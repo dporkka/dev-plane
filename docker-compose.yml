@@ -1,0 +1,98 @@
+# AI Dev Control Plane -- Local Development Services
+# ==================================================
+# Start with:  docker-compose up -d
+# Stop with:   docker-compose down
+# Logs:        docker-compose logs -f
+
+version: '3.8'
+
+services:
+  # --- NATS with JetStream ---------------------------------------------------
+  # Message bus and event streaming backbone. JetStream provides
+  # persistence, streams, and consumer groups for reliable task processing.
+  nats:
+    image: nats:2.10-alpine
+    container_name: aicp-nats
+    ports:
+      - "4222:4222"   # Client connections
+      - "8222:8222"   # HTTP monitoring / health
+    command: "--js --http_port 8222 --store_dir /data/jetstream"
+    volumes:
+      - nats-data:/data/jetstream
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 3s
+    restart: unless-stopped
+    networks:
+      - aicp-network
+
+  # --- Temporal (optional, profile: temporal) --------------------------------
+  # Workflow orchestration for long-running, durable agent tasks.
+  # Start with:  docker-compose --profile temporal up -d
+  temporal:
+    image: temporalio/auto-setup:1.25
+    container_name: aicp-temporal
+    ports:
+      - "7233:7233"   # gRPC frontend
+      - "8233:8233"   # Web UI
+    environment:
+      - DB=sqlite
+      - SQLITE_PRAGMAS=_journal_mode=WAL
+      - TEMPORAL_ADDRESS=0.0.0.0:7233
+      - TEMPORAL_PORT=7233
+      - TEMPORAL_UI_PORT=8233
+    volumes:
+      - temporal-data:/data
+    profiles:
+      - temporal
+    restart: unless-stopped
+    networks:
+      - aicp-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:7233/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # --- PostgreSQL (optional, for cloud-dev mode) -----------------------------
+  # Uncomment to use Postgres instead of SQLite for local development.
+  # Useful for testing migration compatibility and Postgres-specific features.
+  #
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: aicp-postgres
+  #   ports:
+  #     - "5432:5432"
+  #   environment:
+  #     - POSTGRES_USER=aicp
+  #     - POSTGRES_PASSWORD=aicp-dev-password
+  #     - POSTGRES_DB=aicp
+  #   volumes:
+  #     - postgres-data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U aicp"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 5
+  #   restart: unless-stopped
+  #   networks:
+  #     - aicp-network
+
+# --- Networks ----------------------------------------------------------------
+networks:
+  aicp-network:
+    driver: bridge
+    name: aicp-network
+
+# --- Volumes -----------------------------------------------------------------
+volumes:
+  nats-data:
+    driver: local
+  temporal-data:
+    driver: local
+  # postgres-data:
+  #   driver: local

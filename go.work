@@ -1,0 +1,17 @@
+go 1.25.0
+
+use (
+	./apps/api
+	./apps/worker
+	./packages/db
+	./packages/agents
+	./packages/events
+	./packages/gateway
+	./packages/models
+	./packages/policies
+	./packages/prfactory
+	./packages/repo-intel
+	./packages/reviewer
+	./packages/runtimes
+	./packages/securityscan
+)

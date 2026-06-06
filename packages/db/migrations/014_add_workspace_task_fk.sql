@@ -1,0 +1,14 @@
+-- +goose Up
+-- +goose StatementBegin
+-- Historical no-op.
+--
+-- This migration originally attempted to add a workspaces.task_id foreign key
+-- after both tables existed. PostgreSQL can add table constraints after
+-- creation, but SQLite cannot. The portable schema keeps workspaces.task_id
+-- indexed without this deferred FK.
+-- +goose StatementEnd
+
+-- +goose Down
+-- +goose StatementBegin
+-- Historical no-op.
+-- +goose StatementEnd

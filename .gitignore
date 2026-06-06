@@ -1,0 +1,56 @@
+# Binaries
+bin/*
+!bin/.gitkeep
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go
+*.test
+*.out
+vendor/
+go.work.sum
+
+# Node
+node_modules/
+.next/
+.nuxt/
+dist/
+*.tsbuildinfo
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Data
+data/
+workspaces/
+*.db
+*.db-shm
+*.db-wal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# Docker
+volumes/
+
+# Coverage
+coverage.out
+coverage.html
