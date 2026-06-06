@@ -4,7 +4,7 @@
 // comprehensive PR descriptions and create GitHub pull requests.
 module github.com/ai-dev-control-plane/prfactory
 
-go 1.23
+go 1.23.0
 
 require (
 	github.com/ai-dev-control-plane/gateway v0.0.0
@@ -13,7 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 )
 
-require golang.org/x/oauth2 v0.24.0
+require golang.org/x/oauth2 v0.27.0
 
 replace (
 	github.com/ai-dev-control-plane/gateway => ../gateway
