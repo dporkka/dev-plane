@@ -22,6 +22,8 @@ require (
 require (
 	github.com/ai-dev-control-plane/gateway v0.0.0 // indirect
 	github.com/ai-dev-control-plane/policies v0.0.0 // indirect
+	github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
+	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/klauspost/compress v1.17.7 // indirect
 	github.com/lib/pq v1.10.9 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
@@ -46,4 +48,5 @@ replace (
 	github.com/ai-dev-control-plane/prfactory => ../../packages/prfactory
 	github.com/ai-dev-control-plane/reviewer => ../../packages/reviewer
 	github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
+	github.com/ai-dev-control-plane/securityscan => ../../packages/securityscan
 )

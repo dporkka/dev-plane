@@ -8,7 +8,11 @@ go 1.23
 
 require (
 	github.com/ai-dev-control-plane/models v0.0.0
+	github.com/ai-dev-control-plane/securityscan v0.0.0
 	github.com/google/uuid v1.6.0
 )
 
-replace github.com/ai-dev-control-plane/models => ../models
+replace (
+	github.com/ai-dev-control-plane/models => ../models
+	github.com/ai-dev-control-plane/securityscan => ../securityscan
+)

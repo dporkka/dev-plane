@@ -29,6 +29,7 @@ require (
 
 require (
 	github.com/ai-dev-control-plane/gateway v0.0.0 // indirect
+	github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/klauspost/compress v1.17.7 // indirect
@@ -53,4 +54,5 @@ replace (
 	github.com/ai-dev-control-plane/repo-intel => ../../packages/repo-intel
 	github.com/ai-dev-control-plane/reviewer => ../../packages/reviewer
 	github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
+	github.com/ai-dev-control-plane/securityscan => ../../packages/securityscan
 )
