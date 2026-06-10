@@ -61,8 +61,14 @@ export default function IntegrationsPage() {
     enabled: !!selectedOrg,
   });
 
-  const providers: IntegrationProvider[] = providersData?.data || providersData || [];
-  const integrations: Integration[] = integrationsData?.data || integrationsData || [];
+  const providers: IntegrationProvider[] = useMemo(
+    () => providersData?.data || providersData || [],
+    [providersData]
+  );
+  const integrations: Integration[] = useMemo(
+    () => integrationsData?.data || integrationsData || [],
+    [integrationsData]
+  );
 
   const draftValues = useMemo(() => {
     const values: Record<string, { displayName: string; config: string }> = {};
