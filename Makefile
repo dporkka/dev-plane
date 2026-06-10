@@ -37,8 +37,8 @@ BIN_DIR          := ./bin
 DOCKER_COMPOSE   := docker-compose
 
 # Go packages with tests
-GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway
-GO_APPS          := apps/api apps/worker apps/runner apps/gateway
+GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+GO_APPS          := apps/api apps/worker apps/runner
 
 # Colors for output (Linux/macOS compatible)
 BLUE  := $(shell tput setaf 6 2>/dev/null || echo "")
