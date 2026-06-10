@@ -33,13 +33,15 @@ const iconMap: Record<IntegrationType, ElementType> = {
   voice: AudioLines,
 };
 
+const defaultVoiceProvider = 'whisper';
+
 function defaultConfig(provider: IntegrationProvider, selectedProject: string | null) {
   const baseConfig: Record<string, string> = {};
   provider.required_config_fields.forEach((field) => {
     baseConfig[field] = field === 'project_id' && selectedProject ? selectedProject : '';
   });
   if (provider.type === 'voice') {
-    baseConfig.voice_provider = 'whisper';
+    baseConfig.voice_provider = defaultVoiceProvider;
   }
   return JSON.stringify(baseConfig, null, 2);
 }
@@ -288,7 +290,7 @@ export default function IntegrationsPage() {
                   </p>
                   {provider.supports_voice && (
                     <p className="text-xs text-gray-500">
-                      Voice tasks use the authenticated <code>/api/v1/projects/:projectID/voice-tasks</code> endpoint with a Whisper transcript payload.
+                      Voice tasks use the authenticated <code>{'/api/v1/projects/{projectID}/voice-tasks'}</code> endpoint with a Whisper transcript payload.
                     </p>
                   )}
                 </div>

@@ -13,6 +13,8 @@ const (
 	integrationTypeDiscord = "discord"
 	integrationTypeWebhook = "webhook"
 	integrationTypeVoice   = "voice"
+	defaultVoiceProvider   = "whisper"
+	maxVoiceTaskTitleLen   = 72
 )
 
 type IntegrationProvider struct {
@@ -151,12 +153,13 @@ func summarizeTranscript(transcript string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if idx := strings.IndexAny(trimmed, ".!?\n"); idx > 0 {
+	if idx := strings.IndexAny(trimmed, ".!?\n"); idx >= 0 {
 		trimmed = trimmed[:idx]
 	}
 	trimmed = strings.TrimSpace(trimmed)
-	if len(trimmed) > 72 {
-		trimmed = strings.TrimSpace(trimmed[:72])
+	runes := []rune(trimmed)
+	if len(runes) > maxVoiceTaskTitleLen {
+		trimmed = strings.TrimSpace(string(runes[:maxVoiceTaskTitleLen]))
 	}
 	if trimmed == "" {
 		return "Voice task"

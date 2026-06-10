@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
@@ -60,6 +61,8 @@ type genericWebhookIntegration struct {
 	Config          json.RawMessage
 	Status          string
 }
+
+const sourceIDSeparator = ":"
 
 // GitHubWebhook handles incoming GitHub webhook events.
 func (h *WebhookHandler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
@@ -473,7 +476,7 @@ func (h *WebhookHandler) handleCommandEvent(ctx context.Context, provider string
 		if title == "" {
 			return nil, errors.New("create command requires a task title")
 		}
-		sourceID := fmt.Sprintf("%s:%d", provider, time.Now().UTC().UnixNano())
+		sourceID := generateSourceID(provider)
 		metadata, _ := json.Marshal(map[string]any{
 			"integration_id": integration.ID,
 			"provider":       provider,
@@ -565,7 +568,7 @@ func (h *WebhookHandler) handleGenericWebhookTask(ctx context.Context, provider 
 		payload.Title = "Webhook task"
 	}
 	if payload.SourceID == "" {
-		payload.SourceID = fmt.Sprintf("%s:%d", provider, time.Now().UTC().UnixNano())
+		payload.SourceID = generateSourceID(provider)
 	}
 	metadata := payload.Metadata
 	if len(metadata) == 0 {
@@ -638,6 +641,10 @@ func nullableString(value string) interface{} {
 		return nil
 	}
 	return value
+}
+
+func generateSourceID(provider string) string {
+	return provider + sourceIDSeparator + uuid.NewString()
 }
 
 // validateGitHubWebhook validates the HMAC-SHA256 signature of a GitHub webhook payload.

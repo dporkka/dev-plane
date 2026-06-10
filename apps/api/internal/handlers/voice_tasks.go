@@ -66,7 +66,7 @@ func (h *Handler) CreateVoiceTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Provider == "" {
-		req.Provider = "whisper"
+		req.Provider = defaultVoiceProvider
 	}
 	metadataMap["voice_provider"] = req.Provider
 	metadataMap["transcript"] = req.Transcript
