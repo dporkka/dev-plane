@@ -6,26 +6,92 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
+
+	"github.com/ai-dev-control-plane/events"
 )
 
 func TestGenerateSpec(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
+	publisher := &fakeEventPublisher{}
+	h.WithEventPublisher(publisher)
 
 	taskID := "task-1"
+	repoID := "repo-1"
 
 	// Check current status
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("backlog"))
 
-	// Transition to spec_review
-	mock.ExpectExec("UPDATE tasks SET status = 'spec_review'").
-		WithArgs(sqlmock.AnyArg(), taskID).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	expectSpecGeneration(mock, taskID, repoID, "Build API endpoint", "backlog")
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GenerateSpec(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if resp["status"] != "spec_review" {
+		t.Errorf("expected status 'spec_review', got %q", resp["status"])
+	}
+	if resp["message"] != "Spec generated" {
+		t.Errorf("expected generated message, got %q", resp["message"])
+	}
+	if resp["spec_id"] == "" {
+		t.Fatal("expected spec_id in response")
+	}
+	if publisher.subject != events.TaskUpdated {
+		t.Fatalf("published subject = %q, want %s", publisher.subject, events.TaskUpdated)
+	}
+	var event events.TaskEvent
+	if err := json.Unmarshal(publisher.data, &event); err != nil {
+		t.Fatalf("unmarshal task updated event: %v", err)
+	}
+	if event.TaskID != taskID || event.Status != "spec_review" {
+		t.Fatalf("task updated event = %+v", event)
+	}
+	var eventData map[string]string
+	if err := json.Unmarshal(event.Data, &eventData); err != nil {
+		t.Fatalf("unmarshal task updated data: %v", err)
+	}
+	if eventData["action"] != "spec_generated" || eventData["spec_id"] == "" {
+		t.Fatalf("task updated data = %+v", eventData)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestGenerateSpec_FromFailed(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	repoID := "repo-1"
+
+	// Check current status - failed is also allowed
+	mock.ExpectQuery("SELECT status FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("failed"))
+
+	expectSpecGeneration(mock, taskID, repoID, "Fix login bug", "failed")
 
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
 	rctx := chi.NewRouteContext()
@@ -53,46 +119,49 @@ func TestGenerateSpec(t *testing.T) {
 	}
 }
 
-func TestGenerateSpec_FromFailed(t *testing.T) {
-	h, mock, cleanup := setupTest(t)
-	defer cleanup()
-
-	taskID := "task-1"
-
-	// Check current status - failed is also allowed
-	mock.ExpectQuery("SELECT status FROM tasks").
+func expectSpecGeneration(mock sqlmock.Sqlmock, taskID, repoID, title, status string) {
+	now := time.Now().UTC()
+	taskCols := []string{
+		"id", "project_id", "repository_id", "workspace_id", "created_by",
+		"source", "source_id", "title", "description", "status", "priority",
+		"risk_level", "target_branch", "spec", "acceptance_criteria",
+		"max_cost", "max_runtime_minutes", "approval_requirements", "metadata",
+		"started_at", "completed_at", "created_at", "updated_at", "deleted_at",
+	}
+	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by").
 		WithArgs(taskID).
-		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("failed"))
-
-	// Transition to spec_review
-	mock.ExpectExec("UPDATE tasks SET status = 'spec_review'").
-		WithArgs(sqlmock.AnyArg(), taskID).
+		WillReturnRows(sqlmock.NewRows(taskCols).AddRow(
+			taskID, "proj-1", repoID, nil, "user-1",
+			"web", nil, title, "Implement the requested behavior", status, "medium",
+			"low", "main", nil, "[]",
+			nil, 60, "[]", "{}",
+			nil, nil, now, now, nil,
+		))
+	mock.ExpectQuery("SELECT id, project_id, github_id, owner, name, full_name, clone_url").
+		WithArgs(repoID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "project_id", "github_id", "owner", "name", "full_name", "clone_url",
+			"default_branch", "private", "connection_status", "last_synced_at",
+			"webhook_secret", "settings", "created_at", "updated_at",
+		}))
+	mock.ExpectQuery("SELECT id, repository_id, package_manager, framework, test_command").
+		WithArgs(repoID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "repository_id", "package_manager", "framework", "test_command",
+			"lint_command", "typecheck_command", "dev_command", "build_command",
+			"has_dockerfile", "has_devcontainer", "detected_at", "updated_at",
+		}))
+	mock.ExpectExec("INSERT INTO task_specs").
+		WithArgs(
+			sqlmock.AnyArg(), taskID, sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), "template-heuristic", sqlmock.AnyArg(),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-	rec := httptest.NewRecorder()
-
-	h.GenerateSpec(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
-	}
-
-	var resp map[string]string
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("failed to decode response: %v", err)
-	}
-
-	if resp["status"] != "spec_review" {
-		t.Errorf("expected status 'spec_review', got %q", resp["status"])
-	}
-
-	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Errorf("unfulfilled expectations: %v", err)
-	}
+	mock.ExpectExec("UPDATE tasks SET status =").
+		WithArgs(taskID, "spec_review", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 }
 
 func TestGenerateSpec_WrongStatus(t *testing.T) {

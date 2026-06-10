@@ -1,7 +1,5 @@
-// Package spec generates technical specifications for tasks.
-// For Phase 2 MVP, it creates a structured spec from task title + description
-// using template-based generation. In production, it uses the model router to
-// call LLMs for real AI generation.
+// Package spec generates technical specifications for tasks using deterministic
+// task, repository, and project-configuration heuristics.
 package spec
 
 import (
@@ -12,6 +10,8 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/models"
 )
@@ -35,8 +35,8 @@ func NewGenerator(db *sql.DB, logger *slog.Logger) *Generator {
 
 // Generate creates a technical spec for a task.
 //
-// MVP: Returns a template-based spec using task title + description heuristics.
-// Future: Calls LLM via model router with task + repo context.
+// Returns a deterministic heuristic spec using task, repository, and project
+// configuration context.
 func (g *Generator) Generate(ctx context.Context, taskID string) (*models.TaskSpec, error) {
 	g.logger.Info("generating spec", "task_id", taskID)
 
@@ -61,7 +61,7 @@ func (g *Generator) Generate(ctx context.Context, taskID string) (*models.TaskSp
 		g.logger.Debug("no project config found, continuing without", "error", err)
 	}
 
-	// Step 4: Build structured spec (MVP: template-based)
+	// Step 4: Build structured heuristic spec
 	spec := g.generateMVPSpec(task, repo, config)
 
 	// Step 5: Save spec to task_specs table
@@ -72,11 +72,6 @@ func (g *Generator) Generate(ctx context.Context, taskID string) (*models.TaskSp
 	// Step 6: Update task status to "spec_review"
 	if err := g.updateTaskStatus(ctx, taskID, string(models.TaskStatusSpecReview)); err != nil {
 		return nil, fmt.Errorf("update task status: %w", err)
-	}
-
-	// Step 7: Publish event (best effort)
-	if err := g.publishEvent(task, spec, "spec_generated"); err != nil {
-		g.logger.Warn("failed to publish spec generated event", "error", err)
 	}
 
 	g.logger.Info("spec generated successfully", "task_id", taskID, "spec_id", spec.ID)
@@ -126,18 +121,17 @@ func (g *Generator) RejectSpec(ctx context.Context, taskID string, reason string
 }
 
 // ---------------------------------------------------------------------------
-// MVP Spec Generation
+// Heuristic Spec Generation
 // ---------------------------------------------------------------------------
 
 // generateMVPSpec creates a spec without AI using title analysis and heuristics.
-// This is used when no LLM API key is available or for fast local development.
 func (g *Generator) generateMVPSpec(task *models.Task, repo *models.Repository, config *models.ProjectConfig) *models.TaskSpec {
 	spec := &models.TaskSpec{
 		ID:                 g.generateID(),
 		TaskID:             task.ID,
 		GeneratedAt:        time.Now().UTC(),
-		EstimatedCost:      0.001, // MVP placeholder
-		GeneratedBy:        "template-mvp",
+		EstimatedCost:      0,
+		GeneratedBy:        "template-heuristic",
 		ImplementationPlan: []string{},
 		FilesToChange:      []string{},
 		FilesToCreate:      []string{},
@@ -272,7 +266,7 @@ func (g *Generator) inferFilesToCreate(task *models.Task) []string {
 			}
 		}
 
-		// If no specific pattern matched, add a generic placeholder
+		// If no specific pattern matched, add a generic implementation suggestion.
 		if len(files) == 0 {
 			files = append(files, "new implementation file(s)")
 		}
@@ -718,20 +712,5 @@ func (g *Generator) updateTaskStatus(ctx context.Context, taskID, status string)
 // ---------------------------------------------------------------------------
 
 func (g *Generator) generateID() string {
-	// Use a simple timestamp-based ID for MVP
-	// In production, use github.com/google/uuid
-	return fmt.Sprintf("spec-%d", time.Now().UnixNano())
-}
-
-// publishEvent publishes a task spec event to the event bus.
-// This is a stub that logs the event. In production, it publishes to NATS.
-func (g *Generator) publishEvent(task *models.Task, spec *models.TaskSpec, eventType string) error {
-	g.logger.Info("publishing event",
-		"event_type", eventType,
-		"task_id", task.ID,
-		"spec_id", spec.ID,
-		"agent", spec.RecommendedAgent,
-	)
-	// TODO: Integrate with events.Bus for production
-	return nil
+	return uuid.New().String()
 }

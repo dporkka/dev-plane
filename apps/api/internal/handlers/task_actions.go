@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
+	"github.com/ai-dev-control-plane/events"
 )
 
 // GenerateSpec triggers spec generation for a task.
@@ -44,33 +46,37 @@ func (h *Handler) GenerateSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	now := time.Now().UTC()
-	_, err = h.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'spec_review', updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, taskID)
+	generatedSpec, err := specgenerator.NewGenerator(h.db, h.logger).Generate(ctx, taskID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	// Publish event to NATS if event bus is available
 	if h.eventBus != nil {
-		event := map[string]interface{}{
-			"task_id": taskID,
-			"status":  "spec_review",
-			"action":  "generate_spec",
-		}
-		data, _ := json.Marshal(event)
-		if pubErr := h.eventBus.Publish("tasks.spec_generation_requested", data); pubErr != nil {
-			h.logger.Warn("failed to publish spec generation event", "error", pubErr)
+		data, _ := json.Marshal(events.TaskEvent{
+			TaskID: taskID,
+			Status: "spec_review",
+			Data: mustRawMessage(map[string]string{
+				"action":  "spec_generated",
+				"spec_id": generatedSpec.ID,
+				"agent":   generatedSpec.RecommendedAgent,
+			}),
+		})
+		if pubErr := h.eventBus.Publish(events.TaskUpdated, data); pubErr != nil {
+			h.logger.Warn("failed to publish task spec generated event", "task_id", taskID, "spec_id", generatedSpec.ID, "error", pubErr)
 		}
 	}
 
-	respond.JSON(w, http.StatusOK, map[string]string{
+	respond.JSON(w, http.StatusOK, map[string]any{
 		"status":  "spec_review",
-		"message": "Spec generation triggered",
+		"message": "Spec generated",
+		"spec_id": generatedSpec.ID,
 	})
+}
+
+func mustRawMessage(v any) json.RawMessage {
+	data, _ := json.Marshal(v)
+	return data
 }
 
 // StartRun starts an agent run for an approved task.
