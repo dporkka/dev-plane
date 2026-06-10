@@ -19,12 +19,14 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("LOG_LEVEL")
 	os.Unsetenv("ALLOWED_ORIGINS")
 	os.Unsetenv("SECRET_ENCRYPTION_KEYS")
+	os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
 
 	cfg := Load()
 	assertEqual(t, cfg.Port, "8080")
 	assertEqual(t, cfg.DatabaseURL, "file:./data/dev.db?_journal_mode=WAL")
 	assertEqual(t, cfg.LogLevel, "info")
 	assertEqual(t, cfg.SecretKeys, "")
+	assertEqual(t, cfg.GitHubWebhookSecret, "")
 	assertEqual(t, len(cfg.AllowedOrigins), 1)
 	assertEqual(t, cfg.AllowedOrigins[0], "http://localhost:3000")
 }
@@ -34,11 +36,13 @@ func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost/db")
 	os.Setenv("LOG_LEVEL", "debug")
 	os.Setenv("SECRET_ENCRYPTION_KEYS", "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	os.Setenv("GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
 	defer func() {
 		os.Unsetenv("PORT")
 		os.Unsetenv("DATABASE_URL")
 		os.Unsetenv("LOG_LEVEL")
 		os.Unsetenv("SECRET_ENCRYPTION_KEYS")
+		os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
 	}()
 
 	cfg := Load()
@@ -46,6 +50,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	assertEqual(t, cfg.DatabaseURL, "postgres://user:pass@localhost/db")
 	assertEqual(t, cfg.LogLevel, "debug")
 	assertEqual(t, cfg.SecretKeys, "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	assertEqual(t, cfg.GitHubWebhookSecret, "webhook-secret")
 }
 
 func TestLoad_CustomPort(t *testing.T) {

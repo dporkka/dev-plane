@@ -104,7 +104,7 @@ func (s *Server) routes() {
 		h = h.WithAgentVault(av, s.config.AgentVaultProject)
 	}
 	ghAuth := handlers.NewGitHubAuthHandler(s.db, s.config)
-	wh := handlers.NewWebhookHandler()
+	wh := handlers.NewWebhookHandler().WithWebhookSecret(s.config.GitHubWebhookSecret)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
 	}
