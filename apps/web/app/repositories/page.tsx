@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { type FormEvent, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useStore } from '@/lib/store';
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Loading } from '@/components/common/Loading';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -17,19 +18,74 @@ import {
   Trash2,
 } from 'lucide-react';
 
+function parseRepositoryInput(value: string) {
+  const normalized = value
+    .trim()
+    .replace(/^https?:\/\/github\.com\//i, '')
+    .replace(/^git@github\.com:/i, '')
+    .replace(/\.git$/i, '')
+    .replace(/^\/+|\/+$/g, '');
+  const [owner, name, extra] = normalized.split('/');
+  if (!owner || !name || extra) {
+    throw new Error('Enter a GitHub repository as owner/repo or a GitHub URL.');
+  }
+  return { owner, name };
+}
+
 export default function RepositoriesPage() {
   const { selectedProject } = useStore();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [showConnect, setShowConnect] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  const { data: repos, isLoading, refetch } = useQuery({
+  const { data: repos, isLoading } = useQuery({
     queryKey: ['repos', selectedProject],
     queryFn: () =>
       selectedProject
         ? api.listRepos(selectedProject)
         : Promise.resolve([]),
     enabled: !!selectedProject,
+  });
+  const invalidateRepos = () =>
+    queryClient.invalidateQueries({ queryKey: ['repos', selectedProject] });
+  const connectRepo = useMutation({
+    mutationFn: () => {
+      if (!selectedProject) {
+        throw new Error('Select a project before connecting a repository.');
+      }
+      return api.connectRepo(selectedProject, parseRepositoryInput(newRepoUrl));
+    },
+    onSuccess: async () => {
+      await invalidateRepos();
+      setNewRepoUrl('');
+      setShowConnect(false);
+      setActionError(null);
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : 'Failed to connect repository.');
+    },
+  });
+  const syncRepo = useMutation({
+    mutationFn: (repoId: string) => api.syncRepo(repoId),
+    onSuccess: async () => {
+      await invalidateRepos();
+      setActionError(null);
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : 'Failed to sync repository.');
+    },
+  });
+  const disconnectRepo = useMutation({
+    mutationFn: (repoId: string) => api.disconnectRepo(repoId),
+    onSuccess: async () => {
+      await invalidateRepos();
+      setActionError(null);
+    },
+    onError: (error) => {
+      setActionError(error instanceof Error ? error.message : 'Failed to disconnect repository.');
+    },
   });
 
   if (isLoading) return <Loading />;
@@ -38,6 +94,15 @@ export default function RepositoriesPage() {
   const filtered = repoList.filter((r: any) =>
     r.full_name?.toLowerCase().includes(search.toLowerCase())
   );
+  const submitRepository = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!newRepoUrl.trim()) {
+      setActionError('Repository is required.');
+      return;
+    }
+    setActionError(null);
+    connectRepo.mutate();
+  };
 
   return (
     <div className="space-y-6">
@@ -51,6 +116,7 @@ export default function RepositoriesPage() {
         <button
           onClick={() => setShowConnect(!showConnect)}
           className="btn-primary flex items-center gap-2"
+          disabled={!selectedProject}
         >
           <Plus className="w-4 h-4" />
           Connect Repo
@@ -60,32 +126,35 @@ export default function RepositoriesPage() {
       {/* Connect new repo form */}
       {showConnect && (
         <Card>
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-gray-300">
+          <form onSubmit={submitRepository} className="space-y-3">
+            <label htmlFor="repository-url" className="block text-sm font-medium text-gray-300">
               Repository URL or full name (owner/repo)
             </label>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
+                id="repository-url"
                 value={newRepoUrl}
                 onChange={(e) => setNewRepoUrl(e.target.value)}
                 placeholder="e.g. myorg/myrepo or https://github.com/myorg/myrepo"
                 className="flex-1"
+                disabled={connectRepo.isPending}
               />
-              <button
-                onClick={() => {
-                  if (selectedProject && newRepoUrl) {
-                    api.connectRepo(selectedProject, {
-                      full_name: newRepoUrl.replace(/^https:\/\/github\.com\//, ''),
-                    });
-                  }
-                }}
-                className="btn-primary"
+              <Button
+                type="submit"
+                disabled={connectRepo.isPending || !selectedProject}
+                className="shrink-0"
               >
-                Connect
-              </button>
+                {connectRepo.isPending ? 'Connecting...' : 'Connect'}
+              </Button>
             </div>
-          </div>
+          </form>
         </Card>
+      )}
+
+      {actionError && (
+        <div className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
+          {actionError}
+        </div>
       )}
 
       {/* Search */}
@@ -121,9 +190,10 @@ export default function RepositoriesPage() {
               <div className="flex items-center gap-2">
                 <StatusBadge status={repo.connection_status} />
                 <button
-                  onClick={() => api.syncRepo(repo.id)}
+                  onClick={() => syncRepo.mutate(repo.id)}
                   className="p-2 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
                   title="Sync repository"
+                  disabled={syncRepo.isPending || disconnectRepo.isPending}
                 >
                   <RefreshCw className="w-4 h-4" />
                 </button>
@@ -139,11 +209,12 @@ export default function RepositoriesPage() {
                 <button
                   onClick={() => {
                     if (confirm('Disconnect this repository?')) {
-                      api.disconnectRepo(repo.id);
+                      disconnectRepo.mutate(repo.id);
                     }
                   }}
                   className="p-2 rounded-md hover:bg-red-500/10 text-gray-400 hover:text-red-400 transition-colors"
                   title="Disconnect"
+                  disabled={syncRepo.isPending || disconnectRepo.isPending}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
