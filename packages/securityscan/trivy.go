@@ -53,16 +53,16 @@ func (s *TrivyScanner) Scan(ctx context.Context, req ScanRequest) (*ScanResult, 
 
 	duration := time.Since(start)
 
-	// TODO: Parse trivy JSON output into structured findings.
-	// For now, return the raw output as a stub.
+	findings, err := parseTrivyJSON(output)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ScanResult{
 		ScannerName: s.Name(),
-		Findings:    nil,
-		Summary: ScanSummary{
-			Total:        0,
-			FilesScanned: len(req.Files),
-		},
-		Duration:  duration,
-		RawOutput: string(output),
+		Findings:    findings,
+		Summary:     buildSummary(findings, len(req.Files)),
+		Duration:    duration,
+		RawOutput:   string(output),
 	}, nil
 }
