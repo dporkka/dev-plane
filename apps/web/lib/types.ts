@@ -210,8 +210,19 @@ export interface Policy {
 }
 
 // Integration types
-export type IntegrationType = 'github' | 'linear' | 'slack' | 'discord';
+export type IntegrationType = 'github' | 'linear' | 'slack' | 'discord' | 'webhook' | 'voice';
 export type IntegrationStatus = 'pending' | 'connected' | 'error' | 'disconnected';
+
+export interface IntegrationProvider {
+  type: IntegrationType;
+  name: string;
+  description: string;
+  capabilities: string[];
+  required_config_fields: string[];
+  supports_webhook: boolean;
+  supports_commands: boolean;
+  supports_voice: boolean;
+}
 
 export interface Integration {
   id: string;
@@ -222,6 +233,7 @@ export interface Integration {
   status: IntegrationStatus;
   webhook_url?: string;
   last_synced_at?: string;
+  provider?: IntegrationProvider;
   created_at: string;
   updated_at: string;
   deleted_at?: string;

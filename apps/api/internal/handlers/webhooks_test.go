@@ -2,14 +2,19 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-chi/chi/v5"
 
 	"github.com/ai-dev-control-plane/events"
 )
@@ -207,6 +212,83 @@ func TestGitHubWebhookHandler_MissingEventHeader(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestIntegrationWebhook_LinearCreatesTask(t *testing.T) {
+	baseHandler, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	configJSON := `{"project_id":"proj-1","repository_id":"repo-1","created_by":"user-1","webhook_secret":"linear-secret"}`
+	mock.ExpectQuery("SELECT id, organization_id, integration_type, display_name, config, status FROM integrations").
+		WithArgs("int-1", integrationTypeLinear).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
+			AddRow("int-1", "org-1", integrationTypeLinear, "Linear", configJSON, "connected"))
+	mock.ExpectQuery("SELECT id FROM tasks").
+		WithArgs(integrationTypeLinear, "lin-123").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("INSERT INTO tasks").
+		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeLinear, "lin-123", "Fix production bug", "Investigate the failing deploy", "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE integrations SET last_synced_at =").
+		WithArgs(sqlmock.AnyArg(), "int-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	h := NewWebhookHandler().WithHandler(baseHandler)
+	body := []byte(`{"type":"Issue","action":"create","data":{"id":"lin-123","identifier":"ENG-42","title":"Fix production bug","description":"Investigate the failing deploy","state":{"name":"Todo"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/linear/int-1", bytes.NewReader(body))
+	req.Header.Set("X-Linear-Signature", signPayload(body, "linear-secret"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", integrationTypeLinear)
+	rctx.URLParams.Add("integrationID", "int-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.IntegrationWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, rec.Code)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestIntegrationWebhook_SlackCreateCommand(t *testing.T) {
+	baseHandler, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	configJSON := `{"project_id":"proj-1","repository_id":"repo-1","created_by":"user-1","webhook_secret":"slack-secret"}`
+	mock.ExpectQuery("SELECT id, organization_id, integration_type, display_name, config, status FROM integrations").
+		WithArgs("int-2", integrationTypeSlack).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
+			AddRow("int-2", "org-1", integrationTypeSlack, "Slack", configJSON, "connected"))
+	mock.ExpectExec("INSERT INTO tasks").
+		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeSlack, sqlmock.AnyArg(), "Document the new integration flow", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE integrations SET last_synced_at =").
+		WithArgs(sqlmock.AnyArg(), "int-2").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	h := NewWebhookHandler().WithHandler(baseHandler)
+	body := []byte(`{"text":"create Document the new integration flow"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack/int-2", bytes.NewReader(body))
+	req.Header.Set("X-Slack-Signature", signPayload(body, "slack-secret"))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", integrationTypeSlack)
+	rctx.URLParams.Add("integrationID", "int-2")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.IntegrationWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
 	}
 }
 

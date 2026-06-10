@@ -15,17 +15,18 @@ import (
 
 // Integration represents an integration record.
 type Integration struct {
-	ID                 string          `json:"id"`
-	OrgID              string          `json:"organization_id"`
-	IntegrationType    string          `json:"integration_type"`
-	DisplayName        string          `json:"display_name"`
-	Config             json.RawMessage `json:"config,omitempty"`
-	CredentialsEncrypted *string       `json:"credentials_encrypted,omitempty"`
-	Status             string          `json:"status"`
-	WebhookURL         *string         `json:"webhook_url,omitempty"`
-	LastSyncedAt       *time.Time      `json:"last_synced_at,omitempty"`
-	CreatedAt          time.Time       `json:"created_at"`
-	UpdatedAt          time.Time       `json:"updated_at"`
+	ID                   string               `json:"id"`
+	OrgID                string               `json:"organization_id"`
+	IntegrationType      string               `json:"integration_type"`
+	DisplayName          string               `json:"display_name"`
+	Config               json.RawMessage      `json:"config,omitempty"`
+	CredentialsEncrypted *string              `json:"credentials_encrypted,omitempty"`
+	Status               string               `json:"status"`
+	WebhookURL           *string              `json:"webhook_url,omitempty"`
+	LastSyncedAt         *time.Time           `json:"last_synced_at,omitempty"`
+	Provider             *IntegrationProvider `json:"provider,omitempty"`
+	CreatedAt            time.Time            `json:"created_at"`
+	UpdatedAt            time.Time            `json:"updated_at"`
 }
 
 // CreateIntegrationRequest is the request body for creating an integration.
@@ -40,6 +41,11 @@ type UpdateIntegrationRequest struct {
 	DisplayName *string         `json:"display_name,omitempty"`
 	Config      json.RawMessage `json:"config,omitempty"`
 	Status      *string         `json:"status,omitempty"`
+}
+
+// ListIntegrationProviders returns the supported integration catalog.
+func (h *Handler) ListIntegrationProviders(w http.ResponseWriter, _ *http.Request) {
+	respond.JSON(w, http.StatusOK, SupportedIntegrationProviders())
 }
 
 // ListIntegrations returns all integrations for an organization.
@@ -84,6 +90,10 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 		if lastSync.Valid {
 			i.LastSyncedAt = &lastSync.Time
 		}
+		if provider, ok := integrationProviderByType(i.IntegrationType); ok {
+			providerCopy := provider
+			i.Provider = &providerCopy
+		}
 		integrations = append(integrations, i)
 	}
 
@@ -91,6 +101,50 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 		integrations = []Integration{}
 	}
 	respond.JSON(w, http.StatusOK, integrations)
+}
+
+// GetIntegration returns a single integration by ID.
+func (h *Handler) GetIntegration(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("integration id is required"))
+		return
+	}
+
+	var i Integration
+	var config sql.NullString
+	var webhookURL sql.NullString
+	var lastSync sql.NullTime
+	err := h.db.QueryRowContext(ctx, `
+		SELECT id, organization_id, integration_type, display_name, config,
+		       status, webhook_url, last_synced_at, created_at, updated_at
+		FROM integrations
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id).Scan(&i.ID, &i.OrgID, &i.IntegrationType, &i.DisplayName, &config, &i.Status, &webhookURL, &lastSync, &i.CreatedAt, &i.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if config.Valid {
+		i.Config = json.RawMessage(config.String)
+	}
+	if webhookURL.Valid {
+		i.WebhookURL = &webhookURL.String
+	}
+	if lastSync.Valid {
+		i.LastSyncedAt = &lastSync.Time
+	}
+	if provider, ok := integrationProviderByType(i.IntegrationType); ok {
+		providerCopy := provider
+		i.Provider = &providerCopy
+	}
+
+	respond.JSON(w, http.StatusOK, i)
 }
 
 // CreateIntegration creates a new integration.
@@ -112,6 +166,10 @@ func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, errors.New("integration_type and display_name are required"))
 		return
 	}
+	if !supportedIntegrationType(req.IntegrationType) {
+		respond.Error(w, http.StatusBadRequest, errors.New("unsupported integration_type"))
+		return
+	}
 
 	id := uuid.New().String()
 	now := time.Now().UTC()
@@ -120,19 +178,26 @@ func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
 	if len(req.Config) > 0 {
 		config = req.Config
 	} else {
-		config = "{}"
+		req.Config = json.RawMessage(`{}`)
+		config = req.Config
+	}
+
+	webhookURL := integrationWebhookPath(req.IntegrationType, id)
+	var webhookURLValue interface{}
+	if webhookURL != "" {
+		webhookURLValue = webhookURL
 	}
 
 	_, err := h.db.ExecContext(ctx, `
-		INSERT INTO integrations (id, organization_id, integration_type, display_name, config, status, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 'pending', $6, $6)
-	`, id, orgID, req.IntegrationType, req.DisplayName, config, now)
+		INSERT INTO integrations (id, organization_id, integration_type, display_name, config, status, webhook_url, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, 'pending', $6, $7, $7)
+	`, id, orgID, req.IntegrationType, req.DisplayName, config, webhookURLValue, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	respond.JSON(w, http.StatusCreated, Integration{
+	integration := Integration{
 		ID:              id,
 		OrgID:           orgID,
 		IntegrationType: req.IntegrationType,
@@ -141,7 +206,15 @@ func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		Status:          "pending",
 		CreatedAt:       now,
 		UpdatedAt:       now,
-	})
+	}
+	if webhookURL != "" {
+		integration.WebhookURL = &webhookURL
+	}
+	if provider, ok := integrationProviderByType(req.IntegrationType); ok {
+		providerCopy := provider
+		integration.Provider = &providerCopy
+	}
+	respond.JSON(w, http.StatusCreated, integration)
 }
 
 // UpdateIntegration updates an existing integration.

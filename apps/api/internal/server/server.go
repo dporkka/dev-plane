@@ -82,6 +82,7 @@ func (s *Server) routes() {
 	// OpenAPI documentation (public)
 	s.router.Get("/api/docs", openapi.DocsHandler)
 	s.router.Get("/api/openapi.json", openapi.SpecHandler)
+	s.router.Get("/api/public/v1/openapi.json", openapi.SpecHandler)
 
 	// Initialize handlers
 	auditLogger := audit.NewLogger(s.db, s.logger)
@@ -104,7 +105,7 @@ func (s *Server) routes() {
 		h = h.WithAgentVault(av, s.config.AgentVaultProject)
 	}
 	ghAuth := handlers.NewGitHubAuthHandler(s.db, s.config)
-	wh := handlers.NewWebhookHandler()
+	wh := handlers.NewWebhookHandler().WithHandler(h)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
 	}
@@ -121,6 +122,7 @@ func (s *Server) routes() {
 
 		// GitHub webhooks (public but signed)
 		r.Post("/webhooks/github", wh.GitHubWebhook)
+		r.Post("/webhooks/{provider}/{integrationID}", wh.IntegrationWebhook)
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
@@ -208,10 +210,15 @@ func (s *Server) routes() {
 			r.Get("/organizations/{orgID}/dashboard", h.GetDashboard)
 
 			// Integrations
+			r.Get("/integrations/providers", h.ListIntegrationProviders)
 			r.Get("/organizations/{orgID}/integrations", h.ListIntegrations)
 			r.Post("/organizations/{orgID}/integrations", h.CreateIntegration)
+			r.Get("/integrations/{id}", h.GetIntegration)
 			r.Patch("/integrations/{id}", h.UpdateIntegration)
 			r.Delete("/integrations/{id}", h.DeleteIntegration)
+
+			// Voice
+			r.Post("/projects/{projectID}/voice-tasks", h.CreateVoiceTask)
 		})
 	})
 }

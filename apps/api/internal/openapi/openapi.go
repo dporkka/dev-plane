@@ -348,15 +348,41 @@ func buildComponents() Components {
 				Properties: map[string]*Schema{
 					"id":               {Type: "string", Format: "uuid"},
 					"organization_id":  {Type: "string", Format: "uuid"},
-					"integration_type": {Type: "string", Enum: []interface{}{"github", "linear", "slack", "discord"}},
+					"integration_type": {Type: "string", Enum: []interface{}{"github", "linear", "slack", "discord", "webhook", "voice"}},
 					"display_name":     {Type: "string"},
 					"config":           {Type: "object", Nullable: true},
 					"status":           {Type: "string", Enum: []interface{}{"pending", "connected", "error", "disconnected"}},
 					"webhook_url":      {Type: "string", Nullable: true},
 					"last_synced_at":   {Type: "string", Format: "date-time", Nullable: true},
+					"provider":         {Ref: "#/components/schemas/IntegrationProvider", Nullable: true},
 					"created_at":       {Type: "string", Format: "date-time"},
 					"updated_at":       {Type: "string", Format: "date-time"},
 					"deleted_at":       {Type: "string", Format: "date-time", Nullable: true},
+				},
+			},
+			"IntegrationProvider": {
+				Type:     "object",
+				Required: []string{"type", "name", "description", "capabilities", "required_config_fields", "supports_webhook", "supports_commands", "supports_voice"},
+				Properties: map[string]*Schema{
+					"type":                   {Type: "string", Enum: []interface{}{"github", "linear", "slack", "discord", "webhook", "voice"}},
+					"name":                   {Type: "string"},
+					"description":            {Type: "string"},
+					"capabilities":           {Type: "array", Items: &Schema{Type: "string"}},
+					"required_config_fields": {Type: "array", Items: &Schema{Type: "string"}},
+					"supports_webhook":       {Type: "boolean"},
+					"supports_commands":      {Type: "boolean"},
+					"supports_voice":         {Type: "boolean"},
+				},
+			},
+			"CreateVoiceTaskRequest": {
+				Type:     "object",
+				Required: []string{"repository_id", "transcript"},
+				Properties: map[string]*Schema{
+					"repository_id": {Type: "string", Format: "uuid"},
+					"title":         {Type: "string", Nullable: true},
+					"transcript":    {Type: "string"},
+					"provider":      {Type: "string", Nullable: true},
+					"metadata":      {Type: "object", Nullable: true},
 				},
 			},
 			"Workspace": {
@@ -844,6 +870,28 @@ func buildPaths() map[string]PathItem {
 			},
 		},
 	}
+	paths["/api/v1/projects/{projectID}/voice-tasks"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Tasks", "Integrations"},
+			Summary:     "Create voice task",
+			OperationID: "createVoiceTask",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "projectID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreateVoiceTaskRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Voice task created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Task"}},
+				}},
+			},
+		},
+	}
 	paths["/api/v1/tasks/{id}"] = PathItem{
 		Get: &Operation{
 			Tags:        []string{"Tasks"},
@@ -1088,6 +1136,19 @@ func buildPaths() map[string]PathItem {
 	}
 
 	// Integrations
+	paths["/api/v1/integrations/providers"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Integrations"},
+			Summary:     "List integration providers",
+			OperationID: "listIntegrationProviders",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Responses: map[string]Response{
+				"200": {Description: "List of integration providers", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/IntegrationProvider"}}},
+				}},
+			},
+		},
+	}
 	paths["/api/v1/organizations/{orgID}/integrations"] = PathItem{
 		Get: &Operation{
 			Tags:        []string{"Integrations"},
@@ -1123,6 +1184,21 @@ func buildPaths() map[string]PathItem {
 		},
 	}
 	paths["/api/v1/integrations/{id}"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Integrations"},
+			Summary:     "Get integration",
+			OperationID: "getIntegration",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Integration", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Integration"}},
+				}},
+				"404": {Description: "Integration not found"},
+			},
+		},
 		Patch: &Operation{
 			Tags:        []string{"Integrations"},
 			Summary:     "Update integration",
@@ -1163,6 +1239,23 @@ func buildPaths() map[string]PathItem {
 			Responses: map[string]Response{
 				"200": {Description: "Webhook processed"},
 				"400": {Description: "Invalid webhook payload"},
+			},
+		},
+	}
+	paths["/api/v1/webhooks/{provider}/{integrationID}"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Webhooks", "Integrations"},
+			Summary:     "Integration webhook handler",
+			OperationID: "integrationWebhook",
+			Parameters: []Parameter{
+				{Name: "provider", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "integrationID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Command processed"},
+				"202": {Description: "Webhook accepted"},
+				"400": {Description: "Invalid payload"},
+				"404": {Description: "Integration not found"},
 			},
 		},
 	}
