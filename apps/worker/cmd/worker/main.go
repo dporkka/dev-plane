@@ -124,36 +124,29 @@ func main() {
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 
-	// Set up subscriptions
+	// Set up subscriptions - one per stream to avoid consumer conflicts
 	ctx := &shutdownContext{logger: logger}
 
-	// tasks.created -> spec generation
-	subTaskCreated, err := eventBus.Subscribe("tasks.created", func(msg *nats.Msg) {
-		logger.Debug("received tasks.created event")
-		if err := taskHandler.HandleTaskCreated(msg); err != nil {
-			logger.Error("failed to handle task created", "error", err)
+	// tasks.* -> task lifecycle (created, approved)
+	subTasks, err := eventBus.Subscribe("tasks.*", func(msg *nats.Msg) {
+		logger.Debug("received task event", "subject", msg.Subject)
+		switch msg.Subject {
+		case "tasks.created":
+			if err := taskHandler.HandleTaskCreated(msg); err != nil {
+				logger.Error("failed to handle task created", "error", err)
+			}
+		case "tasks.approved":
+			if err := taskHandler.HandleTaskApproved(msg); err != nil {
+				logger.Error("failed to handle task approved", "error", err)
+			}
 		}
 	})
 	if err != nil {
-		logger.Error("failed to subscribe to tasks.created", "error", err)
+		logger.Error("failed to subscribe to tasks.*", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subTaskCreated)
-	logger.Info("subscribed to tasks.created")
-
-	// tasks.approved -> workspace + agent run
-	subTaskApproved, err := eventBus.Subscribe("tasks.approved", func(msg *nats.Msg) {
-		logger.Debug("received tasks.approved event")
-		if err := taskHandler.HandleTaskApproved(msg); err != nil {
-			logger.Error("failed to handle task approved", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to tasks.approved", "error", err)
-		os.Exit(1)
-	}
-	ctx.addSubscription(subTaskApproved)
-	logger.Info("subscribed to tasks.approved")
+	ctx.addSubscription(subTasks)
+	logger.Info("subscribed to tasks.*")
 
 	// agents.run.completed -> mailbox handoff scheduling or review generation
 	subRunCompleted, err := eventBus.Subscribe("agents.run.completed", func(msg *nats.Msg) {
