@@ -334,11 +334,10 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 	}
 
 	// Test coverage assessment
-	if hasTests {
+	if testResults != nil {
+		report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
+	} else if hasTests {
 		report.TestCoverage = "Tests included"
-		if testResults != nil {
-			report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
-		}
 	} else {
 		riskScore += 1
 		report.TestCoverage = "No tests detected"

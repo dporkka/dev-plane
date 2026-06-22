@@ -28,6 +28,14 @@ type githubPRCreator interface {
 	CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr gateway.NewPR) (*gateway.GitHubPR, error)
 }
 
+// shortID returns the first n bytes of id, or the full id if shorter.
+func shortID(id string, n int) string {
+	if len(id) <= n {
+		return id
+	}
+	return id[:n]
+}
+
 // Factory creates pull requests for completed tasks.
 type Factory struct {
 	db          *sql.DB
@@ -320,7 +328,7 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 
 	// Rollback
 	b.WriteString("## Rollback\n\n")
-	b.WriteString(fmt.Sprintf("To revert this change:\n```bash\ngit revert %s-branch\n```\n\n", task.ID[:8]))
+	b.WriteString(fmt.Sprintf("To revert this change:\n```bash\ngit revert %s-branch\n```\n\n", shortID(task.ID, 8)))
 
 	// Approval Record
 	b.WriteString("## Approval Record\n\n")
