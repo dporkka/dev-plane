@@ -44,11 +44,67 @@ This checklist tracks the minimum gates required before AI Dev Control Plane sho
 
 ## Hard Blockers
 
-- Run the live Docker runtime integration suite in a Docker-enabled environment and capture passing evidence for the target host configuration.
-- Run a live end-to-end agent execution against a configured model provider and runtime, from task approval through follow-on handoff execution, and capture passing evidence.
-- Run a live PR creation check with `GITHUB_TOKEN` against a disposable repository and capture evidence that branch push, GitHub PR creation, and local PR record persistence all succeed.
-- Run the gated Postgres migration verification with `POSTGRES_TEST_DATABASE_URL` and capture passing evidence for the production database engine.
-- Add remaining live end-to-end coverage for task approval through real worker execution after approval, including a paused run resumed by an approval response. Local handler/runner tests now cover task approval event emission, workspace/run creation, run trigger publication, approval response events, paused-run requeue, PR creation dispatch, model-requested pause, resumed history, and denied operations.
+- [x] Run the live Docker runtime integration suite in a Docker-enabled environment and capture passing evidence for the target host configuration.
+- [ ] Run a live end-to-end agent execution against a configured model provider and runtime, from task approval through follow-on handoff execution, and capture passing evidence.
+- [ ] Run a live PR creation check with `GITHUB_TOKEN` against a disposable repository and capture evidence that branch push, GitHub PR creation, and local PR record persistence all succeed.
+- [x] Run the gated Postgres migration verification with `POSTGRES_TEST_DATABASE_URL` and capture passing evidence for the production database engine.
+- [ ] Add remaining live end-to-end coverage for task approval through real worker execution after approval, including a paused run resumed by an approval response. Local handler/runner tests now cover task approval event emission, workspace/run creation, run trigger publication, approval response events, paused-run requeue, PR creation dispatch, model-requested pause, resumed history, and denied operations.
+
+## Completed Fixes
+
+- Fixed Docker workspace copy path: `docker cp` now copies the *contents* of the staged repo into `/workspace` rather than copying the `repo` directory itself. The source path uses `stagingRepo + "/."` because `filepath.Join(stagingRepo, ".")` collapses to `stagingRepo`.
+- Fixed GitHub gateway unit tests to use a configurable `apiBaseURL` pointing at `httptest` servers instead of hitting the live GitHub API.
+
+## Verification Evidence
+
+Captured on this checkout (Ubuntu Linux, Docker 29.6.0, Go 1.25, Node 20, NATS running via `docker-compose`):
+
+- `make test` — all Go modules and `apps/web` pass.
+- `make test-race` — no race conditions detected.
+- `make lint` — Go vet and web ESLint pass.
+- `make build` — API, worker, runner binaries and Next.js production build succeed.
+- `cd apps/web && npm audit` — 0 vulnerabilities.
+- Docker runtime integration (host-path isolation, no-network, cleanup, resource limits):
+
+  ```bash
+  cd packages/runtimes
+  RUN_DOCKER_INTEGRATION=1 go test ./... -v
+  ```
+
+  Result: `TestDockerProviderIntegrationIsolationAndCleanup` and all other runtime tests pass.
+
+- Postgres migration verification (all 20 migrations applied successfully):
+
+  ```bash
+  # Start a Postgres 16 container
+  docker run -d --name aicp-postgres-test -e POSTGRES_USER=aicp \
+    -e POSTGRES_PASSWORD=aicp-dev-password -e POSTGRES_DB=aicp \
+    -p 5432:5432 postgres:16-alpine
+
+  cd packages/db
+  POSTGRES_TEST_DATABASE_URL=postgres://aicp:aicp-dev-password@localhost:5432/aicp?sslmode=disable \
+    go test ./... -run TestRunMigrationsPostgres -v
+  ```
+
+  Result: migrations `001` through `020` applied cleanly.
+
+## Remaining Live Gates
+
+These gates require external credentials and cannot be completed in a credentials-free environment:
+
+1. **Live model-provider end-to-end run**
+   - Requires a valid `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or other supported provider key in `.env`.
+   - Steps: create a task, approve the generated spec, observe the worker provision a Docker workspace, run the implementer, and confirm follow-on handoffs execute.
+   - Suggested smoke test repository: a disposable public repo with a trivial `README.md` change.
+
+2. **Live GitHub PR creation**
+   - Requires `GITHUB_TOKEN` with `repo` push + PR scope in `.env`.
+   - Requires a disposable repository where the bot can push a branch and open a PR.
+   - Steps: run a task through approval, approve the `pr_create` approval, and verify the branch is pushed, the PR exists on GitHub, and a `pull_requests` row is persisted.
+
+3. **Live worker resume after approval**
+   - Requires the full stack running (`make dev` or equivalent) plus a model provider.
+   - Steps: trigger an implementer run that requires a risky-action approval, respond `approved`, and confirm the worker requeues the run and continues step numbering.
 
 ## Verification Gates
 

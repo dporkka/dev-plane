@@ -19,6 +19,7 @@ type GitHubGateway struct {
 	clientSecret string
 	httpClient   *http.Client
 	oauthConfig  *oauth2.Config
+	apiBaseURL   string
 }
 
 // GitHubUser represents a GitHub user profile.
@@ -99,6 +100,7 @@ func NewGitHubGateway(clientID, clientSecret string) *GitHubGateway {
 		clientSecret: clientSecret,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		oauthConfig:  oauthConfig,
+		apiBaseURL:   "https://api.github.com",
 	}
 }
 
@@ -124,7 +126,7 @@ func (g *GitHubGateway) ExchangeCode(ctx context.Context, code string) (*oauth2.
 // GetUser retrieves the authenticated user's GitHub profile.
 func (g *GitHubGateway) GetUser(ctx context.Context, token *oauth2.Token) (*GitHubUser, error) {
 	var user GitHubUser
-	if err := g.get(ctx, token, "https://api.github.com/user", &user); err != nil {
+	if err := g.get(ctx, token, g.apiBaseURL+"/user", &user); err != nil {
 		return nil, fmt.Errorf("get github user: %w", err)
 	}
 	return &user, nil
@@ -135,7 +137,7 @@ func (g *GitHubGateway) ListRepos(ctx context.Context, token *oauth2.Token, page
 	if page < 1 {
 		page = 1
 	}
-	url := fmt.Sprintf("https://api.github.com/user/repos?sort=updated&per_page=100&page=%d", page)
+	url := fmt.Sprintf("%s/user/repos?sort=updated&per_page=100&page=%d", g.apiBaseURL, page)
 	var repos []GitHubRepo
 	if err := g.get(ctx, token, url, &repos); err != nil {
 		return nil, fmt.Errorf("list github repos: %w", err)
@@ -145,7 +147,7 @@ func (g *GitHubGateway) ListRepos(ctx context.Context, token *oauth2.Token, page
 
 // GetRepo retrieves a specific repository.
 func (g *GitHubGateway) GetRepo(ctx context.Context, token *oauth2.Token, owner, name string) (*GitHubRepo, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s", owner, name)
+	url := fmt.Sprintf("%s/repos/%s/%s", g.apiBaseURL, owner, name)
 	var repo GitHubRepo
 	if err := g.get(ctx, token, url, &repo); err != nil {
 		return nil, fmt.Errorf("get github repo %s/%s: %w", owner, name, err)
@@ -166,7 +168,7 @@ func (g *GitHubGateway) CreateWebhook(ctx context.Context, token *oauth2.Token, 
 		},
 	}
 
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks", owner, name)
+	url := fmt.Sprintf("%s/repos/%s/%s/hooks", g.apiBaseURL, owner, name)
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return 0, fmt.Errorf("marshal webhook payload: %w", err)
@@ -183,7 +185,7 @@ func (g *GitHubGateway) CreateWebhook(ctx context.Context, token *oauth2.Token, 
 
 // CreatePR creates a new pull request.
 func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr NewPR) (*GitHubPR, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls", owner, name)
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls", g.apiBaseURL, owner, name)
 	body, err := json.Marshal(pr)
 	if err != nil {
 		return nil, fmt.Errorf("marshal pr payload: %w", err)
@@ -198,7 +200,7 @@ func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner
 
 // DeleteWebhook removes a webhook from a repository.
 func (g *GitHubGateway) DeleteWebhook(ctx context.Context, token *oauth2.Token, owner, name string, hookID int64) error {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/hooks/%d", owner, name, hookID)
+	url := fmt.Sprintf("%s/repos/%s/%s/hooks/%d", g.apiBaseURL, owner, name, hookID)
 	return g.del(ctx, token, url)
 }
 
