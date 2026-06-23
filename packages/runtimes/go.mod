@@ -5,4 +5,4 @@
 // execute commands, read/write files, and apply code patches.
 module github.com/ai-dev-control-plane/runtimes
 
-go 1.23
+go 1.25.11

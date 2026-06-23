@@ -4,7 +4,7 @@
 // a structured review report.
 module github.com/ai-dev-control-plane/reviewer
 
-go 1.23
+go 1.25.11
 
 require (
 	github.com/ai-dev-control-plane/models v0.0.0

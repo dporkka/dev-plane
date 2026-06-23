@@ -3,4 +3,4 @@
 // tree-sitter integration in Phase 2).
 module github.com/ai-dev-control-plane/repo-intel
 
-go 1.23
+go 1.25.11
