@@ -4,7 +4,7 @@
 // stream creation, publish/subscribe, and graceful shutdown.
 module github.com/ai-dev-control-plane/events
 
-go 1.25.0
+go 1.25.11
 
 require github.com/nats-io/nats.go v1.37.0
 

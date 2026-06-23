@@ -4,4 +4,4 @@
 // standard Go types with sql.Null types for database compatibility.
 module github.com/ai-dev-control-plane/models
 
-go 1.23
+go 1.25.11

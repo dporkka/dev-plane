@@ -6,7 +6,7 @@
 // patches.
 module github.com/ai-dev-control-plane/runner
 
-go 1.25.0
+go 1.25.11
 
 require github.com/ai-dev-control-plane/runtimes v0.0.0
 

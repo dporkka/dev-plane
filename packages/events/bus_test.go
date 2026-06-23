@@ -21,13 +21,27 @@ func TestDefaultStreamConfigs(t *testing.T) {
 		if cfg.Storage != nats.FileStorage {
 			t.Fatalf("stream %s storage = %v, want FileStorage", cfg.Name, cfg.Storage)
 		}
-		if cfg.Retention != nats.WorkQueuePolicy {
-			t.Fatalf("stream %s retention = %v, want WorkQueuePolicy", cfg.Name, cfg.Retention)
-		}
 		if len(cfg.Subjects) == 0 {
 			t.Fatalf("stream %s must configure at least one subject", cfg.Name)
 		}
 		byName[cfg.Name] = cfg
+	}
+
+	expectedRetention := map[string]nats.RetentionPolicy{
+		StreamTasks:    nats.InterestPolicy,
+		StreamAgents:   nats.InterestPolicy,
+		StreamRuns:     nats.InterestPolicy,
+		StreamWebhooks: nats.WorkQueuePolicy,
+		StreamAudit:    nats.WorkQueuePolicy,
+	}
+	for stream, want := range expectedRetention {
+		cfg, ok := byName[stream]
+		if !ok {
+			t.Fatalf("missing stream %s", stream)
+		}
+		if cfg.Retention != want {
+			t.Fatalf("stream %s retention = %v, want %v", stream, cfg.Retention, want)
+		}
 	}
 
 	expected := map[string][]string{

@@ -5,7 +5,7 @@
 // contracts that concrete agent implementations must satisfy.
 module github.com/ai-dev-control-plane/agents
 
-go 1.23
+go 1.25.11
 
 require github.com/ai-dev-control-plane/models v0.0.0
 
