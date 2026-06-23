@@ -36,6 +36,44 @@ type RespondApprovalRequest struct {
 	ResponseNote string `json:"response_note,omitempty"`
 }
 
+// scanApprovalRow scans a SQL row into an Approval value.
+func scanApprovalRow(scanner interface{ Scan(dest ...any) error }) (Approval, error) {
+	var a Approval
+	var agentRunID, respondedBy, response, responseNote sql.NullString
+	var respondedAt, expiresAt sql.NullTime
+	var metadata sql.NullString
+
+	err := scanner.Scan(
+		&a.ID, &a.TaskID, &agentRunID, &a.ApprovalType, &a.RequestedBy, &a.RequestedAt,
+		&respondedBy, &response, &responseNote, &respondedAt, &expiresAt, &metadata,
+	)
+	if err != nil {
+		return a, err
+	}
+	if agentRunID.Valid {
+		a.AgentRunID = &agentRunID.String
+	}
+	if respondedBy.Valid {
+		a.RespondedBy = &respondedBy.String
+	}
+	if response.Valid {
+		a.Response = &response.String
+	}
+	if responseNote.Valid {
+		a.ResponseNote = &responseNote.String
+	}
+	if respondedAt.Valid {
+		a.RespondedAt = &respondedAt.Time
+	}
+	if expiresAt.Valid {
+		a.ExpiresAt = &expiresAt.Time
+	}
+	if metadata.Valid {
+		a.Metadata = json.RawMessage(metadata.String)
+	}
+	return a, nil
+}
+
 // ListApprovals returns all approvals for a task.
 func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -60,41 +98,60 @@ func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 
 	var approvals []Approval
 	for rows.Next() {
-		var a Approval
-		var agentRunID, respondedBy, response, responseNote sql.NullString
-		var respondedAt, expiresAt sql.NullTime
-		var metadata sql.NullString
-
-		err := rows.Scan(
-			&a.ID, &a.TaskID, &agentRunID, &a.ApprovalType, &a.RequestedBy, &a.RequestedAt,
-			&respondedBy, &response, &responseNote, &respondedAt, &expiresAt, &metadata,
-		)
+		a, err := scanApprovalRow(rows)
 		if err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
 		}
-		if agentRunID.Valid {
-			a.AgentRunID = &agentRunID.String
-		}
-		if respondedBy.Valid {
-			a.RespondedBy = &respondedBy.String
-		}
-		if response.Valid {
-			a.Response = &response.String
-		}
-		if responseNote.Valid {
-			a.ResponseNote = &responseNote.String
-		}
-		if respondedAt.Valid {
-			a.RespondedAt = &respondedAt.Time
-		}
-		if expiresAt.Valid {
-			a.ExpiresAt = &expiresAt.Time
-		}
-		if metadata.Valid {
-			a.Metadata = json.RawMessage(metadata.String)
+		approvals = append(approvals, a)
+	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if approvals == nil {
+		approvals = []Approval{}
+	}
+	respond.JSON(w, http.StatusOK, approvals)
+}
+
+// ListOrganizationApprovals returns all pending approvals across an organization's projects.
+func (h *Handler) ListOrganizationApprovals(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	orgID := chi.URLParam(r, "orgID")
+	if orgID == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT a.id, a.task_id, a.agent_run_id, a.approval_type, a.requested_by, a.requested_at,
+		       a.responded_by, a.response, a.response_note, a.responded_at, a.expires_at, a.metadata
+		FROM approvals a
+		JOIN tasks t ON t.id = a.task_id
+		JOIN projects p ON p.id = t.project_id
+		WHERE p.organization_id = $1 AND a.responded_at IS NULL
+		ORDER BY a.requested_at DESC
+	`, orgID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer rows.Close()
+
+	var approvals []Approval
+	for rows.Next() {
+		a, err := scanApprovalRow(rows)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, err)
+			return
 		}
 		approvals = append(approvals, a)
+	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if approvals == nil {

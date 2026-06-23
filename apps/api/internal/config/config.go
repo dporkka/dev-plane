@@ -2,6 +2,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"strings"
 )
@@ -24,11 +25,17 @@ type Config struct {
 }
 
 // Load reads configuration from environment variables with sensible defaults.
-func Load() *Config {
+// It returns an error if required security settings are missing or too weak.
+func Load() (*Config, error) {
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if len(jwtSecret) < 32 {
+		return nil, errors.New("JWT_SECRET must be at least 32 characters")
+	}
+
 	return &Config{
 		Port:                getEnv("PORT", "8080"),
 		DatabaseURL:         getEnv("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
-		JWTSecret:           getEnv("JWT_SECRET", "dev-secret-change-in-production"),
+		JWTSecret:           jwtSecret,
 		GitHubClientID:      getEnv("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:        getEnv("GITHUB_CLIENT_SECRET", ""),
 		GitHubWebhookSecret: getEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
@@ -39,7 +46,7 @@ func Load() *Config {
 		AgentVaultToken:     getEnv("AGENTVAULT_TOKEN", ""),
 		AgentVaultProject:   getEnv("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:          getEnv("SECRET_ENCRYPTION_KEYS", ""),
-	}
+	}, nil
 }
 
 func getEnv(key, defaultVal string) string {

@@ -6,6 +6,12 @@ bin/*
 *.so
 *.dylib
 
+# Per-app build artifacts
+apps/*/tmp/
+apps/api/tmp/
+apps/runner/runner
+apps/*/main
+
 # Go
 *.test
 *.out

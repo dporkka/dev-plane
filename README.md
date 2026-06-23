@@ -338,7 +338,7 @@ All variables are defined in `.env.example`. Key categories:
 | **Services** | `NATS_URL`, `TEMPORAL_HOST` | Message bus + workflow engine |
 | **Ports** | `PORT`, `WEB_PORT` | Service port bindings |
 | **AI** | `BIFROST_URL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `FIREWORKS_API_KEY` | AI provider configuration |
-| **Runtime** | `RUNNER_BASE_DIR`, `DOCKER_HOST` | Sandbox settings |
+| **Runtime** | `WORKSPACE_BASE_DIR`, `WORKSPACE_RUNTIME`, `DOCKER_HOST` | Sandbox settings |
 | **Frontend** | `NEXT_PUBLIC_*` | Public frontend config |
 | **Features** | `ENABLE_TEMPORAL`, `REQUIRE_RISK_APPROVAL` | Feature toggles |
 

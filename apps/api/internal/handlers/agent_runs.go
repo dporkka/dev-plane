@@ -86,6 +86,10 @@ func (h *Handler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
 		}
 		runs = append(runs, run)
 	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 
 	if runs == nil {
 		runs = []AgentRun{}
@@ -196,6 +200,38 @@ func (h *Handler) ListAgentSteps(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, steps)
 }
 
+// CancelAgentRun cancels a running or pending agent run.
+func (h *Handler) CancelAgentRun(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	now := time.Now().UTC()
+	result, err := h.db.ExecContext(ctx, `
+		UPDATE agent_runs
+		SET status = 'cancelled', completed_at = $1, updated_at = $1
+		WHERE id = $2 AND status IN ('pending', 'running')
+	`, now, id)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		respond.Error(w, http.StatusNotFound, errors.New("run not found or already finished"))
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]string{
+		"status": "cancelled",
+		"id":     id,
+	})
+}
+
 // StreamAgentRun streams agent run updates via SSE.
 func (h *Handler) StreamAgentRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -225,7 +261,14 @@ func (h *Handler) StreamAgentRun(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					return
 				}
-				events <- `{"run_id":"` + runID + `","status":"` + status + `"}`
+				payload, err := json.Marshal(struct {
+					RunID  string `json:"run_id"`
+					Status string `json:"status"`
+				}{RunID: runID, Status: status})
+				if err != nil {
+					return
+				}
+				events <- string(payload)
 				if status == "completed" || status == "failed" || status == "cancelled" {
 					return
 				}

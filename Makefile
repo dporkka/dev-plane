@@ -14,6 +14,12 @@
 
 # --- Variables ---------------------------------------------------------------
 
+# Load local .env file if present so app defaults match the project config
+ifneq (,$(wildcard ./.env))
+    include .env
+    export
+endif
+
 # Detect OS for cross-platform compatibility
 UNAME_S := $(shell uname -s)
 
@@ -22,23 +28,32 @@ export DATABASE_URL    ?= file:./data/dev.db?_journal_mode=WAL
 export NATS_URL        ?= nats://localhost:4222
 export PORT            ?= 8080
 export WEB_PORT        ?= 3000
-export JWT_SECRET      ?= dev-secret-change-me
+export JWT_SECRET      ?= dev-secret-change-me-min-32-chars-long
 export LOG_LEVEL       ?= info
 export TEMPORAL_HOST   ?= localhost:7233
 export BIFROST_URL     ?= http://localhost:8081
-export RUNNER_BASE_DIR ?= ./data/workspaces
+export WORKSPACE_BASE_DIR ?= ./data/workspaces
 
 # Directories
 DATA_DIR         := ./data
 MIGRATIONS_DIR   := ./packages/db/migrations
 BIN_DIR          := ./bin
 
-# Docker Compose command (v1 for compatibility)
-DOCKER_COMPOSE   := docker-compose
+# Docker Compose command (prefer v2, fall back to v1)
+DOCKER_COMPOSE   := $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-# Go packages with tests
+# Derive Go modules from the workspace; fall back to explicit lists if introspection fails.
+GO_MODULES       := $(shell go list -f '{{.Dir}}' -m all 2>/dev/null | sed -n 's|$(CURDIR)/||p' | grep -E '^(packages|apps)/')
+GO_PACKAGES      := $(filter packages/%,$(GO_MODULES))
+GO_APPS          := $(filter apps/%,$(GO_MODULES))
+
+# Fallback explicit lists (used when workspace introspection is unavailable).
+ifeq ($(GO_PACKAGES),)
 GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+endif
+ifeq ($(GO_APPS),)
 GO_APPS          := apps/api apps/worker apps/runner
+endif
 
 # Colors for output (Linux/macOS compatible)
 BLUE  := $(shell tput setaf 6 2>/dev/null || echo "")
@@ -55,15 +70,16 @@ dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 	@mkdir -p $(DATA_DIR)
 	@$(MAKE) migrate
 	@echo "$(GREEN)All dependencies ready. Starting applications...$(RESET)"
-	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 2>/dev/null; wait' EXIT INT TERM; \
+	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 %4 2>/dev/null; wait' EXIT INT TERM; \
 		$(MAKE) dev-web & \
 		$(MAKE) dev-api & \
 		$(MAKE) dev-worker & \
+		$(MAKE) dev-runner & \
 		wait
 
 dev-web: ## Start Next.js dev server
 	@echo "$(BLUE)[web]$(RESET) Starting Next.js dev server on port $(WEB_PORT)..."
-	cd apps/web && npm run dev
+	cd apps/web && PORT=$(WEB_PORT) npm run dev
 
 dev-api: ## Start Go API server (with hot reload via Air if available)
 	@echo "$(BLUE)[api]$(RESET) Starting Go API server on port $(PORT)..."
@@ -112,7 +128,7 @@ docker-down-volumes: ## Stop Docker services and remove volumes (DESTRUCTIVE)
 migrate: ## Run database migrations (Goose)
 	@echo "$(BLUE)[db]$(RESET) Running migrations..."
 	@mkdir -p $(DATA_DIR)
-	cd packages/db && goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" up
+	goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" up
 
 db-reset: ## Delete DB files and recreate (DESTRUCTIVE)
 	@echo "$(BLUE)[db]$(RESET) Resetting database..."
@@ -122,10 +138,10 @@ db-reset: ## Delete DB files and recreate (DESTRUCTIVE)
 	@echo "$(GREEN)Database reset complete.$(RESET)"
 
 db-status: ## Show current migration status
-	@cd packages/db && goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" status
+	@goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" status
 
 db-version: ## Show current migration version
-	@cd packages/db && goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" version
+	@goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" version
 
 # --- Code generation targets -------------------------------------------------
 

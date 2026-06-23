@@ -33,6 +33,10 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"integrations",
 		"secret_references",
 		"secret_values",
+		"approvals",
+		"policies",
+		"model_usage",
+		"pull_requests",
 	} {
 		var name string
 		if err := database.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
