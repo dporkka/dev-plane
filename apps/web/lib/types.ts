@@ -170,7 +170,7 @@ export interface Organization {
 }
 
 // Approval types
-export type ApprovalType = 'spec' | 'execution' | 'deploy' | 'risky_action';
+export type ApprovalType = 'spec' | 'execution' | 'deploy' | 'risky_action' | 'pr_create';
 export type ApprovalResponse = 'approved' | 'rejected';
 
 export interface Approval {
@@ -267,6 +267,7 @@ export interface DashboardData {
   stats: DashboardStats;
   active_runs: AgentRun[];
   recent_tasks: Task[];
+  recent_failures: Task[];
 }
 
 // Spec types

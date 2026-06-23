@@ -12,7 +12,15 @@ func assertEqual(t *testing.T, got, want interface{}) {
 	}
 }
 
+func setValidJWTSecret(t *testing.T) {
+	t.Helper()
+	os.Setenv("JWT_SECRET", "this-is-a-very-long-development-secret-key")
+}
+
 func TestLoad_Defaults(t *testing.T) {
+	setValidJWTSecret(t)
+	defer os.Unsetenv("JWT_SECRET")
+
 	// Clear relevant env vars to test defaults
 	os.Unsetenv("PORT")
 	os.Unsetenv("DATABASE_URL")
@@ -21,7 +29,10 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("SECRET_ENCRYPTION_KEYS")
 	os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
 	assertEqual(t, cfg.Port, "8080")
 	assertEqual(t, cfg.DatabaseURL, "file:./data/dev.db?_journal_mode=WAL")
 	assertEqual(t, cfg.LogLevel, "info")
@@ -32,12 +43,14 @@ func TestLoad_Defaults(t *testing.T) {
 }
 
 func TestLoad_FromEnv(t *testing.T) {
+	setValidJWTSecret(t)
 	os.Setenv("PORT", "9090")
 	os.Setenv("DATABASE_URL", "postgres://user:pass@localhost/db")
 	os.Setenv("LOG_LEVEL", "debug")
 	os.Setenv("SECRET_ENCRYPTION_KEYS", "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	os.Setenv("GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
 	defer func() {
+		os.Unsetenv("JWT_SECRET")
 		os.Unsetenv("PORT")
 		os.Unsetenv("DATABASE_URL")
 		os.Unsetenv("LOG_LEVEL")
@@ -45,7 +58,10 @@ func TestLoad_FromEnv(t *testing.T) {
 		os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
 	}()
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
 	assertEqual(t, cfg.Port, "9090")
 	assertEqual(t, cfg.DatabaseURL, "postgres://user:pass@localhost/db")
 	assertEqual(t, cfg.LogLevel, "debug")
@@ -54,25 +70,64 @@ func TestLoad_FromEnv(t *testing.T) {
 }
 
 func TestLoad_CustomPort(t *testing.T) {
+	setValidJWTSecret(t)
 	os.Setenv("PORT", "4000")
-	defer os.Unsetenv("PORT")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("PORT")
+	}()
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
 	assertEqual(t, cfg.Port, "4000")
 }
 
 func TestLoad_CustomDatabaseURL(t *testing.T) {
+	setValidJWTSecret(t)
 	os.Setenv("DATABASE_URL", "postgresql://admin:secret@db.example.com:5432/prod")
-	defer os.Unsetenv("DATABASE_URL")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("DATABASE_URL")
+	}()
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
 	assertEqual(t, cfg.DatabaseURL, "postgresql://admin:secret@db.example.com:5432/prod")
 }
 
 func TestLoad_CustomLogLevel(t *testing.T) {
+	setValidJWTSecret(t)
 	os.Setenv("LOG_LEVEL", "warn")
-	defer os.Unsetenv("LOG_LEVEL")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("LOG_LEVEL")
+	}()
 
-	cfg := Load()
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
 	assertEqual(t, cfg.LogLevel, "warn")
+}
+
+func TestLoad_RequiresJWTSecret(t *testing.T) {
+	os.Unsetenv("JWT_SECRET")
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for missing JWT_SECRET")
+	}
+}
+
+func TestLoad_RejectsShortJWTSecret(t *testing.T) {
+	os.Setenv("JWT_SECRET", "short")
+	defer os.Unsetenv("JWT_SECRET")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("expected error for short JWT_SECRET")
+	}
 }

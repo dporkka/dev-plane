@@ -51,19 +51,19 @@ func DefaultStreamConfigs() []nats.StreamConfig {
 			Name:      StreamTasks,
 			Subjects:  []string{"tasks.*"},
 			Storage:   nats.FileStorage,
-			Retention: nats.InterestPolicy,
+			Retention: nats.WorkQueuePolicy,
 		},
 		{
 			Name:      StreamAgents,
 			Subjects:  []string{"agents.>"},
 			Storage:   nats.FileStorage,
-			Retention: nats.InterestPolicy,
+			Retention: nats.WorkQueuePolicy,
 		},
 		{
 			Name:      StreamRuns,
 			Subjects:  []string{"runs.*", "review.*", "approval.*", "pr.*"},
 			Storage:   nats.FileStorage,
-			Retention: nats.InterestPolicy,
+			Retention: nats.WorkQueuePolicy,
 		},
 		{
 			Name:      StreamWebhooks,

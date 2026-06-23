@@ -2,9 +2,11 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -29,6 +31,7 @@ type Server struct {
 	logger   *slog.Logger
 	config   *config.Config
 	eventBus *events.Bus
+	httpSrv  *http.Server
 }
 
 // New creates a new Server with all routes and middleware configured.
@@ -162,6 +165,7 @@ func (s *Server) routes() {
 			r.Get("/tasks/{taskID}/runs", h.ListAgentRuns)
 			r.Get("/runs/{id}", h.GetAgentRun)
 			r.Get("/runs/{id}/steps", h.ListAgentSteps)
+			r.Post("/runs/{id}/cancel", h.CancelAgentRun)
 			r.Get("/runs/{id}/stream", h.StreamAgentRun)
 
 			// Reviews
@@ -170,6 +174,7 @@ func (s *Server) routes() {
 
 			// Approvals
 			r.Get("/tasks/{taskID}/approvals", h.ListApprovals)
+			r.Get("/organizations/{orgID}/approvals", h.ListOrganizationApprovals)
 			r.Post("/approvals/{id}/respond", h.RespondApproval)
 
 			// Pull Requests
@@ -179,6 +184,12 @@ func (s *Server) routes() {
 
 			// Repositories
 			r.Post("/repositories/{id}/analyze", h.AnalyzeRepo)
+
+			// Workspaces
+			r.Get("/tasks/{taskID}/workspaces", h.ListTaskWorkspaces)
+			r.Get("/workspaces/{id}", h.GetWorkspace)
+			r.Post("/workspaces/{id}/destroy", h.DestroyWorkspace)
+			r.Get("/workspaces/{id}/diff", h.GetWorkspaceDiff)
 
 			// Workspace file operations
 			r.Get("/workspaces/{id}/files", h.ListWorkspaceFiles)
@@ -219,7 +230,29 @@ func (s *Server) routes() {
 // Start starts the HTTP server on the given address.
 func (s *Server) Start(addr string) error {
 	s.logger.Info("starting server", "addr", addr)
-	return http.ListenAndServe(addr, s.router)
+	s.httpSrv = &http.Server{
+		Addr:              addr,
+		Handler:           s.router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	return s.httpSrv.ListenAndServe()
+}
+
+// Shutdown gracefully stops the HTTP server and closes dependencies.
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.logger.Info("shutting down server")
+	if s.httpSrv != nil {
+		if err := s.httpSrv.Shutdown(ctx); err != nil {
+			return err
+		}
+	}
+	if s.eventBus != nil {
+		return s.eventBus.Close()
+	}
+	return nil
 }
 
 // Handler returns the HTTP handler for testing.
@@ -229,6 +262,9 @@ func (s *Server) Handler() http.Handler {
 
 // Close gracefully shuts down the server and its dependencies.
 func (s *Server) Close() error {
+	if s.httpSrv != nil {
+		_ = s.httpSrv.Close()
+	}
 	if s.eventBus != nil {
 		return s.eventBus.Close()
 	}

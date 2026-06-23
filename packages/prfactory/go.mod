@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	golang.org/x/oauth2 v0.24.0
+	golang.org/x/oauth2 v0.36.0
 )
 
 require github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect

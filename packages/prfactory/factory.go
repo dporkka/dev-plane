@@ -187,7 +187,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		URL:        created.HTMLURL,
 		State:      models.PRStateOpen,
 		Draft:      draft,
-		CreatedBy:  "agent",
+		CreatedBy:  task.CreatedBy,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
 	}
@@ -351,9 +351,9 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 		INSERT INTO pull_requests (
 			id, task_id, run_id, repository_id, number, title, body,
 			branch, base_branch, url, state, draft, created_by, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $14)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`, pr.ID, pr.TaskID, pr.RunID, pr.RepoID, pr.Number, pr.Title, pr.Body,
-		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt,
+		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt, pr.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert pull request: %w", err)
@@ -491,7 +491,7 @@ func (f *Factory) loadLatestRun(ctx context.Context, taskID string) (*models.Age
 		       metadata, created_at, updated_at
 		FROM agent_runs
 		WHERE task_id = $1 AND status IN ('completed', 'reviewed')
-		ORDER BY completed_at DESC NULLS LAST, created_at DESC
+		ORDER BY completed_at IS NULL, completed_at DESC, created_at DESC
 		LIMIT 1
 	`, taskID).Scan(
 		&run.ID, &run.TaskID, &wsID, &run.AgentRole, &model, &provider, &run.Status,

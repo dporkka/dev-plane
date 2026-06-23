@@ -158,8 +158,8 @@ export const api = {
     fetchAPI(`/api/v1/workspaces/${id}/diff`),
 
   // ─── Approvals ──────────────────────────────────────────────────
-  listApprovals: (taskId: string) =>
-    fetchAPI(`/api/v1/tasks/${taskId}/approvals`),
+  listApprovals: (orgId: string) =>
+    fetchAPI(`/api/v1/organizations/${orgId}/approvals`),
 
   respondApproval: (id: string, response: 'approved' | 'rejected', note?: string) =>
     fetchAPI(`/api/v1/approvals/${id}/respond`, {
