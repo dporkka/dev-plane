@@ -28,9 +28,9 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	}
 
 	expectedRetention := map[string]nats.RetentionPolicy{
-		StreamTasks:    nats.InterestPolicy,
-		StreamAgents:   nats.InterestPolicy,
-		StreamRuns:     nats.InterestPolicy,
+		StreamTasks:    nats.WorkQueuePolicy,
+		StreamAgents:   nats.WorkQueuePolicy,
+		StreamRuns:     nats.WorkQueuePolicy,
 		StreamWebhooks: nats.WorkQueuePolicy,
 		StreamAudit:    nats.WorkQueuePolicy,
 	}
