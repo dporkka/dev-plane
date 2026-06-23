@@ -55,4 +55,5 @@ replace (
 	github.com/ai-dev-control-plane/repo-intel => ../../packages/repo-intel
 	github.com/ai-dev-control-plane/reviewer => ../../packages/reviewer
 	github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
+	github.com/ai-dev-control-plane/securityscan => ../../packages/securityscan
 )

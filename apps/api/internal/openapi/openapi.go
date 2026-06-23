@@ -896,6 +896,33 @@ func buildPaths() map[string]PathItem {
 			},
 		},
 	}
+	paths["/api/v1/tasks/{id}/generate-spec"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Tasks"},
+			Summary:     "Generate task spec",
+			Description: "Generates and persists a task specification, then transitions the task to spec_review.",
+			OperationID: "generateSpec",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Spec generated", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{
+						Type: "object",
+						Properties: map[string]*Schema{
+							"status":  {Type: "string", Example: "spec_review"},
+							"message": {Type: "string", Example: "Spec generated"},
+							"spec_id": {Type: "string", Format: "uuid"},
+						},
+						Required: []string{"status", "message", "spec_id"},
+					}},
+				}},
+				"400": {Description: "Task cannot generate a spec from its current status"},
+				"404": {Description: "Task not found"},
+			},
+		},
+	}
 	paths["/api/v1/tasks/{id}/cancel"] = PathItem{
 		Post: &Operation{
 			Tags:        []string{"Tasks"},
@@ -1161,8 +1188,11 @@ func buildPaths() map[string]PathItem {
 			Summary:     "GitHub webhook handler",
 			OperationID: "githubWebhook",
 			Responses: map[string]Response{
-				"200": {Description: "Webhook processed"},
+				"200": {Description: "Webhook ping processed"},
+				"202": {Description: "Webhook accepted for processing"},
 				"400": {Description: "Invalid webhook payload"},
+				"401": {Description: "Missing or invalid webhook signature"},
+				"503": {Description: "Webhook processing or signing secret is unavailable"},
 			},
 		},
 	}

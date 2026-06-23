@@ -54,7 +54,10 @@ func TestValidateGitHubWebhook_WrongSecret(t *testing.T) {
 
 func TestGitHubWebhookHandler_Push(t *testing.T) {
 	publisher := &webhookEventPublisher{}
-	h := NewWebhookHandler().WithEventPublisher(publisher)
+	secret := "my-secret"
+	h := NewWebhookHandler().
+		WithWebhookSecret(secret).
+		WithEventPublisher(publisher)
 
 	payload := map[string]interface{}{
 		"ref": "refs/heads/main",
@@ -63,10 +66,9 @@ func TestGitHubWebhookHandler_Push(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(payload)
-	secret := "my-secret"
 	signature := signPayload(body, secret)
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github?secret="+secret, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-GitHub-Delivery", "del-1")
 	req.Header.Set("X-Hub-Signature-256", signature)
@@ -113,7 +115,8 @@ func TestGitHubWebhookHandler_Push(t *testing.T) {
 }
 
 func TestGitHubWebhookHandler_Issue(t *testing.T) {
-	h := NewWebhookHandler()
+	secret := "my-secret"
+	h := NewWebhookHandler().WithWebhookSecret(secret)
 
 	payload := map[string]interface{}{
 		"action": "opened",
@@ -128,10 +131,12 @@ func TestGitHubWebhookHandler_Issue(t *testing.T) {
 		},
 	}
 	body, _ := json.Marshal(payload)
+	signature := signPayload(body, secret)
 
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "issues")
 	req.Header.Set("X-GitHub-Delivery", "del-2")
+	req.Header.Set("X-Hub-Signature-256", signature)
 	rec := httptest.NewRecorder()
 
 	h.GitHubWebhook(rec, req)
@@ -155,13 +160,13 @@ func TestGitHubWebhookHandler_Issue(t *testing.T) {
 }
 
 func TestGitHubWebhookHandler_InvalidSignature(t *testing.T) {
-	h := NewWebhookHandler()
+	secret := "my-secret"
+	h := NewWebhookHandler().WithWebhookSecret(secret)
 
 	body := []byte(`{"ref":"refs/heads/main"}`)
-	secret := "my-secret"
 	wrongSignature := signPayload(body, "wrong-secret")
 
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/github?secret="+secret, bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-Hub-Signature-256", wrongSignature)
 	rec := httptest.NewRecorder()
@@ -180,13 +185,48 @@ func TestGitHubWebhookHandler_InvalidSignature(t *testing.T) {
 	}
 }
 
+func TestGitHubWebhookHandler_MissingSignature(t *testing.T) {
+	h := NewWebhookHandler().WithWebhookSecret("my-secret")
+
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "push")
+	rec := httptest.NewRecorder()
+
+	h.GitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestGitHubWebhookHandler_MissingConfiguredSecret(t *testing.T) {
+	h := NewWebhookHandler()
+
+	body := []byte(`{"ref":"refs/heads/main"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
+	req.Header.Set("X-GitHub-Event", "push")
+	req.Header.Set("X-Hub-Signature-256", signPayload(body, "my-secret"))
+	rec := httptest.NewRecorder()
+
+	h.GitHubWebhook(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}
+
 func TestGitHubWebhookHandler_PublishFailure(t *testing.T) {
-	h := NewWebhookHandler().WithEventPublisher(&webhookEventPublisher{err: errors.New("nats unavailable")})
+	secret := "my-secret"
+	h := NewWebhookHandler().
+		WithWebhookSecret(secret).
+		WithEventPublisher(&webhookEventPublisher{err: errors.New("nats unavailable")})
 
 	body := []byte(`{"ref":"refs/heads/main","repository":{"full_name":"acme/corp"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/github", bytes.NewReader(body))
 	req.Header.Set("X-GitHub-Event", "push")
 	req.Header.Set("X-GitHub-Delivery", "del-1")
+	req.Header.Set("X-Hub-Signature-256", signPayload(body, secret))
 	rec := httptest.NewRecorder()
 
 	h.GitHubWebhook(rec, req)

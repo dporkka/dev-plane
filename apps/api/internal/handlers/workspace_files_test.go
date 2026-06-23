@@ -583,17 +583,215 @@ func TestApplyWorkspacePatch(t *testing.T) {
 }
 
 func TestStartWorkspaceService(t *testing.T) {
-	h, _, cleanup := setupTest(t)
-	defer cleanup()
+	h, mock, cleanupDB := setupTest(t)
+	defer cleanupDB()
+	workspacePath, cleanupWS := setupWorkspace(t)
+	defer cleanupWS()
+	stateDir := t.TempDir()
+	t.Setenv("WORKSPACE_BASE_DIR", stateDir)
 
-	req := httptest.NewRequest(http.MethodPost, "/workspaces/ws-1/service", nil)
+	workspaceID := "ws-service"
+	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
+
+	body, _ := json.Marshal(StartServiceRequest{
+		Command: "sleep 30",
+		Port:    3000,
+		Name:    "web",
+	})
+	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/service", workspaceID, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 
 	h.StartWorkspaceService(rec, req)
 
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("expected status %d, got %d", http.StatusNotImplemented, rec.Code)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
 	}
+
+	var startResp struct {
+		ServiceID string `json:"service_id"`
+		Status    string `json:"status"`
+		PID       int    `json:"pid"`
+		Port      int    `json:"port"`
+		LogPath   string `json:"log_path"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &startResp); err != nil {
+		t.Fatalf("decode start response: %v", err)
+	}
+	if startResp.ServiceID != "web" || startResp.Status != "running" || startResp.PID <= 0 || startResp.Port != 3000 {
+		t.Fatalf("unexpected start response: %+v", startResp)
+	}
+	expectedLogPath := filepath.ToSlash(filepath.Join(stateDir, "local-services", workspaceID, "web", "service.log"))
+	if startResp.LogPath != expectedLogPath {
+		t.Fatalf("log_path = %q", startResp.LogPath)
+	}
+	pidPath := filepath.Join(stateDir, "local-services", workspaceID, "web", "pid")
+	if _, err := os.Stat(pidPath); err != nil {
+		t.Fatalf("expected pid file: %v", err)
+	}
+	workspaceControlledPidPath := filepath.Join(workspacePath, ".dev-plane", "services", "web", "pid")
+	if _, err := os.Stat(workspaceControlledPidPath); !os.IsNotExist(err) {
+		t.Fatalf("expected workspace-controlled pid path to be unused, stat err: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(workspaceControlledPidPath), 0755); err != nil {
+		t.Fatalf("create workspace-controlled service dir: %v", err)
+	}
+	if err := os.WriteFile(workspaceControlledPidPath, []byte("1\n"), 0644); err != nil {
+		t.Fatalf("write workspace-controlled pid: %v", err)
+	}
+
+	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
+
+	stopBody, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
+	stopReq := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/service/stop", workspaceID, bytes.NewReader(stopBody))
+	stopRec := httptest.NewRecorder()
+
+	h.StopWorkspaceService(stopRec, stopReq)
+
+	if stopRec.Code != http.StatusOK {
+		t.Fatalf("expected stop status %d, got %d: %s", http.StatusOK, stopRec.Code, stopRec.Body.String())
+	}
+	if _, err := os.Stat(pidPath); !os.IsNotExist(err) {
+		t.Fatalf("expected pid file to be removed, stat err: %v", err)
+	}
+	if _, err := os.Stat(workspaceControlledPidPath); err != nil {
+		t.Fatalf("expected workspace-controlled pid path to be ignored, stat err: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestStartWorkspaceServiceRejectsInvalidNameBeforeLookup(t *testing.T) {
+	h, mock, cleanupDB := setupTest(t)
+	defer cleanupDB()
+
+	body, _ := json.Marshal(StartServiceRequest{
+		Command: "npm run dev",
+		Name:    "../bad",
+	})
+	req := workspaceRequest(http.MethodPost, "/workspaces/ws-service/service", "ws-service", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.StartWorkspaceService(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadRequest, rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unexpected database interaction: %v", err)
+	}
+}
+
+func TestStopWorkspaceServiceDefaultPolicyRequiresApproval(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock db: %v", err)
+	}
+	defer db.Close()
+	h := NewHandler(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	workspacePath, cleanupWS := setupWorkspace(t)
+	defer cleanupWS()
+
+	workspaceID := "ws-service"
+	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
+
+	body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
+	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/stop-service", workspaceID, bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.StopWorkspaceService(rec, req)
+
+	if rec.Code != http.StatusLocked {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusLocked, rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestRuntimeWorkspaceServiceOperationsUseProvider(t *testing.T) {
+	t.Run("start", func(t *testing.T) {
+		h, mock, cleanupDB := setupTest(t)
+		defer cleanupDB()
+		provider := &fakeWorkspaceRuntimeProvider{commandResult: &runtimes.CommandResult{Stdout: "1234\n", ExitCode: 0}}
+		h.WithRuntimeProvider("docker", provider)
+		expectDockerRuntimeWorkspace(mock, "ws-runtime")
+
+		body, _ := json.Marshal(StartServiceRequest{Command: "npm run dev", Port: 3000, Name: "web"})
+		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service", "ws-runtime", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		h.StartWorkspaceService(rec, req)
+
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+		}
+		if len(provider.commands) != 1 {
+			t.Fatalf("provider commands = %#v", provider.commands)
+		}
+		command := provider.commands[0].Command
+		if !strings.Contains(command, "nohup sh -c") || !strings.Contains(command, "npm run dev") || !strings.Contains(command, ".dev-plane/services/web") {
+			t.Fatalf("unexpected runtime start command: %s", command)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unfulfilled expectations: %v", err)
+		}
+	})
+
+	t.Run("stop", func(t *testing.T) {
+		h, mock, cleanupDB := setupTest(t)
+		defer cleanupDB()
+		provider := &fakeWorkspaceRuntimeProvider{commandResult: &runtimes.CommandResult{Stdout: "stopped\n", ExitCode: 0}}
+		h.WithRuntimeProvider("docker", provider)
+		expectDockerRuntimeWorkspace(mock, "ws-runtime")
+
+		body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
+		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service/stop", "ws-runtime", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		h.StopWorkspaceService(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+		}
+		if len(provider.commands) != 1 {
+			t.Fatalf("provider commands = %#v", provider.commands)
+		}
+		command := provider.commands[0].Command
+		if !strings.Contains(command, "kill -TERM") || !strings.Contains(command, ".dev-plane/services/web") {
+			t.Fatalf("unexpected runtime stop command: %s", command)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unfulfilled expectations: %v", err)
+		}
+	})
+
+	t.Run("stop missing service", func(t *testing.T) {
+		h, mock, cleanupDB := setupTest(t)
+		defer cleanupDB()
+		provider := &fakeWorkspaceRuntimeProvider{commandResult: &runtimes.CommandResult{ExitCode: 44}}
+		h.WithRuntimeProvider("docker", provider)
+		expectDockerRuntimeWorkspace(mock, "ws-runtime")
+
+		body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
+		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service/stop", "ws-runtime", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+
+		h.StopWorkspaceService(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("expected status %d, got %d: %s", http.StatusNotFound, rec.Code, rec.Body.String())
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatalf("unfulfilled expectations: %v", err)
+		}
+	})
 }
 
 func TestRuntimeWorkspaceFileOperationsUseProvider(t *testing.T) {

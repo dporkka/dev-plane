@@ -266,7 +266,11 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	if out, err := p.runner.Run(ctx, "docker", []string{"exec", container, "mkdir", "-p", workspaceDir}, commandOptions{}); err != nil {
 		return nil, fmt.Errorf("docker mkdir workspace: %w (stderr: %s)", err, out.Stderr)
 	}
-	if out, err := p.runner.Run(ctx, "docker", []string{"cp", filepath.Join(stagingRepo, "."), container + ":" + workspaceDir + "/"}, commandOptions{}); err != nil {
+	// Append "/." explicitly so docker cp copies the contents of the staging
+	// directory into /workspace. filepath.Join(stagingRepo, ".") collapses to
+	// stagingRepo, which would copy the directory itself as /workspace/repo.
+	srcPath := stagingRepo + string(filepath.Separator) + "."
+	if out, err := p.runner.Run(ctx, "docker", []string{"cp", srcPath, container + ":" + workspaceDir + "/"}, commandOptions{}); err != nil {
 		return nil, fmt.Errorf("docker copy workspace: %w (stderr: %s)", err, out.Stderr)
 	}
 

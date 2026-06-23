@@ -51,19 +51,19 @@ func DefaultStreamConfigs() []nats.StreamConfig {
 			Name:      StreamTasks,
 			Subjects:  []string{"tasks.*"},
 			Storage:   nats.FileStorage,
-			Retention: nats.WorkQueuePolicy,
+			Retention: nats.InterestPolicy,
 		},
 		{
 			Name:      StreamAgents,
 			Subjects:  []string{"agents.>"},
 			Storage:   nats.FileStorage,
-			Retention: nats.WorkQueuePolicy,
+			Retention: nats.InterestPolicy,
 		},
 		{
 			Name:      StreamRuns,
 			Subjects:  []string{"runs.*", "review.*", "approval.*", "pr.*"},
 			Storage:   nats.FileStorage,
-			Retention: nats.WorkQueuePolicy,
+			Retention: nats.InterestPolicy,
 		},
 		{
 			Name:      StreamWebhooks,
@@ -116,7 +116,9 @@ func (b *Bus) Publish(subject string, data []byte) error {
 
 // Subscribe creates a durable subscription on the given subject.
 func (b *Bus) Subscribe(subject string, handler nats.MsgHandler) (*nats.Subscription, error) {
-	sub, err := b.js.Subscribe(subject, handler, nats.Durable("api-worker"))
+	// Use subject as durable name (sanitized for NATS naming rules)
+	durableName := strings.NewReplacer(".", "_", "*", "star", ">", "all").Replace(subject)
+	sub, err := b.js.Subscribe(subject, handler, nats.Durable(durableName))
 	if err != nil {
 		return nil, fmt.Errorf("subscribe to %q: %w", subject, err)
 	}

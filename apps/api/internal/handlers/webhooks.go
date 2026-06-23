@@ -17,7 +17,8 @@ import (
 
 // WebhookHandler handles incoming webhooks from GitHub.
 type WebhookHandler struct {
-	eventBus EventPublisher
+	eventBus      EventPublisher
+	webhookSecret string
 }
 
 // NewWebhookHandler creates a new webhook handler.
@@ -28,6 +29,12 @@ func NewWebhookHandler() *WebhookHandler {
 // WithEventPublisher adds an event publisher for accepted webhook events.
 func (h *WebhookHandler) WithEventPublisher(pub EventPublisher) *WebhookHandler {
 	h.eventBus = pub
+	return h
+}
+
+// WithWebhookSecret configures the shared GitHub webhook signing secret.
+func (h *WebhookHandler) WithWebhookSecret(secret string) *WebhookHandler {
+	h.webhookSecret = strings.TrimSpace(secret)
 	return h
 }
 
@@ -58,13 +65,17 @@ func (h *WebhookHandler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate signature if a webhook secret is configured
-	webhookSecret := r.URL.Query().Get("secret")
-	if webhookSecret != "" && signature != "" {
-		if !validateGitHubWebhook(body, signature, webhookSecret) {
-			respond.Error(w, http.StatusUnauthorized, errors.New("invalid webhook signature"))
-			return
-		}
+	if h.webhookSecret == "" {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("github webhook secret is not configured"))
+		return
+	}
+	if signature == "" {
+		respond.Error(w, http.StatusUnauthorized, errors.New("missing X-Hub-Signature-256 header"))
+		return
+	}
+	if !validateGitHubWebhook(body, signature, h.webhookSecret) {
+		respond.Error(w, http.StatusUnauthorized, errors.New("invalid webhook signature"))
+		return
 	}
 
 	event := GitHubEvent{

@@ -2,9 +2,10 @@ go 1.25.0
 
 use (
 	./apps/api
+	./apps/runner
 	./apps/worker
-	./packages/db
 	./packages/agents
+	./packages/db
 	./packages/events
 	./packages/gateway
 	./packages/models

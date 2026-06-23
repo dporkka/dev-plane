@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -106,8 +107,18 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req.Owner = strings.TrimSpace(req.Owner)
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Owner == "" || req.Name == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("owner and name are required"))
+		return
+	}
+	if err := validateGitHubOwner(req.Owner); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := validateGitHubRepoName(req.Name); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
 
@@ -144,6 +155,41 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	})
+}
+
+func validateGitHubOwner(owner string) error {
+	if len(owner) > 39 {
+		return errors.New("owner must be 39 characters or fewer")
+	}
+	if strings.HasPrefix(owner, "-") || strings.HasSuffix(owner, "-") {
+		return errors.New("owner cannot start or end with a hyphen")
+	}
+	for _, r := range owner {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' {
+			continue
+		}
+		return errors.New("owner may only contain letters, numbers, and hyphens")
+	}
+	return nil
+}
+
+func validateGitHubRepoName(name string) error {
+	if len(name) > 100 {
+		return errors.New("repository name must be 100 characters or fewer")
+	}
+	if strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		return errors.New("repository name cannot contain path separators")
+	}
+	if name == "." || name == ".." {
+		return errors.New("repository name is invalid")
+	}
+	for _, r := range name {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return errors.New("repository name may only contain letters, numbers, dots, hyphens, and underscores")
+	}
+	return nil
 }
 
 // GetRepository returns a single repository by ID.

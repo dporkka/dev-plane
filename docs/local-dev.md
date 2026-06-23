@@ -106,6 +106,7 @@ make migrate-up
 | `API_URL` | `http://localhost:8080` | API base URL |
 | `LOG_LEVEL` | `info` | Log verbosity (debug/info/warn/error) |
 | `SECRET_ENCRYPTION_KEYS` | `` | Comma-separated `key-id:base64-32-byte-key` specs for encrypted secret storage. First key encrypts new values. |
+| `GITHUB_APP_WEBHOOK_SECRET` | `` | Shared secret used to verify `X-Hub-Signature-256` on GitHub webhook deliveries. The API rejects webhook deliveries when unset. |
 | `WORKSPACE_RUNTIME` | `local` | Runtime provider: `local` for trusted development, `docker` for containerized workspace provisioning. |
 | `WORKSPACE_BASE_DIR` | OS temp dir | Base directory for runtime staging and local worktrees |
 | `DOCKER_HOST` | `` | Docker daemon socket path |

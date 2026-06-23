@@ -3,6 +3,7 @@ package securityscan
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -36,8 +37,22 @@ func (s *GitleaksScanner) Scan(ctx context.Context, req ScanRequest) (*ScanResul
 
 	start := time.Now()
 
-	// Build command arguments
-	args := []string{"detect", "--source", req.WorkspacePath, "--verbose", "--exit-code=0"}
+	reportFile, err := os.CreateTemp("", "gitleaks-report-*.json")
+	if err != nil {
+		return nil, fmt.Errorf("create gitleaks report file: %w", err)
+	}
+	reportPath := reportFile.Name()
+	reportFile.Close()
+	defer os.Remove(reportPath)
+
+	args := []string{
+		"detect",
+		"--source", req.WorkspacePath,
+		"--verbose",
+		"--exit-code=0",
+		"--report-format", "json",
+		"--report-path", reportPath,
+	}
 	if len(req.Files) > 0 {
 		// Gitleaks doesn't support per-file scanning directly;
 		// it scans the entire source path.
@@ -52,16 +67,20 @@ func (s *GitleaksScanner) Scan(ctx context.Context, req ScanRequest) (*ScanResul
 
 	duration := time.Since(start)
 
-	// TODO: Parse gitleaks SARIF/JSON output into structured findings.
-	// For now, return the raw output as a stub.
+	report, readErr := os.ReadFile(reportPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return nil, fmt.Errorf("read gitleaks report: %w", readErr)
+	}
+	findings, err := parseGitleaksJSON(report)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ScanResult{
 		ScannerName: s.Name(),
-		Findings:    nil,
-		Summary: ScanSummary{
-			Total:        0,
-			FilesScanned: len(req.Files),
-		},
-		Duration:  duration,
-		RawOutput: string(output),
+		Findings:    findings,
+		Summary:     buildSummary(findings, len(req.Files)),
+		Duration:    duration,
+		RawOutput:   string(output),
 	}, nil
 }

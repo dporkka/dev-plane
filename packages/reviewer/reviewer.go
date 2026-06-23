@@ -20,12 +20,18 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/securityscan"
 )
+
+type securityScanner interface {
+	ScanAll(ctx context.Context, req securityscan.ScanRequest) ([]*securityscan.ScanResult, error)
+}
 
 // Reviewer performs code review on agent-generated changes.
 type Reviewer struct {
-	db     *sql.DB
-	logger *slog.Logger
+	db              *sql.DB
+	logger          *slog.Logger
+	securityScanner securityScanner
 }
 
 // ReviewReport contains the complete review.
@@ -85,10 +91,20 @@ type TestResults struct {
 
 // NewReviewer creates a code reviewer.
 func NewReviewer(db *sql.DB, logger *slog.Logger) *Reviewer {
-	return &Reviewer{
-		db:     db,
-		logger: logger,
+	if logger == nil {
+		logger = slog.Default()
 	}
+	return &Reviewer{
+		db:              db,
+		logger:          logger,
+		securityScanner: securityscan.NewRegistry(),
+	}
+}
+
+// WithSecurityScanner overrides the scanner used during review.
+func (r *Reviewer) WithSecurityScanner(scanner securityScanner) *Reviewer {
+	r.securityScanner = scanner
+	return r
 }
 
 // Review analyzes changes in a workspace and produces a review report.
@@ -114,8 +130,19 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 		return nil, fmt.Errorf("agent run %s has no workspace", runID)
 	}
 
-	// 2. Get git diff from workspace
-	diff, err := r.getGitDiff(ctx, *run.WorkspaceID)
+	// 2. Get workspace path and git diff
+	worktreePath, err := r.getWorkspacePath(ctx, *run.WorkspaceID)
+	if err != nil {
+		r.logger.Warn("failed to get workspace path, proceeding without diff or security scan", "error", err)
+		worktreePath = ""
+	}
+
+	diff := ""
+	if worktreePath != "" {
+		diff, err = r.getGitDiff(ctx, worktreePath)
+	} else {
+		err = nil
+	}
 	if err != nil {
 		r.logger.Warn("failed to get git diff, proceeding with empty diff", "error", err)
 		diff = ""
@@ -130,6 +157,7 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 
 	report := r.generateReview(diff, nil, steps)
 	report.RunID = runID
+	r.applySecurityScan(ctx, report, worktreePath)
 
 	// 5. Save review report
 	if err := r.Save(ctx, report); err != nil {
@@ -146,8 +174,7 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 	return report, nil
 }
 
-// getGitDiff retrieves the git diff from a workspace.
-func (r *Reviewer) getGitDiff(ctx context.Context, workspaceID string) (string, error) {
+func (r *Reviewer) getWorkspacePath(ctx context.Context, workspaceID string) (string, error) {
 	var worktreePath string
 	err := r.db.QueryRowContext(ctx, `
 		SELECT worktree_path FROM workspaces WHERE id = $1
@@ -159,10 +186,15 @@ func (r *Reviewer) getGitDiff(ctx context.Context, workspaceID string) (string, 
 		return "", fmt.Errorf("workspace %s has no worktree path", workspaceID)
 	}
 
+	return worktreePath, nil
+}
+
+// getGitDiff retrieves the git diff from a workspace path.
+func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "diff", "--no-ext-diff", "--binary", "HEAD", "--")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git diff workspace %s: %w: %s", workspaceID, err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git diff workspace path %s: %w: %s", worktreePath, err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
 }
@@ -302,11 +334,10 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 	}
 
 	// Test coverage assessment
-	if hasTests {
+	if testResults != nil {
+		report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
+	} else if hasTests {
 		report.TestCoverage = "Tests included"
-		if testResults != nil {
-			report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
-		}
 	} else {
 		riskScore += 1
 		report.TestCoverage = "No tests detected"
@@ -386,6 +417,130 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 	}
 
 	return report
+}
+
+func (r *Reviewer) applySecurityScan(ctx context.Context, report *ReviewReport, workspacePath string) {
+	if workspacePath == "" {
+		r.addSecurityFinding(report, Finding{
+			Severity:   "medium",
+			File:       "*",
+			Message:    "Automated security scan skipped because the workspace has no local worktree path",
+			Category:   "security",
+			Suggestion: "Run review in a workspace with a readable local worktree or add runtime-backed scanner support.",
+		})
+		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan skipped: no local worktree path.")
+		return
+	}
+	if r.securityScanner == nil {
+		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan skipped: scanner is not configured.")
+		return
+	}
+
+	results, err := r.securityScanner.ScanAll(ctx, securityscan.ScanRequest{
+		WorkspacePath: workspacePath,
+		Files:         changedFilePaths(report.DiffSummary),
+	})
+	if err != nil {
+		r.addSecurityFinding(report, Finding{
+			Severity:   "medium",
+			File:       "*",
+			Message:    "Automated security scan did not complete",
+			Category:   "security",
+			Suggestion: err.Error(),
+		})
+		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan unavailable: "+err.Error())
+		return
+	}
+
+	totalFindings := 0
+	scanners := make([]string, 0, len(results))
+	for _, result := range results {
+		if result == nil {
+			continue
+		}
+		scanners = append(scanners, fmt.Sprintf("%s=%d", result.ScannerName, result.Summary.Total))
+		totalFindings += result.Summary.Total
+		for _, finding := range result.Findings {
+			r.addSecurityFinding(report, reviewerFindingFromScan(result.ScannerName, finding))
+		}
+	}
+	if len(scanners) == 0 {
+		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan ran but no scanner results were returned.")
+		return
+	}
+	report.SecurityNotes = appendSecurityNote(report.SecurityNotes,
+		fmt.Sprintf("Automated security scan completed: %s; %d finding(s).", strings.Join(scanners, ", "), totalFindings),
+	)
+}
+
+func (r *Reviewer) addSecurityFinding(report *ReviewReport, finding Finding) {
+	report.Findings = append(report.Findings, finding)
+	switch finding.Severity {
+	case "critical":
+		report.RiskLevel = "critical"
+		report.Approvable = false
+	case "high":
+		if report.RiskLevel != "critical" {
+			report.RiskLevel = "high"
+		}
+		report.Approvable = false
+	case "medium":
+		if report.RiskLevel == "low" {
+			report.RiskLevel = "medium"
+		}
+	}
+}
+
+func reviewerFindingFromScan(scanner string, finding securityscan.Finding) Finding {
+	return Finding{
+		Severity:   normalizeReviewSeverity(finding.Severity),
+		File:       firstNonEmpty(finding.File, "*"),
+		Line:       finding.Line,
+		Message:    fmt.Sprintf("%s: %s", scanner, firstNonEmpty(finding.Message, finding.Rule, "security finding")),
+		Category:   "security",
+		Suggestion: firstNonEmpty(finding.Fix, fmt.Sprintf("Review %s finding %q.", scanner, finding.Rule)),
+	}
+}
+
+func normalizeReviewSeverity(severity string) string {
+	switch strings.ToLower(strings.TrimSpace(severity)) {
+	case "critical":
+		return "critical"
+	case "high":
+		return "high"
+	case "medium":
+		return "medium"
+	case "low":
+		return "low"
+	default:
+		return "info"
+	}
+}
+
+func changedFilePaths(summary DiffSummary) []string {
+	paths := make([]string, 0, len(summary.Files))
+	for _, file := range summary.Files {
+		if file.Path != "" {
+			paths = append(paths, file.Path)
+		}
+	}
+	return paths
+}
+
+func appendSecurityNote(existing, note string) string {
+	if strings.TrimSpace(existing) == "" {
+		return note
+	}
+	return existing + " " + note
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // checkSecurity performs basic security checks on the diff.

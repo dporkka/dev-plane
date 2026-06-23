@@ -15,8 +15,11 @@ require (
 
 require golang.org/x/oauth2 v0.27.0
 
+require github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
+
 replace (
 	github.com/ai-dev-control-plane/gateway => ../gateway
 	github.com/ai-dev-control-plane/models => ../models
 	github.com/ai-dev-control-plane/reviewer => ../reviewer
+	github.com/ai-dev-control-plane/securityscan => ../securityscan
 )
