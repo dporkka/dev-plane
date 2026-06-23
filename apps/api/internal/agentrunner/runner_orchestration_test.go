@@ -440,6 +440,24 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE budgets (
+			id TEXT PRIMARY KEY,
+			organization_id TEXT NOT NULL,
+			project_id TEXT,
+			task_id TEXT,
+			type TEXT NOT NULL,
+			period TEXT NOT NULL,
+			max_cost REAL,
+			max_runtime_minutes INTEGER DEFAULT 0,
+			max_model_calls INTEGER DEFAULT 0,
+			max_tool_calls INTEGER DEFAULT 0,
+			max_shell_commands INTEGER DEFAULT 0,
+			max_concurrent_agents INTEGER DEFAULT 0,
+			max_daily_spend REAL,
+			notifications TEXT DEFAULT '{}',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		_ = db.Close()
