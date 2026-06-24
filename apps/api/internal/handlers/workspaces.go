@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -38,9 +39,19 @@ type WorkspaceResponse struct {
 // ListTaskWorkspaces returns all workspaces associated with a task.
 func (h *Handler) ListTaskWorkspaces(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	taskID := chi.URLParam(r, "taskID")
 	if taskID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -102,9 +113,19 @@ func (h *Handler) ListTaskWorkspaces(w http.ResponseWriter, r *http.Request) {
 // GetWorkspace returns a single workspace by ID.
 func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -154,9 +175,19 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 // DestroyWorkspace marks a workspace as destroyed and removes its worktree.
 func (h *Handler) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -204,9 +235,19 @@ func (h *Handler) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 // GetWorkspaceDiff returns the git diff for a workspace.
 func (h *Handler) GetWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 

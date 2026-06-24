@@ -124,6 +124,9 @@ func (s *Server) routes() {
 
 		// GitHub webhooks (public but signed)
 		r.Post("/webhooks/github", wh.GitHubWebhook)
+		r.Post("/webhooks/linear", wh.LinearWebhook)
+		r.Post("/webhooks/slack", wh.SlackWebhook)
+		r.Post("/webhooks/discord", wh.DiscordWebhook)
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
@@ -181,6 +184,10 @@ func (s *Server) routes() {
 			r.Get("/projects/{projectID}/pull-requests", h.ListPullRequests)
 			r.Get("/pull-requests/{id}", h.GetPullRequest)
 			r.Post("/tasks/{taskId}/pull-request", h.CreatePullRequest)
+			r.Post("/pull-requests/{id}/merge", h.MergePullRequest)
+
+			// Deployments
+			r.Post("/tasks/{id}/deploy", h.DeployTask)
 
 			// Repositories
 			r.Post("/repositories/{id}/analyze", h.AnalyzeRepo)

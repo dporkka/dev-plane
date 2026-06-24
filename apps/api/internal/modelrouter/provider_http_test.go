@@ -181,6 +181,60 @@ func TestGeminiProviderCallUsesGenerateContent(t *testing.T) {
 	}
 }
 
+func TestBifrostProviderCallUsesChatCompletions(t *testing.T) {
+	t.Setenv("BIFROST_API_KEY", "test-bifrost-key")
+	var captured map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-bifrost-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message":       map[string]any{"content": `{"action":"final_response","content":"done"}`},
+				"finish_reason": "stop",
+			}},
+			"usage": map[string]any{
+				"prompt_tokens":     100,
+				"completion_tokens": 20,
+				"total_tokens":      120,
+			},
+		})
+	}))
+	defer server.Close()
+
+	provider := NewBifrostProvider()
+	provider.baseURL = server.URL
+	provider.client = server.Client()
+
+	result, err := provider.Call(context.Background(), CallRequest{
+		PreferredModel: "bifrost/gpt-4o",
+		StructuredReq:  true,
+		Messages:       []Message{{Role: "user", Content: "return json"}},
+	})
+	if err != nil {
+		t.Fatalf("Call() error: %v", err)
+	}
+	if captured["model"] != "bifrost/gpt-4o" {
+		t.Fatalf("model = %v", captured["model"])
+	}
+	responseFormat, ok := captured["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("response_format = %#v", captured["response_format"])
+	}
+	if result.Content != `{"action":"final_response","content":"done"}` {
+		t.Fatalf("content = %q", result.Content)
+	}
+	if result.Provider != "bifrost" || result.Model != "bifrost/gpt-4o" {
+		t.Fatalf("route = %s/%s", result.Provider, result.Model)
+	}
+}
+
 func TestOpenAICompatibleProviderCallReturnsHTTPErrorBody(t *testing.T) {
 	t.Setenv("GROQ_API_KEY", "test-groq-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

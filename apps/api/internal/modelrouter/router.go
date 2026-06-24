@@ -64,7 +64,7 @@ func DefaultConfig() *Config {
 		DefaultModel:     "gpt-4o",
 		DefaultProvider:  "openai",
 		MaxCostPer1K:     0.10,
-		ProviderPriority: []string{"openai", "anthropic", "groq", "fireworks", "gemini"},
+		ProviderPriority: []string{"openai", "bifrost", "anthropic", "groq", "fireworks", "gemini"},
 	}
 }
 

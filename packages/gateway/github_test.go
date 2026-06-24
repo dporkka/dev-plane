@@ -192,6 +192,65 @@ func TestCreateWebhook(t *testing.T) {
 	}
 }
 
+func TestMergePR(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("method = %q, want PUT", r.Method)
+		}
+		if r.URL.Path != "/repos/owner/repo/pulls/42/merge" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+
+		var req MergePRRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if req.Method != "squash" {
+			t.Errorf("merge_method = %q, want squash", req.Method)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MergePRResult{
+			SHA:    "abc123",
+			Merged: true,
+		})
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+
+	result, err := g.MergePR(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", 42, MergePRRequest{Method: "squash"})
+	if err != nil {
+		t.Fatalf("merge pr: %v", err)
+	}
+	if !result.Merged {
+		t.Errorf("merged = false, want true")
+	}
+	if result.SHA != "abc123" {
+		t.Errorf("sha = %q, want abc123", result.SHA)
+	}
+}
+
+func TestMergePR_DefaultsToMerge(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req MergePRRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if req.Method != "merge" {
+			t.Errorf("merge_method = %q, want merge", req.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(MergePRResult{Merged: true})
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	if _, err := g.MergePR(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", 1, MergePRRequest{}); err != nil {
+		t.Fatalf("merge pr: %v", err)
+	}
+}
+
 func TestDeleteWebhook(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodDelete {
@@ -208,6 +267,32 @@ func TestDeleteWebhook(t *testing.T) {
 
 	if err := g.DeleteWebhook(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", 77); err != nil {
 		t.Fatalf("delete webhook: %v", err)
+	}
+}
+
+func TestCreateDeployment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/owner/repo/deployments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q", r.Method)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id":  12345,
+			"url": "https://api.github.com/repos/owner/repo/deployments/12345",
+			"ref": "main",
+		})
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	deployment, err := g.CreateDeployment(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", "staging", "main")
+	if err != nil {
+		t.Fatalf("CreateDeployment() error: %v", err)
+	}
+	if deployment.ID != 12345 {
+		t.Fatalf("deployment id = %d", deployment.ID)
 	}
 }
 

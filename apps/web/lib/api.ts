@@ -1,5 +1,122 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+// Minimal EventSource-like interface used for secure SSE streaming.
+// Callers can treat the returned object as a drop-in replacement for
+// EventSource; it exposes onopen/onmessage/onerror and close().
+export interface SSELike {
+  onopen: ((this: SSELike, ev: Event) => void) | null;
+  onmessage: ((this: SSELike, ev: MessageEvent) => void) | null;
+  onerror: ((this: SSELike, ev: Event) => void) | null;
+  close(): void;
+}
+
+// SecureEventSource fetches an SSE stream using the Authorization header
+// instead of leaking the JWT into the URL query string.
+class SecureEventSource implements SSELike {
+  url: string;
+  readyState: number;
+
+  onopen: ((this: SSELike, ev: Event) => void) | null = null;
+  onmessage: ((this: SSELike, ev: MessageEvent) => void) | null = null;
+  onerror: ((this: SSELike, ev: Event) => void) | null = null;
+
+  private controller: AbortController;
+
+  constructor(url: string) {
+    this.url = url;
+    this.readyState = 0; // CONNECTING
+    this.controller = new AbortController();
+    this.connect();
+  }
+
+  private connect() {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+
+    fetch(this.url, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      signal: this.controller.signal,
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        if (!response.body) {
+          throw new Error('response body is null');
+        }
+        this.readyState = 1; // OPEN
+        if (this.onopen) {
+          this.onopen(new Event('open'));
+        }
+        this.readStream(response.body);
+      })
+      .catch((err) => {
+        if ((err as Error).name === 'AbortError') {
+          this.readyState = 2; // CLOSED
+          return;
+        }
+        this.readyState = 2; // CLOSED
+        if (this.onerror) {
+          this.onerror(new Event('error'));
+        }
+      });
+  }
+
+  private async readStream(body: ReadableStream<Uint8Array>) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (this.readyState !== 2) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          this.processLine(line);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== 'AbortError' && this.onerror) {
+        this.onerror(new Event('error'));
+      }
+    } finally {
+      this.readyState = 2; // CLOSED
+      reader.releaseLock();
+    }
+  }
+
+  private processLine(line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('data:')) {
+      return;
+    }
+    const data = trimmed.slice('data:'.length).trim();
+    const event = new MessageEvent('message', { data });
+    if (this.onmessage) {
+      this.onmessage(event);
+    }
+  }
+
+  close() {
+    this.readyState = 2; // CLOSED
+    this.controller.abort();
+  }
+}
+
+// SSE stream helper
+function streamSSE(path: string): SSELike {
+  const url = new URL(`${API_BASE}${path}`, window.location.href);
+  return new SecureEventSource(url.toString());
+}
+
 async function fetchAPI(path: string, options?: RequestInit) {
   const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
   const res = await fetch(`${API_BASE}${path}`, {
@@ -21,15 +138,6 @@ async function fetchAPI(path: string, options?: RequestInit) {
   return res.text();
 }
 
-// SSE stream helper
-function streamSSE(path: string): EventSource {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-  const url = new URL(`${API_BASE}${path}`, window.location.href);
-  if (token) {
-    url.searchParams.set('token', token);
-  }
-  return new EventSource(url.toString());
-}
 
 export const api = {
   // ─── Tasks ──────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
 	"github.com/ai-dev-control-plane/events"
@@ -20,9 +21,19 @@ import (
 // It transitions the task to "spec_review" and publishes an event for the worker.
 func (h *Handler) GenerateSpec(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	taskID := chi.URLParam(r, "id")
 	if taskID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -83,9 +94,19 @@ func mustRawMessage(v any) json.RawMessage {
 // Validates the task is in "approved" status, creates an AgentRun, and publishes an event.
 func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	taskID := chi.URLParam(r, "id")
 	if taskID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -170,9 +191,19 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 // Gets the original run's config, creates a new run, and publishes an event.
 func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "id")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 
@@ -297,9 +328,19 @@ type RunEvent struct {
 // GetRunEvents returns high-level events for a run (like steps but aggregated).
 func (h *Handler) GetRunEvents(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "id")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 

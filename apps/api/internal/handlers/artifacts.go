@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -34,9 +35,19 @@ type Artifact struct {
 // It looks up the artifact in the database, verifies access, and streams the file.
 func (h *Handler) GetArtifact(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	artifactID := chi.URLParam(r, "id")
 	if artifactID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("artifact id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeArtifact(ctx, h.db, user, artifactID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("artifact not found"))
 		return
 	}
 

@@ -11,7 +11,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 )
@@ -22,6 +21,7 @@ func TestRespondApprovalPublishesApprovedEvent(t *testing.T) {
 	publisher := &fakeEventPublisher{}
 	h.WithEventPublisher(publisher)
 
+	expectAuthorizeApproval(mock, "approval-1")
 	mock.ExpectQuery("SELECT task_id, agent_run_id, approval_type").
 		WithArgs("approval-1").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "agent_run_id", "approval_type"}).
@@ -58,6 +58,7 @@ func TestRespondApprovalRejectedPublishesEventAndFailsTask(t *testing.T) {
 	publisher := &fakeEventPublisher{}
 	h.WithEventPublisher(publisher)
 
+	expectAuthorizeApproval(mock, "approval-1")
 	mock.ExpectQuery("SELECT task_id, agent_run_id, approval_type").
 		WithArgs("approval-1").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "agent_run_id", "approval_type"}).
@@ -97,6 +98,7 @@ func TestRespondApprovalAlreadyRespondedDoesNotPublish(t *testing.T) {
 	publisher := &fakeEventPublisher{}
 	h.WithEventPublisher(publisher)
 
+	expectAuthorizeApproval(mock, "approval-1")
 	mock.ExpectQuery("SELECT task_id, agent_run_id, approval_type").
 		WithArgs("approval-1").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "agent_run_id", "approval_type"}).
@@ -135,7 +137,7 @@ func (p *fakeEventPublisher) Publish(subject string, data []byte) error {
 func approvalResponseRequest(t *testing.T, approvalID, body string) *http.Request {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/approvals/"+approvalID+"/respond", bytes.NewReader([]byte(body)))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", approvalID)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/reviewer"
 )
@@ -21,9 +22,19 @@ import (
 // GetReview returns the review report for an agent run.
 func (h *Handler) GetReview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "runId")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 
@@ -44,9 +55,19 @@ func (h *Handler) GetReview(w http.ResponseWriter, r *http.Request) {
 // RequestReview triggers a manual review for a run.
 func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "runId")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 

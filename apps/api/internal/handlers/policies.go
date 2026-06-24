@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -41,9 +42,19 @@ type CreatePolicyRequest struct {
 // ListPolicies returns all policies for an organization.
 func (h *Handler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 
@@ -88,9 +99,19 @@ func (h *Handler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 // CreatePolicy creates a new policy.
 func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 

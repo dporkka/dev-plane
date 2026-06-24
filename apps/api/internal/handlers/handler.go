@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"log/slog"
 
@@ -8,7 +9,9 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/runtimes"
+	"golang.org/x/oauth2"
 )
 
 // EventPublisher is the subset of the event bus used by HTTP handlers.
@@ -26,6 +29,20 @@ type Handler struct {
 	capabilityKernel  *capability.Kernel
 	runtimeProviders  map[string]runtimes.Provider
 	secretManager     *secrets.Manager
+	githubGateway     githubGateway
+	githubToken       string
+	deployGateway     deployGateway
+	deployToken       string
+}
+
+// githubGateway is the subset of the GitHub gateway used by handlers.
+type githubGateway interface {
+	MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error)
+}
+
+// deployGateway is the subset of a deployment provider used by handlers.
+type deployGateway interface {
+	CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*gateway.Deployment, error)
 }
 
 // NewHandler creates a new base handler with the given dependencies.
@@ -72,6 +89,30 @@ func (h *Handler) WithRuntimeProvider(name string, provider runtimes.Provider) *
 // WithSecretManager enables encrypted secret storage endpoints.
 func (h *Handler) WithSecretManager(manager *secrets.Manager) *Handler {
 	h.secretManager = manager
+	return h
+}
+
+// WithGitHubGateway injects a GitHub gateway for PR/merge operations.
+func (h *Handler) WithGitHubGateway(g githubGateway) *Handler {
+	h.githubGateway = g
+	return h
+}
+
+// WithGitHubToken configures the GitHub token used for PR/merge operations.
+func (h *Handler) WithGitHubToken(token string) *Handler {
+	h.githubToken = token
+	return h
+}
+
+// WithDeployGateway injects a deployment gateway for task deploy operations.
+func (h *Handler) WithDeployGateway(g deployGateway) *Handler {
+	h.deployGateway = g
+	return h
+}
+
+// WithDeployToken configures the deployment token used for task deploy operations.
+func (h *Handler) WithDeployToken(token string) *Handler {
+	h.deployToken = token
 	return h
 }
 

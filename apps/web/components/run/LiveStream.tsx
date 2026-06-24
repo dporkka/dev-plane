@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import type { SSELike } from '@/lib/api';
 import type { AgentStep } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import {
@@ -17,7 +18,7 @@ export interface StreamEvent {
 
 interface LiveStreamProps {
   runId: string;
-  streamFn: (id: string) => EventSource;
+  streamFn: (id: string) => SSELike;
   onStepsUpdate: (steps: AgentStep[]) => void;
   onStatusUpdate?: (status: string) => void;
   onCostUpdate?: (cost: number) => void;
@@ -34,7 +35,7 @@ export function LiveStream({
 }: LiveStreamProps) {
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'complete'>('connecting');
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventSourceRef = useRef<SSELike | null>(null);
   const stepsRef = useRef<AgentStep[]>([]);
 
   const connect = useCallback(() => {

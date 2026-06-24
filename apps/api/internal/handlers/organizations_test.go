@@ -13,8 +13,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
-
-	"github.com/ai-dev-control-plane/api/internal/auth"
 )
 
 func TestListOrganizations(t *testing.T) {
@@ -31,7 +29,7 @@ func TestListOrganizations(t *testing.T) {
 		WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/organizations", nil)
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.ListOrganizations(rec, req)
@@ -70,7 +68,7 @@ func TestListOrganizations_Empty(t *testing.T) {
 		WillReturnRows(rows)
 
 	req := httptest.NewRequest(http.MethodGet, "/organizations", nil)
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.ListOrganizations(rec, req)
@@ -99,7 +97,7 @@ func TestListOrganizations_DBError(t *testing.T) {
 		WillReturnError(errors.New("connection failed"))
 
 	req := httptest.NewRequest(http.MethodGet, "/organizations", nil)
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.ListOrganizations(rec, req)
@@ -117,14 +115,13 @@ func TestCreateOrganization(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 
-	userID := "user-1"
 	mock.ExpectExec("INSERT INTO organizations").
 		WithArgs(sqlmock.AnyArg(), "Acme Corp", "acme", "free", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	body, _ := json.Marshal(CreateOrganizationRequest{Name: "Acme Corp", Slug: "acme"})
 	req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.CreateOrganization(rec, req)
@@ -162,7 +159,7 @@ func TestCreateOrganization_Invalid(t *testing.T) {
 	// Missing name
 	body, _ := json.Marshal(CreateOrganizationRequest{Slug: "acme"})
 	req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.CreateOrganization(rec, req)
@@ -174,7 +171,7 @@ func TestCreateOrganization_Invalid(t *testing.T) {
 	// Missing slug
 	body, _ = json.Marshal(CreateOrganizationRequest{Name: "Acme Corp"})
 	req = httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec = httptest.NewRecorder()
 
 	h.CreateOrganization(rec, req)
@@ -186,7 +183,7 @@ func TestCreateOrganization_Invalid(t *testing.T) {
 	// Empty body
 	body, _ = json.Marshal(map[string]string{})
 	req = httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec = httptest.NewRecorder()
 
 	h.CreateOrganization(rec, req)
@@ -200,14 +197,13 @@ func TestCreateOrganization_DuplicateSlug(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 
-	userID := "user-1"
 	mock.ExpectExec("INSERT INTO organizations").
 		WithArgs(sqlmock.AnyArg(), "Acme Corp", "acme", "free", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(errors.New("duplicate key value violates unique constraint \"organizations_slug_key\""))
 
 	body, _ := json.Marshal(CreateOrganizationRequest{Name: "Acme Corp", Slug: "acme"})
 	req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rec := httptest.NewRecorder()
 
 	h.CreateOrganization(rec, req)
@@ -230,6 +226,7 @@ func TestGetOrganization(t *testing.T) {
 	rows := sqlmock.NewRows([]string{"id", "name", "slug", "plan", "settings", "created_at", "updated_at"}).
 		AddRow(orgID, "Acme Corp", "acme", "pro", nil, now, now)
 
+	expectAuthorizeOrganization(mock, orgID)
 	mock.ExpectQuery("SELECT id, name, slug, plan, settings, created_at, updated_at").
 		WithArgs(orgID).
 		WillReturnRows(rows)
@@ -237,7 +234,7 @@ func TestGetOrganization(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/organizations/"+orgID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", orgID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetOrganization(rec, req)
@@ -269,6 +266,7 @@ func TestGetOrganization_NotFound(t *testing.T) {
 	defer cleanup()
 
 	orgID := "nonexistent"
+	expectAuthorizeOrganization(mock, orgID)
 	mock.ExpectQuery("SELECT id, name, slug, plan, settings, created_at, updated_at").
 		WithArgs(orgID).
 		WillReturnError(sql.ErrNoRows)
@@ -276,7 +274,7 @@ func TestGetOrganization_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/organizations/"+orgID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", orgID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetOrganization(rec, req)

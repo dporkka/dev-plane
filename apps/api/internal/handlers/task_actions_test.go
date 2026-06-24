@@ -23,6 +23,7 @@ func TestGenerateSpec(t *testing.T) {
 	taskID := "task-1"
 	repoID := "repo-1"
 
+	expectAuthorizeTask(mock, taskID)
 	// Check current status
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
@@ -33,7 +34,7 @@ func TestGenerateSpec(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GenerateSpec(rec, req)
@@ -86,6 +87,7 @@ func TestGenerateSpec_FromFailed(t *testing.T) {
 	taskID := "task-1"
 	repoID := "repo-1"
 
+	expectAuthorizeTask(mock, taskID)
 	// Check current status - failed is also allowed
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
@@ -96,7 +98,7 @@ func TestGenerateSpec_FromFailed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GenerateSpec(rec, req)
@@ -170,6 +172,7 @@ func TestGenerateSpec_WrongStatus(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	// Check current status - running is not allowed
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
@@ -178,7 +181,7 @@ func TestGenerateSpec_WrongStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/generate-spec", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GenerateSpec(rec, req)
@@ -206,6 +209,7 @@ func TestStartRun(t *testing.T) {
 	taskID := "task-1"
 	workspaceID := "ws-1"
 
+	expectAuthorizeTask(mock, taskID)
 	// Get task details - must be approved
 	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch").
 		WithArgs(taskID).
@@ -225,7 +229,7 @@ func TestStartRun(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.StartRun(rec, req)
@@ -258,6 +262,7 @@ func TestStartRun_NotApproved(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	// Get task details - not approved
 	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch").
 		WithArgs(taskID).
@@ -267,7 +272,7 @@ func TestStartRun_NotApproved(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.StartRun(rec, req)
@@ -288,6 +293,7 @@ func TestRetryRun(t *testing.T) {
 	runID := "run-1"
 	taskID := "task-1"
 
+	expectAuthorizeAgentRun(mock, runID)
 	// Get failed run details
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
@@ -312,7 +318,7 @@ func TestRetryRun(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/runs/"+runID+"/retry", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.RetryRun(rec, req)
@@ -350,6 +356,7 @@ func TestRetryRun_NotFailed(t *testing.T) {
 	runID := "run-1"
 	taskID := "task-1"
 
+	expectAuthorizeAgentRun(mock, runID)
 	// Get run details - status is completed, not failed
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
@@ -359,7 +366,7 @@ func TestRetryRun_NotFailed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/runs/"+runID+"/retry", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.RetryRun(rec, req)
@@ -387,6 +394,7 @@ func TestRetryRun_TaskNotRetryable(t *testing.T) {
 	runID := "run-1"
 	taskID := "task-1"
 
+	expectAuthorizeAgentRun(mock, runID)
 	// Get failed run details
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
@@ -401,7 +409,7 @@ func TestRetryRun_TaskNotRetryable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/runs/"+runID+"/retry", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.RetryRun(rec, req)

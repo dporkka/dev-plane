@@ -458,6 +458,94 @@ func (p *FireworksProvider) IsAvailable() bool {
 	return p.apiKey != ""
 }
 
+// --------------------
+// Bifrost Provider
+// --------------------
+
+// BifrostProvider implements the Provider interface for the Bifrost AI gateway.
+// Bifrost exposes an OpenAI-compatible chat-completions endpoint.
+type BifrostProvider struct {
+	apiKey  string
+	baseURL string
+	client  *http.Client
+	models  []ModelInfo
+	once    sync.Once
+}
+
+// NewBifrostProvider creates a new Bifrost provider.
+func NewBifrostProvider() *BifrostProvider {
+	return &BifrostProvider{
+		baseURL: envOrDefault("BIFROST_URL", "http://localhost:8081"),
+	}
+}
+
+// Name returns the provider name.
+func (p *BifrostProvider) Name() string { return "bifrost" }
+
+// Models returns the Bifrost model catalog.
+func (p *BifrostProvider) Models() []ModelInfo {
+	p.once.Do(func() {
+		p.models = []ModelInfo{
+			{
+				Name:                     "bifrost/gpt-4o",
+				Provider:                 "bifrost",
+				MaxContext:               128000,
+				CodingStrength:           9,
+				ReasoningStrength:        8,
+				LatencyMs:                2500,
+				CostPer1KInput:           0.005,
+				CostPer1KOutput:          0.015,
+				SupportsStructuredOutput: true,
+				SupportsVision:           true,
+				SupportsFunctionCalling:  true,
+			},
+			{
+				Name:                     "bifrost/claude-sonnet",
+				Provider:                 "bifrost",
+				MaxContext:               200000,
+				CodingStrength:           9,
+				ReasoningStrength:        9,
+				LatencyMs:                3000,
+				CostPer1KInput:           0.003,
+				CostPer1KOutput:          0.015,
+				SupportsStructuredOutput: true,
+				SupportsVision:           true,
+				SupportsFunctionCalling:  true,
+			},
+			{
+				Name:                     "bifrost/gemini-flash",
+				Provider:                 "bifrost",
+				MaxContext:               1000000,
+				CodingStrength:           7,
+				ReasoningStrength:        7,
+				LatencyMs:                1200,
+				CostPer1KInput:           0.00015,
+				CostPer1KOutput:          0.0006,
+				SupportsStructuredOutput: true,
+				SupportsVision:           true,
+				SupportsFunctionCalling:  true,
+			},
+		}
+	})
+	return p.models
+}
+
+// Call executes a model call via the Bifrost gateway.
+func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
+	if !p.IsAvailable() {
+		return nil, fmt.Errorf("bifrost: %w", ProviderNotConnectedError)
+	}
+	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
+}
+
+// IsAvailable returns true if the Bifrost provider is configured.
+func (p *BifrostProvider) IsAvailable() bool {
+	if p.apiKey == "" {
+		p.apiKey = os.Getenv("BIFROST_API_KEY")
+	}
+	return p.apiKey != ""
+}
+
 // AllProviders returns a list of all available provider instances.
 func AllProviders() []Provider {
 	return []Provider{
@@ -466,6 +554,7 @@ func AllProviders() []Provider {
 		NewGeminiProvider(),
 		NewGroqProvider(),
 		NewFireworksProvider(),
+		NewBifrostProvider(),
 	}
 }
 

@@ -83,6 +83,45 @@ type NewPR struct {
 	Draft bool   `json:"draft"`
 }
 
+// MergePRRequest represents the parameters for merging a pull request.
+type MergePRRequest struct {
+	// Method is the merge method: "merge", "squash", or "rebase".
+	// Defaults to "merge" when empty.
+	Method string `json:"merge_method,omitempty"`
+	// Title is the title of the merge commit (optional).
+	Title string `json:"commit_title,omitempty"`
+	// Message is the message of the merge commit (optional).
+	Message string `json:"commit_message,omitempty"`
+	// SHA is the expected HEAD SHA of the pull request. When provided, the
+	// merge fails if the pull request HEAD does not match.
+	SHA string `json:"sha,omitempty"`
+}
+
+// MergePRResult is the response from a successful GitHub merge call.
+type MergePRResult struct {
+	SHA     string `json:"sha"`
+	Merged  bool   `json:"merged"`
+	Message string `json:"message"`
+}
+
+// Deployment represents a GitHub deployment.
+type Deployment struct {
+	ID        int64  `json:"id"`
+	NodeID    string `json:"node_id"`
+	URL       string `json:"url"`
+	StatusURL string `json:"statuses_url"`
+	Ref       string `json:"ref"`
+	Task      string `json:"task"`
+	State     string `json:"state"`
+}
+
+// DeploymentStatus represents a GitHub deployment status.
+type DeploymentStatus struct {
+	ID    int64  `json:"id"`
+	State string `json:"state"`
+	URL   string `json:"url"`
+}
+
 // NewGitHubGateway creates a new GitHub gateway with the given OAuth credentials.
 func NewGitHubGateway(clientID, clientSecret string) *GitHubGateway {
 	oauthConfig := &oauth2.Config{
@@ -198,6 +237,68 @@ func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner
 	return &result, nil
 }
 
+// MergePR merges a pull request on GitHub.
+func (g *GitHubGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req MergePRRequest) (*MergePRResult, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", g.apiBaseURL, owner, name, number)
+
+	if req.Method == "" {
+		req.Method = "merge"
+	}
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal merge payload: %w", err)
+	}
+
+	var result MergePRResult
+	if err := g.put(ctx, token, url, body, &result); err != nil {
+		return nil, fmt.Errorf("merge github pr: %w", err)
+	}
+	return &result, nil
+}
+
+// CreateDeployment creates a new GitHub deployment for the given ref and environment.
+func (g *GitHubGateway) CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*Deployment, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBaseURL, owner, name)
+	payload := map[string]any{
+		"ref":         ref,
+		"environment": environment,
+		"auto_merge":  false,
+		"required_contexts": []string{},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal deployment payload: %w", err)
+	}
+
+	var result Deployment
+	if err := g.post(ctx, token, url, body, &result); err != nil {
+		return nil, fmt.Errorf("create github deployment: %w", err)
+	}
+	return &result, nil
+}
+
+// CreateDeploymentStatus creates a status update for a GitHub deployment.
+func (g *GitHubGateway) CreateDeploymentStatus(ctx context.Context, token *oauth2.Token, owner, name string, deploymentID int64, state, targetURL string) (*DeploymentStatus, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/deployments/%d/statuses", g.apiBaseURL, owner, name, deploymentID)
+	payload := map[string]any{
+		"state": state,
+	}
+	if targetURL != "" {
+		payload["target_url"] = targetURL
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal deployment status payload: %w", err)
+	}
+
+	var result DeploymentStatus
+	if err := g.post(ctx, token, url, body, &result); err != nil {
+		return nil, fmt.Errorf("create github deployment status: %w", err)
+	}
+	return &result, nil
+}
+
 // DeleteWebhook removes a webhook from a repository.
 func (g *GitHubGateway) DeleteWebhook(ctx context.Context, token *oauth2.Token, owner, name string, hookID int64) error {
 	url := fmt.Sprintf("%s/repos/%s/%s/hooks/%d", g.apiBaseURL, owner, name, hookID)
@@ -250,6 +351,30 @@ func (g *GitHubGateway) post(ctx context.Context, token *oauth2.Token, url strin
 		return fmt.Errorf("github API error %d: %s", resp.StatusCode, string(body))
 	}
 
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// put performs an authenticated PUT request and decodes the JSON response.
+func (g *GitHubGateway) put(ctx context.Context, token *oauth2.Token, url string, body []byte, out any) error {
+	client := g.oauthConfig.Client(ctx, token)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/vnd.github.v3+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("github API error %d: %s", resp.StatusCode, string(body))
+	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 

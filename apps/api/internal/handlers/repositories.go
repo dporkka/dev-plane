@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -42,9 +42,19 @@ type ConnectRepositoryRequest struct {
 // ListRepositories returns all repositories for a project.
 func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeProject(ctx, h.db, user, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 
@@ -95,9 +105,19 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 // ConnectRepository connects a GitHub repository to a project.
 func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeProject(ctx, h.db, user, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 
@@ -119,12 +139,6 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateGitHubRepoName(req.Name); err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
-		return
-	}
-
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
 		return
 	}
 
@@ -195,9 +209,19 @@ func validateGitHubRepoName(name string) error {
 // GetRepository returns a single repository by ID.
 func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("repository id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeRepository(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
 
@@ -238,9 +262,19 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 // DisconnectRepository soft-deletes a repository connection.
 func (h *Handler) DisconnectRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("repository id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeRepository(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
 
@@ -266,9 +300,19 @@ func (h *Handler) DisconnectRepository(w http.ResponseWriter, r *http.Request) {
 // SyncRepository triggers a sync for a repository.
 func (h *Handler) SyncRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("repository id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeRepository(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
 

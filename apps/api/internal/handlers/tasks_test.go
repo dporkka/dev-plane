@@ -14,7 +14,6 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/events"
 )
 
@@ -39,6 +38,8 @@ func TestListTasks(t *testing.T) {
 
 	projectID := "proj-1"
 	now := time.Now()
+
+	expectAuthorizeProject(mock, projectID)
 	rows := sqlmock.NewRows(taskCols).
 		AddRow("task-1", projectID, "repo-1", nil, "user-1", "web", nil,
 			"Task One", nil, "backlog", "medium", "low", "main",
@@ -56,7 +57,7 @@ func TestListTasks(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/tasks", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListTasks(rec, req)
@@ -94,6 +95,7 @@ func TestListTasks_Empty(t *testing.T) {
 	projectID := "proj-1"
 	rows := sqlmock.NewRows(taskCols)
 
+	expectAuthorizeProject(mock, projectID)
 	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
 		WithArgs(projectID).
 		WillReturnRows(rows)
@@ -101,7 +103,7 @@ func TestListTasks_Empty(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/tasks", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListTasks(rec, req)
@@ -125,6 +127,7 @@ func TestListTasks_DBError(t *testing.T) {
 	defer cleanup()
 
 	projectID := "proj-1"
+	expectAuthorizeProject(mock, projectID)
 	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
 		WithArgs(projectID).
 		WillReturnError(errors.New("connection failed"))
@@ -132,7 +135,7 @@ func TestListTasks_DBError(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/projects/"+projectID+"/tasks", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListTasks(rec, req)
@@ -153,6 +156,7 @@ func TestCreateTask(t *testing.T) {
 	projectID := "proj-1"
 	userID := "user-1"
 
+	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO tasks").
 		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", nil, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -162,7 +166,7 @@ func TestCreateTask(t *testing.T) {
 		Title:        "Build Feature",
 	})
 	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -209,13 +213,14 @@ func TestCreateTask(t *testing.T) {
 }
 
 func TestCreateTask_MissingTitle(t *testing.T) {
-	h, _, cleanup := setupTest(t)
+	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 
 	projectID := "proj-1"
+	expectAuthorizeProject(mock, projectID)
 	body, _ := json.Marshal(CreateTaskRequest{RepositoryID: "repo-1"})
 	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -235,7 +240,7 @@ func TestCreateTask_MissingProject(t *testing.T) {
 	// Missing projectID in URL
 	body, _ := json.Marshal(CreateTaskRequest{RepositoryID: "repo-1", Title: "Build Feature"})
 	req := httptest.NewRequest(http.MethodPost, "/projects//tasks", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", "")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -253,13 +258,13 @@ func TestCreateTask_InvalidStatus(t *testing.T) {
 	defer cleanup()
 
 	projectID := "proj-1"
-	userID := "user-1"
 
+	expectAuthorizeProject(mock, projectID)
 	// The handler doesn't validate status on create; it always sets backlog.
 	// But we can test that invalid JSON body is rejected.
 	body := []byte(`{invalid json`)
 	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -285,6 +290,7 @@ func TestGetTask(t *testing.T) {
 	now := time.Now()
 	rows := taskRow(taskID, projectID, "repo-1", "Task One", "backlog", now)
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
 		WithArgs(taskID).
 		WillReturnRows(rows)
@@ -292,7 +298,7 @@ func TestGetTask(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetTask(rec, req)
@@ -324,6 +330,7 @@ func TestGetTask_NotFound(t *testing.T) {
 	defer cleanup()
 
 	taskID := "nonexistent"
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
 		WithArgs(taskID).
 		WillReturnError(sql.ErrNoRows)
@@ -331,7 +338,7 @@ func TestGetTask_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetTask(rec, req)
@@ -354,6 +361,7 @@ func TestUpdateTask(t *testing.T) {
 	now := time.Now()
 	newTitle := "Updated Title"
 
+	expectAuthorizeTask(mock, taskID)
 	// First query: get current status
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
@@ -364,7 +372,8 @@ func TestUpdateTask(t *testing.T) {
 		WithArgs(&newTitle, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	// GetTask query after update
+	// GetTask query after update re-runs authorization
+	expectAuthorizeTask(mock, taskID)
 	rows := taskRow(taskID, projectID, "repo-1", "Updated Title", "backlog", now)
 	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
 		WithArgs(taskID).
@@ -374,7 +383,7 @@ func TestUpdateTask(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/tasks/"+taskID, bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.UpdateTask(rec, req)
@@ -403,6 +412,7 @@ func TestUpdateTask_InvalidStatus(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("backlog"))
@@ -412,7 +422,7 @@ func TestUpdateTask_InvalidStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/tasks/"+taskID, bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.UpdateTask(rec, req)
@@ -432,6 +442,7 @@ func TestUpdateTask_InvalidTransition(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("backlog"))
@@ -442,7 +453,7 @@ func TestUpdateTask_InvalidTransition(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/tasks/"+taskID, bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.UpdateTask(rec, req)
@@ -464,6 +475,7 @@ func TestApproveSpec(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectExec("UPDATE tasks SET status = 'approved'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -471,7 +483,7 @@ func TestApproveSpec(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve-spec", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ApproveSpec(rec, req)
@@ -510,6 +522,7 @@ func TestApproveSpec_WrongStatus(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectExec("UPDATE tasks SET status = 'approved'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 0))
@@ -517,7 +530,7 @@ func TestApproveSpec_WrongStatus(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve-spec", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ApproveSpec(rec, req)
@@ -537,6 +550,7 @@ func TestCancelTask(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectExec("UPDATE tasks SET status = 'cancelled'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -544,7 +558,7 @@ func TestCancelTask(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/cancel", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.CancelTask(rec, req)
@@ -573,6 +587,7 @@ func TestCancelTask_AlreadyDone(t *testing.T) {
 
 	taskID := "task-1"
 
+	expectAuthorizeTask(mock, taskID)
 	mock.ExpectExec("UPDATE tasks SET status = 'cancelled'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 0))
@@ -580,13 +595,41 @@ func TestCancelTask_AlreadyDone(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/cancel", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.CancelTask(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestGetTask_CrossOrgDenied(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+
+	// Authz lookup returns a different organization than the test user's org.
+	mock.ExpectQuery("SELECT p.organization_id FROM tasks t JOIN projects p").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"organization_id"}).AddRow("org-2"))
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.GetTask(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d for cross-org access, got %d", http.StatusNotFound, rec.Code)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {

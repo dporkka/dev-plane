@@ -99,8 +99,10 @@ func TestSecretHandlersCreateListAndRotateEncryptedSecrets(t *testing.T) {
 }
 
 func TestCreateSecretWithoutManagerReturnsUnavailable(t *testing.T) {
-	h, _, cleanup := setupTest(t)
+	h, mock, cleanup := setupTest(t)
 	defer cleanup()
+
+	expectAuthorizeOrganization(mock, "org-1")
 
 	body, _ := json.Marshal(CreateSecretRequest{Name: "x", Value: "secret"})
 	req := secretRequest(http.MethodPost, "/organizations/org-1/secrets", "org-1", "", bytes.NewReader(body))
@@ -134,6 +136,13 @@ func setupSecretHandlerDB(t *testing.T) *sql.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	_, err = db.Exec(`
+		CREATE TABLE users (
+			id TEXT PRIMARY KEY,
+			organization_id TEXT NOT NULL,
+			email TEXT NOT NULL,
+			role TEXT NOT NULL,
+			deleted_at DATETIME
+		);
 		CREATE TABLE secret_references (
 			id TEXT PRIMARY KEY,
 			organization_id TEXT NOT NULL,
@@ -170,6 +179,7 @@ func setupSecretHandlerDB(t *testing.T) *sql.DB {
 			details TEXT,
 			created_at DATETIME
 		);
+		INSERT INTO users (id, organization_id, email, role) VALUES ('user-1', 'org-1', 'test@example.com', 'member');
 	`)
 	if err != nil {
 		_ = db.Close()

@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -31,9 +32,19 @@ type AuditLog struct {
 // ListAuditLogs returns audit logs for an organization.
 func (h *Handler) ListAuditLogs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 

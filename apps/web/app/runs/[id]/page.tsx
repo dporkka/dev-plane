@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, type SSELike } from '@/lib/api';
 import type { AgentRun, AgentStep } from '@/lib/types';
 import { Card } from '@/components/ui/card';
 import { Loading } from '@/components/common/Loading';
@@ -41,7 +41,7 @@ const roleIcons: Record<string, React.ElementType> = {
 function useLiveSteps(runId: string, isRunning: boolean) {
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
   const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'complete'>('connecting');
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventSourceRef = useRef<SSELike | null>(null);
   const reconnectCount = useRef(0);
 
   const connect = useCallback(() => {

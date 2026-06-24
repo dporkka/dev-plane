@@ -60,3 +60,6 @@ volumes/
 # Coverage
 coverage.out
 coverage.html
+
+# Generated code
+packages/db/gen/

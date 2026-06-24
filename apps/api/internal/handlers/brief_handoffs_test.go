@@ -10,8 +10,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
-
-	"github.com/ai-dev-control-plane/api/internal/auth"
 )
 
 func TestCreateBriefHandoff(t *testing.T) {
@@ -22,6 +20,7 @@ func TestCreateBriefHandoff(t *testing.T) {
 	userID := "user-1"
 	briefProjectID := "brief-123"
 
+	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO tasks").
 		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "dev_plan_brief", &briefProjectID, "Implement Brief", sqlmock.AnyArg(), "high", "medium", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -40,7 +39,7 @@ func TestCreateBriefHandoff(t *testing.T) {
 		},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/brief-handoffs", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: userID}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -76,12 +75,14 @@ func TestCreateBriefHandoff(t *testing.T) {
 }
 
 func TestCreateBriefHandoff_RequiresBriefPointer(t *testing.T) {
-	h, _, cleanup := setupTest(t)
+	h, mock, cleanup := setupTest(t)
 	defer cleanup()
+
+	expectAuthorizeProject(mock, "proj-1")
 
 	body, _ := json.Marshal(CreateBriefHandoffRequest{RepositoryID: "repo-1"})
 	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/brief-handoffs", bytes.NewReader(body))
-	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1"}))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", "proj-1")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

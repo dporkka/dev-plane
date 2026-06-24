@@ -8,7 +8,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -39,15 +39,19 @@ type BriefDocument struct {
 // CreateBriefHandoff creates a task from a Dev Plan Builder's Brief handoff.
 func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
 		return
 	}
 
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
+	if err := authz.AuthorizeProject(ctx, h.db, user, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 

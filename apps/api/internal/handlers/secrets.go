@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	secretstore "github.com/ai-dev-control-plane/api/internal/secrets"
@@ -46,9 +47,19 @@ type RotateSecretRequest struct {
 
 func (h *Handler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 
@@ -82,11 +93,22 @@ func (h *Handler) ListSecrets(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
 		return
 	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
+		return
+	}
+
 	if h.secretManager == nil {
 		respond.Error(w, http.StatusServiceUnavailable, errors.New("encrypted secret storage is not configured"))
 		return
@@ -128,11 +150,22 @@ func (h *Handler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	secretID := chi.URLParam(r, "id")
 	if secretID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("secret id is required"))
 		return
 	}
+
+	if err := authz.AuthorizeSecret(ctx, h.db, user, secretID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("secret not found"))
+		return
+	}
+
 	if h.secretManager == nil {
 		respond.Error(w, http.StatusServiceUnavailable, errors.New("encrypted secret storage is not configured"))
 		return

@@ -151,13 +151,107 @@ func (h *WebhookHandler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// LinearWebhook handles incoming Linear webhook events.
+func (h *WebhookHandler) LinearWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, errors.New("failed to read body"))
+		return
+	}
+
+	eventType := r.Header.Get("linear-event")
+	if eventType == "" {
+		eventType = "unknown"
+	}
+
+	if err := h.publishWebhookEvent("linear", GitHubEvent{
+		EventType:  eventType,
+		DeliveryID: r.Header.Get("linear-delivery-id"),
+		Payload:    body,
+	}, ""); err != nil {
+		respond.Error(w, http.StatusServiceUnavailable, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusAccepted, map[string]string{
+		"status":     "received",
+		"event_type": eventType,
+	})
+}
+
+// SlackWebhook handles incoming Slack webhook events.
+func (h *WebhookHandler) SlackWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, errors.New("failed to read body"))
+		return
+	}
+
+	// Slack URL verification handshake for event subscriptions
+	var payload struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+		Token     string `json:"token"`
+	}
+	if err := json.Unmarshal(body, &payload); err == nil && payload.Type == "url_verification" {
+		respond.JSON(w, http.StatusOK, map[string]string{"challenge": payload.Challenge})
+		return
+	}
+
+	eventType := r.Header.Get("X-Slack-Event")
+	if eventType == "" {
+		eventType = "event_callback"
+	}
+
+	if err := h.publishWebhookEvent("slack", GitHubEvent{
+		EventType:  eventType,
+		DeliveryID: r.Header.Get("X-Slack-Retry-Num"),
+		Payload:    body,
+	}, ""); err != nil {
+		respond.Error(w, http.StatusServiceUnavailable, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusAccepted, map[string]string{
+		"status":     "received",
+		"event_type": eventType,
+	})
+}
+
+// DiscordWebhook handles incoming Discord webhook events.
+func (h *WebhookHandler) DiscordWebhook(w http.ResponseWriter, r *http.Request) {
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, errors.New("failed to read body"))
+		return
+	}
+
+	if err := h.publishWebhookEvent("discord", GitHubEvent{
+		EventType:  "event",
+		DeliveryID: r.Header.Get("X-Discord-Event-Id"),
+		Payload:    body,
+	}, ""); err != nil {
+		respond.Error(w, http.StatusServiceUnavailable, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusAccepted, map[string]string{
+		"status":     "received",
+		"event_type": "event",
+	})
+}
+
 func (h *WebhookHandler) publishReceivedWebhook(event GitHubEvent, signature string) error {
+	return h.publishWebhookEvent("github", event, signature)
+}
+
+func (h *WebhookHandler) publishWebhookEvent(source string, event GitHubEvent, signature string) error {
 	if h.eventBus == nil {
 		return nil
 	}
 
 	payload, err := json.Marshal(events.WebhookEvent{
-		Source:       "github",
+		Source:       source,
 		EventType:    event.EventType,
 		DeliveryID:   event.DeliveryID,
 		RepositoryID: event.Repository,

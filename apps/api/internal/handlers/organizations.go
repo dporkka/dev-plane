@@ -10,7 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -35,9 +35,8 @@ type CreateOrganizationRequest struct {
 // ListOrganizations returns all organizations for the authenticated user.
 func (h *Handler) ListOrganizations(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -76,9 +75,8 @@ func (h *Handler) ListOrganizations(w http.ResponseWriter, r *http.Request) {
 // CreateOrganization creates a new organization.
 func (h *Handler) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
+	_, ok := authz.RequireUser(w, r)
+	if !ok {
 		return
 	}
 
@@ -123,9 +121,19 @@ func (h *Handler) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 // GetOrganization returns a single organization by ID.
 func (h *Handler) GetOrganization(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 

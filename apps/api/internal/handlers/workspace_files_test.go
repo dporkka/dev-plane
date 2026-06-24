@@ -50,6 +50,7 @@ func TestReadWorkspaceFile(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -57,7 +58,7 @@ func TestReadWorkspaceFile(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/"+workspaceID+"/files?path=README.md", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ReadWorkspaceFile(rec, req)
@@ -91,6 +92,7 @@ func TestReadWorkspaceFile_NotFound(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -98,7 +100,7 @@ func TestReadWorkspaceFile_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/"+workspaceID+"/files?path=nonexistent.txt", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ReadWorkspaceFile(rec, req)
@@ -127,6 +129,7 @@ func TestReadWorkspaceFile_Traversal(t *testing.T) {
 	}
 
 	for _, path := range traversalPaths {
+		expectAuthorizeWorkspace(mock, workspaceID)
 		mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 			WithArgs(workspaceID).
 			WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -134,7 +137,7 @@ func TestReadWorkspaceFile_Traversal(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/workspaces/"+workspaceID+"/files?path="+path, nil)
 		rctx := chi.NewRouteContext()
 		rctx.URLParams.Add("id", workspaceID)
-		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 		rec := httptest.NewRecorder()
 
 		h.ReadWorkspaceFile(rec, req)
@@ -161,6 +164,7 @@ func TestWriteWorkspaceFile(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -172,7 +176,7 @@ func TestWriteWorkspaceFile(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.WriteWorkspaceFile(rec, req)
@@ -221,6 +225,7 @@ func TestWriteWorkspaceFile_Traversal(t *testing.T) {
 	os.MkdirAll(outsideDir, 0755)
 	defer os.RemoveAll(outsideDir)
 
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -232,7 +237,7 @@ func TestWriteWorkspaceFile_Traversal(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.WriteWorkspaceFile(rec, req)
@@ -262,6 +267,7 @@ func TestWriteWorkspaceFile_DefaultPolicyRequiresApproval(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -273,7 +279,7 @@ func TestWriteWorkspaceFile_DefaultPolicyRequiresApproval(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.WriteWorkspaceFile(rec, req)
@@ -295,8 +301,8 @@ func TestWriteWorkspaceFilePersistsCapabilityAudit(t *testing.T) {
 	workspacePath, cleanupWS := setupWorkspace(t)
 	defer cleanupWS()
 	if _, err := db.Exec(`
-		INSERT INTO workspaces (id, worktree_path, runtime_provider, runtime_session_id, status, deleted_at)
-		VALUES ('ws-audit', ?, 'local', NULL, 'ready', NULL)
+		INSERT INTO workspaces (id, worktree_path, repository_id, runtime_provider, runtime_session_id, status, deleted_at)
+		VALUES ('ws-audit', ?, 'repo-audit', 'local', NULL, 'ready', NULL)
 	`, workspacePath); err != nil {
 		t.Fatalf("insert workspace: %v", err)
 	}
@@ -348,6 +354,7 @@ func TestListWorkspaceFiles(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -355,7 +362,7 @@ func TestListWorkspaceFiles(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/workspaces/"+workspaceID+"/files", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListWorkspaceFiles(rec, req)
@@ -397,6 +404,7 @@ func TestExecWorkspaceCommand(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -408,7 +416,8 @@ func TestExecWorkspaceCommand(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/"+workspaceID+"/exec", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	h.ExecWorkspaceCommand(rec, req)
@@ -451,6 +460,7 @@ func TestExecWorkspaceCommand_Timeout(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -462,7 +472,8 @@ func TestExecWorkspaceCommand_Timeout(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/"+workspaceID+"/exec", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	start := time.Now()
@@ -494,6 +505,7 @@ func TestExecWorkspaceCommand_DefaultPolicyRequiresApproval(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -505,7 +517,8 @@ func TestExecWorkspaceCommand_DefaultPolicyRequiresApproval(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/"+workspaceID+"/exec", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	h.ExecWorkspaceCommand(rec, req)
@@ -542,6 +555,7 @@ func TestApplyWorkspacePatch(t *testing.T) {
 	exec.Command("git", "-C", workspacePath, "commit", "-m", "initial").Run()
 
 	workspaceID := "ws-1"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -559,7 +573,7 @@ func TestApplyWorkspacePatch(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/workspaces/"+workspaceID+"/patch", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ApplyWorkspacePatch(rec, req)
@@ -591,6 +605,7 @@ func TestStartWorkspaceService(t *testing.T) {
 	t.Setenv("WORKSPACE_BASE_DIR", stateDir)
 
 	workspaceID := "ws-service"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
@@ -601,6 +616,8 @@ func TestStartWorkspaceService(t *testing.T) {
 		Name:    "web",
 	})
 	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/service", workspaceID, bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	h.StartWorkspaceService(rec, req)
@@ -641,12 +658,15 @@ func TestStartWorkspaceService(t *testing.T) {
 		t.Fatalf("write workspace-controlled pid: %v", err)
 	}
 
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
 
 	stopBody, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
 	stopReq := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/service/stop", workspaceID, bytes.NewReader(stopBody))
+	stopReq = stopReq.WithContext(withTestUser(stopReq.Context()))
+	stopReq = stopReq.WithContext(auth.WithUser(stopReq.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	stopRec := httptest.NewRecorder()
 
 	h.StopWorkspaceService(stopRec, stopReq)
@@ -669,11 +689,15 @@ func TestStartWorkspaceServiceRejectsInvalidNameBeforeLookup(t *testing.T) {
 	h, mock, cleanupDB := setupTest(t)
 	defer cleanupDB()
 
+	expectAuthorizeWorkspace(mock, "ws-service")
+
 	body, _ := json.Marshal(StartServiceRequest{
 		Command: "npm run dev",
 		Name:    "../bad",
 	})
 	req := workspaceRequest(http.MethodPost, "/workspaces/ws-service/service", "ws-service", bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	h.StartWorkspaceService(rec, req)
@@ -697,12 +721,15 @@ func TestStopWorkspaceServiceDefaultPolicyRequiresApproval(t *testing.T) {
 	defer cleanupWS()
 
 	workspaceID := "ws-service"
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
 
 	body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
 	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/stop-service", workspaceID, bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 	rec := httptest.NewRecorder()
 
 	h.StopWorkspaceService(rec, req)
@@ -725,6 +752,7 @@ func TestRuntimeWorkspaceServiceOperationsUseProvider(t *testing.T) {
 
 		body, _ := json.Marshal(StartServiceRequest{Command: "npm run dev", Port: 3000, Name: "web"})
 		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service", "ws-runtime", bytes.NewReader(body))
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 		rec := httptest.NewRecorder()
 
 		h.StartWorkspaceService(rec, req)
@@ -753,6 +781,7 @@ func TestRuntimeWorkspaceServiceOperationsUseProvider(t *testing.T) {
 
 		body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
 		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service/stop", "ws-runtime", bytes.NewReader(body))
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 		rec := httptest.NewRecorder()
 
 		h.StopWorkspaceService(rec, req)
@@ -781,6 +810,7 @@ func TestRuntimeWorkspaceServiceOperationsUseProvider(t *testing.T) {
 
 		body, _ := json.Marshal(StopServiceRequest{ServiceID: "web"})
 		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/service/stop", "ws-runtime", bytes.NewReader(body))
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 		rec := httptest.NewRecorder()
 
 		h.StopWorkspaceService(rec, req)
@@ -872,6 +902,7 @@ func TestRuntimeWorkspaceFileOperationsUseProvider(t *testing.T) {
 
 		body, _ := json.Marshal(ExecRequest{Command: "echo hello", Timeout: 5})
 		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/exec", "ws-runtime", bytes.NewReader(body))
+		req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{UserID: "user-1", OrgID: "org-1", Role: "owner"}))
 		rec := httptest.NewRecorder()
 		h.ExecWorkspaceCommand(rec, req)
 
@@ -922,9 +953,21 @@ func setupWorkspaceAuditDB(t *testing.T) *sql.DB {
 		t.Fatalf("open sqlite: %v", err)
 	}
 	_, err = db.Exec(`
+		CREATE TABLE projects (
+			id TEXT PRIMARY KEY,
+			organization_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			deleted_at DATETIME
+		);
+		CREATE TABLE repositories (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
+			deleted_at DATETIME
+		);
 		CREATE TABLE workspaces (
 			id TEXT PRIMARY KEY,
 			worktree_path TEXT,
+			repository_id TEXT,
 			runtime_provider TEXT,
 			runtime_session_id TEXT,
 			status TEXT,
@@ -941,6 +984,8 @@ func setupWorkspaceAuditDB(t *testing.T) *sql.DB {
 			details TEXT,
 			created_at DATETIME
 		);
+		INSERT INTO projects (id, organization_id, name) VALUES ('proj-audit', '22222222-2222-2222-2222-222222222222', 'Audit Project');
+		INSERT INTO repositories (id, project_id) VALUES ('repo-audit', 'proj-audit');
 	`)
 	if err != nil {
 		_ = db.Close()
@@ -950,6 +995,7 @@ func setupWorkspaceAuditDB(t *testing.T) *sql.DB {
 }
 
 func expectDockerRuntimeWorkspace(mock sqlmock.Sqlmock, workspaceID string) {
+	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
 		WithArgs(workspaceID).
 		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(nil))
@@ -964,7 +1010,8 @@ func workspaceRequest(method, target, workspaceID string, body io.Reader) *http.
 	req := httptest.NewRequest(method, target, body)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", workspaceID)
-	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	return req.WithContext(withTestUser(req.Context()))
 }
 
 type fakeWorkspaceRuntimeProvider struct {

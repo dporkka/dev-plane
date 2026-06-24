@@ -143,7 +143,7 @@ func (e *Engine) RecordUsage(ctx context.Context, runID, taskID, model, provider
 
 	_, err := e.db.ExecContext(ctx, `
 		INSERT INTO model_usage (
-			id, run_id, task_id, model, provider,
+			id, agent_run_id, task_id, model, provider,
 			prompt_tokens, completion_tokens, cost, latency_ms, created_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
@@ -168,7 +168,7 @@ func (e *Engine) GetDailySpend(ctx context.Context, orgID string) (float64, erro
 	err := e.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost), 0)
 		FROM model_usage mu
-		JOIN agent_runs ar ON mu.run_id = ar.id
+		JOIN agent_runs ar ON mu.agent_run_id = ar.id
 		WHERE ar.organization_id = $1
 		  AND mu.created_at >= $2
 	`, orgID, since).Scan(&total)
@@ -215,7 +215,7 @@ func (e *Engine) GetRunCost(ctx context.Context, runID string) (float64, error) 
 	err := e.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost), 0)
 		FROM model_usage
-		WHERE run_id = $1
+		WHERE agent_run_id = $1
 	`, runID).Scan(&total)
 
 	if err != nil {
@@ -238,7 +238,7 @@ func (e *Engine) GetTaskCost(ctx context.Context, taskID string) (float64, error
 	err := e.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost), 0)
 		FROM model_usage mu
-		JOIN agent_runs ar ON mu.run_id = ar.id
+		JOIN agent_runs ar ON mu.agent_run_id = ar.id
 		WHERE ar.task_id = $1
 	`, taskID).Scan(&total)
 
@@ -276,7 +276,7 @@ func (e *Engine) GetPeriodSpend(ctx context.Context, orgID string, period string
 	err := e.db.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost), 0)
 		FROM model_usage mu
-		JOIN agent_runs ar ON mu.run_id = ar.id
+		JOIN agent_runs ar ON mu.agent_run_id = ar.id
 		WHERE ar.organization_id = $1
 		  AND mu.created_at >= $2
 	`, orgID, since).Scan(&total)

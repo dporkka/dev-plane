@@ -9,7 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
 )
@@ -77,9 +77,19 @@ func scanApprovalRow(scanner interface{ Scan(dest ...any) error }) (Approval, er
 // ListApprovals returns all approvals for a task.
 func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	taskID := chi.URLParam(r, "taskID")
 	if taskID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -119,9 +129,19 @@ func (h *Handler) ListApprovals(w http.ResponseWriter, r *http.Request) {
 // ListOrganizationApprovals returns all pending approvals across an organization's projects.
 func (h *Handler) ListOrganizationApprovals(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 
@@ -163,15 +183,19 @@ func (h *Handler) ListOrganizationApprovals(w http.ResponseWriter, r *http.Reque
 // RespondApproval processes an approval response (approved or rejected).
 func (h *Handler) RespondApproval(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("approval id is required"))
 		return
 	}
 
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
+	if err := authz.AuthorizeApproval(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("approval not found"))
 		return
 	}
 

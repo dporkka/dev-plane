@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -35,9 +36,19 @@ type CreateProjectRequest struct {
 // ListProjects returns all projects for an organization.
 func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 
@@ -80,9 +91,19 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 // CreateProject creates a new project within an organization.
 func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	orgID := chi.URLParam(r, "orgID")
 	if orgID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("organization id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
 		return
 	}
 
@@ -127,9 +148,19 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 // GetProject returns a single project by ID.
 func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeProject(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 

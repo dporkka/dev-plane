@@ -10,8 +10,6 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
-
-	"github.com/ai-dev-control-plane/api/internal/auth"
 )
 
 func TestConnectRepository(t *testing.T) {
@@ -20,12 +18,13 @@ func TestConnectRepository(t *testing.T) {
 
 	projectID := "proj-1"
 	body, _ := json.Marshal(ConnectRepositoryRequest{Owner: "dporkka", Name: "dev-plane"})
+	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO repositories").
 		WithArgs(sqlmock.AnyArg(), projectID, "dporkka", "dev-plane", "dporkka/dev-plane", "https://github.com/dporkka/dev-plane.git", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
-	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body)).
-		WithContext(auth.WithUser(context.Background(), &auth.Claims{UserID: "user-1"}))
+	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("projectID", projectID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
@@ -67,8 +66,9 @@ func TestConnectRepositoryRejectsInvalidOwnerAndName(t *testing.T) {
 
 			projectID := "proj-1"
 			body, _ := json.Marshal(tc.req)
-			req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body)).
-				WithContext(auth.WithUser(context.Background(), &auth.Claims{UserID: "user-1"}))
+			expectAuthorizeProject(mock, projectID)
+			req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
+			req = req.WithContext(withTestUser(req.Context()))
 			rctx := chi.NewRouteContext()
 			rctx.URLParams.Add("projectID", projectID)
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))

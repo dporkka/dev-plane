@@ -59,6 +59,15 @@ const (
 // PR event subject constants.
 const (
 	PRCreated = "pr.created"
+	PRMerged  = "pr.merged"
+)
+
+// Deploy event subject constants.
+const (
+	DeployTriggered = "deploy.triggered"
+	DeployStarted   = "deploy.started"
+	DeploySucceeded = "deploy.succeeded"
+	DeployFailed    = "deploy.failed"
 )
 
 // TaskEvent is the payload for task lifecycle events.
@@ -118,4 +127,16 @@ type RunEvent struct {
 	Status   string          `json:"status"`
 	WorkerID string          `json:"worker_id,omitempty"`
 	Data     json.RawMessage `json:"data,omitempty"`
+}
+
+// DeployEvent is the payload for deployment lifecycle events.
+type DeployEvent struct {
+	DeploymentID string          `json:"deployment_id"`
+	TaskID       string          `json:"task_id"`
+	Environment  string          `json:"environment"`
+	Ref          string          `json:"ref"`
+	Status       string          `json:"status"`
+	URL          string          `json:"url,omitempty"`
+	Provider     string          `json:"provider,omitempty"`
+	Data         json.RawMessage `json:"data,omitempty"`
 }

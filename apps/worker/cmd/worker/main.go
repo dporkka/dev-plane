@@ -35,6 +35,7 @@ import (
 	"github.com/ai-dev-control-plane/runtimes"
 
 	"github.com/ai-dev-control-plane/worker/internal/handlers"
+	"github.com/ai-dev-control-plane/worker/internal/webhooks"
 )
 
 func main() {
@@ -123,6 +124,8 @@ func main() {
 	reviewService := reviewer.NewReviewer(database.DB, logger)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
+	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus)
+	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
 
 	// Set up subscriptions - one per stream to avoid consumer conflicts
 	ctx := &shutdownContext{logger: logger}
@@ -204,6 +207,47 @@ func main() {
 	ctx.addSubscription(subApprovalRejected)
 	logger.Info("subscribed to approval.rejected")
 
+	// approval.requested -> notify integrations
+	subApprovalRequested, err := eventBus.Subscribe("approval.requested", func(msg *nats.Msg) {
+		logger.Debug("received approval.requested event")
+		if err := notificationHandler.HandleApprovalRequested(msg); err != nil {
+			logger.Error("failed to handle approval requested notification", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to approval.requested", "error", err)
+		os.Exit(1)
+	}
+	ctx.addSubscription(subApprovalRequested)
+	logger.Info("subscribed to approval.requested")
+
+	// tasks.completed / tasks.failed -> notify integrations
+	subTaskCompleted, err := eventBus.Subscribe("tasks.completed", func(msg *nats.Msg) {
+		logger.Debug("received tasks.completed event")
+		if err := notificationHandler.HandleTaskCompleted(msg); err != nil {
+			logger.Error("failed to handle task completed notification", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to tasks.completed", "error", err)
+		os.Exit(1)
+	}
+	ctx.addSubscription(subTaskCompleted)
+	logger.Info("subscribed to tasks.completed")
+
+	subTaskFailed, err := eventBus.Subscribe("tasks.failed", func(msg *nats.Msg) {
+		logger.Debug("received tasks.failed event")
+		if err := notificationHandler.HandleTaskFailed(msg); err != nil {
+			logger.Error("failed to handle task failed notification", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to tasks.failed", "error", err)
+		os.Exit(1)
+	}
+	ctx.addSubscription(subTaskFailed)
+	logger.Info("subscribed to tasks.failed")
+
 	// Also subscribe to runs.triggered for agent execution
 	subRunTriggered, err := eventBus.Subscribe("runs.triggered", func(msg *nats.Msg) {
 		logger.Debug("received runs.triggered event", "data", string(msg.Data))
@@ -217,6 +261,20 @@ func main() {
 	}
 	ctx.addSubscription(subRunTriggered)
 	logger.Info("subscribed to runs.triggered")
+
+	// webhooks.* -> process incoming webhook events
+	subWebhooks, err := eventBus.Subscribe("webhooks.*", func(msg *nats.Msg) {
+		logger.Debug("received webhook event", "subject", msg.Subject)
+		if err := webhookConsumer.Handle(msg); err != nil {
+			logger.Error("failed to handle webhook event", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to webhooks.*", "error", err)
+		os.Exit(1)
+	}
+	ctx.addSubscription(subWebhooks)
+	logger.Info("subscribed to webhooks.*")
 
 	logger.Info("worker service is running, waiting for events...")
 

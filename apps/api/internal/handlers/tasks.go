@@ -11,7 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
 )
@@ -87,7 +87,8 @@ var validStatusTransitions = map[string][]string{
 	"approved":    {"running", "cancelled"},
 	"running":     {"reviewing", "failed", "cancelled"},
 	"reviewing":   {"pr_created", "running", "failed", "cancelled"},
-	"pr_created":  {"done", "running", "cancelled"},
+	"pr_created":  {"deploying", "done", "running", "cancelled"},
+	"deploying":   {"done", "failed", "cancelled"},
 	"done":        {},
 	"failed":      {"backlog", "running", "cancelled"},
 	"cancelled":   {"backlog"},
@@ -109,9 +110,19 @@ func isValidTransition(from, to string) bool {
 // ListTasks returns all tasks for a project.
 func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeProject(ctx, h.db, user, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 
@@ -159,15 +170,19 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 // CreateTask creates a new task.
 func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	projectID := chi.URLParam(r, "projectID")
 	if projectID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("project id is required"))
 		return
 	}
 
-	user := auth.UserFromContext(ctx)
-	if user == nil {
-		respond.Error(w, http.StatusUnauthorized, errors.New("unauthorized"))
+	if err := authz.AuthorizeProject(ctx, h.db, user, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("project not found"))
 		return
 	}
 
@@ -212,9 +227,19 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 // GetTask returns a single task by ID.
 func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -242,9 +267,19 @@ func (h *Handler) GetTask(w http.ResponseWriter, r *http.Request) {
 // UpdateTask updates a task's fields.
 func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -296,9 +331,19 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 // ApproveSpec transitions a task from spec_review to approved.
 func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -334,9 +379,19 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 // CancelTask transitions a task to cancelled status.
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 

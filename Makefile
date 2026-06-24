@@ -194,10 +194,32 @@ test-race: ## Run Go tests with race detector
 		cd $$app && go test ./... -race && cd - > /dev/null || exit 1; \
 	done
 
+integration-test: ## Run credential-dependent integration tests (skip if no credentials)
+	@echo "$(GREEN)Running integration tests...$(RESET)"
+	cd packages/gateway && go test -tags=integration ./... -run Integration -timeout 60s
+	cd apps/api && go test -tags=integration ./internal/modelrouter/... -run Integration -timeout 60s
+
 test-coverage: ## Run tests with coverage report
 	@echo "$(GREEN)Running tests with coverage...$(RESET)"
 	@mkdir -p $(BIN_DIR)
-	go test ./packages/... ./apps/... -coverprofile=$(BIN_DIR)/coverage.out
+	@rm -f $(BIN_DIR)/coverage.*.out $(BIN_DIR)/coverage.out $(BIN_DIR)/coverage.html
+	@ABS_BIN=$$(cd $(BIN_DIR) && pwd); \
+	idx=0; \
+	for pkg in $(GO_PACKAGES) $(GO_APPS); do \
+		idx=$$((idx + 1)); \
+		outfile="$$ABS_BIN/coverage.$$idx.$$(basename $$pkg).out"; \
+		echo "$(BLUE)[coverage]$(RESET) $$pkg"; \
+		cd $$pkg && go test ./... -coverprofile=$$outfile >/dev/null 2>&1 || exit 1; \
+		cd - > /dev/null; \
+	done; \
+	mode=""; \
+	for f in $(BIN_DIR)/coverage.*.out; do \
+		if [ -z "$$mode" ]; then \
+			mode=$$(head -n1 "$$f"); \
+			echo "$$mode" > $(BIN_DIR)/coverage.out; \
+		fi; \
+		tail -n +2 "$$f" >> $(BIN_DIR)/coverage.out; \
+	done; \
 	go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
 	@echo "$(GREEN)Coverage report: $(BIN_DIR)/coverage.html$(RESET)"
 

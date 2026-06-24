@@ -59,7 +59,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`
 		CREATE TABLE model_usage (
 			id TEXT PRIMARY KEY,
-			run_id TEXT,
+			agent_run_id TEXT,
 			task_id TEXT,
 			model TEXT,
 			provider TEXT,
@@ -108,7 +108,7 @@ func TestCheckRun_AllLimitsPass(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
 		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
-		INSERT INTO model_usage (id, run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
 	if err != nil {
@@ -342,7 +342,7 @@ func TestCheckRun_DailySpendExceeded(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
 		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
-		INSERT INTO model_usage (id, run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 12.00, 1000, datetime('now'));
 	`)
 	if err != nil {
@@ -401,7 +401,7 @@ func TestCheckRun_ConcurrentAgentsExceeded(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
 		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
-		INSERT INTO model_usage (id, run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
 	if err != nil {
@@ -466,7 +466,7 @@ func TestRecordUsage(t *testing.T) {
 
 	// Verify the record was inserted
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM model_usage WHERE run_id = ? AND task_id = ? AND model = ?",
+	err = db.QueryRow("SELECT COUNT(*) FROM model_usage WHERE agent_run_id = ? AND task_id = ? AND model = ?",
 		"run-1", "task-1", "gpt-4o").Scan(&count)
 	if err != nil {
 		t.Fatalf("query count: %v", err)
@@ -653,7 +653,7 @@ func TestCheckRun_MultipleViolations(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
 		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
-		INSERT INTO model_usage (id, run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 15.00, 1000, datetime('now'));
 	`)
 	if err != nil {
@@ -735,7 +735,7 @@ func seedPassingDBData(t *testing.T, db *sql.DB) {
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
 		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
-		INSERT INTO model_usage (id, run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
 	if err != nil {

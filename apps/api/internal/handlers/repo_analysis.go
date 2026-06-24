@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	repointel "github.com/ai-dev-control-plane/repo-intel"
 
 	"github.com/ai-dev-control-plane/api/internal/respond"
@@ -58,9 +59,19 @@ type DirEntry struct {
 // package managers, frameworks, and test commands.
 func (h *Handler) AnalyzeRepo(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	repoID := chi.URLParam(r, "id")
 	if repoID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("repository id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeRepository(ctx, h.db, user, repoID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
 

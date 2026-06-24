@@ -1,6 +1,9 @@
 package agents
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // RoleConfig defines the configuration for an agent role.
 type RoleConfig struct {
@@ -111,7 +114,8 @@ func SystemPromptFor(role AgentRole, context map[string]string) string {
 }
 
 func replacePlaceholder(text, key, val string) string {
-	return fmt.Sprintf("%s", text) // Placeholder - in production use text/template
+	placeholder := fmt.Sprintf("{{%s}}", key)
+	return strings.ReplaceAll(text, placeholder, val)
 }
 
 // System prompt templates for each role.

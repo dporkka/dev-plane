@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 )
 
@@ -57,9 +58,19 @@ type AgentStep struct {
 // ListAgentRuns returns all agent runs for a task.
 func (h *Handler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	taskID := chi.URLParam(r, "taskID")
 	if taskID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
 		return
 	}
 
@@ -100,9 +111,19 @@ func (h *Handler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
 // GetAgentRun returns a single agent run by ID.
 func (h *Handler) GetAgentRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 
@@ -129,9 +150,19 @@ func (h *Handler) GetAgentRun(w http.ResponseWriter, r *http.Request) {
 // ListAgentSteps returns all steps for an agent run.
 func (h *Handler) ListAgentSteps(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "id")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 
@@ -203,9 +234,19 @@ func (h *Handler) ListAgentSteps(w http.ResponseWriter, r *http.Request) {
 // CancelAgentRun cancels a running or pending agent run.
 func (h *Handler) CancelAgentRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	id := chi.URLParam(r, "id")
 	if id == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 
@@ -235,9 +276,19 @@ func (h *Handler) CancelAgentRun(w http.ResponseWriter, r *http.Request) {
 // StreamAgentRun streams agent run updates via SSE.
 func (h *Handler) StreamAgentRun(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	runID := chi.URLParam(r, "id")
 	if runID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("run id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeAgentRun(ctx, h.db, user, runID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
 		return
 	}
 

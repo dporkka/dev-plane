@@ -477,3 +477,70 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_secret_values_active
     WHERE active = true;
 CREATE INDEX IF NOT EXISTS idx_secret_values_reference ON secret_values(secret_reference_id);
 CREATE INDEX IF NOT EXISTS idx_secret_values_key_id ON secret_values(key_id);
+
+-- =====================================================
+-- 17. project_configs
+-- =====================================================
+CREATE TABLE IF NOT EXISTS project_configs (
+    id UUID PRIMARY KEY,
+    repository_id UUID NOT NULL REFERENCES repositories(id),
+    package_manager TEXT,
+    framework TEXT,
+    test_command TEXT,
+    lint_command TEXT,
+    typecheck_command TEXT,
+    dev_command TEXT,
+    build_command TEXT,
+    has_dockerfile BOOLEAN DEFAULT false,
+    has_devcontainer BOOLEAN DEFAULT false,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_configs_repo_id ON project_configs(repository_id);
+
+-- =====================================================
+-- 18. task_specs
+-- =====================================================
+CREATE TABLE IF NOT EXISTS task_specs (
+    id UUID PRIMARY KEY,
+    task_id UUID NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE CASCADE,
+    summary TEXT,
+    problem_statement TEXT,
+    implementation_plan JSONB DEFAULT '[]',
+    files_to_change JSONB DEFAULT '[]',
+    files_to_create JSONB DEFAULT '[]',
+    acceptance_criteria JSONB DEFAULT '[]',
+    test_plan TEXT,
+    risk_assessment TEXT,
+    rollback_plan TEXT,
+    required_approvals JSONB DEFAULT '[]',
+    estimated_cost DECIMAL(10,6),
+    recommended_agent TEXT,
+    generated_by TEXT,
+    generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_specs_task_id ON task_specs(task_id);
+
+-- =====================================================
+-- 19. detection_results
+-- =====================================================
+CREATE TABLE IF NOT EXISTS detection_results (
+    id UUID PRIMARY KEY,
+    repository_id UUID NOT NULL REFERENCES repositories(id),
+    workspace_id UUID REFERENCES workspaces(id),
+    package_manager TEXT,
+    framework TEXT,
+    test_command TEXT,
+    lint_command TEXT,
+    typecheck_command TEXT,
+    dev_command TEXT,
+    build_command TEXT,
+    has_dockerfile BOOLEAN DEFAULT false,
+    has_devcontainer BOOLEAN DEFAULT false,
+    raw_output TEXT,
+    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_detection_results_repo ON detection_results(repository_id);

@@ -32,6 +32,8 @@ func TestListAgentRuns(t *testing.T) {
 
 	taskID := "task-1"
 	now := time.Now()
+
+	expectAuthorizeTask(mock, taskID)
 	rows := sqlmock.NewRows(agentRunCols).
 		AddRow("run-1", taskID, nil, "implementer", nil, nil, "completed",
 			nil, nil, 100, 50,
@@ -47,7 +49,7 @@ func TestListAgentRuns(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/runs", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("taskID", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListAgentRuns(rec, req)
@@ -99,6 +101,7 @@ func TestGetAgentRun(t *testing.T) {
 	now := time.Now()
 	rows := agentRunRow(runID, taskID, "implementer", "completed", now)
 
+	expectAuthorizeAgentRun(mock, runID)
 	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
 		WillReturnRows(rows)
@@ -106,7 +109,7 @@ func TestGetAgentRun(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetAgentRun(rec, req)
@@ -142,6 +145,7 @@ func TestGetAgentRun_NotFound(t *testing.T) {
 	defer cleanup()
 
 	runID := "nonexistent"
+	expectAuthorizeAgentRun(mock, runID)
 	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
 		WillReturnError(sql.ErrNoRows)
@@ -149,7 +153,7 @@ func TestGetAgentRun_NotFound(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.GetAgentRun(rec, req)
@@ -169,6 +173,8 @@ func TestListAgentSteps(t *testing.T) {
 
 	runID := "run-1"
 	now := time.Now()
+
+	expectAuthorizeAgentRun(mock, runID)
 	rows := sqlmock.NewRows([]string{
 		"id", "agent_run_id", "step_number", "step_type", "status", "content",
 		"tool_name", "tool_input", "tool_output", "command", "command_output",
@@ -188,7 +194,7 @@ func TestListAgentSteps(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID+"/steps", nil)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("id", runID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
 	rec := httptest.NewRecorder()
 
 	h.ListAgentSteps(rec, req)

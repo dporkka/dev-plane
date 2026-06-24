@@ -546,8 +546,8 @@ func TestDefaultConfig(t *testing.T) {
 	if config.MaxCostPer1K != 0.10 {
 		t.Errorf("expected max cost 0.10, got %.4f", config.MaxCostPer1K)
 	}
-	if len(config.ProviderPriority) != 5 {
-		t.Errorf("expected 5 providers in priority, got %d", len(config.ProviderPriority))
+	if len(config.ProviderPriority) != 6 {
+		t.Errorf("expected 6 providers in priority, got %d", len(config.ProviderPriority))
 	}
 }
 
@@ -588,6 +588,12 @@ func TestProvider_Models(t *testing.T) {
 			provider:   NewFireworksProvider(),
 			minModels:  2,
 			modelNames: []string{"accounts/fireworks/models/deepseek-v3", "accounts/fireworks/models/llama-v3p3-70b-instruct", "accounts/fireworks/models/qwen2p5-72b-instruct"},
+		},
+		{
+			name:       "Bifrost",
+			provider:   NewBifrostProvider(),
+			minModels:  2,
+			modelNames: []string{"bifrost/gpt-4o", "bifrost/claude-sonnet", "bifrost/gemini-flash"},
 		},
 	}
 
@@ -692,6 +698,22 @@ func TestProvider_IsAvailable(t *testing.T) {
 			t.Error("expected Fireworks provider to be available with API key")
 		}
 	})
+
+	t.Run("Bifrost without env var", func(t *testing.T) {
+		t.Setenv("BIFROST_API_KEY", "")
+		p := NewBifrostProvider()
+		if p.IsAvailable() {
+			t.Error("expected Bifrost provider to be unavailable without API key")
+		}
+	})
+
+	t.Run("Bifrost with env var", func(t *testing.T) {
+		t.Setenv("BIFROST_API_KEY", "test-key-bifrost")
+		p := NewBifrostProvider()
+		if !p.IsAvailable() {
+			t.Error("expected Bifrost provider to be available with API key")
+		}
+	})
 }
 
 // TestProvider_Name verifies provider names.
@@ -705,6 +727,7 @@ func TestProvider_Name(t *testing.T) {
 		{NewGeminiProvider(), "gemini"},
 		{NewGroqProvider(), "groq"},
 		{NewFireworksProvider(), "fireworks"},
+		{NewBifrostProvider(), "bifrost"},
 	}
 
 	for _, tt := range tests {
@@ -736,13 +759,13 @@ func TestProvider_Call_NotAvailable(t *testing.T) {
 // TestAllProviders returns the expected list of providers.
 func TestAllProviders(t *testing.T) {
 	providers := AllProviders()
-	if len(providers) != 5 {
-		t.Errorf("expected 5 providers, got %d", len(providers))
+	if len(providers) != 6 {
+		t.Errorf("expected 6 providers, got %d", len(providers))
 	}
 
 	expected := map[string]bool{
 		"openai": false, "anthropic": false, "gemini": false,
-		"groq": false, "fireworks": false,
+		"groq": false, "fireworks": false, "bifrost": false,
 	}
 	for _, p := range providers {
 		expected[p.Name()] = true

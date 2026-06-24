@@ -242,7 +242,7 @@ func buildComponents() Components {
 					"source_id":             {Type: "string", Nullable: true},
 					"title":                 {Type: "string"},
 					"description":           {Type: "string", Nullable: true},
-					"status":                {Type: "string", Enum: []interface{}{"backlog", "spec_review", "approved", "running", "reviewing", "pr_created", "done", "failed", "cancelled"}},
+					"status":                {Type: "string", Enum: []interface{}{"backlog", "spec_review", "approved", "running", "reviewing", "pr_created", "deploying", "done", "failed", "cancelled"}},
 					"priority":              {Type: "string", Enum: []interface{}{"low", "medium", "high", "urgent"}},
 					"risk_level":            {Type: "string", Enum: []interface{}{"low", "medium", "high", "critical"}},
 					"target_branch":         {Type: "string"},
@@ -426,7 +426,7 @@ func buildComponents() Components {
 					"description": {Type: "string"},
 					"priority":    {Type: "string", Enum: []interface{}{"low", "medium", "high", "urgent"}},
 					"risk_level":  {Type: "string", Enum: []interface{}{"low", "medium", "high", "critical"}},
-					"status":      {Type: "string", Enum: []interface{}{"backlog", "spec_review", "approved", "running", "reviewing", "pr_created", "done", "failed", "cancelled"}},
+					"status":      {Type: "string", Enum: []interface{}{"backlog", "spec_review", "approved", "running", "reviewing", "pr_created", "deploying", "done", "failed", "cancelled"}},
 				},
 			},
 			"CreateProjectRequest": {
@@ -482,6 +482,35 @@ func buildComponents() Components {
 					"merged_at":     {Type: "string", Format: "date-time", Nullable: true},
 					"created_at":    {Type: "string", Format: "date-time"},
 					"updated_at":    {Type: "string", Format: "date-time"},
+				},
+			},
+			"MergePullRequestRequest": {
+				Type: "object",
+				Properties: map[string]*Schema{
+					"merge_method": {Type: "string", Enum: []interface{}{"merge", "squash", "rebase"}, Nullable: true},
+					"sha":          {Type: "string", Nullable: true},
+				},
+			},
+			"DeployTaskRequest": {
+				Type:     "object",
+				Required: []string{"environment"},
+				Properties: map[string]*Schema{
+					"environment": {Type: "string"},
+					"ref":         {Type: "string", Nullable: true},
+				},
+			},
+			"DeploymentResponse": {
+				Type:     "object",
+				Required: []string{"id", "task_id", "environment", "ref", "provider", "status", "created_at"},
+				Properties: map[string]*Schema{
+					"id":          {Type: "string", Format: "uuid"},
+					"task_id":     {Type: "string", Format: "uuid"},
+					"environment": {Type: "string"},
+					"ref":         {Type: "string"},
+					"provider":    {Type: "string"},
+					"status":      {Type: "string"},
+					"url":         {Type: "string", Nullable: true},
+					"created_at":  {Type: "string", Format: "date-time"},
 				},
 			},
 			"Budget": {
@@ -1177,6 +1206,67 @@ func buildPaths() map[string]PathItem {
 			},
 			Responses: map[string]Response{
 				"204": {Description: "Integration deleted"},
+			},
+		},
+	}
+
+	// Pull Request merge
+	paths["/api/v1/pull-requests/{id}/merge"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Merge a pull request",
+			Description: "Merges a pull request on GitHub after authorization and transitions the task to done.",
+			OperationID: "mergePullRequest",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/MergePullRequestRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Pull request merged", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
+				}},
+				"400": {Description: "Invalid request or task status"},
+				"403": {Description: "Merge denied by policy"},
+				"404": {Description: "Pull request not found"},
+				"409": {Description: "Pull request already merged or merge conflict"},
+				"423": {Description: "Merge requires approval"},
+				"502": {Description: "GitHub API error"},
+				"503": {Description: "GitHub token not configured"},
+			},
+		},
+	}
+
+	// Task deploy
+	paths["/api/v1/tasks/{id}/deploy"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Tasks"},
+			Summary:     "Deploy a task",
+			Description: "Triggers a deployment for a task after capability authorization and records a deployment.",
+			OperationID: "deployTask",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/DeployTaskRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Deployment created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/DeploymentResponse"}},
+				}},
+				"400": {Description: "Invalid request or task status"},
+				"403": {Description: "Deploy denied by policy"},
+				"404": {Description: "Task or repository not found"},
+				"423": {Description: "Deploy requires approval"},
+				"502": {Description: "Deployment provider error"},
+				"503": {Description: "Deploy token not configured"},
 			},
 		},
 	}

@@ -62,3 +62,25 @@ func TestSystemPromptFor_Unknown(t *testing.T) {
 	// Generic prompt should contain a generic fallback message
 	assertTrue(t, len(prompt) > 0, "generic prompt should have content")
 }
+
+func TestReplacePlaceholder(t *testing.T) {
+	t.Run("replaces single occurrence", func(t *testing.T) {
+		got := replacePlaceholder("Hello {{name}}!", "name", "World")
+		assertEqual(t, got, "Hello World!")
+	})
+
+	t.Run("replaces multiple occurrences", func(t *testing.T) {
+		got := replacePlaceholder("{{greeting}} {{name}}! {{greeting}} again!", "greeting", "Hi")
+		assertEqual(t, got, "Hi {{name}}! Hi again!")
+	})
+
+	t.Run("no placeholder leaves text unchanged", func(t *testing.T) {
+		got := replacePlaceholder("no placeholders here", "key", "value")
+		assertEqual(t, got, "no placeholders here")
+	})
+
+	t.Run("empty value removes placeholder", func(t *testing.T) {
+		got := replacePlaceholder("prefix{{key}}suffix", "key", "")
+		assertEqual(t, got, "prefixsuffix")
+	})
+}

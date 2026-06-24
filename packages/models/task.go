@@ -18,6 +18,7 @@ const (
 	TaskStatusRunning    TaskStatus = "running"
 	TaskStatusReviewing  TaskStatus = "reviewing"
 	TaskStatusPRCreated  TaskStatus = "pr_created"
+	TaskStatusDeploying  TaskStatus = "deploying"
 	TaskStatusDone       TaskStatus = "done"
 	TaskStatusFailed     TaskStatus = "failed"
 	TaskStatusCancelled  TaskStatus = "cancelled"

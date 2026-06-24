@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/models"
@@ -31,9 +32,19 @@ import (
 // ListFiles lists files in a workspace directory.
 func (h *Handler) ListWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -97,9 +108,19 @@ func (h *Handler) ListWorkspaceFiles(w http.ResponseWriter, r *http.Request) {
 // ReadWorkspaceFile reads the content of a file in a workspace.
 func (h *Handler) ReadWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -164,9 +185,19 @@ type WriteFileRequest struct {
 // WriteWorkspaceFile writes content to a file in a workspace.
 func (h *Handler) WriteWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -226,9 +257,19 @@ type PatchRequest struct {
 // ApplyWorkspacePatch applies a git patch to the workspace.
 func (h *Handler) ApplyWorkspacePatch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -288,9 +329,19 @@ type ExecRequest struct {
 // ExecWorkspaceCommand executes a shell command in the workspace directory.
 func (h *Handler) ExecWorkspaceCommand(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
 
@@ -375,11 +426,22 @@ type StartServiceRequest struct {
 // StartWorkspaceService starts a development service in the workspace.
 func (h *Handler) StartWorkspaceService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
 		return
 	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
+		return
+	}
+
 	var req StartServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
@@ -483,11 +545,22 @@ type StopServiceRequest struct {
 // StopWorkspaceService stops a development service in the workspace.
 func (h *Handler) StopWorkspaceService(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
 	workspaceID := chi.URLParam(r, "id")
 	if workspaceID == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("workspace id is required"))
 		return
 	}
+
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
+		return
+	}
+
 	var req StopServiceRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
