@@ -7,9 +7,9 @@
 .PHONY: dev dev-web dev-api dev-worker dev-runner \
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
-        test test-api test-packages test-race \
-        lint lint-go lint-web \
-        build build-api build-worker build-runner build-web \
+        test test-api test-packages test-race test-sdk \
+        lint lint-go lint-web lint-sdk \
+        build build-api build-worker build-runner build-web build-sdk \
         clean help
 
 # --- Variables ---------------------------------------------------------------
@@ -156,7 +156,7 @@ gen-mock: ## Generate Go mocks (if mockgen is installed)
 
 # --- Testing targets ---------------------------------------------------------
 
-test: ## Run ALL Go tests across all packages
+test: ## Run ALL Go tests across all packages and SDK
 	@echo "$(GREEN)Running all tests...$(RESET)"
 	@for pkg in $(GO_PACKAGES); do \
 		echo "$(BLUE)[test]$(RESET) $$pkg"; \
@@ -166,6 +166,7 @@ test: ## Run ALL Go tests across all packages
 		echo "$(BLUE)[test]$(RESET) $$app"; \
 		cd $$app && go test ./... && cd - > /dev/null || exit 1; \
 	done
+	@$(MAKE) test-sdk
 	@echo "$(GREEN)All tests passed.$(RESET)"
 
 test-api: ## Run API-specific tests with verbose output
@@ -193,6 +194,11 @@ test-race: ## Run Go tests with race detector
 		echo "$(BLUE)[test]$(RESET) $$app"; \
 		cd $$app && go test ./... -race && cd - > /dev/null || exit 1; \
 	done
+
+test-sdk: ## Install deps and test TypeScript SDK (typecheck + tests)
+	@echo "$(BLUE)[test]$(RESET) Installing and testing TypeScript SDK..."
+	cd packages/sdk/typescript && npm ci && npm run typecheck && npm test
+	@echo "$(GREEN)SDK tests passed.$(RESET)"
 
 integration-test: ## Run credential-dependent integration tests (skip if no credentials)
 	@echo "$(GREEN)Running integration tests...$(RESET)"
@@ -247,6 +253,11 @@ lint-web: ## Run npm lint in frontend
 	@echo "$(BLUE)[lint]$(RESET) Running web lint..."
 	cd apps/web && npm run lint
 
+lint-sdk: ## Run TypeScript SDK typecheck
+	@echo "$(BLUE)[lint]$(RESET) Running SDK typecheck..."
+	cd packages/sdk/typescript && npm ci && npm run typecheck
+	@echo "$(GREEN)SDK lint complete.$(RESET)"
+
 lint-fix: ## Run linters with auto-fix
 	@echo "$(BLUE)[lint]$(RESET) Running auto-fix..."
 	cd apps/web && npm run lint -- --fix 2>/dev/null || true
@@ -254,7 +265,7 @@ lint-fix: ## Run linters with auto-fix
 
 # --- Build targets -----------------------------------------------------------
 
-build: build-api build-worker build-runner build-web ## Build all binaries and frontend
+build: build-api build-worker build-runner build-sdk build-web ## Build all binaries, SDK, and frontend
 
 build-api: ## Build API binary --> bin/api
 	@echo "$(BLUE)[build]$(RESET) Building API..."
@@ -274,10 +285,15 @@ build-runner: ## Build runner binary --> bin/runner
 	cd apps/runner && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/runner cmd/runner/main.go
 	@echo "$(GREEN)Runner binary: $(BIN_DIR)/runner$(RESET)"
 
-build-web: ## Build Next.js for production
+build-web: build-sdk ## Build Next.js for production
 	@echo "$(BLUE)[build]$(RESET) Building Next.js..."
 	cd apps/web && npm run build
 	@echo "$(GREEN)Next.js build complete.$(RESET)"
+
+build-sdk: ## Install deps and build TypeScript SDK
+	@echo "$(BLUE)[build]$(RESET) Building TypeScript SDK..."
+	cd packages/sdk/typescript && npm ci && npm run build
+	@echo "$(GREEN)SDK build complete.$(RESET)"
 
 # --- Clean targets -----------------------------------------------------------
 
