@@ -169,6 +169,11 @@ func BuildSpec() *Spec {
 			{Name: "Audit Logs", Description: "Audit trail"},
 			{Name: "Dashboard", Description: "Dashboard and analytics"},
 			{Name: "Health", Description: "Health checks"},
+			{Name: "Pull Requests", Description: "Pull request management"},
+			{Name: "Workspaces", Description: "Workspace and runtime management"},
+			{Name: "Artifacts", Description: "Artifact retrieval"},
+			{Name: "Secrets", Description: "Encrypted secret management"},
+			{Name: "Webhooks", Description: "Incoming webhook providers"},
 		},
 	}
 
@@ -591,6 +596,305 @@ func buildComponents() Components {
 					"last_rotated_at": {Type: "string", Format: "date-time", Nullable: true},
 					"created_at":      {Type: "string", Format: "date-time"},
 					"updated_at":      {Type: "string", Format: "date-time"},
+				},
+			},
+			"Artifact": {
+				Type:     "object",
+				Required: []string{"id", "artifact_type", "file_name", "file_path", "created_at"},
+				Properties: map[string]*Schema{
+					"id":            {Type: "string", Format: "uuid"},
+					"agent_run_id":  {Type: "string", Format: "uuid", Nullable: true},
+					"step_id":       {Type: "string", Format: "uuid", Nullable: true},
+					"artifact_type": {Type: "string"},
+					"file_name":     {Type: "string"},
+					"file_path":     {Type: "string"},
+					"mime_type":     {Type: "string", Nullable: true},
+					"size_bytes":    {Type: "integer", Format: "int64"},
+					"metadata":      {Type: "object", Nullable: true},
+					"created_at":    {Type: "string", Format: "date-time"},
+				},
+			},
+			"CreateBriefHandoffRequest": {
+				Type:     "object",
+				Required: []string{"repository_id"},
+				Properties: map[string]*Schema{
+					"repository_id":       {Type: "string", Format: "uuid"},
+					"brief_project_id":    {Type: "string", Nullable: true},
+					"brief_url":           {Type: "string", Format: "uri", Nullable: true},
+					"brief_zip_url":       {Type: "string", Format: "uri", Nullable: true},
+					"title":               {Type: "string", Nullable: true},
+					"description":         {Type: "string", Nullable: true},
+					"priority":            {Type: "string", Enum: []interface{}{"low", "medium", "high", "urgent"}, Nullable: true},
+					"risk_level":          {Type: "string", Enum: []interface{}{"low", "medium", "high", "critical"}, Nullable: true},
+					"target_branch":       {Type: "string", Nullable: true},
+					"acceptance_criteria": {Type: "array", Items: &Schema{Type: "string"}},
+					"documents": {
+						Type: "array",
+						Items: &Schema{
+							Type: "object",
+							Properties: map[string]*Schema{
+								"slug":    {Type: "string"},
+								"title":   {Type: "string"},
+								"url":     {Type: "string", Format: "uri", Nullable: true},
+								"content": {Type: "string", Nullable: true},
+							},
+						},
+					},
+					"constraints": {Type: "object", Nullable: true},
+				},
+			},
+			"StartRunResponse": {
+				Type:     "object",
+				Required: []string{"run_id", "status"},
+				Properties: map[string]*Schema{
+					"run_id": {Type: "string", Format: "uuid"},
+					"status": {Type: "string", Example: "queued"},
+				},
+			},
+			"RetryRunResponse": {
+				Type:     "object",
+				Required: []string{"run_id", "original_run_id", "status"},
+				Properties: map[string]*Schema{
+					"run_id":          {Type: "string", Format: "uuid"},
+					"original_run_id": {Type: "string", Format: "uuid"},
+					"status":          {Type: "string", Example: "queued"},
+				},
+			},
+			"RunEvent": {
+				Type:     "object",
+				Required: []string{"id", "agent_run_id", "event_type", "status", "created_at"},
+				Properties: map[string]*Schema{
+					"id":           {Type: "string", Format: "uuid"},
+					"agent_run_id": {Type: "string", Format: "uuid"},
+					"event_type":   {Type: "string"},
+					"status":       {Type: "string"},
+					"message":      {Type: "string", Nullable: true},
+					"metadata":     {Type: "object", Nullable: true},
+					"created_at":   {Type: "string", Format: "date-time"},
+				},
+			},
+			"ReviewReport": {
+				Type:     "object",
+				Required: []string{"run_id", "summary", "findings", "risk_level", "approvable", "suggestions", "test_coverage", "security_notes", "diff_summary", "created_at"},
+				Properties: map[string]*Schema{
+					"run_id":         {Type: "string", Format: "uuid"},
+					"summary":        {Type: "string"},
+					"findings":       {Type: "array", Items: &Schema{Ref: "#/components/schemas/ReviewFinding"}},
+					"risk_level":     {Type: "string", Enum: []interface{}{"low", "medium", "high", "critical"}},
+					"approvable":     {Type: "boolean"},
+					"suggestions":    {Type: "array", Items: &Schema{Type: "string"}},
+					"test_coverage":  {Type: "string"},
+					"security_notes": {Type: "string"},
+					"diff_summary":   {Ref: "#/components/schemas/DiffSummary"},
+					"created_at":     {Type: "string", Format: "date-time"},
+				},
+			},
+			"ReviewFinding": {
+				Type:     "object",
+				Required: []string{"severity", "file", "line", "message", "category"},
+				Properties: map[string]*Schema{
+					"severity":   {Type: "string", Enum: []interface{}{"critical", "high", "medium", "low", "info"}},
+					"file":       {Type: "string"},
+					"line":       {Type: "integer"},
+					"message":    {Type: "string"},
+					"category":   {Type: "string", Enum: []interface{}{"correctness", "security", "performance", "style", "testing"}},
+					"suggestion": {Type: "string", Nullable: true},
+				},
+			},
+			"DiffSummary": {
+				Type:     "object",
+				Required: []string{"files_changed", "insertions", "deletions", "files"},
+				Properties: map[string]*Schema{
+					"files_changed": {Type: "integer"},
+					"insertions":    {Type: "integer"},
+					"deletions":     {Type: "integer"},
+					"files":         {Type: "array", Items: &Schema{Ref: "#/components/schemas/FileChange"}},
+				},
+			},
+			"FileChange": {
+				Type:     "object",
+				Required: []string{"path", "status", "insertions", "deletions"},
+				Properties: map[string]*Schema{
+					"path":         {Type: "string"},
+					"status":       {Type: "string", Enum: []interface{}{"added", "modified", "deleted"}},
+					"insertions":   {Type: "integer"},
+					"deletions":    {Type: "integer"},
+					"is_test":      {Type: "boolean"},
+					"is_config":    {Type: "boolean"},
+					"is_migration": {Type: "boolean"},
+				},
+			},
+			"CreatePullRequestRequest": {
+				Type: "object",
+				Properties: map[string]*Schema{
+					"approved": {Type: "boolean", Nullable: true},
+				},
+			},
+			"RepoAnalysis": {
+				Type:     "object",
+				Required: []string{"repository_id", "languages", "package_managers", "frameworks", "test_commands", "build_commands", "entry_points", "has_dockerfile", "has_ci_config", "structure", "analyzed_at"},
+				Properties: map[string]*Schema{
+					"repository_id":    {Type: "string", Format: "uuid"},
+					"languages":        {Type: "array", Items: &Schema{Ref: "#/components/schemas/RepoLanguage"}},
+					"package_managers": {Type: "array", Items: &Schema{Type: "string"}},
+					"frameworks":       {Type: "array", Items: &Schema{Type: "string"}},
+					"test_commands":    {Type: "array", Items: &Schema{Type: "string"}},
+					"build_commands":   {Type: "array", Items: &Schema{Type: "string"}},
+					"dependencies":     {Type: "array", Items: &Schema{Ref: "#/components/schemas/RepoDependency"}, Nullable: true},
+					"entry_points":     {Type: "array", Items: &Schema{Type: "string"}},
+					"has_dockerfile":   {Type: "boolean"},
+					"has_ci_config":    {Type: "boolean"},
+					"structure":        {Type: "array", Items: &Schema{Ref: "#/components/schemas/DirEntry"}},
+					"analyzed_at":      {Type: "string", Format: "date-time"},
+				},
+			},
+			"RepoLanguage": {
+				Type:     "object",
+				Required: []string{"name", "file_count"},
+				Properties: map[string]*Schema{
+					"name":       {Type: "string"},
+					"file_count": {Type: "integer"},
+				},
+			},
+			"RepoDependency": {
+				Type:     "object",
+				Required: []string{"name", "version", "source", "type"},
+				Properties: map[string]*Schema{
+					"name":    {Type: "string"},
+					"version": {Type: "string"},
+					"source":  {Type: "string"},
+					"type":    {Type: "string"},
+				},
+			},
+			"DirEntry": {
+				Type:     "object",
+				Required: []string{"name", "is_dir"},
+				Properties: map[string]*Schema{
+					"name":   {Type: "string"},
+					"is_dir": {Type: "boolean"},
+				},
+			},
+			"RepoAnalysisPending": {
+				Type:     "object",
+				Required: []string{"repository_id", "status", "message", "clone_url"},
+				Properties: map[string]*Schema{
+					"repository_id": {Type: "string", Format: "uuid"},
+					"status":        {Type: "string", Example: "pending_clone"},
+					"message":       {Type: "string"},
+					"clone_url":     {Type: "string", Format: "uri"},
+				},
+			},
+			"WorkspaceFileEntry": {
+				Type:     "object",
+				Required: []string{"name", "path", "is_dir"},
+				Properties: map[string]*Schema{
+					"name":   {Type: "string"},
+					"path":   {Type: "string"},
+					"is_dir": {Type: "boolean"},
+					"size":   {Type: "integer", Format: "int64"},
+				},
+			},
+			"WorkspaceFileContent": {
+				Type:     "object",
+				Required: []string{"path", "content", "size"},
+				Properties: map[string]*Schema{
+					"path":    {Type: "string"},
+					"content": {Type: "string"},
+					"size":    {Type: "integer", Format: "int64"},
+				},
+			},
+			"WriteFileRequest": {
+				Type:     "object",
+				Required: []string{"path", "content"},
+				Properties: map[string]*Schema{
+					"path":    {Type: "string"},
+					"content": {Type: "string"},
+				},
+			},
+			"PatchRequest": {
+				Type:     "object",
+				Required: []string{"patch"},
+				Properties: map[string]*Schema{
+					"patch": {Type: "string"},
+				},
+			},
+			"ExecRequest": {
+				Type:     "object",
+				Required: []string{"command"},
+				Properties: map[string]*Schema{
+					"command": {Type: "string"},
+					"timeout": {Type: "integer", Description: "Timeout in seconds, default 60"},
+				},
+			},
+			"ExecResponse": {
+				Type:     "object",
+				Required: []string{"command", "stdout", "exit_code"},
+				Properties: map[string]*Schema{
+					"command":   {Type: "string"},
+					"stdout":    {Type: "string"},
+					"exit_code": {Type: "integer"},
+				},
+			},
+			"StartServiceRequest": {
+				Type:     "object",
+				Required: []string{"command", "port"},
+				Properties: map[string]*Schema{
+					"command": {Type: "string"},
+					"port":    {Type: "integer", Description: "Port must be between 0 and 65535"},
+					"name":    {Type: "string", Nullable: true},
+				},
+			},
+			"StartServiceResponse": {
+				Type:     "object",
+				Required: []string{"service_id", "status", "pid", "port"},
+				Properties: map[string]*Schema{
+					"service_id": {Type: "string"},
+					"status":     {Type: "string", Example: "running"},
+					"pid":        {Type: "integer"},
+					"port":       {Type: "integer"},
+					"log_path":   {Type: "string", Nullable: true},
+				},
+			},
+			"StopServiceRequest": {
+				Type:     "object",
+				Required: []string{"service_id"},
+				Properties: map[string]*Schema{
+					"service_id": {Type: "string"},
+				},
+			},
+			"CreateSecretRequest": {
+				Type:     "object",
+				Required: []string{"name", "value"},
+				Properties: map[string]*Schema{
+					"project_id":  {Type: "string", Format: "uuid", Nullable: true},
+					"name":        {Type: "string"},
+					"scope":       {Type: "string", Enum: []interface{}{"dev", "staging", "prod"}, Nullable: true},
+					"description": {Type: "string", Nullable: true},
+					"value":       {Type: "string"},
+				},
+			},
+			"RotateSecretRequest": {
+				Type:     "object",
+				Required: []string{"value"},
+				Properties: map[string]*Schema{
+					"value": {Type: "string"},
+				},
+			},
+			"AuditLog": {
+				Type:     "object",
+				Required: []string{"id", "organization_id", "actor_type", "action", "resource_type", "created_at"},
+				Properties: map[string]*Schema{
+					"id":              {Type: "string", Format: "uuid"},
+					"organization_id": {Type: "string", Format: "uuid"},
+					"actor_type":      {Type: "string"},
+					"actor_id":        {Type: "string", Nullable: true},
+					"action":          {Type: "string"},
+					"resource_type":   {Type: "string"},
+					"resource_id":     {Type: "string", Nullable: true},
+					"details":         {Type: "object", Nullable: true},
+					"ip_address":      {Type: "string", Nullable: true},
+					"user_agent":      {Type: "string", Nullable: true},
+					"created_at":      {Type: "string", Format: "date-time"},
 				},
 			},
 		},
@@ -1166,9 +1470,12 @@ func buildPaths() map[string]PathItem {
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
 				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "limit", In: "query", Description: "Maximum number of entries to return (1-1000)", Schema: &Schema{Type: "integer"}},
 			},
 			Responses: map[string]Response{
-				"200": {Description: "List of audit log entries"},
+				"200": {Description: "List of audit log entries", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/AuditLog"}}},
+				}},
 			},
 		},
 	}
@@ -1347,6 +1654,581 @@ func buildPaths() map[string]PathItem {
 		},
 	}
 
+	// Task actions
+	paths["/api/v1/projects/{projectID}/brief-handoffs"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Tasks"},
+			Summary:     "Create brief handoff task",
+			Description: "Creates a task from a Dev Plan Builder's Brief handoff.",
+			OperationID: "createBriefHandoff",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "projectID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreateBriefHandoffRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Brief handoff task created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Task"}},
+				}},
+				"400": {Description: "Invalid request"},
+			},
+		},
+	}
+	paths["/api/v1/tasks/{id}/start-run"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Tasks", "Agent Runs"},
+			Summary:     "Start an agent run",
+			Description: "Starts an implementer agent run for an approved task.",
+			OperationID: "startRun",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Task ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Agent run started", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/StartRunResponse"}},
+				}},
+				"400": {Description: "Task not in approved status"},
+				"404": {Description: "Task not found"},
+			},
+		},
+	}
+
+	// Agent run actions
+	paths["/api/v1/runs/{id}/retry"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Agent Runs"},
+			Summary:     "Retry a failed agent run",
+			Description: "Creates a new queued run from a failed or cancelled run.",
+			OperationID: "retryRun",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Run ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Agent run retried", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/RetryRunResponse"}},
+				}},
+				"400": {Description: "Run cannot be retried"},
+				"404": {Description: "Agent run not found"},
+			},
+		},
+	}
+	paths["/api/v1/runs/{id}/events"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Agent Runs"},
+			Summary:     "List run events",
+			Description: "Returns high-level lifecycle events for an agent run.",
+			OperationID: "getRunEvents",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Run ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of run events", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/RunEvent"}}},
+				}},
+				"404": {Description: "Agent run not found"},
+			},
+		},
+	}
+	paths["/api/v1/runs/{id}/cancel"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Agent Runs"},
+			Summary:     "Cancel agent run",
+			OperationID: "cancelAgentRun",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Run ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Agent run cancelled", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"status": {Type: "string"},
+						"id":     {Type: "string"},
+					}}},
+				}},
+				"404": {Description: "Agent run not found or already finished"},
+			},
+		},
+	}
+
+	// Reviews
+	paths["/api/v1/runs/{runId}/review"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Agent Runs"},
+			Summary:     "Get review report",
+			OperationID: "getReview",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "runId", In: "path", Required: true, Description: "Run ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Review report", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ReviewReport"}},
+				}},
+				"404": {Description: "Review report not found"},
+			},
+		},
+		Post: &Operation{
+			Tags:        []string{"Agent Runs"},
+			Summary:     "Request review",
+			Description: "Triggers a manual review for an agent run.",
+			OperationID: "requestReview",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "runId", In: "path", Required: true, Description: "Run ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Review report", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ReviewReport"}},
+				}},
+				"404": {Description: "Agent run not found"},
+			},
+		},
+	}
+
+	// Organization approvals
+	paths["/api/v1/organizations/{orgID}/approvals"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Approvals"},
+			Summary:     "List organization approvals",
+			Description: "Returns all pending approvals across an organization's projects.",
+			OperationID: "listOrganizationApprovals",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Description: "Organization ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of pending approvals", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/Approval"}}},
+				}},
+			},
+		},
+	}
+
+	// Pull Requests
+	paths["/api/v1/projects/{projectID}/pull-requests"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "List pull requests",
+			OperationID: "listPullRequests",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "projectID", In: "path", Required: true, Description: "Project ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of pull requests", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/PullRequest"}}},
+				}},
+			},
+		},
+	}
+	paths["/api/v1/pull-requests/{id}"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Get pull request",
+			OperationID: "getPullRequest",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Pull request details", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
+				}},
+				"404": {Description: "Pull request not found"},
+			},
+		},
+	}
+	paths["/api/v1/tasks/{taskId}/pull-request"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Pull Requests", "Tasks"},
+			Summary:     "Create pull request",
+			Description: "Creates a pull request for a task after approval.",
+			OperationID: "createPullRequest",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "taskId", In: "path", Required: true, Description: "Task ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreatePullRequestRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Pull request created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
+				}},
+				"400": {Description: "Invalid request or task status"},
+				"409": {Description: "Pending approval exists"},
+			},
+		},
+	}
+
+	// Repository analysis
+	paths["/api/v1/repositories/{id}/analyze"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Repositories"},
+			Summary:     "Analyze repository",
+			Description: "Triggers and returns an analysis of a repository's structure, package managers, frameworks, and test commands.",
+			OperationID: "analyzeRepo",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Repository analysis", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/RepoAnalysis"}},
+				}},
+				"202": {Description: "Repository needs to be cloned first", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/RepoAnalysisPending"}},
+				}},
+				"404": {Description: "Repository not found"},
+			},
+		},
+	}
+
+	// Workspaces
+	paths["/api/v1/tasks/{taskID}/workspaces"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "List task workspaces",
+			OperationID: "listTaskWorkspaces",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "taskID", In: "path", Required: true, Description: "Task ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of workspaces", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/Workspace"}}},
+				}},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Get workspace",
+			OperationID: "getWorkspace",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Workspace details", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Workspace"}},
+				}},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/destroy"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Destroy workspace",
+			OperationID: "destroyWorkspace",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Workspace destroyed", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"status": {Type: "string"},
+						"id":     {Type: "string"},
+					}}},
+				}},
+				"404": {Description: "Workspace not found or already destroyed"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/diff"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Get workspace diff",
+			OperationID: "getWorkspaceDiff",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Git diff for the workspace", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"diff": {Type: "string"},
+					}}},
+				}},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/files"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "List workspace files",
+			OperationID: "listWorkspaceFiles",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "path", In: "query", Description: "Relative directory path", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of files", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/WorkspaceFileEntry"}}},
+				}},
+				"403": {Description: "Path traversal detected"},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/files/content"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Read workspace file",
+			OperationID: "readWorkspaceFile",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "path", In: "query", Required: true, Description: "Relative file path", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "File content", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/WorkspaceFileContent"}},
+				}},
+				"400": {Description: "Path query parameter is required"},
+				"403": {Description: "Path traversal detected"},
+				"404": {Description: "File or workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/files/write"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Write workspace file",
+			OperationID: "writeWorkspaceFile",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/WriteFileRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "File written", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"status": {Type: "string"},
+						"path":   {Type: "string"},
+					}}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Path traversal detected or operation denied"},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/patch"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Apply workspace patch",
+			OperationID: "applyWorkspacePatch",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PatchRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Patch applied", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"status": {Type: "string"},
+						"output": {Type: "string"},
+					}}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/exec"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Execute workspace command",
+			OperationID: "execWorkspaceCommand",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ExecRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Command output", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ExecResponse"}},
+				}},
+				"400": {Description: "Invalid command"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Workspace not found"},
+				"504": {Description: "Command timed out"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/start-service"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Start workspace service",
+			OperationID: "startWorkspaceService",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/StartServiceRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"202": {Description: "Service started", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/StartServiceResponse"}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/stop-service"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Workspaces"},
+			Summary:     "Stop workspace service",
+			OperationID: "stopWorkspaceService",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/StopServiceRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Service stopped", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"service_id": {Type: "string"},
+						"status":     {Type: "string"},
+					}}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Service or workspace not found"},
+			},
+		},
+	}
+
+	// Artifacts
+	paths["/api/v1/artifacts/{id}"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts"},
+			Summary:     "Get artifact",
+			Description: "Returns artifact metadata or streams the artifact file.",
+			OperationID: "getArtifact",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Artifact metadata or binary content"},
+				"404": {Description: "Artifact not found"},
+			},
+		},
+	}
+
+	// Secrets
+	paths["/api/v1/organizations/{orgID}/secrets"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Secrets"},
+			Summary:     "List secrets",
+			OperationID: "listSecrets",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Description: "Organization ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "List of secrets", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/SecretReference"}}},
+				}},
+			},
+		},
+		Post: &Operation{
+			Tags:        []string{"Secrets"},
+			Summary:     "Create secret",
+			Description: "Stores an encrypted secret reference for the organization.",
+			OperationID: "createSecret",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Description: "Organization ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreateSecretRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Secret created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/SecretReference"}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"503": {Description: "Encrypted secret storage is not configured"},
+			},
+		},
+	}
+	paths["/api/v1/secrets/{id}/rotate"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Secrets"},
+			Summary:     "Rotate secret",
+			Description: "Updates the value of an existing encrypted secret.",
+			OperationID: "rotateSecret",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Secret ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/RotateSecretRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Secret rotated", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/SecretReference"}},
+				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Secret not found"},
+				"503": {Description: "Encrypted secret storage is not configured"},
+			},
+		},
+	}
+
 	// Webhooks
 	paths["/api/v1/webhooks/github"] = PathItem{
 		Post: &Operation{
@@ -1355,6 +2237,48 @@ func buildPaths() map[string]PathItem {
 			OperationID: "githubWebhook",
 			Responses: map[string]Response{
 				"200": {Description: "Webhook ping processed"},
+				"202": {Description: "Webhook accepted for processing"},
+				"400": {Description: "Invalid webhook payload"},
+				"401": {Description: "Missing or invalid webhook signature"},
+				"503": {Description: "Webhook processing or signing secret is unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/webhooks/linear"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Webhooks"},
+			Summary:     "Linear webhook handler",
+			OperationID: "linearWebhook",
+			Responses: map[string]Response{
+				"200": {Description: "Webhook processed"},
+				"202": {Description: "Webhook accepted for processing"},
+				"400": {Description: "Invalid webhook payload"},
+				"401": {Description: "Missing or invalid webhook signature"},
+				"503": {Description: "Webhook processing or signing secret is unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/webhooks/slack"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Webhooks"},
+			Summary:     "Slack webhook handler",
+			OperationID: "slackWebhook",
+			Responses: map[string]Response{
+				"200": {Description: "Webhook processed"},
+				"202": {Description: "Webhook accepted for processing"},
+				"400": {Description: "Invalid webhook payload"},
+				"401": {Description: "Missing or invalid webhook signature"},
+				"503": {Description: "Webhook processing or signing secret is unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/webhooks/discord"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Webhooks"},
+			Summary:     "Discord webhook handler",
+			OperationID: "discordWebhook",
+			Responses: map[string]Response{
+				"200": {Description: "Webhook processed"},
 				"202": {Description: "Webhook accepted for processing"},
 				"400": {Description: "Invalid webhook payload"},
 				"401": {Description: "Missing or invalid webhook signature"},
