@@ -7,9 +7,9 @@
 .PHONY: dev dev-web dev-api dev-worker dev-runner \
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
-        test test-api test-packages test-race test-sdk \
+        test test-api test-cli test-packages test-race test-sdk \
         lint lint-go lint-web lint-sdk \
-        build build-api build-worker build-runner build-web build-sdk \
+        build build-api build-cli build-worker build-runner build-web build-sdk \
         clean help
 
 # --- Variables ---------------------------------------------------------------
@@ -28,6 +28,7 @@ export DATABASE_URL    ?= file:./data/dev.db?_journal_mode=WAL
 export NATS_URL        ?= nats://localhost:4222
 export PORT            ?= 8080
 export WEB_PORT        ?= 3000
+export RUNNER_PORT     ?= 8082
 export JWT_SECRET      ?= dev-secret-change-me-min-32-chars-long
 export LOG_LEVEL       ?= info
 export TEMPORAL_HOST   ?= localhost:7233
@@ -94,8 +95,8 @@ dev-worker: ## Start Go worker service
 	cd apps/worker && go run cmd/worker/main.go
 
 dev-runner: ## Start Go runner (runtime) service
-	@echo "$(BLUE)[runner]$(RESET) Starting Go runner service..."
-	cd apps/runner && go run cmd/runner/main.go
+	@echo "$(BLUE)[runner]$(RESET) Starting Go runner service on port $(RUNNER_PORT)..."
+	cd apps/runner && RUNNER_PORT=$(RUNNER_PORT) go run cmd/runner/main.go
 
 # --- Docker service targets --------------------------------------------------
 
@@ -166,12 +167,17 @@ test: ## Run ALL Go tests across all packages and SDK
 		echo "$(BLUE)[test]$(RESET) $$app"; \
 		cd $$app && go test ./... && cd - > /dev/null || exit 1; \
 	done
+	@$(MAKE) test-cli
 	@$(MAKE) test-sdk
 	@echo "$(GREEN)All tests passed.$(RESET)"
 
 test-api: ## Run API-specific tests with verbose output
 	@echo "$(BLUE)[test]$(RESET) Running API tests..."
 	cd apps/api && go test ./... -v
+
+test-cli: ## Run CLI-specific tests
+	@echo "$(BLUE)[test]$(RESET) Running CLI tests..."
+	cd apps/cli && go test ./... -v
 
 test-worker: ## Run worker-specific tests
 	@echo "$(BLUE)[test]$(RESET) Running worker tests..."
@@ -265,13 +271,19 @@ lint-fix: ## Run linters with auto-fix
 
 # --- Build targets -----------------------------------------------------------
 
-build: build-api build-worker build-runner build-sdk build-web ## Build all binaries, SDK, and frontend
+build: build-api build-cli build-worker build-runner build-sdk build-web ## Build all binaries, SDK, and frontend
 
 build-api: ## Build API binary --> bin/api
 	@echo "$(BLUE)[build]$(RESET) Building API..."
 	@mkdir -p $(BIN_DIR)
 	cd apps/api && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/api cmd/api/main.go
 	@echo "$(GREEN)API binary: $(BIN_DIR)/api$(RESET)"
+
+build-cli: ## Build CLI binary --> bin/dev-plane
+	@echo "$(BLUE)[build]$(RESET) Building CLI..."
+	@mkdir -p $(BIN_DIR)
+	cd apps/cli && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/dev-plane ./cmd/dev-plane
+	@echo "$(GREEN)CLI binary: $(BIN_DIR)/dev-plane$(RESET)"
 
 build-worker: ## Build worker binary --> bin/worker
 	@echo "$(BLUE)[build]$(RESET) Building worker..."

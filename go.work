@@ -4,6 +4,7 @@ toolchain go1.25.11
 
 use (
 	./apps/api
+	./apps/cli
 	./apps/runner
 	./apps/worker
 	./packages/agents

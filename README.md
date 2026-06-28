@@ -182,6 +182,7 @@ The endpoint accepts `repository_id` plus a `brief_url`, `brief_zip_url`, or inl
 |---|---|
 | `make test` | Run all Go tests |
 | `make test-api` | Run API tests (verbose) |
+| `make test-cli` | Run CLI tests |
 | `make test-worker` | Run worker tests |
 | `make test-race` | Run tests with race detector |
 | `make test-coverage` | Generate coverage report |
@@ -194,6 +195,7 @@ The endpoint accepts `repository_id` plus a `brief_url`, `brief_zip_url`, or inl
 | `make lint-go` | Run Go vet across all modules |
 | `make lint-web` | Run npm lint |
 | `make build` | Build all binaries + frontend |
+| `make build-cli` | Build CLI binary (`bin/dev-plane`) |
 | `make clean` | Remove build artifacts |
 | `make fmt` | Format all Go code |
 
@@ -235,6 +237,13 @@ ai-dev-control-plane/
 |  |  |  |_ middleware/
 |  |  |  |_ config/config.go
 |  |  |  |_ auth/
+|  |  |_ go.mod
+|  |  |_ go.sum
+|  |
+|  |_ cli/                           # Go CLI client
+|  |  |_ cmd/dev-plane/main.go
+|  |  |_ internal/client
+|  |  |_ internal/config
 |  |  |_ go.mod
 |  |  |_ go.sum
 |  |
@@ -348,6 +357,36 @@ All variables are defined in `.env.example`. Key categories:
 | **Features** | `ENABLE_TEMPORAL`, `REQUIRE_RISK_APPROVAL` | Feature toggles |
 
 See `.env.example` for full documentation and default values.
+
+---
+
+## CLI
+
+A Go CLI client is available in `apps/cli`.
+
+```bash
+# Build the CLI
+make build-cli
+
+# Authenticate
+dev-plane login --base-url=http://localhost:8080
+# Enter your JWT token when prompted
+
+# Tasks
+dev-plane tasks list --project-id=<project-id>
+dev-plane tasks get <task-id>
+dev-plane tasks create --project-id=<project-id> --repository-id=<repo-id> --title="Fix bug"
+
+# Runs
+dev-plane runs list --task-id=<task-id>
+dev-plane runs logs <run-id>
+
+# Approvals
+dev-plane approvals list --org-id=<org-id>
+dev-plane approvals respond --response=approved <approval-id>
+```
+
+Configuration is stored in `~/.config/dev-plane/config.json`.
 
 ---
 
