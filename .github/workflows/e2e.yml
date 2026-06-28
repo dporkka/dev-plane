@@ -1,0 +1,52 @@
+name: Live E2E
+
+on:
+  workflow_dispatch:
+
+env:
+  GO_VERSION: "1.25.11"
+  NODE_VERSION: "24"
+  DATABASE_URL: "file:./data/dev.db?_journal_mode=WAL"
+  NATS_URL: "nats://localhost:4222"
+  JWT_SECRET: "ci-secret-change-me-min-32-chars-long"
+  SECRET_ENCRYPTION_KEYS: "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  NEXT_PUBLIC_API_URL: "http://localhost:8080"
+
+jobs:
+  live-e2e:
+    name: Live End-to-End Integration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: packages/sdk/typescript/package-lock.json
+
+      - name: Start NATS
+        run: docker compose up -d --wait nats
+
+      - name: Run baseline tests
+        run: make test
+
+      - name: Run live end-to-end integration tests
+        env:
+          RUN_LIVE_E2E: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          FIREWORKS_API_KEY: ${{ secrets.FIREWORKS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TEST_OWNER: ${{ secrets.GITHUB_TEST_OWNER }}
+          GITHUB_TEST_REPO: ${{ secrets.GITHUB_TEST_REPO }}
+        run: cd apps/worker && go test ./internal/integration/... -timeout 20m
