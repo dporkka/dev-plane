@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@ai-cp/dev-plane-sdk": "file:../../packages/sdk/typescript",
     "@codemirror/commands": "^6.7.0",
     "@codemirror/lang-javascript": "^6.2.2",
     "@codemirror/lang-json": "^6.0.1",

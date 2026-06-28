@@ -1,3 +1,5 @@
+import { DevPlaneClient, RunStream } from '@ai-cp/dev-plane-sdk';
+
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 // Minimal EventSource-like interface used for secure SSE streaming.
@@ -10,115 +12,44 @@ export interface SSELike {
   close(): void;
 }
 
-// SecureEventSource fetches an SSE stream using the Authorization header
-// instead of leaking the JWT into the URL query string.
-class SecureEventSource implements SSELike {
-  url: string;
-  readyState: number;
-
-  onopen: ((this: SSELike, ev: Event) => void) | null = null;
-  onmessage: ((this: SSELike, ev: MessageEvent) => void) | null = null;
-  onerror: ((this: SSELike, ev: Event) => void) | null = null;
-
-  private controller: AbortController;
-
-  constructor(url: string) {
-    this.url = url;
-    this.readyState = 0; // CONNECTING
-    this.controller = new AbortController();
-    this.connect();
-  }
-
-  private connect() {
-    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
-
-    fetch(this.url, {
-      method: 'GET',
-      headers: {
-        Accept: 'text/event-stream',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      signal: this.controller.signal,
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-        if (!response.body) {
-          throw new Error('response body is null');
-        }
-        this.readyState = 1; // OPEN
-        if (this.onopen) {
-          this.onopen(new Event('open'));
-        }
-        this.readStream(response.body);
-      })
-      .catch((err) => {
-        if ((err as Error).name === 'AbortError') {
-          this.readyState = 2; // CLOSED
-          return;
-        }
-        this.readyState = 2; // CLOSED
-        if (this.onerror) {
-          this.onerror(new Event('error'));
-        }
-      });
-  }
-
-  private async readStream(body: ReadableStream<Uint8Array>) {
-    const reader = body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (this.readyState !== 2) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          this.processLine(line);
-        }
-      }
-    } catch (err) {
-      if ((err as Error).name !== 'AbortError' && this.onerror) {
-        this.onerror(new Event('error'));
-      }
-    } finally {
-      this.readyState = 2; // CLOSED
-      reader.releaseLock();
-    }
-  }
-
-  private processLine(line: string) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('data:')) {
-      return;
-    }
-    const data = trimmed.slice('data:'.length).trim();
-    const event = new MessageEvent('message', { data });
-    if (this.onmessage) {
-      this.onmessage(event);
-    }
-  }
-
-  close() {
-    this.readyState = 2; // CLOSED
-    this.controller.abort();
-  }
+function getToken(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  return localStorage.getItem('token') || undefined;
 }
 
-// SSE stream helper
-function streamSSE(path: string): SSELike {
-  const url = new URL(`${API_BASE}${path}`, window.location.href);
-  return new SecureEventSource(url.toString());
+function getClient(): DevPlaneClient {
+  return new DevPlaneClient({ baseUrl: API_BASE, token: getToken() });
 }
 
-async function fetchAPI(path: string, options?: RequestInit) {
-  const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
+// Adapts the SDK's typed RunStream to the SSELike interface expected by
+// existing UI components (onmessage receives a MessageEvent with string data).
+function adaptRunStream(runStream: RunStream): SSELike {
+  const sse: SSELike = {
+    onopen: null,
+    onmessage: null,
+    onerror: null,
+    close: () => runStream.close(),
+  };
+
+  runStream.onopen = () => {
+    sse.onopen?.call(sse, new Event('open'));
+  };
+
+  runStream.onmessage = (event) => {
+    const data = JSON.stringify(event.data);
+    sse.onmessage?.call(sse, new MessageEvent('message', { data }));
+  };
+
+  runStream.onerror = () => {
+    sse.onerror?.call(sse, new Event('error'));
+  };
+
+  return sse;
+}
+
+// Fallback fetch helper for endpoints not yet exposed by the SDK.
+async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
@@ -131,211 +62,170 @@ async function fetchAPI(path: string, options?: RequestInit) {
     const text = await res.text();
     throw new Error(text || `HTTP ${res.status}`);
   }
-  const contentType = res.headers.get('content-type');
-  if (contentType?.includes('application/json')) {
-    return res.json();
+  if (res.status === 204) {
+    return undefined as T;
   }
-  return res.text();
+  return res.json() as T;
 }
-
 
 export const api = {
   // ─── Tasks ──────────────────────────────────────────────────────
-  listTasks: (projectId: string) =>
-    fetchAPI(`/api/v1/projects/${projectId}/tasks`),
+  listTasks: (projectId: string): Promise<any> =>
+    getClient().listTasks(projectId),
 
-  getTask: (id: string) =>
-    fetchAPI(`/api/v1/tasks/${id}`),
+  getTask: (id: string): Promise<any> =>
+    getClient().getTask(id),
 
-  createTask: (projectId: string, data: any) =>
-    fetchAPI(`/api/v1/projects/${projectId}/tasks`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createTask: (projectId: string, data: any): Promise<any> =>
+    getClient().createTask(projectId, data),
 
-  updateTask: (id: string, data: any) =>
-    fetchAPI(`/api/v1/tasks/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
+  updateTask: (id: string, data: any): Promise<any> =>
+    getClient().updateTask(id, data),
 
-  cancelTask: (id: string) =>
-    fetchAPI(`/api/v1/tasks/${id}/cancel`, { method: 'POST' }),
+  cancelTask: (id: string): Promise<any> =>
+    getClient().cancelTask(id),
 
-  approveSpec: (id: string, spec?: any) =>
-    fetchAPI(`/api/v1/tasks/${id}/approve-spec`, {
-      method: 'POST',
-      body: spec ? JSON.stringify(spec) : undefined,
-    }),
+  approveSpec: (id: string, spec?: any): Promise<any> =>
+    getClient().approveSpec(id, spec),
 
-  generateSpec: (id: string) =>
-    fetchAPI(`/api/v1/tasks/${id}/generate-spec`, { method: 'POST' }),
+  generateSpec: (id: string): Promise<any> =>
+    getClient().generateSpec(id),
 
   // ─── Spec ───────────────────────────────────────────────────────
-  getTaskSpec: (taskId: string) =>
-    fetchAPI(`/api/v1/tasks/${taskId}/spec`),
+  getTaskSpec: (taskId: string): Promise<any> =>
+    fetchJSON(`/api/v1/tasks/${taskId}/spec`),
 
   // ─── Agent Runs ─────────────────────────────────────────────────
-  listRuns: (taskId: string) =>
-    fetchAPI(`/api/v1/tasks/${taskId}/runs`),
+  listRuns: (taskId: string): Promise<any> =>
+    getClient().listRuns(taskId),
 
-  getRun: (id: string) =>
-    fetchAPI(`/api/v1/runs/${id}`),
+  getRun: (id: string): Promise<any> =>
+    getClient().getRun(id),
 
-  getRunSteps: (id: string) =>
-    fetchAPI(`/api/v1/runs/${id}/steps`),
+  getRunSteps: (id: string): Promise<any> =>
+    getClient().getRunSteps(id),
 
-  streamRun: (id: string) =>
-    streamSSE(`/api/v1/runs/${id}/stream`),
+  streamRun: (id: string): SSELike =>
+    adaptRunStream(getClient().streamRun(id)),
 
-  cancelRun: (id: string) =>
-    fetchAPI(`/api/v1/runs/${id}/cancel`, { method: 'POST' }),
+  cancelRun: (id: string): Promise<any> =>
+    getClient().cancelRun(id),
 
   // ─── Reviews ────────────────────────────────────────────────────
-  getReview: (runId: string) =>
-    fetchAPI(`/api/v1/runs/${runId}/review`),
+  getReview: (runId: string): Promise<any> =>
+    getClient().getReview(runId),
 
   // ─── Pull Requests ──────────────────────────────────────────────
-  createPullRequest: (taskId: string) =>
-    fetchAPI(`/api/v1/tasks/${taskId}/pull-request`, { method: 'POST' }),
+  createPullRequest: (taskId: string): Promise<any> =>
+    getClient().createPullRequest(taskId),
 
-  listPullRequests: (projectId: string) =>
-    fetchAPI(`/api/v1/projects/${projectId}/pull-requests`),
+  listPullRequests: (projectId: string): Promise<any> =>
+    getClient().listPullRequests(projectId),
 
   // ─── Projects ───────────────────────────────────────────────────
-  listProjects: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/projects`),
+  listProjects: (orgId: string): Promise<any> =>
+    getClient().listProjects(orgId),
 
-  getProject: (id: string) =>
-    fetchAPI(`/api/v1/projects/${id}`),
+  getProject: (id: string): Promise<any> =>
+    getClient().getProject(id),
 
-  createProject: (orgId: string, data: any) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/projects`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createProject: (orgId: string, data: any): Promise<any> =>
+    getClient().createProject(orgId, data),
 
   // ─── Repositories ───────────────────────────────────────────────
-  listRepos: (projectId: string) =>
-    fetchAPI(`/api/v1/projects/${projectId}/repositories`),
+  listRepos: (projectId: string): Promise<any> =>
+    getClient().listRepos(projectId),
 
-  getRepo: (id: string) =>
-    fetchAPI(`/api/v1/repositories/${id}`),
+  getRepo: (id: string): Promise<any> =>
+    getClient().getRepo(id),
 
-  connectRepo: (projectId: string, data: any) =>
-    fetchAPI(`/api/v1/projects/${projectId}/repositories`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  connectRepo: (projectId: string, data: any): Promise<any> =>
+    getClient().connectRepo(projectId, data),
 
-  disconnectRepo: (id: string) =>
-    fetchAPI(`/api/v1/repositories/${id}`, { method: 'DELETE' }),
+  disconnectRepo: (id: string): Promise<any> =>
+    getClient().disconnectRepo(id),
 
-  syncRepo: (id: string) =>
-    fetchAPI(`/api/v1/repositories/${id}/sync`, { method: 'POST' }),
+  syncRepo: (id: string): Promise<any> =>
+    getClient().syncRepo(id),
 
   // ─── Workspaces ─────────────────────────────────────────────────
-  listWorkspaces: (taskId: string) =>
-    fetchAPI(`/api/v1/tasks/${taskId}/workspaces`),
+  listWorkspaces: (taskId: string): Promise<any> =>
+    getClient().listWorkspaces(taskId),
 
-  getWorkspace: (id: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}`),
+  getWorkspace: (id: string): Promise<any> =>
+    getClient().getWorkspace(id),
 
-  destroyWorkspace: (id: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}/destroy`, { method: 'POST' }),
+  destroyWorkspace: (id: string): Promise<any> =>
+    getClient().destroyWorkspace(id),
 
-  listWorkspaceFiles: (id: string, path?: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}/files${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  listWorkspaceFiles: (id: string, path?: string): Promise<any> =>
+    getClient().listWorkspaceFiles(id, path),
 
-  readWorkspaceFile: (id: string, path: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}/files/content?path=${encodeURIComponent(path)}`),
+  readWorkspaceFile: (id: string, path: string): Promise<any> =>
+    getClient().readWorkspaceFile(id, path),
 
-  writeWorkspaceFile: (id: string, path: string, content: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}/files/write`, {
-      method: 'POST',
-      body: JSON.stringify({ path, content }),
-    }),
+  writeWorkspaceFile: (id: string, path: string, content: string): Promise<any> =>
+    getClient().writeWorkspaceFile(id, path, content),
 
-  execWorkspaceCommand: (id: string, command: string, timeout?: number) =>
-    fetchAPI(`/api/v1/workspaces/${id}/exec`, {
-      method: 'POST',
-      body: JSON.stringify({ command, timeout }),
-    }),
+  execWorkspaceCommand: (id: string, command: string, timeout?: number): Promise<any> =>
+    getClient().execWorkspaceCommand(id, command, timeout),
 
-  getWorkspaceDiff: (id: string) =>
-    fetchAPI(`/api/v1/workspaces/${id}/diff`),
+  getWorkspaceDiff: (id: string): Promise<any> =>
+    getClient().getWorkspaceDiff(id),
 
   // ─── Approvals ──────────────────────────────────────────────────
-  listApprovals: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/approvals`),
+  listApprovals: (orgId: string): Promise<any> =>
+    getClient().listApprovals(orgId),
 
-  respondApproval: (id: string, response: 'approved' | 'rejected', note?: string) =>
-    fetchAPI(`/api/v1/approvals/${id}/respond`, {
-      method: 'POST',
-      body: JSON.stringify({ response, response_note: note }),
-    }),
+  respondApproval: (id: string, response: 'approved' | 'rejected', note?: string): Promise<any> =>
+    getClient().respondApproval(id, response, note),
 
   // ─── Dashboard ──────────────────────────────────────────────────
-  getDashboard: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/dashboard`),
+  getDashboard: (orgId: string): Promise<any> =>
+    getClient().getDashboard(orgId),
 
   // ─── Organizations ──────────────────────────────────────────────
-  listOrganizations: () =>
-    fetchAPI(`/api/v1/organizations`),
+  listOrganizations: (): Promise<any> =>
+    getClient().listOrganizations(),
 
-  getOrganization: (id: string) =>
-    fetchAPI(`/api/v1/organizations/${id}`),
+  getOrganization: (id: string): Promise<any> =>
+    getClient().getOrganization(id),
 
-  createOrganization: (data: any) =>
-    fetchAPI(`/api/v1/organizations`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createOrganization: (data: any): Promise<any> =>
+    getClient().createOrganization(data),
 
   // ─── Policies ───────────────────────────────────────────────────
-  listPolicies: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/policies`),
+  listPolicies: (orgId: string): Promise<any> =>
+    getClient().listPolicies(orgId),
 
-  createPolicy: (orgId: string, data: any) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/policies`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createPolicy: (orgId: string, data: any): Promise<any> =>
+    getClient().createPolicy(orgId, data),
 
   // ─── Integrations ───────────────────────────────────────────────
-  listIntegrationProviders: () =>
-    fetchAPI(`/api/v1/integrations/providers`),
+  listIntegrationProviders: (): Promise<any> =>
+    getClient().listIntegrationProviders(),
 
-  listIntegrations: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/integrations`),
+  listIntegrations: (orgId: string): Promise<any> =>
+    getClient().listIntegrations(orgId),
 
-  createIntegration: (orgId: string, data: any) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/integrations`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createIntegration: (orgId: string, data: any): Promise<any> =>
+    getClient().createIntegration(orgId, data),
 
-  getIntegration: (id: string) =>
-    fetchAPI(`/api/v1/integrations/${id}`),
+  getIntegration: (id: string): Promise<any> =>
+    getClient().getIntegration(id),
 
-  updateIntegration: (id: string, data: any) =>
-    fetchAPI(`/api/v1/integrations/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
+  updateIntegration: (id: string, data: any): Promise<any> =>
+    getClient().updateIntegration(id, data),
 
-  deleteIntegration: (id: string) =>
-    fetchAPI(`/api/v1/integrations/${id}`, { method: 'DELETE' }),
+  deleteIntegration: (id: string): Promise<any> =>
+    getClient().deleteIntegration(id),
 
-  createVoiceTask: (projectId: string, data: any) =>
-    fetchAPI(`/api/v1/projects/${projectId}/voice-tasks`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    }),
+  createVoiceTask: (projectId: string, data: any): Promise<any> =>
+    getClient().createVoiceTask(projectId, data),
 
   // ─── Audit Logs ─────────────────────────────────────────────────
-  listAuditLogs: (orgId: string) =>
-    fetchAPI(`/api/v1/organizations/${orgId}/audit-logs`),
+  listAuditLogs: (orgId: string): Promise<any> =>
+    getClient().listAuditLogs(orgId),
 
   // ─── GitHub OAuth ───────────────────────────────────────────────
   githubAuth: () => {
