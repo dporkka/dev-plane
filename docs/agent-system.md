@@ -123,7 +123,7 @@ type TokenUsage struct {
 }
 ```
 
-Token usage is persisted to `model_usage` table for cost tracking.
+The production `AgentRun` model stores `PromptTokens`, `CompletionTokens`, and `TotalCost`; the `model_usage` table also records `total_tokens` for cost tracking.
 
 ## Multi-Agent Pipeline
 
@@ -164,7 +164,7 @@ Remaining production work is to run and capture live end-to-end evidence with a 
 
 ### Pipeline Flow
 
-1. **Planner** receives the task, reads the repository, and produces a structured spec with acceptance criteria and file change plan. Output: `spec` message.
+1. A heuristic **Spec Generator** (`apps/api/internal/spec/generator.go`) creates a structured spec from the task title and description. The task then moves through `spec_review` and `approved` statuses before an `implementer` agent run is queued.
 
 2. **Implementer** reads the spec, makes the required code changes, and requests approval for mutations or shell commands that policy marks as sensitive. Output: git commits + `changes` message.
 
@@ -174,17 +174,11 @@ Remaining production work is to run and capture live end-to-end evidence with a 
 
 5. **Security Reviewer** scans the changes for security issues. Output: `security_report` message.
 
-6. **Release Manager** prepares the release (changelog, version bump, PR). PR creation uses an explicit `pr_create` approval and merge actions require approval. Output: GitHub pull request.
+6. **PR creation** is handled by the worker's approval handler on `approval.approved` events with `approval_type = 'pr_create'`, using `packages/prfactory` to open the GitHub pull request.
 
 ### Pipeline Shortcuts
 
-| Trigger | Skipped Stages | Notes |
-|---------|---------------|-------|
-| Task has existing spec | Planner | Use provided spec directly |
-| Review approves on first pass | Additional review rounds | Go straight to tests |
-| All tests pass | Retries | Proceed to security |
-| No security issues | Additional security rounds | Go to release |
-| User cancels | All subsequent stages | Immediate halt |
+> These shortcuts describe the target design and are **not yet implemented**. Review generation is currently a single pass, and spec generation is not conditionally skipped.
 
 ### Human-in-the-Loop
 

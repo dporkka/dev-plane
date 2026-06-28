@@ -10,14 +10,14 @@ Secrets are referenced by name only throughout the system. Raw secret values are
 - **Encrypted at rest** - Secret values are encrypted using AES-256-GCM before database persistence
 - **Versioned rotation** - Rotation deactivates previous encrypted values and creates one new active version
 - **Keyring support** - `SECRET_ENCRYPTION_KEYS` accepts comma-separated `key-id:base64-32-byte-key` entries; the first key encrypts new values and older keys remain available for decrypting prior versions
-- **Separate scopes** - Secrets are scoped to organization + environment (dev/staging/prod)
-- **Approval required** - Access to secret values requires explicit administrative approval
+- **Separate scopes** - Secrets are scoped to organization, optional project, and environment (dev/staging/prod)
+- **Approval required** - Access to secret values is audited; capability-kernel policy may require approval depending on scope and role
 - **Audit trail** - Every secret access (read, write, rotate) generates an audit event
 
 ### Secret Lifecycle
 
 ```
-Registration -> Capability check -> Encryption -> Storage -> Access (with approval) -> Rotation
+Registration -> Capability check -> Encryption -> Storage -> Access (audited, approved when policy requires) -> Rotation
 ```
 
 ## Agent Safety
