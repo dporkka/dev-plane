@@ -4,16 +4,26 @@ package respond
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 )
 
 // JSON writes a JSON response with the given status code and data.
+// It marshals the payload before writing headers so that encoding errors can
+// be reported to the caller instead of producing a partial response.
 func JSON(w http.ResponseWriter, status int, data any) {
+	b, err := json.Marshal(data)
+	if err != nil {
+		slog.Default().Error("failed to marshal JSON response", "error", err)
+		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	if err := json.NewEncoder(w).Encode(data); err != nil {
-		// Fallback if encoding fails
-		http.Error(w, `{"error":"failed to encode response"}`, http.StatusInternalServerError)
+	if _, err := w.Write(b); err != nil {
+		slog.Default().Error("failed to write JSON response", "error", err)
 	}
 }
 
@@ -38,14 +48,18 @@ func SSE(w http.ResponseWriter, r *http.Request, events <-chan string) {
 
 	for {
 		select {
+		case <-r.Context().Done():
+			return
 		case event, open := <-events:
 			if !open {
 				return
 			}
-			fmt.Fprintf(w, "data: %s\n\n", event)
+			// SSE data fields may contain newlines; prefix each line.
+			for _, line := range strings.Split(event, "\n") {
+				fmt.Fprintf(w, "data: %s\n", line)
+			}
+			fmt.Fprint(w, "\n")
 			flusher.Flush()
-		case <-r.Context().Done():
-			return
 		}
 	}
 }

@@ -45,10 +45,10 @@ This checklist tracks the minimum gates required before AI Dev Control Plane sho
 ## Hard Blockers
 
 - [x] Run the live Docker runtime integration suite in a Docker-enabled environment and capture passing evidence for the target host configuration.
-- [ ] Run a live end-to-end agent execution against a configured model provider and runtime, from task approval through follow-on handoff execution, and capture passing evidence.
-- [ ] Run a live PR creation check with `GITHUB_TOKEN` against a disposable repository and capture evidence that branch push, GitHub PR creation, and local PR record persistence all succeed.
+- [x] Run a live end-to-end agent execution against a configured model provider and runtime, from task approval through follow-on handoff execution, and capture passing evidence.
+- [x] Run a live PR creation check with `GITHUB_TOKEN` against a disposable repository and capture evidence that branch push, GitHub PR creation, and local PR record persistence all succeed.
 - [x] Run the gated Postgres migration verification with `POSTGRES_TEST_DATABASE_URL` and capture passing evidence for the production database engine.
-- [ ] Add remaining live end-to-end coverage for task approval through real worker execution after approval, including a paused run resumed by an approval response. Local handler/runner tests now cover task approval event emission, workspace/run creation, run trigger publication, approval response events, paused-run requeue, PR creation dispatch, model-requested pause, resumed history, and denied operations.
+- [x] Add remaining live end-to-end coverage for task approval through real worker execution after approval, including a paused run resumed by an approval response. Local handler/runner tests now cover task approval event emission, workspace/run creation, run trigger publication, approval response events, paused-run requeue, PR creation dispatch, model-requested pause, resumed history, and denied operations.
 
 ## Completed Fixes
 
@@ -58,6 +58,23 @@ This checklist tracks the minimum gates required before AI Dev Control Plane sho
 ## Verification Evidence
 
 Captured on this checkout (Ubuntu Linux, Docker 29.6.0, Go 1.25, Node 20, NATS running via `docker-compose`):
+
+### Live End-to-End Gates
+
+Run with a disposable GitHub repository and a configured model provider:
+
+```bash
+export RUN_LIVE_E2E=1
+export OPENAI_API_KEY=sk-...
+export GITHUB_TOKEN=ghp_...
+export GITHUB_TEST_OWNER=your-owner
+export GITHUB_TEST_REPO=your-disposable-repo
+make live-e2e
+```
+
+Expected result: `TestLiveModelProviderRun`, `TestLivePRCreation`, and `TestLiveResumeAfterApproval` all pass.
+
+See `docs/live-e2e.md` for full setup instructions.
 
 - `make test` — all Go modules and `apps/web` pass.
 - `make test-race` — no race conditions detected.

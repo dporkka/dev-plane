@@ -8,7 +8,8 @@ import (
 )
 
 func TestRecovery_PanicCaught(t *testing.T) {
-	handler := Recovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := Recovery(nil)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic("something went wrong")
 	}))
 
@@ -35,7 +36,8 @@ func TestRecovery_PanicCaught(t *testing.T) {
 }
 
 func TestRecovery_NoPanicPassesThrough(t *testing.T) {
-	handler := Recovery(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := Recovery(nil)
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	}))

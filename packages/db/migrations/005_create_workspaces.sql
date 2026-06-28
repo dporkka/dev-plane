@@ -13,9 +13,9 @@ CREATE TABLE IF NOT EXISTS workspaces (
     status              TEXT NOT NULL DEFAULT 'pending',
     preview_url         TEXT,
     settings            JSONB DEFAULT '{}',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at          TIMESTAMPTZ
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at          TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspaces_repository_id ON workspaces(repository_id);

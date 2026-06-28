@@ -55,7 +55,8 @@ func (h *GitHubAuthHandler) GitHubAuthRedirect(w http.ResponseWriter, r *http.Re
 		Path:     "/",
 		MaxAge:   600,
 		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
+		Secure:   h.config.OAuthCookieSecure,
+		SameSite: http.SameSiteStrictMode,
 	})
 
 	url := h.oauth.AuthCodeURL(state)
@@ -192,7 +193,7 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 	}
 
 	// Generate JWT token
-	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, "owner", h.config.JWTSecret, 24*time.Hour)
+	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, "owner", h.config.JWTSecret, 60*time.Minute)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to generate token: %w", err))
 		return

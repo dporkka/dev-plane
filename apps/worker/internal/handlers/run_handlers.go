@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -243,7 +244,7 @@ func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.A
 		WHERE id = $1
 	`, event.RunID).Scan(&run.TaskID, &workspaceID, &run.AgentRole, &model, &provider)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("completed run %s not found", event.RunID)
 		}
 		return nil, fmt.Errorf("load completed run context: %w", err)
@@ -279,7 +280,7 @@ func (h *RunHandler) nextUnconsumedHandoff(ctx context.Context, tx *sql.Tx, run 
 		LIMIT 1
 	`, run.TaskID, models.MessageTypeHandoff, run.RunID).Scan(&handoff.ID, &handoff.ToAgent)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("load next handoff: %w", err)

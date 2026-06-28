@@ -16,19 +16,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/api/pkg/agentexecutor"
+	"github.com/ai-dev-control-plane/crypto"
 	"github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/reviewer"
@@ -111,12 +111,24 @@ func main() {
 	}
 	logger.Info("NATS event bus connected and streams created")
 
-	runtimeProvider, runtimeProviderName, err := newRuntimeProvider(*runtimeName, *runtimeBaseDir)
+	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
 	if err != nil {
 		logger.Error("failed to initialize workspace runtime", "error", err)
 		os.Exit(1)
 	}
 	logger.Info("workspace runtime initialized", "runtime", runtimeProviderName, "base_dir", *runtimeBaseDir)
+
+	var keyring *crypto.Keyring
+	if keysRaw := os.Getenv("SECRET_ENCRYPTION_KEYS"); keysRaw != "" {
+		keyring, err = crypto.ParseKeyring(keysRaw)
+		if err != nil {
+			logger.Error("invalid SECRET_ENCRYPTION_KEYS", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("integration token keyring configured")
+	} else {
+		logger.Warn("SECRET_ENCRYPTION_KEYS not configured; encrypted integration tokens cannot be decrypted")
+	}
 
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
@@ -124,7 +136,7 @@ func main() {
 	reviewService := reviewer.NewReviewer(database.DB, logger)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
-	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus)
+	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
 
 	// Set up subscriptions - one per stream to avoid consumer conflicts
@@ -320,17 +332,16 @@ func detectDriver(url string) string {
 	return "unknown"
 }
 
-func newRuntimeProvider(name, baseDir string) (runtimes.Provider, string, error) {
-	switch strings.ToLower(name) {
-	case "local":
-		return runtimes.NewLocalProvider(baseDir), "local", nil
-	case "docker":
-		provider, err := runtimes.NewDockerProvider(baseDir)
-		if err != nil {
-			return nil, "", err
-		}
-		return provider, "docker", nil
-	default:
-		return nil, "", fmt.Errorf("unsupported workspace runtime %q", name)
+func initRuntimeProvider(name, baseDir, runnerURL, runnerToken string) (runtimes.Provider, string, error) {
+	if runnerURL != "" {
+		return runtimes.NewRemoteProvider(runnerURL, runnerToken), "remote", nil
 	}
+	if isProduction() && name == "local" {
+		return nil, "", errors.New("local workspace runtime is not allowed in production")
+	}
+	return runtimes.NewProvider(name, baseDir)
+}
+
+func isProduction() bool {
+	return os.Getenv("APP_ENV") == "production" || os.Getenv("ENV") == "production"
 }

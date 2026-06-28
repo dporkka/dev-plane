@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -104,7 +105,7 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		SELECT status FROM tasks WHERE id = $1 AND deleted_at IS NULL
 	`, payload.TaskID).Scan(&taskStatus)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return ackMessage(msg)
 		}
 		return fmt.Errorf("load task status: %w", err)
@@ -273,7 +274,7 @@ func (h *ApprovalHandler) loadApprovalRunID(ctx context.Context, approvalID stri
 		SELECT agent_run_id FROM approvals WHERE id = $1
 	`, approvalID).Scan(&runID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
 		return "", err

@@ -5,6 +5,7 @@ package spec
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -491,7 +492,7 @@ func (g *Generator) loadTask(ctx context.Context, taskID string) (*models.Task, 
 		&maxCost, &task.MaxRuntimeMinutes, &apr, &meta,
 		&started, &completed, &task.CreatedAt, &task.UpdatedAt, &deleted,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -547,7 +548,7 @@ func (g *Generator) loadRepository(ctx context.Context, repoID string) (*models.
 		&repo.CloneURL, &repo.DefaultBranch, &repo.Private, &repo.ConnectionStatus,
 		&ls, &ws, &settings, &repo.CreatedAt, &repo.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -587,7 +588,7 @@ func (g *Generator) loadProjectConfig(ctx context.Context, repoID string) (*mode
 		&config.DevCommand, &config.BuildCommand, &config.HasDockerfile,
 		&config.HasDevcontainer, &config.DetectedAt, &config.UpdatedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
@@ -655,7 +656,7 @@ func (g *Generator) loadSpecByTaskID(ctx context.Context, taskID string) (*model
 		&approvalsJSON, &spec.EstimatedCost, &spec.RecommendedAgent,
 		&spec.GeneratedBy, &spec.GeneratedAt,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {

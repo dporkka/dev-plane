@@ -132,7 +132,23 @@ func (p *LocalProvider) ExecuteCommand(ctx context.Context, sessionID string, cm
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	execCmd := exec.CommandContext(ctx, "sh", "-c", cmd.Command)
+	var execCmd *exec.Cmd
+	if len(cmd.Args) > 0 {
+		if err := ValidateCommandArgs(cmd.Args); err != nil {
+			return nil, fmt.Errorf("invalid command args: %w", err)
+		}
+		execCmd = exec.CommandContext(ctx, cmd.Args[0], cmd.Args[1:]...)
+	} else if cmd.UnsafeShell {
+		// Trusted system callers may pass a raw shell string.
+		execCmd = exec.CommandContext(ctx, "sh", "-c", cmd.Command)
+	} else {
+		// Fallback for legacy callers that still provide a shell string.
+		// Reject obvious shell metacharacters before invoking the shell.
+		if _, err := ParseCommandString(cmd.Command); err != nil {
+			return nil, fmt.Errorf("invalid command: %w", err)
+		}
+		execCmd = exec.CommandContext(ctx, "sh", "-c", cmd.Command)
+	}
 	execCmd.Dir = dir
 	execCmd.Env = os.Environ()
 	for k, v := range cmd.Env {
@@ -181,7 +197,11 @@ func (p *LocalProvider) ReadFile(ctx context.Context, sessionID, path string) ([
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	fullPath := filepath.Join(sess.worktreePath, path)
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return nil, err
+	}
+	fullPath := filepath.Join(sess.worktreePath, rel)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", path, err)
@@ -199,7 +219,11 @@ func (p *LocalProvider) WriteFile(ctx context.Context, sessionID, path string, d
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	fullPath := filepath.Join(sess.worktreePath, path)
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return err
+	}
+	fullPath := filepath.Join(sess.worktreePath, rel)
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
 		return fmt.Errorf("create parent directories for %q: %w", path, err)
 	}

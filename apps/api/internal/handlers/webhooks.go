@@ -15,10 +15,13 @@ import (
 	"github.com/ai-dev-control-plane/events"
 )
 
-// WebhookHandler handles incoming webhooks from GitHub.
+// WebhookHandler handles incoming webhooks from GitHub, Linear, Slack, and Discord.
 type WebhookHandler struct {
-	eventBus      EventPublisher
-	webhookSecret string
+	eventBus             EventPublisher
+	webhookSecret        string
+	linearWebhookSecret  string
+	slackSigningSecret   string
+	discordWebhookSecret string
 }
 
 // NewWebhookHandler creates a new webhook handler.
@@ -35,6 +38,24 @@ func (h *WebhookHandler) WithEventPublisher(pub EventPublisher) *WebhookHandler 
 // WithWebhookSecret configures the shared GitHub webhook signing secret.
 func (h *WebhookHandler) WithWebhookSecret(secret string) *WebhookHandler {
 	h.webhookSecret = strings.TrimSpace(secret)
+	return h
+}
+
+// WithLinearWebhookSecret configures the Linear webhook signing secret.
+func (h *WebhookHandler) WithLinearWebhookSecret(secret string) *WebhookHandler {
+	h.linearWebhookSecret = strings.TrimSpace(secret)
+	return h
+}
+
+// WithSlackSigningSecret configures the Slack request signing secret.
+func (h *WebhookHandler) WithSlackSigningSecret(secret string) *WebhookHandler {
+	h.slackSigningSecret = strings.TrimSpace(secret)
+	return h
+}
+
+// WithDiscordWebhookSecret configures the shared secret used to authorize Discord webhook requests.
+func (h *WebhookHandler) WithDiscordWebhookSecret(secret string) *WebhookHandler {
+	h.discordWebhookSecret = strings.TrimSpace(secret)
 	return h
 }
 
@@ -159,6 +180,20 @@ func (h *WebhookHandler) LinearWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.linearWebhookSecret == "" {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("linear webhook secret is not configured"))
+		return
+	}
+	signature := r.Header.Get("linear-signature")
+	if signature == "" {
+		respond.Error(w, http.StatusUnauthorized, errors.New("missing linear-signature header"))
+		return
+	}
+	if !validateLinearWebhook(body, signature, h.linearWebhookSecret) {
+		respond.Error(w, http.StatusUnauthorized, errors.New("invalid linear webhook signature"))
+		return
+	}
+
 	eventType := r.Header.Get("linear-event")
 	if eventType == "" {
 		eventType = "unknown"
@@ -198,6 +233,21 @@ func (h *WebhookHandler) SlackWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if h.slackSigningSecret == "" {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("slack signing secret is not configured"))
+		return
+	}
+	signature := r.Header.Get("X-Slack-Signature")
+	timestamp := r.Header.Get("X-Slack-Request-Timestamp")
+	if signature == "" || timestamp == "" {
+		respond.Error(w, http.StatusUnauthorized, errors.New("missing slack signature headers"))
+		return
+	}
+	if !validateSlackWebhook(body, signature, timestamp, h.slackSigningSecret) {
+		respond.Error(w, http.StatusUnauthorized, errors.New("invalid slack webhook signature"))
+		return
+	}
+
 	eventType := r.Header.Get("X-Slack-Event")
 	if eventType == "" {
 		eventType = "event_callback"
@@ -223,6 +273,20 @@ func (h *WebhookHandler) DiscordWebhook(w http.ResponseWriter, r *http.Request) 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, errors.New("failed to read body"))
+		return
+	}
+
+	if h.discordWebhookSecret == "" {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("discord webhook secret is not configured"))
+		return
+	}
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		respond.Error(w, http.StatusUnauthorized, errors.New("missing discord authorization header"))
+		return
+	}
+	if strings.TrimPrefix(authHeader, "Bearer ") != h.discordWebhookSecret {
+		respond.Error(w, http.StatusUnauthorized, errors.New("invalid discord webhook secret"))
 		return
 	}
 
@@ -282,5 +346,36 @@ func validateGitHubWebhook(payload []byte, signature, secret string) bool {
 	mac.Write(payload)
 	expected := mac.Sum(nil)
 
+	return hmac.Equal(sigBytes, expected)
+}
+
+// validateLinearWebhook validates the HMAC-SHA256 hex signature of a Linear webhook payload.
+func validateLinearWebhook(payload []byte, signature, secret string) bool {
+	sigBytes, err := hex.DecodeString(signature)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	expected := mac.Sum(nil)
+	return hmac.Equal(sigBytes, expected)
+}
+
+// validateSlackWebhook validates the HMAC-SHA256 signature of a Slack webhook payload.
+// Slack signatures use the format "v0=<hex>" over the base string "v0:timestamp:body".
+func validateSlackWebhook(payload []byte, signature, timestamp, secret string) bool {
+	if !strings.HasPrefix(signature, "v0=") {
+		return false
+	}
+	sigHex := strings.TrimPrefix(signature, "v0=")
+	sigBytes, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return false
+	}
+	base := []byte("v0:" + timestamp + ":")
+	base = append(base, payload...)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(base)
+	expected := mac.Sum(nil)
 	return hmac.Equal(sigBytes, expected)
 }

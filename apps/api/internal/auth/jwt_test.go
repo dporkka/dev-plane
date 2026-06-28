@@ -338,8 +338,8 @@ func TestClaims_RegisteredClaims(t *testing.T) {
 		Role:   "admin",
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   "user-1",
-			Issuer:    "test-issuer",
-			Audience:  jwt.ClaimStrings{"test-audience"},
+			Issuer:    Issuer,
+			Audience:  jwt.ClaimStrings{Audience},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 	}
@@ -358,8 +358,8 @@ func TestClaims_RegisteredClaims(t *testing.T) {
 	if parsed.Subject != "user-1" {
 		t.Errorf("Subject = %q, want user-1", parsed.Subject)
 	}
-	if parsed.Issuer != "test-issuer" {
-		t.Errorf("Issuer = %q, want test-issuer", parsed.Issuer)
+	if parsed.Issuer != Issuer {
+		t.Errorf("Issuer = %q, want %q", parsed.Issuer, Issuer)
 	}
 }
 

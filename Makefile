@@ -199,6 +199,10 @@ integration-test: ## Run credential-dependent integration tests (skip if no cred
 	cd packages/gateway && go test -tags=integration ./... -run Integration -timeout 60s
 	cd apps/api && go test -tags=integration ./internal/modelrouter/... -run Integration -timeout 60s
 
+live-e2e: ## Run live end-to-end gates (requires model provider key, GitHub token, NATS, Docker)
+	@echo "$(GREEN)Running live end-to-end integration gates...$(RESET)"
+	cd apps/worker && RUN_LIVE_E2E=1 go test ./internal/integration/... -v -timeout 20m
+
 test-coverage: ## Run tests with coverage report
 	@echo "$(GREEN)Running tests with coverage...$(RESET)"
 	@mkdir -p $(BIN_DIR)

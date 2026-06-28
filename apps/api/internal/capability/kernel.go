@@ -58,6 +58,15 @@ type Result struct {
 	RiskLevel        string
 }
 
+// WithPolicyEngine replaces the policy engine used by the kernel.
+func (k *Kernel) WithPolicyEngine(engine *policies.Engine) *Kernel {
+	if k == nil || engine == nil {
+		return k
+	}
+	k.policyEngine = engine
+	return k
+}
+
 // NewKernel creates a new Capability Kernel.
 func NewKernel(policyEngine *policies.Engine, budgetEngine *budget.Engine, auditLogger *audit.Logger, logger *slog.Logger) *Kernel {
 	if logger == nil {
@@ -139,6 +148,11 @@ func (k *Kernel) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		checkResult, err := k.budgetEngine.CheckRun(ctx, req.Budget, runState)
 		if err != nil {
 			k.logger.Error("budget check failed", "error", err)
+			result.Effect = policies.EffectDeny
+			result.Reason = fmt.Sprintf("budget check error: %v", err)
+			result.RiskLevel = RiskLevelCritical
+			k.logAudit(ctx, req, result)
+			return result, err
 		}
 		if checkResult != nil && !checkResult.Allowed {
 			result.Effect = policies.EffectDeny

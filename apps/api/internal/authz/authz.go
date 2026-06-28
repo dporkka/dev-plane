@@ -220,9 +220,31 @@ func AuthorizeArtifact(ctx context.Context, db *sql.DB, user *auth.Claims, artif
 	return authorizeByColumn(ctx, db, user, "artifacts", "id", artifactID)
 }
 
+// allowedAuthzColumns maps table names to the set of columns that may be used
+// for organization-scoped authorization lookups.
+var allowedAuthzColumns = map[string]map[string]bool{
+	"projects":          {"id": true},
+	"secret_references": {"id": true},
+	"integrations":      {"id": true},
+	"policies":          {"id": true},
+	"artifacts":         {"id": true},
+}
+
+func isAllowedAuthzColumn(table, column string) bool {
+	cols, ok := allowedAuthzColumns[table]
+	if !ok {
+		return false
+	}
+	return cols[column]
+}
+
 // authorizeByColumn is a generic helper for tables that have an
 // organization_id column directly.
 func authorizeByColumn(ctx context.Context, db *sql.DB, user *auth.Claims, table, column, value string) error {
+	if !isAllowedAuthzColumn(table, column) {
+		return fmt.Errorf("unsupported authorization lookup for %s.%s", table, column)
+	}
+
 	var orgID string
 	query := fmt.Sprintf(`
 		SELECT organization_id

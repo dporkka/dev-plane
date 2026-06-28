@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -103,7 +104,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND r.deleted_at IS NULL
 	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return msg.Ack() // Task not found, ack to remove from queue
 		}
 		return fmt.Errorf("load task: %w", err)
@@ -264,7 +265,7 @@ func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID strin
 		LIMIT 1
 	`, taskID).Scan(&runID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, fmt.Errorf("load existing queued run: %w", err)

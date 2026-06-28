@@ -75,11 +75,17 @@ type Session struct {
 }
 
 // Command represents a command to execute in a workspace.
+// Prefer Args over Command; when Args is set the provider executes the command
+// directly without a shell, which prevents shell injection.
+// UnsafeShell may be set by trusted system callers that need shell features
+// (pipes, redirection). It must never be set from user input.
 type Command struct {
-	Command string            `json:"command"`
-	Dir     string            `json:"dir,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Timeout time.Duration     `json:"timeout,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Dir         string            `json:"dir,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Timeout     time.Duration     `json:"timeout,omitempty"`
+	UnsafeShell bool              `json:"-"`
 }
 
 // CommandResult contains the output of an executed command.

@@ -72,6 +72,17 @@ func (r *Runner) WithCapabilityKernel(kernel *capability.Kernel) *Runner {
 	return r
 }
 
+// WithPolicyEngine replaces the policy engine on the runner's capability kernel.
+// This allows integration tests to relax approval requirements without changing
+// the default production policy set.
+func (r *Runner) WithPolicyEngine(engine *policies.Engine) *Runner {
+	if r == nil || r.kernel == nil || engine == nil {
+		return r
+	}
+	r.kernel.WithPolicyEngine(engine)
+	return r
+}
+
 // WithRuntimeProvider registers a runtime provider for non-local workspace
 // sessions.
 func (r *Runner) WithRuntimeProvider(name string, provider runtimes.Provider) *Runner {
@@ -914,7 +925,7 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 
 	var run models.AgentRun
 	var workspaceID, model, provider, errorMessage, summary sql.NullString
-	var startedAt, completedAt sql.NullTime
+	var startedAt, completedAt, createdAt, updatedAt sql.NullTime
 	var metadata sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
@@ -925,7 +936,7 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 	`, runID).Scan(
 		&run.ID, &run.TaskID, &workspaceID, &run.AgentRole, &model, &provider, &run.Status,
 		&startedAt, &completedAt, &run.PromptTokens, &run.CompletionTokens,
-		&run.TotalCost, &errorMessage, &summary, &metadata, &run.CreatedAt, &run.UpdatedAt,
+		&run.TotalCost, &errorMessage, &summary, &metadata, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -954,6 +965,12 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 	}
 	if metadata.Valid {
 		run.Metadata = json.RawMessage(metadata.String)
+	}
+	if createdAt.Valid {
+		run.CreatedAt = createdAt.Time
+	}
+	if updatedAt.Valid {
+		run.UpdatedAt = updatedAt.Time
 	}
 
 	return &run, nil

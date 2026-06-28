@@ -7,6 +7,7 @@ package prfactory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -499,7 +500,7 @@ func (f *Factory) loadLatestRun(ctx context.Context, taskID string) (*models.Age
 		&run.Metadata, &run.CreatedAt, &run.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err

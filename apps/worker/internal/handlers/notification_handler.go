@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/nats-io/nats.go"
 
+	"github.com/ai-dev-control-plane/crypto"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 )
@@ -18,11 +20,18 @@ type NotificationHandler struct {
 	db       *sql.DB
 	logger   *slog.Logger
 	eventBus WorkerEventPublisher
+	keys     *crypto.Keyring
 }
 
 // NewNotificationHandler creates a new notification handler.
 func NewNotificationHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublisher) *NotificationHandler {
 	return &NotificationHandler{db: db, logger: logger, eventBus: eventBus}
+}
+
+// WithKeyring configures the AES-GCM keyring used to decrypt integration tokens.
+func (h *NotificationHandler) WithKeyring(keys *crypto.Keyring) *NotificationHandler {
+	h.keys = keys
+	return h
 }
 
 // HandleApprovalRequested processes approval.requested events.
@@ -106,7 +115,7 @@ func (h *NotificationHandler) lookupTaskOrganization(taskID string) (string, err
 		WHERE t.id = $1 AND t.deleted_at IS NULL
 	`, taskID).Scan(&orgID)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
@@ -116,7 +125,7 @@ func (h *NotificationHandler) lookupTaskOrganization(taskID string) (string, err
 
 func (h *NotificationHandler) sendNotifications(ctx context.Context, organizationID, message string) error {
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT integration_type, credentials_encrypted, config
+		SELECT id, organization_id, integration_type, credentials_encrypted, config
 		FROM integrations
 		WHERE organization_id = $1 AND status = 'connected' AND deleted_at IS NULL
 		  AND integration_type IN ('slack', 'discord')
@@ -128,10 +137,12 @@ func (h *NotificationHandler) sendNotifications(ctx context.Context, organizatio
 
 	var firstErr error
 	for rows.Next() {
+		var integrationID string
+		var integrationOrgID string
 		var integrationType string
 		var credentials sql.NullString
 		var config sql.NullString
-		if err := rows.Scan(&integrationType, &credentials, &config); err != nil {
+		if err := rows.Scan(&integrationID, &integrationOrgID, &integrationType, &credentials, &config); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -139,8 +150,21 @@ func (h *NotificationHandler) sendNotifications(ctx context.Context, organizatio
 		}
 
 		token := ""
-		if credentials.Valid {
-			token = credentials.String
+		if credentials.Valid && credentials.String != "" {
+			if h.keys == nil {
+				h.logger.Warn("cannot decrypt integration token, no keyring configured", "integration_id", integrationID)
+				continue
+			}
+			aad := integrationOrgID + ":" + integrationID
+			plaintext, err := h.keys.Decrypt(credentials.String, []byte(aad))
+			if err != nil {
+				h.logger.Warn("failed to decrypt integration token", "integration_id", integrationID, "error", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+			token = string(plaintext)
 		}
 
 		channelID := ""

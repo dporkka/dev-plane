@@ -15,8 +15,12 @@ type Config struct {
 	GitHubClientID      string
 	GitHubSecret        string
 	GitHubWebhookSecret string
+	LinearWebhookSecret string
+	SlackSigningSecret  string
+	DiscordWebhookSecret string
 	NATSURL             string
 	AllowedOrigins      []string
+	OAuthCookieSecure   bool
 	LogLevel            string
 	AgentVaultURL       string
 	AgentVaultToken     string
@@ -36,11 +40,15 @@ func Load() (*Config, error) {
 		Port:                getEnv("PORT", "8080"),
 		DatabaseURL:         getEnv("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
 		JWTSecret:           jwtSecret,
-		GitHubClientID:      getEnv("GITHUB_CLIENT_ID", ""),
-		GitHubSecret:        getEnv("GITHUB_CLIENT_SECRET", ""),
-		GitHubWebhookSecret: getEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
-		NATSURL:             getEnv("NATS_URL", "nats://localhost:4222"),
+		GitHubClientID:       getEnv("GITHUB_CLIENT_ID", ""),
+		GitHubSecret:         getEnv("GITHUB_CLIENT_SECRET", ""),
+		GitHubWebhookSecret:  getEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
+		LinearWebhookSecret:  getEnv("LINEAR_WEBHOOK_SECRET", ""),
+		SlackSigningSecret:   getEnv("SLACK_SIGNING_SECRET", ""),
+		DiscordWebhookSecret: getEnv("DISCORD_WEBHOOK_SECRET", ""),
+		NATSURL:              getEnv("NATS_URL", "nats://localhost:4222"),
 		AllowedOrigins:      getOrigins(),
+		OAuthCookieSecure:   getEnv("OAUTH_COOKIE_SECURE", "true") == "true",
 		LogLevel:            getEnv("LOG_LEVEL", "info"),
 		AgentVaultURL:       getEnv("AGENTVAULT_URL", ""),
 		AgentVaultToken:     getEnv("AGENTVAULT_TOKEN", ""),

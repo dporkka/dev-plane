@@ -98,3 +98,38 @@ func TestSSE_ContextCancellation(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
+
+func TestSSE_MultiLineEvent(t *testing.T) {
+	events := make(chan string, 1)
+	events <- "line1\nline2"
+	close(events)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/events", nil)
+
+	SSE(rec, req, events)
+
+	body := rec.Body.String()
+	want := "data: line1\ndata: line2\n\n"
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
+	}
+}
+
+func TestJSON_EncodingFailure(t *testing.T) {
+	rec := httptest.NewRecorder()
+	// A channel cannot be JSON marshaled.
+	JSON(rec, http.StatusOK, make(chan int))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	var body map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "failed to encode response" {
+		t.Errorf("error = %q, want failed to encode response", body["error"])
+	}
+}

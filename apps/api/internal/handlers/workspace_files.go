@@ -380,8 +380,13 @@ func (h *Handler) ExecWorkspaceCommand(w http.ResponseWriter, r *http.Request) {
 	execCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
-	// Use shell to run the command for proper argument parsing
-	cmd := exec.CommandContext(execCtx, "sh", "-c", req.Command)
+	args, err := runtimes.ParseCommandString(req.Command)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Errorf("invalid command: %w", err))
+		return
+	}
+
+	cmd := exec.CommandContext(execCtx, args[0], args[1:]...)
 	cmd.Dir = workspacePath
 	cmd.Env = os.Environ()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -774,8 +779,13 @@ func (h *Handler) execRuntimeWorkspaceCommand(w http.ResponseWriter, r *http.Req
 	if timeout <= 0 {
 		timeout = 60
 	}
+	args, err := runtimes.ParseCommandString(req.Command)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, fmt.Errorf("invalid command: %w", err))
+		return
+	}
 	result, err := provider.ExecuteCommand(r.Context(), *workspace.RuntimeSessionID, runtimes.Command{
-		Command: req.Command,
+		Args:    args,
 		Timeout: time.Duration(timeout) * time.Second,
 	})
 	if err != nil {

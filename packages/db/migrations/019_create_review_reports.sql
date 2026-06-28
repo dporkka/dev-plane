@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS review_reports (
     test_coverage   TEXT NOT NULL DEFAULT '',
     security_notes  TEXT NOT NULL DEFAULT '',
     diff_summary    JSONB DEFAULT '{}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_reports_run_id ON review_reports(run_id);

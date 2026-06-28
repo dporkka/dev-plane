@@ -48,6 +48,14 @@ func (h *Handler) runtimeProvider(name string) (runtimes.Provider, error) {
 	if provider := h.runtimeProviders[name]; provider != nil {
 		return provider, nil
 	}
+
+	// If a remote runner URL is configured, route all runtime traffic through it.
+	if runnerURL := os.Getenv("RUNNER_URL"); runnerURL != "" {
+		provider := runtimes.NewRemoteProvider(runnerURL, os.Getenv("RUNNER_AUTH_TOKEN"))
+		h.runtimeProviders[name] = provider
+		return provider, nil
+	}
+
 	switch name {
 	case "docker":
 		provider, err := runtimes.NewDockerProvider(workspaceRuntimeBaseDir())

@@ -28,6 +28,9 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("ALLOWED_ORIGINS")
 	os.Unsetenv("SECRET_ENCRYPTION_KEYS")
 	os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
+	os.Unsetenv("LINEAR_WEBHOOK_SECRET")
+	os.Unsetenv("SLACK_SIGNING_SECRET")
+	os.Unsetenv("DISCORD_WEBHOOK_SECRET")
 
 	cfg, err := Load()
 	if err != nil {
@@ -56,6 +59,9 @@ func TestLoad_FromEnv(t *testing.T) {
 		os.Unsetenv("LOG_LEVEL")
 		os.Unsetenv("SECRET_ENCRYPTION_KEYS")
 		os.Unsetenv("GITHUB_APP_WEBHOOK_SECRET")
+		os.Unsetenv("LINEAR_WEBHOOK_SECRET")
+		os.Unsetenv("SLACK_SIGNING_SECRET")
+		os.Unsetenv("DISCORD_WEBHOOK_SECRET")
 	}()
 
 	cfg, err := Load()

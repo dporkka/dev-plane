@@ -6,15 +6,15 @@ CREATE TABLE IF NOT EXISTS approvals (
     agent_run_id    UUID REFERENCES agent_runs(id),
     approval_type   TEXT NOT NULL,
     requested_by    UUID NOT NULL REFERENCES users(id),
-    requested_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     responded_by    UUID REFERENCES users(id),
     response        TEXT,
     response_note   TEXT,
-    responded_at    TIMESTAMPTZ,
-    expires_at      TIMESTAMPTZ,
+    responded_at    TIMESTAMP,
+    expires_at      TIMESTAMP,
     metadata        JSONB DEFAULT '{}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_approvals_task_id ON approvals(task_id);

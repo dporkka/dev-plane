@@ -71,7 +71,7 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, organization_id, integration_type, display_name, config,
-		       credentials_encrypted, status, webhook_url, last_synced_at, created_at, updated_at
+		       status, webhook_url, last_synced_at, created_at, updated_at
 		FROM integrations
 		WHERE organization_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
@@ -86,20 +86,15 @@ func (h *Handler) ListIntegrations(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var i Integration
 		var config sql.NullString
-		var credentials sql.NullString
 		var webhookURL sql.NullString
 		var lastSync sql.NullTime
 		if err := rows.Scan(&i.ID, &i.OrgID, &i.IntegrationType, &i.DisplayName, &config,
-			&credentials, &i.Status, &webhookURL, &lastSync, &i.CreatedAt, &i.UpdatedAt); err != nil {
+			&i.Status, &webhookURL, &lastSync, &i.CreatedAt, &i.UpdatedAt); err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
 		}
 		if config.Valid {
 			i.Config = json.RawMessage(config.String)
-		}
-		if credentials.Valid {
-			s := credentials.String
-			i.CredentialsEncrypted = &s
 		}
 		if webhookURL.Valid {
 			i.WebhookURL = &webhookURL.String
@@ -156,11 +151,6 @@ func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		config = "{}"
 	}
 
-	var credentials interface{}
-	if req.Token != nil && *req.Token != "" {
-		credentials = *req.Token
-	}
-
 	var webhookURL interface{}
 	if req.WebhookURL != nil && *req.WebhookURL != "" {
 		webhookURL = *req.WebhookURL
@@ -175,7 +165,13 @@ func (h *Handler) CreateIntegration(w http.ResponseWriter, r *http.Request) {
 		status = "connected"
 	}
 
-	_, err := h.db.ExecContext(ctx, `
+	credentials, err := h.encryptIntegrationToken(ctx, orgID, id, req.Token)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO integrations (id, organization_id, integration_type, display_name, config, credentials_encrypted, webhook_url, status, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9)
 	`, id, orgID, req.IntegrationType, req.DisplayName, config, credentials, webhookURL, status, now)
@@ -235,20 +231,17 @@ func (h *Handler) UpdateIntegration(w http.ResponseWriter, r *http.Request) {
 	if len(req.Config) > 0 {
 		config = req.Config
 	}
-	var credentials interface{}
-	if req.Token != nil && *req.Token != "" {
-		credentials = *req.Token
-	}
 	var webhookURL interface{}
 	if req.WebhookURL != nil && *req.WebhookURL != "" {
 		webhookURL = *req.WebhookURL
 	}
 
+	var orgID string
 	if req.Token != nil || req.WebhookURL != nil {
 		var integrationType string
 		if err := h.db.QueryRowContext(ctx, `
-			SELECT integration_type FROM integrations WHERE id = $1 AND deleted_at IS NULL
-		`, id).Scan(&integrationType); err != nil {
+			SELECT organization_id, integration_type FROM integrations WHERE id = $1 AND deleted_at IS NULL
+		`, id).Scan(&orgID, &integrationType); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
 				return
@@ -261,6 +254,12 @@ func (h *Handler) UpdateIntegration(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		status = "connected"
+	}
+
+	credentials, err := h.encryptIntegrationToken(ctx, orgID, id, req.Token)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	result, err := h.db.ExecContext(ctx, `
@@ -318,6 +317,21 @@ func (h *Handler) validateIntegration(ctx context.Context, integrationType strin
 	default:
 		return nil
 	}
+}
+
+func (h *Handler) encryptIntegrationToken(ctx context.Context, orgID, integrationID string, token *string) (interface{}, error) {
+	if token == nil || *token == "" {
+		return nil, nil
+	}
+	if h.secretManager == nil {
+		return nil, errors.New("secret manager not configured")
+	}
+	aad := orgID + ":" + integrationID
+	ciphertext, err := h.secretManager.EncryptString(*token, aad)
+	if err != nil {
+		return nil, fmt.Errorf("encrypt integration token: %w", err)
+	}
+	return ciphertext, nil
 }
 
 // DeleteIntegration soft-deletes an integration.

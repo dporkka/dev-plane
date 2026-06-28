@@ -7,9 +7,9 @@ CREATE TABLE IF NOT EXISTS projects (
     slug            TEXT NOT NULL,
     description     TEXT,
     settings        JSONB DEFAULT '{}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at      TIMESTAMPTZ,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMP,
     UNIQUE(organization_id, slug)
 );
 

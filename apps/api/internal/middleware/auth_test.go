@@ -37,7 +37,7 @@ func TestExtractBearer(t *testing.T) {
 }
 
 func TestAuth_MissingToken(t *testing.T) {
-	mw := Auth("secret")
+	mw := Auth("secret", nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("next handler should not be called")
 	}))
@@ -61,7 +61,7 @@ func TestAuth_MissingToken(t *testing.T) {
 }
 
 func TestAuth_InvalidToken(t *testing.T) {
-	mw := Auth("secret")
+	mw := Auth("secret", nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Error("next handler should not be called")
 	}))
@@ -93,7 +93,7 @@ func TestAuth_ValidToken(t *testing.T) {
 	}
 
 	var captured *auth.Claims
-	mw := Auth(secret)
+	mw := Auth(secret, nil)
 	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := auth.UserFromContext(r.Context())
 		if claims == nil {

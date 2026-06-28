@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     diff            TEXT,
     cost            DECIMAL(10,6) DEFAULT 0,
     latency_ms      INTEGER DEFAULT 0,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_steps_agent_run_id ON agent_steps(agent_run_id);

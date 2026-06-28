@@ -9,10 +9,10 @@ CREATE TABLE IF NOT EXISTS secret_references (
     provider        TEXT NOT NULL,
     key_path        TEXT NOT NULL,
     description     TEXT,
-    last_rotated_at TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at      TIMESTAMPTZ
+    last_rotated_at TIMESTAMP,
+    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMP
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_secret_refs_org_project_name_scope
@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS secret_values (
     key_id              TEXT NOT NULL,
     ciphertext          TEXT NOT NULL,
     active              BOOLEAN NOT NULL DEFAULT true,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    rotated_at          TIMESTAMPTZ,
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    rotated_at          TIMESTAMP,
     UNIQUE(secret_reference_id, version)
 );
 

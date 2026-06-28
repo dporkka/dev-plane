@@ -4,21 +4,16 @@ package secrets
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/api/internal/audit"
+	"github.com/ai-dev-control-plane/crypto"
 	"github.com/ai-dev-control-plane/models"
 )
 
@@ -31,73 +26,25 @@ var (
 	ErrSecretKey      = errors.New("secret encryption key error")
 )
 
-type Key struct {
-	ID    string
-	Value []byte
-}
-
-type Keyring struct {
-	primary Key
-	keys    map[string][]byte
-}
-
 // ParseKeyring parses comma-separated key specs in the form
 // key-id:base64-encoded-32-byte-key. The first key is used for new writes.
-func ParseKeyring(raw string) (*Keyring, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil, fmt.Errorf("%w: SECRET_ENCRYPTION_KEYS is required", ErrSecretKey)
-	}
-	keyring := &Keyring{keys: map[string][]byte{}}
-	for i, spec := range strings.Split(raw, ",") {
-		spec = strings.TrimSpace(spec)
-		if spec == "" {
-			continue
-		}
-		id, encoded, ok := strings.Cut(spec, ":")
-		if !ok || strings.TrimSpace(id) == "" || strings.TrimSpace(encoded) == "" {
-			return nil, fmt.Errorf("%w: key spec must be key-id:base64-key", ErrSecretKey)
-		}
-		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
-		if err != nil {
-			return nil, fmt.Errorf("%w: decode key %q: %w", ErrSecretKey, id, err)
-		}
-		if len(key) != 32 {
-			return nil, fmt.Errorf("%w: key %q must decode to 32 bytes", ErrSecretKey, id)
-		}
-		id = strings.TrimSpace(id)
-		keyring.keys[id] = key
-		if i == 0 {
-			keyring.primary = Key{ID: id, Value: key}
-		}
-	}
-	if keyring.primary.ID == "" {
-		return nil, fmt.Errorf("%w: no keys configured", ErrSecretKey)
-	}
-	return keyring, nil
+func ParseKeyring(raw string) (*crypto.Keyring, error) {
+	return crypto.ParseKeyring(raw)
 }
 
-func NewSingleKeyring(id string, key []byte) (*Keyring, error) {
-	if id == "" {
-		return nil, fmt.Errorf("%w: key id is required", ErrSecretKey)
-	}
-	if len(key) != 32 {
-		return nil, fmt.Errorf("%w: key must be 32 bytes", ErrSecretKey)
-	}
-	return &Keyring{
-		primary: Key{ID: id, Value: append([]byte(nil), key...)},
-		keys:    map[string][]byte{id: append([]byte(nil), key...)},
-	}, nil
+// NewSingleKeyring creates a keyring with a single key.
+func NewSingleKeyring(id string, key []byte) (*crypto.Keyring, error) {
+	return crypto.NewSingleKeyring(id, key)
 }
 
 type Manager struct {
 	db     *sql.DB
-	keys   *Keyring
+	keys   *crypto.Keyring
 	audit  *audit.Logger
 	logger *slog.Logger
 }
 
-func NewManager(db *sql.DB, keys *Keyring, auditLogger *audit.Logger, logger *slog.Logger) *Manager {
+func NewManager(db *sql.DB, keys *crypto.Keyring, auditLogger *audit.Logger, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -151,7 +98,7 @@ func (m *Manager) Store(ctx context.Context, req StoreRequest) (*StoredSecret, e
 	if len(req.Value) == 0 {
 		return nil, fmt.Errorf("secret value is required")
 	}
-	ciphertext, err := m.encrypt(req.Value)
+	ciphertext, err := m.keys.Encrypt(req.Value, []byte(m.keys.PrimaryID()))
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +124,7 @@ func (m *Manager) Store(ctx context.Context, req StoreRequest) (*StoredSecret, e
 		INSERT INTO secret_values (
 			id, secret_reference_id, version, key_id, ciphertext, active, created_at, rotated_at
 		) VALUES ($1, $2, 1, $3, $4, true, $5, $5)
-	`, valueID, ref.ID, m.keys.primary.ID, ciphertext, now)
+	`, valueID, ref.ID, m.keys.PrimaryID(), ciphertext, now)
 	if err != nil {
 		return nil, fmt.Errorf("insert secret value: %w", err)
 	}
@@ -193,7 +140,7 @@ func (m *Manager) Store(ctx context.Context, req StoreRequest) (*StoredSecret, e
 		"scope":   ref.Scope,
 		"version": 1,
 	})
-	return &StoredSecret{Reference: ref, Version: 1, KeyID: m.keys.primary.ID}, nil
+	return &StoredSecret{Reference: ref, Version: 1, KeyID: m.keys.PrimaryID()}, nil
 }
 
 func (m *Manager) Rotate(ctx context.Context, req RotationRequest) (*StoredSecret, error) {
@@ -211,7 +158,7 @@ func (m *Manager) Rotate(ctx context.Context, req RotationRequest) (*StoredSecre
 	if err != nil {
 		return nil, err
 	}
-	ciphertext, err := m.encrypt(req.Value)
+	ciphertext, err := m.keys.Encrypt(req.Value, []byte(m.keys.PrimaryID()))
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +177,7 @@ func (m *Manager) Rotate(ctx context.Context, req RotationRequest) (*StoredSecre
 		INSERT INTO secret_values (
 			id, secret_reference_id, version, key_id, ciphertext, active, created_at, rotated_at
 		) VALUES ($1, $2, $3, $4, $5, true, $6, $6)
-	`, uuid.New().String(), req.SecretID, nextVersion, m.keys.primary.ID, ciphertext, now); err != nil {
+	`, uuid.New().String(), req.SecretID, nextVersion, m.keys.PrimaryID(), ciphertext, now); err != nil {
 		return nil, fmt.Errorf("insert rotated secret value: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -249,7 +196,7 @@ func (m *Manager) Rotate(ctx context.Context, req RotationRequest) (*StoredSecre
 		"scope":   ref.Scope,
 		"version": nextVersion,
 	})
-	return &StoredSecret{Reference: *ref, Version: nextVersion, KeyID: m.keys.primary.ID}, nil
+	return &StoredSecret{Reference: *ref, Version: nextVersion, KeyID: m.keys.PrimaryID()}, nil
 }
 
 func (m *Manager) Resolve(ctx context.Context, secretID, actorType, actorID string) ([]byte, error) {
@@ -269,7 +216,7 @@ func (m *Manager) Resolve(ctx context.Context, secretID, actorType, actorID stri
 	if err != nil {
 		return nil, err
 	}
-	plaintext, err := m.decrypt(keyID, ciphertext)
+	plaintext, err := m.keys.Decrypt(ciphertext, []byte(keyID))
 	if err != nil {
 		return nil, err
 	}
@@ -280,47 +227,27 @@ func (m *Manager) Resolve(ctx context.Context, secretID, actorType, actorID stri
 	return plaintext, nil
 }
 
-func (m *Manager) encrypt(plaintext []byte) (string, error) {
-	block, err := aes.NewCipher(m.keys.primary.Value)
-	if err != nil {
+// EncryptString encrypts plaintext with the primary key and returns a string of
+// the form "keyID:base64ciphertext". The aad is bound to the ciphertext via the
+// AES-GCM authentication tag.
+func (m *Manager) EncryptString(plaintext, aad string) (string, error) {
+	if err := m.validateReady(); err != nil {
 		return "", err
 	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	sealed := gcm.Seal(nil, nonce, plaintext, []byte(m.keys.primary.ID))
-	payload := append(nonce, sealed...)
-	return base64.StdEncoding.EncodeToString(payload), nil
+	return m.keys.Encrypt([]byte(plaintext), []byte(aad))
 }
 
-func (m *Manager) decrypt(keyID, ciphertext string) ([]byte, error) {
-	key, ok := m.keys.keys[keyID]
-	if !ok {
-		return nil, fmt.Errorf("%w: key %q not configured", ErrSecretKey, keyID)
+// DecryptString decrypts a string produced by EncryptString. The aad must match
+// the value used during encryption.
+func (m *Manager) DecryptString(ciphertext, aad string) (string, error) {
+	if err := m.validateReady(); err != nil {
+		return "", err
 	}
-	payload, err := base64.StdEncoding.DecodeString(ciphertext)
+	plaintext, err := m.keys.Decrypt(ciphertext, []byte(aad))
 	if err != nil {
-		return nil, fmt.Errorf("decode ciphertext: %w", err)
+		return "", err
 	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, err
-	}
-	if len(payload) < gcm.NonceSize() {
-		return nil, fmt.Errorf("ciphertext payload too short")
-	}
-	nonce := payload[:gcm.NonceSize()]
-	sealed := payload[gcm.NonceSize():]
-	return gcm.Open(nil, nonce, sealed, []byte(keyID))
+	return string(plaintext), nil
 }
 
 func (m *Manager) loadReferenceAndVersion(ctx context.Context, secretID string) (*models.SecretReference, int, error) {
@@ -375,7 +302,7 @@ func (m *Manager) validateReady() error {
 	if m == nil || m.db == nil {
 		return fmt.Errorf("secret manager is not configured")
 	}
-	if m.keys == nil || m.keys.primary.ID == "" {
+	if m.keys == nil || m.keys.PrimaryID() == "" {
 		return fmt.Errorf("%w: keyring is not configured", ErrSecretKey)
 	}
 	return nil

@@ -261,3 +261,197 @@ func (p *webhookEventPublisher) Publish(subject string, data []byte) error {
 	p.data = append([]byte(nil), data...)
 	return p.err
 }
+
+func signLinearPayload(payload []byte, secret string) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func signSlackPayload(payload []byte, timestamp, secret string) string {
+	base := []byte("v0:" + timestamp + ":")
+	base = append(base, payload...)
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(base)
+	return "v0=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestValidateLinearWebhook_Valid(t *testing.T) {
+	secret := "linear-secret"
+	payload := []byte(`{"action":"create","type":"Issue"}`)
+	signature := signLinearPayload(payload, secret)
+	if !validateLinearWebhook(payload, signature, secret) {
+		t.Error("expected valid linear signature to be accepted")
+	}
+}
+
+func TestValidateLinearWebhook_Invalid(t *testing.T) {
+	secret := "linear-secret"
+	payload := []byte(`{"action":"create","type":"Issue"}`)
+	if validateLinearWebhook(payload, "not-hex", secret) {
+		t.Error("expected invalid linear signature to be rejected")
+	}
+}
+
+func TestLinearWebhookHandler_Valid(t *testing.T) {
+	secret := "linear-secret"
+	publisher := &webhookEventPublisher{}
+	h := NewWebhookHandler().WithLinearWebhookSecret(secret).WithEventPublisher(publisher)
+
+	body := []byte(`{"action":"create","type":"Issue"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/linear", bytes.NewReader(body))
+	req.Header.Set("linear-event", "Issue")
+	req.Header.Set("linear-signature", signLinearPayload(body, secret))
+	rec := httptest.NewRecorder()
+
+	h.LinearWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, rec.Code)
+	}
+	if publisher.subject != events.WebhookReceived {
+		t.Fatalf("published subject = %q, want %s", publisher.subject, events.WebhookReceived)
+	}
+}
+
+func TestLinearWebhookHandler_MissingSecret(t *testing.T) {
+	h := NewWebhookHandler()
+	body := []byte(`{"action":"create"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/linear", bytes.NewReader(body))
+	req.Header.Set("linear-event", "Issue")
+	req.Header.Set("linear-signature", "abc")
+	rec := httptest.NewRecorder()
+
+	h.LinearWebhook(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}
+
+func TestValidateSlackWebhook_Valid(t *testing.T) {
+	secret := "slack-secret"
+	payload := []byte(`{"event":{"type":"message"}}`)
+	timestamp := "1234567890"
+	signature := signSlackPayload(payload, timestamp, secret)
+	if !validateSlackWebhook(payload, signature, timestamp, secret) {
+		t.Error("expected valid slack signature to be accepted")
+	}
+}
+
+func TestValidateSlackWebhook_Invalid(t *testing.T) {
+	secret := "slack-secret"
+	payload := []byte(`{"event":{"type":"message"}}`)
+	if validateSlackWebhook(payload, "v0=bad", "123", secret) {
+		t.Error("expected invalid slack signature to be rejected")
+	}
+}
+
+func TestSlackWebhookHandler_UrlVerification(t *testing.T) {
+	secret := "slack-secret"
+	h := NewWebhookHandler().WithSlackSigningSecret(secret)
+
+	body := []byte(`{"type":"url_verification","challenge":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+
+	h.SlackWebhook(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if resp["challenge"] != "hello" {
+		t.Fatalf("expected challenge 'hello', got %q", resp["challenge"])
+	}
+}
+
+func TestSlackWebhookHandler_ValidEvent(t *testing.T) {
+	secret := "slack-secret"
+	publisher := &webhookEventPublisher{}
+	h := NewWebhookHandler().WithSlackSigningSecret(secret).WithEventPublisher(publisher)
+
+	body := []byte(`{"event":{"type":"message"}}`)
+	timestamp := "1234567890"
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(body))
+	req.Header.Set("X-Slack-Signature", signSlackPayload(body, timestamp, secret))
+	req.Header.Set("X-Slack-Request-Timestamp", timestamp)
+	rec := httptest.NewRecorder()
+
+	h.SlackWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, rec.Code)
+	}
+	if publisher.subject != events.WebhookReceived {
+		t.Fatalf("published subject = %q, want %s", publisher.subject, events.WebhookReceived)
+	}
+}
+
+func TestSlackWebhookHandler_MissingSecret(t *testing.T) {
+	h := NewWebhookHandler()
+	body := []byte(`{"event":{"type":"message"}}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack", bytes.NewReader(body))
+	req.Header.Set("X-Slack-Signature", "v0=abc")
+	req.Header.Set("X-Slack-Request-Timestamp", "123")
+	rec := httptest.NewRecorder()
+
+	h.SlackWebhook(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}
+
+func TestDiscordWebhookHandler_Valid(t *testing.T) {
+	secret := "discord-secret"
+	publisher := &webhookEventPublisher{}
+	h := NewWebhookHandler().WithDiscordWebhookSecret(secret).WithEventPublisher(publisher)
+
+	body := []byte(`{"content":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/discord", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+secret)
+	rec := httptest.NewRecorder()
+
+	h.DiscordWebhook(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d", http.StatusAccepted, rec.Code)
+	}
+	if publisher.subject != events.WebhookReceived {
+		t.Fatalf("published subject = %q, want %s", publisher.subject, events.WebhookReceived)
+	}
+}
+
+func TestDiscordWebhookHandler_InvalidSecret(t *testing.T) {
+	secret := "discord-secret"
+	h := NewWebhookHandler().WithDiscordWebhookSecret(secret)
+
+	body := []byte(`{"content":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/discord", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer wrong-secret")
+	rec := httptest.NewRecorder()
+
+	h.DiscordWebhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestDiscordWebhookHandler_MissingSecret(t *testing.T) {
+	h := NewWebhookHandler()
+	body := []byte(`{"content":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/discord", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer secret")
+	rec := httptest.NewRecorder()
+
+	h.DiscordWebhook(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected status %d, got %d", http.StatusServiceUnavailable, rec.Code)
+	}
+}

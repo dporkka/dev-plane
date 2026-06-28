@@ -909,7 +909,7 @@ func TestRuntimeWorkspaceFileOperationsUseProvider(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
 		}
-		if len(provider.commands) != 1 || provider.commands[0].Command != "echo hello" {
+		if len(provider.commands) != 1 || len(provider.commands[0].Args) != 2 || provider.commands[0].Args[0] != "echo" || provider.commands[0].Args[1] != "hello" {
 			t.Fatalf("provider commands = %#v", provider.commands)
 		}
 		if err := mock.ExpectationsWereMet(); err != nil {

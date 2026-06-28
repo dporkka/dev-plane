@@ -6,6 +6,14 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
+)
+
+const (
+	// Issuer is the JWT issuer claim.
+	Issuer = "dev-plane"
+	// Audience is the JWT audience claim.
+	Audience = "dev-plane-api"
 )
 
 // Claims represents the JWT claims for an authenticated user.
@@ -19,6 +27,7 @@ type Claims struct {
 
 // GenerateToken creates a new JWT token for the given user with the specified expiry duration.
 func GenerateToken(userID, orgID, email, role, secret string, expiry time.Duration) (string, error) {
+	jti := uuid.New().String()
 	claims := Claims{
 		UserID: userID,
 		OrgID:  orgID,
@@ -28,6 +37,9 @@ func GenerateToken(userID, orgID, email, role, secret string, expiry time.Durati
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			NotBefore: jwt.NewNumericDate(time.Now()),
+			Issuer:    Issuer,
+			Audience:  jwt.ClaimStrings{Audience},
+			ID:        jti,
 		},
 	}
 
@@ -42,7 +54,7 @@ func ValidateToken(tokenString, secret string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
 		return []byte(secret), nil
-	})
+	}, jwt.WithIssuer(Issuer), jwt.WithAudience(Audience))
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse token: %w", err)
 	}

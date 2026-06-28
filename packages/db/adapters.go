@@ -16,12 +16,22 @@ func newSQLite(url string) (*DB, error) {
 	if err := ensureSQLiteParentDir(url); err != nil {
 		return nil, err
 	}
-	if url != ":memory:" && !strings.Contains(url, "mode=memory") && !strings.Contains(url, "_journal_mode") {
+	if url != ":memory:" && !strings.Contains(url, "mode=memory") {
 		separator := "?"
 		if strings.Contains(url, "?") {
 			separator = "&"
 		}
-		url = url + separator + "_journal_mode=WAL&_foreign_keys=on"
+		if !strings.Contains(url, "_journal_mode") {
+			url = url + separator + "_journal_mode=WAL"
+			separator = "&"
+		}
+		if !strings.Contains(url, "_foreign_keys") {
+			url = url + separator + "_foreign_keys=on"
+			separator = "&"
+		}
+		if !strings.Contains(url, "_loc") {
+			url = url + separator + "_loc=auto"
+		}
 	}
 
 	sqlDB, err := sql.Open("sqlite3", url)

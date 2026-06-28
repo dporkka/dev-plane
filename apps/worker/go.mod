@@ -8,9 +8,12 @@ go 1.25.11
 
 require (
 	github.com/ai-dev-control-plane/api v0.0.0
+	github.com/ai-dev-control-plane/crypto v0.0.0
 	github.com/ai-dev-control-plane/db v0.0.0
 	github.com/ai-dev-control-plane/events v0.0.0
+	github.com/ai-dev-control-plane/gateway v0.0.0
 	github.com/ai-dev-control-plane/models v0.0.0
+	github.com/ai-dev-control-plane/policies v0.0.0
 	github.com/ai-dev-control-plane/prfactory v0.0.0
 	github.com/ai-dev-control-plane/reviewer v0.0.0
 	github.com/ai-dev-control-plane/runtimes v0.0.0
@@ -20,8 +23,6 @@ require (
 )
 
 require (
-	github.com/ai-dev-control-plane/gateway v0.0.0 // indirect
-	github.com/ai-dev-control-plane/policies v0.0.0 // indirect
 	github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
 	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/lib/pq v1.12.3 // indirect
@@ -39,6 +40,7 @@ require (
 
 replace (
 	github.com/ai-dev-control-plane/api => ../../apps/api
+	github.com/ai-dev-control-plane/crypto => ../../packages/crypto
 	github.com/ai-dev-control-plane/db => ../../packages/db
 	github.com/ai-dev-control-plane/events => ../../packages/events
 	github.com/ai-dev-control-plane/gateway => ../../packages/gateway

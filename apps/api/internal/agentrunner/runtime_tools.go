@@ -156,7 +156,9 @@ func runtimeSearchFiles(ctx context.Context, provider runtimes.Provider, session
 	command += " -- " + shellQuote(req.Query) + " " + shellQuote(path)
 	command += "; else grep -R -n -H -- " + shellQuote(req.Query) + " " + shellQuote(path)
 	command += "; fi; code=$?; [ $code -eq 0 ] || [ $code -eq 1 ]"
-	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: command, Timeout: 60 * time.Second})
+	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: command, Timeout: 60 * time.Second,
+		UnsafeShell: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +198,9 @@ func runtimeListDirectory(ctx context.Context, provider runtimes.Provider, sessi
 		Dir: req.Path,
 		Command: `for p in ./*; do
   [ -e "$p" ] || continue
-  name=${p#./}
+  name=${p#./,
+		UnsafeShell: true,
+	}
   if [ -d "$p" ]; then
     printf '%s\t%s\t%s\n' "$name" directory 0
   else
@@ -275,6 +279,7 @@ func runtimeRunCommand(ctx context.Context, provider runtimes.Provider, sessionI
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
 		Command: req.Command,
 		Timeout: time.Duration(timeoutSec) * time.Second,
+		UnsafeShell: true,
 	})
 	if err != nil {
 		return nil, err
@@ -291,6 +296,7 @@ func runtimeInspectRepo(ctx context.Context, provider runtimes.Provider, session
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
 		Command: `find . -path './.git' -prune -o -type f -print | sed 's#^\./##' | head -n 1000`,
 		Timeout: 30 * time.Second,
+		UnsafeShell: true,
 	})
 	if err != nil {
 		return nil, err
@@ -325,11 +331,15 @@ func runtimeInspectRepo(ctx context.Context, provider runtimes.Provider, session
 }
 
 func runtimeGetGitDiff(ctx context.Context, provider runtimes.Provider, sessionID string) (json.RawMessage, error) {
-	stat, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: "git diff --stat", Timeout: 30 * time.Second})
+	stat, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: "git diff --stat", Timeout: 30 * time.Second,
+		UnsafeShell: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("git diff --stat: %w", err)
 	}
-	diff, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: "git diff", Timeout: 30 * time.Second})
+	diff, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: "git diff", Timeout: 30 * time.Second,
+		UnsafeShell: true,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("git diff: %w", err)
 	}
@@ -355,6 +365,7 @@ func runtimeCreateCommit(ctx context.Context, provider runtimes.Provider, sessio
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
 		Command: "git add -A && git -c user.email=dev-plane@example.invalid -c user.name='Dev Plane' commit -m " + shellQuote(req.Message) + " && git rev-parse HEAD",
 		Timeout: 60 * time.Second,
+		UnsafeShell: true,
 	})
 	if err != nil || result == nil || result.ExitCode != 0 {
 		errText := ""
@@ -396,7 +407,9 @@ func runtimeRunTests(ctx context.Context, provider runtimes.Provider, sessionID 
 	if timeoutSec > 600 {
 		timeoutSec = 600
 	}
-	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: testCommand, Timeout: time.Duration(timeoutSec) * time.Second})
+	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{Command: testCommand, Timeout: time.Duration(timeoutSec) * time.Second,
+		UnsafeShell: true,
+	})
 	if err != nil {
 		return nil, err
 	}

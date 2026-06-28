@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS model_usage (
     cost                DECIMAL(10,6) NOT NULL DEFAULT 0,
     latency_ms          INTEGER DEFAULT 0,
     success             BOOLEAN NOT NULL DEFAULT true,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_model_usage_agent_run_id ON model_usage(agent_run_id);

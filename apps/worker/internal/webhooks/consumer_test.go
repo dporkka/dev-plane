@@ -101,6 +101,20 @@ func setupConsumerDB(t *testing.T) *sql.DB {
 			updated_at DATETIME,
 			deleted_at DATETIME
 		);
+		CREATE TABLE integrations (
+			id TEXT PRIMARY KEY,
+			organization_id TEXT NOT NULL,
+			integration_type TEXT NOT NULL,
+			display_name TEXT NOT NULL,
+			config TEXT,
+			credentials_encrypted TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			webhook_url TEXT,
+			last_synced_at DATETIME,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted_at DATETIME
+		);
 	`)
 	if err != nil {
 		_ = db.Close()
@@ -121,6 +135,22 @@ func insertWebhookFixtures(t *testing.T, db *sql.DB) {
 	`, now)
 	if err != nil {
 		t.Fatalf("insert fixtures: %v", err)
+	}
+}
+
+func insertLinearIntegrationFixture(t *testing.T, db *sql.DB) {
+	t.Helper()
+	config, _ := json.Marshal(map[string]any{
+		"team_id":       "linear-team-1",
+		"project_id":    "proj-1",
+		"repository_id": "repo-1",
+	})
+	_, err := db.Exec(`
+		INSERT INTO integrations (id, organization_id, integration_type, display_name, config, status, created_at, updated_at)
+		VALUES ('int-1', 'org-1', 'linear', 'Linear', $1, 'connected', $2, $2)
+	`, string(config), time.Now().UTC())
+	if err != nil {
+		t.Fatalf("insert linear integration fixture: %v", err)
 	}
 }
 
@@ -242,5 +272,158 @@ func TestHandleUnknownSourceAcks(t *testing.T) {
 
 	if err := consumer.Handle(msg); err != nil {
 		t.Fatalf("Handle() error: %v", err)
+	}
+}
+
+func TestHandleLinearIssueCreatesTask(t *testing.T) {
+	db := setupConsumerDB(t)
+	defer db.Close()
+	insertWebhookFixtures(t, db)
+	insertLinearIntegrationFixture(t, db)
+
+	publisher := &fakeEventPublisher{}
+	consumer := NewConsumer(db, slog.Default(), publisher)
+
+	payload, _ := json.Marshal(map[string]any{
+		"type":   "Issue",
+		"action": "create",
+		"data": map[string]any{
+			"id":          "issue-uuid-1",
+			"identifier":  "TEAM-42",
+			"title":       "Fix navigation bug",
+			"description": "The navigation menu is broken on mobile",
+			"state":       map[string]any{"name": "Todo"},
+			"team":        map[string]any{"id": "linear-team-1", "name": "Team", "key": "TEAM"},
+			"url":         "https://linear.app/acme/issue/TEAM-42",
+		},
+	})
+	event := events.WebhookEvent{
+		Source:     "linear",
+		EventType:  "Issue",
+		DeliveryID: "delivery-linear-1",
+		Payload:    payload,
+	}
+	data, _ := json.Marshal(event)
+	msg := &nats.Msg{Data: data, Sub: &nats.Subscription{}}
+
+	if err := consumer.Handle(msg); err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+
+	var taskID, title, source, sourceID, status string
+	var metadata string
+	err := db.QueryRow(`
+		SELECT id, title, source, source_id, status, metadata FROM tasks
+		WHERE source_id = 'TEAM-42'
+	`).Scan(&taskID, &title, &source, &sourceID, &status, &metadata)
+	if err != nil {
+		t.Fatalf("task not created: %v", err)
+	}
+	if title != "Fix navigation bug" {
+		t.Fatalf("title = %q, want Fix navigation bug", title)
+	}
+	if source != "linear" {
+		t.Fatalf("source = %q, want linear", source)
+	}
+	if status != "backlog" {
+		t.Fatalf("status = %q, want backlog", status)
+	}
+	if metadata == "" {
+		t.Fatalf("expected metadata to be set")
+	}
+
+	if !publisher.hasSubject(events.TaskCreated) {
+		t.Fatalf("expected %q to be published, got %v", events.TaskCreated, publisher.subjects)
+	}
+	var taskEvent events.TaskEvent
+	if err := json.Unmarshal(publisher.dataFor(events.TaskCreated), &taskEvent); err != nil {
+		t.Fatalf("unmarshal task event: %v", err)
+	}
+	if taskEvent.TaskID != taskID {
+		t.Fatalf("task event task_id = %q, want %q", taskEvent.TaskID, taskID)
+	}
+}
+
+func TestHandleLinearIssueCanceledIgnored(t *testing.T) {
+	db := setupConsumerDB(t)
+	defer db.Close()
+	insertWebhookFixtures(t, db)
+	insertLinearIntegrationFixture(t, db)
+
+	publisher := &fakeEventPublisher{}
+	consumer := NewConsumer(db, slog.Default(), publisher)
+
+	payload, _ := json.Marshal(map[string]any{
+		"type":   "Issue",
+		"action": "create",
+		"data": map[string]any{
+			"id":          "issue-uuid-2",
+			"identifier":  "TEAM-43",
+			"title":       "Canceled issue",
+			"description": "This was canceled",
+			"state":       map[string]any{"name": "Canceled"},
+			"team":        map[string]any{"id": "linear-team-1", "name": "Team", "key": "TEAM"},
+		},
+	})
+	event := events.WebhookEvent{
+		Source:     "linear",
+		EventType:  "Issue",
+		DeliveryID: "delivery-linear-2",
+		Payload:    payload,
+	}
+	data, _ := json.Marshal(event)
+	msg := &nats.Msg{Data: data, Sub: &nats.Subscription{}}
+
+	if err := consumer.Handle(msg); err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE source_id = 'TEAM-43'`).Scan(&count); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no task created, got %d", count)
+	}
+}
+
+func TestHandleLinearIssueNoIntegrationIgnored(t *testing.T) {
+	db := setupConsumerDB(t)
+	defer db.Close()
+	insertWebhookFixtures(t, db)
+
+	publisher := &fakeEventPublisher{}
+	consumer := NewConsumer(db, slog.Default(), publisher)
+
+	payload, _ := json.Marshal(map[string]any{
+		"type":   "Issue",
+		"action": "create",
+		"data": map[string]any{
+			"id":          "issue-uuid-3",
+			"identifier":  "TEAM-44",
+			"title":       "Orphan issue",
+			"state":       map[string]any{"name": "Todo"},
+			"team":        map[string]any{"id": "unknown-team", "name": "Team", "key": "TEAM"},
+		},
+	})
+	event := events.WebhookEvent{
+		Source:     "linear",
+		EventType:  "Issue",
+		DeliveryID: "delivery-linear-3",
+		Payload:    payload,
+	}
+	data, _ := json.Marshal(event)
+	msg := &nats.Msg{Data: data, Sub: &nats.Subscription{}}
+
+	if err := consumer.Handle(msg); err != nil {
+		t.Fatalf("Handle() error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE source_id = 'TEAM-44'`).Scan(&count); err != nil {
+		t.Fatalf("count tasks: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no task created, got %d", count)
 	}
 }

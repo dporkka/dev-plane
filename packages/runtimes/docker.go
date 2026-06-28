@@ -360,7 +360,22 @@ func (p *DockerProvider) ExecuteCommand(ctx context.Context, sessionID string, c
 	for k, v := range cmd.Env {
 		args = append(args, "-e", k+"="+v)
 	}
-	args = append(args, sess.container, "sh", "-c", cmd.Command)
+	if len(cmd.Args) > 0 {
+		if err := ValidateCommandArgs(cmd.Args); err != nil {
+			return nil, fmt.Errorf("invalid command args: %w", err)
+		}
+		args = append(args, sess.container)
+		args = append(args, cmd.Args...)
+	} else if cmd.UnsafeShell {
+		// Trusted system callers may pass a raw shell string.
+		args = append(args, sess.container, "sh", "-c", cmd.Command)
+	} else {
+		// Fallback for legacy callers that still provide a shell string.
+		if _, err := ParseCommandString(cmd.Command); err != nil {
+			return nil, fmt.Errorf("invalid command: %w", err)
+		}
+		args = append(args, sess.container, "sh", "-c", cmd.Command)
+	}
 
 	p.setSessionStatus(sessionID, "running")
 	out, runErr := p.runner.Run(execCtx, "docker", args, commandOptions{})

@@ -21,8 +21,8 @@ func TestParseKeyring(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseKeyring() error: %v", err)
 	}
-	if keyring.primary.ID != "primary" {
-		t.Fatalf("primary id = %q, want primary", keyring.primary.ID)
+	if keyring.PrimaryID() != "primary" {
+		t.Fatalf("primary id = %q, want primary", keyring.PrimaryID())
 	}
 
 	if _, err := ParseKeyring(""); err == nil {

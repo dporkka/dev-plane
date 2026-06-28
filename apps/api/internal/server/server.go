@@ -72,7 +72,7 @@ func (s *Server) routes() {
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))
-	s.router.Use(appmiddleware.Recovery)
+	s.router.Use(appmiddleware.Recovery(s.logger))
 	s.router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   s.config.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -107,7 +107,11 @@ func (s *Server) routes() {
 		h = h.WithAgentVault(av, s.config.AgentVaultProject)
 	}
 	ghAuth := handlers.NewGitHubAuthHandler(s.db, s.config)
-	wh := handlers.NewWebhookHandler().WithWebhookSecret(s.config.GitHubWebhookSecret)
+	wh := handlers.NewWebhookHandler().
+		WithWebhookSecret(s.config.GitHubWebhookSecret).
+		WithLinearWebhookSecret(s.config.LinearWebhookSecret).
+		WithSlackSigningSecret(s.config.SlackSigningSecret).
+		WithDiscordWebhookSecret(s.config.DiscordWebhookSecret)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
 	}
@@ -130,7 +134,7 @@ func (s *Server) routes() {
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
-			r.Use(appmiddleware.Auth(s.config.JWTSecret))
+			r.Use(appmiddleware.Auth(s.config.JWTSecret, s.logger))
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)

@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS project_configs (
     build_command TEXT,
     has_dockerfile BOOLEAN DEFAULT false,
     has_devcontainer BOOLEAN DEFAULT false,
-    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_project_configs_repo_id ON project_configs(repository_id);
 
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS task_specs (
     estimated_cost DECIMAL(10,6),
     recommended_agent TEXT,
     generated_by TEXT, -- model that generated this spec
-    generated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    generated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_task_specs_task_id ON task_specs(task_id);
 
@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS detection_results (
     has_dockerfile BOOLEAN DEFAULT false,
     has_devcontainer BOOLEAN DEFAULT false,
     raw_output TEXT, -- full detection output for debugging
-    detected_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_detection_results_repo ON detection_results(repository_id);
 

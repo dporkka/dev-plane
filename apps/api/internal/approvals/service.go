@@ -8,6 +8,7 @@ package approvals
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -165,8 +166,9 @@ func (s *Service) RespondApproval(ctx context.Context, approvalID, responderID, 
 
 		result, err := s.kernel.Evaluate(ctx, req)
 		if err != nil {
-			s.logger.Warn("capability kernel evaluation failed, allowing response", "error", err)
-		} else if result.Effect == policies.EffectDeny {
+			return fmt.Errorf("capability evaluation failed: %w", err)
+		}
+		if result.Effect == policies.EffectDeny {
 			return fmt.Errorf("responder does not have permission to approve this action: %s", result.Reason)
 		}
 	}
@@ -331,7 +333,7 @@ func (s *Service) getApproval(ctx context.Context, approvalID string) (*models.A
 		&metadata, &a.CreatedAt, &a.UpdatedAt,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("approval %s not found", approvalID)
 		}
 		return nil, fmt.Errorf("get approval: %w", err)

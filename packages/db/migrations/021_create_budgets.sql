@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS budgets (
     max_concurrent_agents   INTEGER DEFAULT 0,
     max_daily_spend         DECIMAL(10,4),
     notifications           JSONB DEFAULT '{}',
-    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_budgets_organization_id ON budgets(organization_id);
