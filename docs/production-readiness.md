@@ -11,7 +11,7 @@ This checklist tracks the minimum gates required before AI Dev Control Plane sho
 - Test execution has a distinct allow-listed capability operation.
 - Approval-required agent tool calls create approval records and pause the run instead of continuing.
 - HTTP workspace writes, patches, and shell commands are capability-gated before side effects.
-- HTTP workspace shell command timeouts kill the process group rather than waiting on orphaned child processes.
+- HTTP workspace shell command timeouts for local worktrees kill the process group rather than waiting on orphaned child processes; Docker-backed commands return a timeout error via the runtime provider.
 - Docker runtime provider implements create, exec, file read/write, patch, snapshot, restore, status, log streaming, and cleanup with no runtime network, named workspace volumes, read-only rootfs, dropped capabilities, no-new-privileges, and CPU/memory/PID limits.
 - Worker `tasks.approved` handling provisions configured runtime sessions and persists runtime provider/session metadata on workspace rows.
 - HTTP workspace read, write, patch, exec, directory-list, and dev-service start/stop endpoints route Docker-backed workspace rows through `runtimes.Provider` instead of requiring local worktree paths.
@@ -34,13 +34,21 @@ This checklist tracks the minimum gates required before AI Dev Control Plane sho
 - HTTP approval responses publish `approval.approved` or `approval.rejected` events after updating the approval row, and rejected responses mark the task failed immediately. Worker approval handling only creates PRs for explicit `pr_create` approvals, with tests covering approved, rejected, non-PR, non-reviewable, and PR creation error paths.
 - PR factory no longer creates fake local PR records when GitHub is unavailable. It requires a configured GitHub gateway/token, pushes the workspace branch with non-interactive Git, calls the GitHub PR API, and only persists a PR record after GitHub returns a PR.
 - Direct model providers are HTTP-backed for OpenAI, Anthropic, Gemini, Groq, and Fireworks. The router passes the selected model into each provider call, records usage/cost estimates from provider responses, supports structured JSON response mode where the provider API supports it, and keeps provider calls locally testable with injectable HTTP clients.
-- Event stream definitions are centralized and locally tested so every declared task, agent, run, review, approval, PR, webhook, and audit subject is covered by a configured JetStream stream.
+- Event stream definitions are centralized and locally tested so every declared task, agent, run, review, approval, PR, webhook, and audit subject is covered by a configured JetStream stream. Deploy-event subjects (`deploy.*`) are declared but not yet assigned a dedicated JetStream stream.
 - GitHub webhook handlers require `GITHUB_APP_WEBHOOK_SECRET`, reject missing or invalid `X-Hub-Signature-256` headers, and publish accepted non-ping deliveries to `webhooks.received`; publish failures return a retryable HTTP error instead of silently acknowledging dropped work.
 - Repository connection now validates GitHub owner/name components before constructing clone URLs, and the web repository screen sends the API's owner/name contract with mutation error handling and list refresh for connect, sync, and disconnect actions.
 - Repository intelligence no longer returns `ErrNotImplemented` for symbol search or no-dependency repositories; the lightweight indexer now extracts best-effort lexical symbols, indexes source content, and parses Go/npm dependencies with tests.
 - Security scanner adapters now parse Gitleaks, Trivy, and Semgrep JSON output into structured findings with normalized severity, confidence, file, line, remediation, and summary counts instead of returning only opaque raw output.
 - All Go modules in `go.work` pass `go test -buildvcs=false ./...` from their module directories.
 - `apps/web` passes `npm audit`, `npm run typecheck`, `npm run lint` (warnings only), and `npm run build`.
+
+### Phase 4 Integration Features
+
+- Linear, Slack, and Discord integration gateways consume external events and create tasks.
+- Voice transcript handler creates tasks from audio transcripts.
+- Webhook consumer dispatches incoming `webhooks.received` events to integration handlers.
+- An initial experimental TypeScript SDK is available under `packages/sdk/typescript`.
+- Deployment-gated releases require capability authorization via `capability.OpDeploy`.
 
 ## Hard Blockers
 
@@ -76,7 +84,8 @@ Expected result: `TestLiveModelProviderRun`, `TestLivePRCreation`, and `TestLive
 
 See `docs/live-e2e.md` for full setup instructions.
 
-- `make test` — all Go modules and `apps/web` pass.
+- `make test` — all Go modules and apps pass.
+- `apps/web` checks — `npm run typecheck`, `npm run lint` (warnings only), `npm run build`, and `npm audit` pass.
 - `make test-race` — no race conditions detected.
 - `make lint` — Go vet and web ESLint pass.
 - `make build` — API, worker, runner binaries and Next.js production build succeed.
@@ -90,7 +99,7 @@ See `docs/live-e2e.md` for full setup instructions.
 
   Result: `TestDockerProviderIntegrationIsolationAndCleanup` and all other runtime tests pass.
 
-- Postgres migration verification (all 20 migrations applied successfully):
+- Postgres migration verification (all 22 migrations applied successfully):
 
   ```bash
   # Start a Postgres 16 container
@@ -103,7 +112,7 @@ See `docs/live-e2e.md` for full setup instructions.
     go test ./... -run TestRunMigrationsPostgres -v
   ```
 
-  Result: migrations `001` through `020` applied cleanly.
+  Result: migrations `001` through `022` applied cleanly (including `budgets` and `deployments`).
 
 ## Remaining Live Gates
 

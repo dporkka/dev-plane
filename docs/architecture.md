@@ -237,20 +237,17 @@ projects --< budgets
 
 ```
 Task Created -> [NATS: tasks.created]
-    -> Worker picks up -> [NATS: tasks.started]
-    -> Planner runs -> [NATS: agents.run.started]
-    -> Spec approved -> [NATS: tasks.approved]
-    -> Worker provisions workspace and queues implementer -> [NATS: runs.triggered]
-    -> Steps execute -> [NATS: agents.step.*]
+    -> Worker (task handler) creates heuristic spec
+    -> Task approved -> [NATS: tasks.approved]
+    -> Worker provisions workspace and triggers run -> [NATS: runs.triggered]
+    -> Agent run executes via API Agent Runner -> [NATS: agents.run.started]
+    -> Steps execute -> [NATS: agents.step.created / completed / failed]
     -> Run completes -> [NATS: agents.run.completed]
-    -> Handoff consumed -> [NATS: runs.triggered]
-    -> Worker executes queued run via shared agent executor
+    -> Worker schedules next role or review -> [NATS: runs.triggered / review.completed]
     -> Approval-needed run pauses -> [NATS: approval.requested]
-    -> Human approves -> [NATS: approval.approved]
-    -> Worker requeues paused run -> [NATS: runs.triggered]
-    -> If no handoff remains, reviewer persists report -> [NATS: review.completed]
-    -> Worker requests human approval -> [NATS: approval.requested]
-    -> Task updated -> [NATS: tasks.completed]
+    -> Human approves/rejects -> [NATS: approval.approved / rejected]
+    -> Worker creates PR or requeues run -> [NATS: runs.triggered]
+    -> Task updated -> [NATS: tasks.completed / failed]
     -> Audit logged -> [NATS: audit.action.logged]
 ```
 

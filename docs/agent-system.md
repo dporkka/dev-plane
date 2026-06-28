@@ -168,11 +168,11 @@ Remaining production work is to run and capture live end-to-end evidence with a 
 
 2. **Implementer** reads the spec, makes the required code changes, and requests approval for mutations or shell commands that policy marks as sensitive. Output: git commits + `changes` message.
 
-3. **Reviewer** reads the changes and provides a code review. Output: persisted `review_reports` row and `review.completed` event, or a `review` mailbox message when another role needs to act on the feedback.
+3. **Reviewer** reads the changes and provides a code review. Output: persisted `review_reports` row and `review.completed` event, or a `review_comment` mailbox message when another role needs to act on the feedback.
 
-4. **Test Runner** executes tests to validate the changes. Output: `test_results` message.
+4. **Test Runner** executes tests to validate the changes. Output: test results.
 
-5. **Security Reviewer** scans the changes for security issues. Output: `security_report` message.
+5. **Security Reviewer** scans the changes for security issues. Output: security findings.
 
 6. **PR creation** is handled by the worker's approval handler on `approval.approved` events with `approval_type = 'pr_create'`, using `packages/prfactory` to open the GitHub pull request.
 
@@ -182,10 +182,16 @@ Remaining production work is to run and capture live end-to-end evidence with a 
 
 ### Human-in-the-Loop
 
-Human approval is required at these gates:
+The runner can pause an agent run and request human approval. Current approval types include:
 
-1. **After Planner** - Approve/reject the implementation plan
-2. **After Security Review** - Acknowledge any security findings
-3. **Before PR merge** - Final approval to create the pull request
+1. **Capability approval** (`capability:{operation}`) - Paused when the capability kernel returns `RequiredApproval` for an operation.
+2. **Risky-action approval** (`risky_action`) - Paused when the model emits a `request_approval` action.
+3. **PR-create approval** (`pr_create`) - Created after `review.completed`; approving it opens the GitHub pull request.
 
 Approval requests appear in the UI with context from the agent that generated them. Approvers can comment and request changes before approving.
+
+## Implementation Notes
+
+- Model/provider selection is routed through `apps/api/internal/modelrouter/router.go`.
+- The agent loop enforces a hard maximum of 50 steps (`maxSteps := 50` in `runner.go`).
+- The first agent run created for a task is always an `implementer` run.

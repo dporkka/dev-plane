@@ -47,22 +47,43 @@ Agent-run tool calls go through the Capability Kernel, a centralized authorizati
 | `list_directory` | Safe | Allow |
 | `inspect_repo` | Safe | Allow |
 | `get_git_diff` | Safe | Allow |
+| `run_tests` | Safe | Allow |
 | `write_file` | Destructive | Ask |
 | `apply_patch` | Destructive | Ask |
+| `delete_file` | Destructive | Ask |
 | `run_command` | Dangerous | Ask |
-| `run_tests` | Safe | Allow |
+| `install_dependency` | Destructive | Ask |
+| `call_mcp_tool` | Dangerous | Ask |
+| `run_migration` | Dangerous | Ask |
 | `create_commit` | Significant | Ask |
-| `run_tests` | Safe | Allow |
+| `push_branch` | Significant | Ask |
+| `open_pull_request` | Significant | Ask |
+| `start_preview_server` | Significant | Ask |
+| `stop_preview_server` | Significant | Ask |
+| `network_request` | Sensitive | Ask |
+| `access_secret` | Sensitive | Ask |
+| `merge_pull_request` | Administrative | Admin only |
+| `deploy` | Administrative | Admin only |
+| `write_secret` | Administrative | Admin only |
+| `rotate_secret` | Administrative | Admin only |
+| `modify_policy` | Administrative | Admin only |
+| `modify_budget` | Administrative | Admin only |
+| `delete_workspace` | Administrative | Admin only |
+| `destructive_db` | Administrative | Deny |
+
+Conditional deny rules in the default engine also block pushes to `main`, production secret reads, and file deletions larger than 10 MB.
 
 ### Capability Evaluation Flow
 
 ```
 Agent requests tool execution
-    -> Kernel resolves policy for (tool, agent_role, resource)
-    -> Check policy:
-        ALLOW  -> Execute immediately
-        ASK    -> Create approval request, pause execution
-        DENY   -> Reject with error
+    -> Kernel resolves resource type and action from operation
+    -> Check RBAC permissions (if user is present)
+    -> Evaluate policies, returning the most restrictive matching effect
+    -> Check budget constraints (if budget is provided)
+    -> Upgrade high-risk operations to ask when sandbox is isolated
+    -> Determine approval requirement (ask or admin_only)
+    -> Determine risk level
     -> Log action to audit stream
 ```
 
