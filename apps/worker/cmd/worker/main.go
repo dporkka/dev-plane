@@ -20,6 +20,8 @@ import (
 	"errors"
 	"flag"
 	"log/slog"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,7 +51,7 @@ func main() {
 		dbURL          = flag.String("db", os.Getenv("DATABASE_URL"), "Database URL (or DATABASE_URL env)")
 		natsURL        = flag.String("nats", os.Getenv("NATS_URL"), "NATS URL (or NATS_URL env, default nats://localhost:4222)")
 		logLevel       = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
-		runtimeName    = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local or docker")
+		runtimeName    = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
 		runtimeBaseDir = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
 	)
 	flag.Parse()
@@ -84,6 +86,10 @@ func main() {
 		"workspace_runtime", *runtimeName,
 	)
 
+	// Set up graceful shutdown context.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	// Connect to database
 	database, err := db.New(*dbURL)
 	if err != nil {
@@ -92,7 +98,7 @@ func main() {
 	}
 	defer database.Close()
 
-	if err := database.Ping(context.Background()); err != nil {
+	if err := database.Ping(ctx); err != nil {
 		logger.Error("database ping failed", "error", err)
 		os.Exit(1)
 	}
@@ -141,7 +147,7 @@ func main() {
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
 
 	// Set up subscriptions - one per stream to avoid consumer conflicts
-	ctx := &shutdownContext{logger: logger}
+	shutdownCtx := &shutdownContext{logger: logger}
 
 	// tasks.* -> task lifecycle (created, approved)
 	subTasks, err := eventBus.Subscribe("tasks.*", func(msg *nats.Msg) {
@@ -161,7 +167,7 @@ func main() {
 		logger.Error("failed to subscribe to tasks.*", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subTasks)
+	shutdownCtx.addSubscription(subTasks)
 	logger.Info("subscribed to tasks.*")
 
 	// agents.run.completed -> mailbox handoff scheduling or review generation
@@ -175,7 +181,7 @@ func main() {
 		logger.Error("failed to subscribe to agents.run.completed", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subRunCompleted)
+	shutdownCtx.addSubscription(subRunCompleted)
 	logger.Info("subscribed to agents.run.completed")
 
 	// agents.run.failed -> fail task and notify integrations
@@ -189,7 +195,7 @@ func main() {
 		logger.Error("failed to subscribe to agents.run.failed", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subRunFailed)
+	shutdownCtx.addSubscription(subRunFailed)
 	logger.Info("subscribed to agents.run.failed")
 
 	// review.completed -> PR approval request
@@ -203,7 +209,7 @@ func main() {
 		logger.Error("failed to subscribe to review.completed", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subReviewCompleted)
+	shutdownCtx.addSubscription(subReviewCompleted)
 	logger.Info("subscribed to review.completed")
 
 	// approval.approved -> create PR
@@ -217,7 +223,7 @@ func main() {
 		logger.Error("failed to subscribe to approval.approved", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subApprovalApproved)
+	shutdownCtx.addSubscription(subApprovalApproved)
 	logger.Info("subscribed to approval.approved")
 
 	// approval.rejected -> fail task
@@ -231,7 +237,7 @@ func main() {
 		logger.Error("failed to subscribe to approval.rejected", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subApprovalRejected)
+	shutdownCtx.addSubscription(subApprovalRejected)
 	logger.Info("subscribed to approval.rejected")
 
 	// approval.requested -> notify integrations
@@ -245,7 +251,7 @@ func main() {
 		logger.Error("failed to subscribe to approval.requested", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subApprovalRequested)
+	shutdownCtx.addSubscription(subApprovalRequested)
 	logger.Info("subscribed to approval.requested")
 
 	// tasks.completed / tasks.failed -> notify integrations
@@ -259,7 +265,7 @@ func main() {
 		logger.Error("failed to subscribe to tasks.completed", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subTaskCompleted)
+	shutdownCtx.addSubscription(subTaskCompleted)
 	logger.Info("subscribed to tasks.completed")
 
 	subTaskFailed, err := eventBus.Subscribe("tasks.failed", func(msg *nats.Msg) {
@@ -272,7 +278,7 @@ func main() {
 		logger.Error("failed to subscribe to tasks.failed", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subTaskFailed)
+	shutdownCtx.addSubscription(subTaskFailed)
 	logger.Info("subscribed to tasks.failed")
 
 	// Also subscribe to runs.triggered for agent execution
@@ -286,7 +292,7 @@ func main() {
 		logger.Error("failed to subscribe to runs.triggered", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subRunTriggered)
+	shutdownCtx.addSubscription(subRunTriggered)
 	logger.Info("subscribed to runs.triggered")
 
 	// webhooks.* -> process incoming webhook events
@@ -300,18 +306,26 @@ func main() {
 		logger.Error("failed to subscribe to webhooks.*", "error", err)
 		os.Exit(1)
 	}
-	ctx.addSubscription(subWebhooks)
+	shutdownCtx.addSubscription(subWebhooks)
 	logger.Info("subscribed to webhooks.*")
+
+	// Start the minimal health HTTP server used by container health checks.
+	healthPort := envOrDefault("WORKER_HEALTH_PORT", "8081")
+	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger)
+	if healthAddr == "" {
+		logger.Error("failed to start worker health server", "port", healthPort)
+		os.Exit(1)
+	}
+	logger.Info("worker health server started", "addr", healthAddr)
 
 	logger.Info("worker service is running, waiting for events...")
 
 	// Wait for shutdown signal
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigChan
+	<-ctx.Done()
 
-	logger.Info("shutdown signal received", "signal", sig.String())
-	ctx.shutdown()
+	logger.Info("shutdown signal received")
+	shutdownCtx.shutdown()
+	stopHealth()
 	logger.Info("worker service stopped gracefully")
 }
 
@@ -354,9 +368,60 @@ func initRuntimeProvider(name, baseDir, runnerURL, runnerToken string) (runtimes
 	if isProduction() && name == "local" {
 		return nil, "", errors.New("local workspace runtime is not allowed in production")
 	}
-	return runtimes.NewProvider(name, baseDir)
+	return runtimes.NewProvider(name, baseDir, runnerURL, runnerToken)
 }
 
 func isProduction() bool {
 	return os.Getenv("APP_ENV") == "production" || os.Getenv("ENV") == "production"
+}
+
+func envOrDefault(key, defaultValue string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return defaultValue
+}
+
+// startHealthServer starts a minimal HTTP server for container health checks.
+// It listens on the configured port and responds to GET /health with a JSON
+// status payload. The server is shut down when the provided context is cancelled.
+// It returns the listener address and a function that can be called to wait for
+// graceful shutdown.
+func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	})
+
+	listener, err := net.Listen("tcp", net.JoinHostPort("", port))
+	if err != nil {
+		if logger != nil {
+			logger.Error("failed to start health server", "error", err)
+		}
+		return "", func() {}
+	}
+
+	srv := &http.Server{
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("health server error", "error", err)
+		}
+	}()
+
+	stop := func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("health server shutdown error", "error", err)
+		}
+		_ = listener.Close()
+	}
+
+	return listener.Addr().String(), stop
 }

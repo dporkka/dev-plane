@@ -66,8 +66,20 @@ RESET := $(shell tput sgr0 2>/dev/null || echo "")
 dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 	@echo "$(GREEN)Starting AI Dev Control Plane in dev mode...$(RESET)"
 	@$(MAKE) docker-up
-	@echo "$(BLUE)Waiting for services to be ready...$(RESET)"
-	@sleep 3
+	@echo "$(BLUE)Waiting for NATS to be ready...$(RESET)"
+	@i=0; \
+	while [ $$i -lt 30 ]; do \
+		if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1 || \
+		   wget --spider -q http://localhost:8222/healthz >/dev/null 2>&1; then \
+			echo "$(GREEN)NATS is ready.$(RESET)"; \
+			break; \
+		fi; \
+		i=$$((i + 1)); \
+		if [ $$i -eq 30 ]; then \
+			echo "$(BLUE)NATS health check timed out after 30s; continuing anyway...$(RESET)"; \
+		fi; \
+		sleep 1; \
+	done
 	@mkdir -p $(DATA_DIR)
 	@$(MAKE) migrate
 	@echo "$(GREEN)All dependencies ready. Starting applications...$(RESET)"

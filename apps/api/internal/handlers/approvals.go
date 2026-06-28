@@ -145,6 +145,10 @@ func (h *Handler) ListOrganizationApprovals(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if !h.requireAdmin(w, user) {
+		return
+	}
+
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT a.id, a.task_id, a.agent_run_id, a.approval_type, a.requested_by, a.requested_at,
 		       a.responded_by, a.response, a.response_note, a.responded_at, a.expires_at, a.metadata
@@ -196,6 +200,10 @@ func (h *Handler) RespondApproval(w http.ResponseWriter, r *http.Request) {
 
 	if err := authz.AuthorizeApproval(ctx, h.db, user, id); err != nil {
 		respond.Error(w, http.StatusNotFound, errors.New("approval not found"))
+		return
+	}
+
+	if !h.requireAdmin(w, user) {
 		return
 	}
 

@@ -113,6 +113,61 @@ func TestCreateSecretWithoutManagerReturnsUnavailable(t *testing.T) {
 	}
 }
 
+func TestDeleteSecretSoftDeletesAndAudits(t *testing.T) {
+	db := setupSecretHandlerDB(t)
+	defer db.Close()
+	h := setupSecretHandler(t, db)
+
+	createBody, _ := json.Marshal(CreateSecretRequest{
+		Name:  "to-delete",
+		Scope: "staging",
+		Value: "secret-value",
+	})
+	createReq := secretRequest(http.MethodPost, "/organizations/org-1/secrets", "org-1", "", bytes.NewReader(createBody))
+	createRec := httptest.NewRecorder()
+	h.CreateSecret(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("CreateSecret status = %d body=%s", createRec.Code, createRec.Body.String())
+	}
+	var created SecretResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	deleteReq := secretRequest(http.MethodDelete, "/secrets/"+created.ID, "", created.ID, nil)
+	deleteRec := httptest.NewRecorder()
+	h.DeleteSecret(deleteRec, deleteReq)
+	if deleteRec.Code != http.StatusNoContent {
+		t.Fatalf("DeleteSecret status = %d body=%s", deleteRec.Code, deleteRec.Body.String())
+	}
+
+	var deletedAt sql.NullTime
+	if err := db.QueryRow(`SELECT deleted_at FROM secret_references WHERE id = ?`, created.ID).Scan(&deletedAt); err != nil {
+		t.Fatalf("query deleted_at: %v", err)
+	}
+	if !deletedAt.Valid {
+		t.Fatal("expected secret to be soft-deleted")
+	}
+
+	for _, action := range []string{"capability_check", "secret.write", "secret.delete"} {
+		var count int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action = ?`, action).Scan(&count); err != nil {
+			t.Fatalf("query audit action %s: %v", action, err)
+		}
+		if count == 0 {
+			t.Fatalf("audit action %s missing", action)
+		}
+	}
+
+	// Deleting again should return not found.
+	deleteReq2 := secretRequest(http.MethodDelete, "/secrets/"+created.ID, "", created.ID, nil)
+	deleteRec2 := httptest.NewRecorder()
+	h.DeleteSecret(deleteRec2, deleteReq2)
+	if deleteRec2.Code != http.StatusNotFound {
+		t.Fatalf("second DeleteSecret status = %d, want %d", deleteRec2.Code, http.StatusNotFound)
+	}
+}
+
 func setupSecretHandler(t *testing.T, db *sql.DB) *Handler {
 	t.Helper()
 	allowAll := policies.NewEngine([]policies.Policy{

@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS organizations (
     slug        TEXT NOT NULL UNIQUE,
     plan        TEXT NOT NULL DEFAULT 'free',
     settings    JSONB DEFAULT '{}',
-    created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at  TIMESTAMP
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at  TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_organizations_slug ON organizations(slug);

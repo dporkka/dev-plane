@@ -313,8 +313,11 @@ func TestIntegrationWebhook_SlackCreateCommand(t *testing.T) {
 
 	h := NewWebhookHandler().WithHandler(baseHandler)
 	body := []byte(`{"text":"create Document the new integration flow"}`)
+	timestamp := "1234567890"
+	signature := signSlackPayload(body, timestamp, "slack-secret")
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack/int-2", bytes.NewReader(body))
-	req.Header.Set("X-Slack-Signature", signPayload(body, "slack-secret"))
+	req.Header.Set("X-Slack-Signature", signature)
+	req.Header.Set("X-Slack-Request-Timestamp", timestamp)
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("provider", integrationTypeSlack)
 	rctx.URLParams.Add("integrationID", "int-2")
@@ -329,6 +332,61 @@ func TestIntegrationWebhook_SlackCreateCommand(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestIntegrationWebhook_MissingSignature(t *testing.T) {
+	baseHandler, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	configJSON := `{"project_id":"proj-1","repository_id":"repo-1","created_by":"user-1","webhook_secret":"linear-secret"}`
+	mock.ExpectQuery("SELECT id, organization_id, integration_type, display_name, config, status FROM integrations").
+		WithArgs("int-1", integrationTypeLinear).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
+			AddRow("int-1", "org-1", integrationTypeLinear, "Linear", configJSON, "connected"))
+
+	h := NewWebhookHandler().WithHandler(baseHandler)
+	body := []byte(`{"type":"Issue","action":"create","data":{"id":"lin-123","identifier":"ENG-42","title":"Fix production bug","description":"Investigate","state":{"name":"Todo"}}}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/linear/int-1", bytes.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", integrationTypeLinear)
+	rctx.URLParams.Add("integrationID", "int-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.IntegrationWebhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
+	}
+}
+
+func TestIntegrationWebhook_SlackInvalidSignature(t *testing.T) {
+	baseHandler, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	configJSON := `{"project_id":"proj-1","repository_id":"repo-1","created_by":"user-1","webhook_secret":"slack-secret"}`
+	mock.ExpectQuery("SELECT id, organization_id, integration_type, display_name, config, status FROM integrations").
+		WithArgs("int-2", integrationTypeSlack).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
+			AddRow("int-2", "org-1", integrationTypeSlack, "Slack", configJSON, "connected"))
+
+	h := NewWebhookHandler().WithHandler(baseHandler)
+	body := []byte(`{"text":"create Test task"}`)
+	timestamp := "1234567890"
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/slack/int-2", bytes.NewReader(body))
+	req.Header.Set("X-Slack-Signature", signSlackPayload(body, timestamp, "wrong-secret"))
+	req.Header.Set("X-Slack-Request-Timestamp", timestamp)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", integrationTypeSlack)
+	rctx.URLParams.Add("integrationID", "int-2")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.IntegrationWebhook(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected status %d, got %d", http.StatusUnauthorized, rec.Code)
 	}
 }
 

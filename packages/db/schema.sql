@@ -264,6 +264,25 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created_at);
 
 -- =====================================================
+-- 8c. deployments
+-- =====================================================
+CREATE TABLE IF NOT EXISTS deployments (
+    id              UUID PRIMARY KEY,
+    task_id         UUID NOT NULL REFERENCES tasks(id),
+    environment     TEXT NOT NULL,
+    ref             TEXT NOT NULL,
+    provider        TEXT NOT NULL DEFAULT 'github',
+    external_id     TEXT,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    url             TEXT,
+    metadata        JSONB DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_deployments_task_id ON deployments(task_id);
+
+-- =====================================================
 -- 9. approvals
 -- =====================================================
 CREATE TABLE IF NOT EXISTS approvals (

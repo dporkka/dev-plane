@@ -18,6 +18,10 @@ interface AppState {
   selectedProject: string | null;
   setSelectedProject: (id: string | null) => void;
 
+  // Bootstrap
+  bootstrapped: boolean;
+  setBootstrapped: (value: boolean) => void;
+
   // Live updates
   activeRuns: AgentRun[];
   setActiveRuns: (runs: AgentRun[]) => void;
@@ -53,6 +57,10 @@ export const useStore = create<AppState>((set) => ({
   setProjects: (projects) => set({ projects }),
   selectedProject: null,
   setSelectedProject: (id) => set({ selectedProject: id }),
+
+  // Bootstrap
+  bootstrapped: false,
+  setBootstrapped: (bootstrapped) => set({ bootstrapped }),
 
   // Live updates
   activeRuns: [],

@@ -31,6 +31,7 @@ func TestRespondApprovalPublishesApprovedEvent(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := approvalResponseRequest(t, "approval-1", `{"response":"approved","response_note":"ship it"}`)
+	req = req.WithContext(withRole(req.Context(), "owner"))
 	rr := httptest.NewRecorder()
 	h.RespondApproval(rr, req)
 
@@ -71,6 +72,7 @@ func TestRespondApprovalRejectedPublishesEventAndFailsTask(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := approvalResponseRequest(t, "approval-1", `{"response":"rejected","response_note":"needs changes"}`)
+	req = req.WithContext(withRole(req.Context(), "owner"))
 	rr := httptest.NewRecorder()
 	h.RespondApproval(rr, req)
 
@@ -108,6 +110,7 @@ func TestRespondApprovalAlreadyRespondedDoesNotPublish(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(1, 0))
 
 	req := approvalResponseRequest(t, "approval-1", `{"response":"approved"}`)
+	req = req.WithContext(withRole(req.Context(), "owner"))
 	rr := httptest.NewRecorder()
 	h.RespondApproval(rr, req)
 
@@ -132,6 +135,48 @@ func (p *fakeEventPublisher) Publish(subject string, data []byte) error {
 	p.subject = subject
 	p.data = append([]byte(nil), data...)
 	return p.err
+}
+
+func TestListOrganizationApprovalsRequiresAdmin(t *testing.T) {
+	tests := []struct {
+		name       string
+		role       string
+		wantStatus int
+	}{
+		{"owner can list", "owner", http.StatusOK},
+		{"admin can list", "admin", http.StatusOK},
+		{"member cannot list", "member", http.StatusForbidden},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h, mock, cleanup := setupTest(t)
+			defer cleanup()
+
+			expectAuthorizeOrganization(mock, "org-1")
+			if tt.wantStatus == http.StatusOK {
+				rows := sqlmock.NewRows([]string{"id", "task_id", "agent_run_id", "approval_type", "requested_by", "requested_at", "responded_by", "response", "response_note", "responded_at", "expires_at", "metadata"})
+				mock.ExpectQuery("SELECT a.id, a.task_id, a.agent_run_id, a.approval_type, a.requested_by, a.requested_at").
+					WithArgs("org-1").
+					WillReturnRows(rows)
+			}
+
+			req := httptest.NewRequest(http.MethodGet, "/organizations/org-1/approvals", nil)
+			req = req.WithContext(withRole(req.Context(), tt.role))
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("orgID", "org-1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			rec := httptest.NewRecorder()
+
+			h.ListOrganizationApprovals(rec, req)
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("unfulfilled expectations: %v", err)
+			}
+		})
+	}
 }
 
 func approvalResponseRequest(t *testing.T, approvalID, body string) *http.Request {

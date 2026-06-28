@@ -8,16 +8,16 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     model               TEXT,
     provider            TEXT,
     status              TEXT NOT NULL DEFAULT 'pending',
-    started_at          TIMESTAMP,
-    completed_at        TIMESTAMP,
+    started_at          TIMESTAMPTZ,
+    completed_at        TIMESTAMPTZ,
     prompt_tokens       INTEGER DEFAULT 0,
     completion_tokens   INTEGER DEFAULT 0,
     total_cost          DECIMAL(10,6) DEFAULT 0,
     error_message       TEXT,
     summary             TEXT,
     metadata            JSONB DEFAULT '{}',
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);

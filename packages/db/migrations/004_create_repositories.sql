@@ -11,12 +11,12 @@ CREATE TABLE IF NOT EXISTS repositories (
     default_branch      TEXT NOT NULL DEFAULT 'main',
     private             BOOLEAN NOT NULL DEFAULT false,
     connection_status   TEXT NOT NULL DEFAULT 'pending',
-    last_synced_at      TIMESTAMP,
+    last_synced_at      TIMESTAMPTZ,
     webhook_secret      TEXT,
     settings            JSONB DEFAULT '{}',
-    created_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at          TIMESTAMP,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at          TIMESTAMPTZ,
     UNIQUE(project_id, full_name)
 );
 

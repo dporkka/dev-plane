@@ -401,6 +401,36 @@ func buildComponents() Components {
 					"supports_voice":         {Type: "boolean"},
 				},
 			},
+			"CreateIntegrationRequest": {
+				Type:     "object",
+				Required: []string{"integration_type", "display_name"},
+				Properties: map[string]*Schema{
+					"integration_type": {Type: "string", Enum: []interface{}{"github", "linear", "slack", "discord", "webhook", "voice"}},
+					"display_name":     {Type: "string"},
+					"config":           {Type: "object", Nullable: true},
+					"token":            {Type: "string", Nullable: true},
+					"webhook_url":      {Type: "string", Format: "uri", Nullable: true},
+				},
+			},
+			"UpdateIntegrationRequest": {
+				Type: "object",
+				Properties: map[string]*Schema{
+					"display_name": {Type: "string", Nullable: true},
+					"config":       {Type: "object", Nullable: true},
+					"status":       {Type: "string", Enum: []interface{}{"pending", "connected", "error", "disconnected"}, Nullable: true},
+					"token":        {Type: "string", Nullable: true},
+					"webhook_url":  {Type: "string", Format: "uri", Nullable: true},
+				},
+			},
+			"IntegrationVerifyResponse": {
+				Type:     "object",
+				Required: []string{"valid", "status"},
+				Properties: map[string]*Schema{
+					"valid":  {Type: "boolean"},
+					"status": {Type: "string", Enum: []interface{}{"pending", "connected", "error", "disconnected"}},
+					"error":  {Type: "string", Nullable: true},
+				},
+			},
 			"CreateVoiceTaskRequest": {
 				Type:     "object",
 				Required: []string{"repository_id", "transcript"},
@@ -1578,11 +1608,13 @@ func buildPaths() map[string]PathItem {
 			RequestBody: &RequestBody{
 				Required: true,
 				Content: map[string]MediaType{
-					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Integration"}},
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreateIntegrationRequest"}},
 				},
 			},
 			Responses: map[string]Response{
-				"201": {Description: "Integration created"},
+				"201": {Description: "Integration created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Integration"}},
+				}},
 			},
 		},
 	}
@@ -1612,11 +1644,13 @@ func buildPaths() map[string]PathItem {
 			},
 			RequestBody: &RequestBody{
 				Content: map[string]MediaType{
-					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Integration"}},
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/UpdateIntegrationRequest"}},
 				},
 			},
 			Responses: map[string]Response{
-				"200": {Description: "Integration updated"},
+				"200": {Description: "Integration updated", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Integration"}},
+				}},
 			},
 		},
 		Delete: &Operation{
@@ -1629,6 +1663,25 @@ func buildPaths() map[string]PathItem {
 			},
 			Responses: map[string]Response{
 				"204": {Description: "Integration deleted"},
+			},
+		},
+	}
+	paths["/api/v1/integrations/{id}/verify"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Integrations"},
+			Summary:     "Verify integration credentials",
+			OperationID: "verifyIntegration",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Verification result", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/IntegrationVerifyResponse"}},
+				}},
+				"400": {Description: "Integration has no credentials to verify"},
+				"404": {Description: "Integration not found"},
+				"503": {Description: "Secret manager not configured"},
 			},
 		},
 	}
@@ -2261,6 +2314,25 @@ func buildPaths() map[string]PathItem {
 				"200": {Description: "Secret rotated", Content: map[string]MediaType{
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/SecretReference"}},
 				}},
+				"400": {Description: "Invalid request"},
+				"403": {Description: "Operation denied"},
+				"404": {Description: "Secret not found"},
+				"503": {Description: "Encrypted secret storage is not configured"},
+			},
+		},
+	}
+	paths["/api/v1/secrets/{id}"] = PathItem{
+		Delete: &Operation{
+			Tags:        []string{"Secrets"},
+			Summary:     "Delete secret",
+			Description: "Soft-deletes an encrypted secret.",
+			OperationID: "deleteSecret",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Secret ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"204": {Description: "Secret deleted"},
 				"400": {Description: "Invalid request"},
 				"403": {Description: "Operation denied"},
 				"404": {Description: "Secret not found"},

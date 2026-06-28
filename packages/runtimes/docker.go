@@ -499,12 +499,14 @@ func (p *DockerProvider) Restore(ctx context.Context, sessionID string, snap *Sn
 	return nil
 }
 
-// GetStatus returns the current status of a Docker container session.
+// GetStatus returns the current status of a Docker container session,
+// including live CPU, memory, and disk usage when available.
 func (p *DockerProvider) GetStatus(ctx context.Context, sessionID string) (*SessionStatus, error) {
 	sess, err := p.session(sessionID)
 	if err != nil {
 		return nil, err
 	}
+
 	out, err := p.runner.Run(ctx, "docker", []string{"inspect", "-f", "{{.State.Status}} {{.State.Pid}}", sess.container}, commandOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("docker inspect: %w (stderr: %s)", err, out.Stderr)
@@ -518,12 +520,89 @@ func (p *DockerProvider) GetStatus(ctx context.Context, sessionID string) (*Sess
 	if len(fields) > 1 {
 		pid, _ = strconv.Atoi(fields[1])
 	}
+
+	cpuUsage, memoryUsage, diskUsage := p.containerUsage(ctx, sess.container)
+
 	return &SessionStatus{
-		SessionID:  sessionID,
-		Status:     status,
-		PID:        pid,
-		LastActive: sess.lastActive,
+		SessionID:   sessionID,
+		Status:      status,
+		PID:         pid,
+		CPUUsage:    cpuUsage,
+		MemoryUsage: memoryUsage,
+		DiskUsage:   diskUsage,
+		LastActive:  sess.lastActive,
 	}, nil
+}
+
+func (p *DockerProvider) containerUsage(ctx context.Context, container string) (cpu float64, memory int64, disk int64) {
+	if stats, err := p.runner.Run(ctx, "docker", []string{"stats", "--no-stream", "--format", "{{.CPUPerc}}\t{{.MemUsage}}", container}, commandOptions{}); err == nil {
+		parts := strings.Split(strings.TrimSpace(stats.Stdout), "\t")
+		if len(parts) >= 1 {
+			cpu, _ = strconv.ParseFloat(strings.TrimSuffix(strings.TrimSpace(parts[0]), "%"), 64)
+		}
+		if len(parts) >= 2 {
+			memFields := strings.Fields(parts[1])
+			if len(memFields) >= 1 {
+				memory = parseDockerSize(memFields[0])
+			}
+		}
+	}
+
+	if sizeOut, err := p.runner.Run(ctx, "docker", []string{"inspect", "-f", "{{.SizeRw}}", container}, commandOptions{}); err == nil {
+		disk, _ = strconv.ParseInt(strings.TrimSpace(sizeOut.Stdout), 10, 64)
+	}
+	if disk == 0 {
+		if workDirOut, err := p.runner.Run(ctx, "docker", []string{"inspect", "-f", "{{.GraphDriver.Data.WorkDir}}", container}, commandOptions{}); err == nil {
+			workDir := strings.TrimSpace(workDirOut.Stdout)
+			if workDir != "" {
+				if duOut, err := p.runner.Run(ctx, "du", []string{"-sb", workDir}, commandOptions{}); err == nil {
+					duFields := strings.Fields(duOut.Stdout)
+					if len(duFields) >= 1 {
+						disk, _ = strconv.ParseInt(duFields[0], 10, 64)
+					}
+				}
+			}
+		}
+	}
+	return
+}
+
+func parseDockerSize(value string) int64 {
+	value = strings.TrimSpace(value)
+	multiplier := 1.0
+	switch {
+	case strings.HasSuffix(value, "TiB"):
+		multiplier = 1 << 40
+		value = strings.TrimSuffix(value, "TiB")
+	case strings.HasSuffix(value, "GiB"):
+		multiplier = 1 << 30
+		value = strings.TrimSuffix(value, "GiB")
+	case strings.HasSuffix(value, "MiB"):
+		multiplier = 1 << 20
+		value = strings.TrimSuffix(value, "MiB")
+	case strings.HasSuffix(value, "KiB"):
+		multiplier = 1 << 10
+		value = strings.TrimSuffix(value, "KiB")
+	case strings.HasSuffix(value, "TB"):
+		multiplier = 1e12
+		value = strings.TrimSuffix(value, "TB")
+	case strings.HasSuffix(value, "GB"):
+		multiplier = 1e9
+		value = strings.TrimSuffix(value, "GB")
+	case strings.HasSuffix(value, "MB"):
+		multiplier = 1e6
+		value = strings.TrimSuffix(value, "MB")
+	case strings.HasSuffix(value, "KB"):
+		multiplier = 1e3
+		value = strings.TrimSuffix(value, "KB")
+	case strings.HasSuffix(value, "B"):
+		value = strings.TrimSuffix(value, "B")
+	}
+	n, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0
+	}
+	return int64(n * multiplier)
 }
 
 // StreamLogs returns a channel of log lines from the Docker container.

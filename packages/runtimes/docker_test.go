@@ -26,8 +26,14 @@ func (r *fakeRunner) Run(ctx context.Context, name string, args []string, opts c
 	}
 	r.calls = append(r.calls, rec)
 
-	if name == "docker" && len(args) >= 3 && args[0] == "inspect" {
+	if name == "docker" && len(args) >= 3 && args[0] == "inspect" && args[1] == "-f" && args[2] == "{{.State.Status}} {{.State.Pid}}" {
 		return commandOutput{Stdout: "running 1234\n"}, nil
+	}
+	if name == "docker" && len(args) >= 3 && args[0] == "stats" {
+		return commandOutput{Stdout: "1.50%\t2.5MiB / 512MiB\n"}, nil
+	}
+	if name == "docker" && len(args) >= 3 && args[0] == "inspect" && args[1] == "-f" && args[2] == "{{.SizeRw}}" {
+		return commandOutput{Stdout: "4096\n"}, nil
 	}
 	if name == "docker" && containsArg(args, "cat -- \"$1\"") {
 		return commandOutput{Stdout: "file contents"}, nil
@@ -228,6 +234,39 @@ func TestDockerProviderFilePatchSnapshotAndStatusCommands(t *testing.T) {
 	patch := findCallWithArg(runner.calls, "docker", "apply")
 	if patch == nil || patch.stdin == "" {
 		t.Fatalf("patch call/stdin missing: %+v", patch)
+	}
+}
+
+func TestDockerProviderGetStatusReportsUsage(t *testing.T) {
+	runner := &fakeRunner{}
+	provider := dockerProviderWithSession(t, runner)
+
+	status, err := provider.GetStatus(context.Background(), "sess-1")
+	if err != nil {
+		t.Fatalf("GetStatus() error: %v", err)
+	}
+	if status.Status != "ready" {
+		t.Fatalf("Status = %q, want ready", status.Status)
+	}
+	if status.PID != 1234 {
+		t.Fatalf("PID = %d, want 1234", status.PID)
+	}
+	if status.CPUUsage != 1.5 {
+		t.Fatalf("CPUUsage = %v, want 1.5", status.CPUUsage)
+	}
+	wantMemory := int64(2.5 * (1 << 20))
+	if status.MemoryUsage != wantMemory {
+		t.Fatalf("MemoryUsage = %d, want %d", status.MemoryUsage, wantMemory)
+	}
+	if status.DiskUsage != 4096 {
+		t.Fatalf("DiskUsage = %d, want 4096", status.DiskUsage)
+	}
+
+	if stats := findCall(runner.calls, "docker", "stats"); stats == nil {
+		t.Fatal("expected docker stats call")
+	}
+	if sizeInspect := findCallWithArg(runner.calls, "docker", "{{.SizeRw}}"); sizeInspect == nil {
+		t.Fatal("expected docker inspect SizeRw call")
 	}
 }
 

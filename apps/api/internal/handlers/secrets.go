@@ -212,6 +212,59 @@ func (h *Handler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, secretReferenceResponse(stored.Reference))
 }
 
+func (h *Handler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	secretID := chi.URLParam(r, "id")
+	if secretID == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("secret id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeSecret(ctx, h.db, user, secretID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("secret not found"))
+		return
+	}
+
+	if h.secretManager == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("encrypted secret storage is not configured"))
+		return
+	}
+
+	ref, err := h.loadSecretReference(ctx, secretID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("secret not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if !h.authorizeSecretOperation(w, r, ref.OrganizationID, capability.OpWriteSecret, ref.Name, ref.Scope) {
+		return
+	}
+
+	actorType, actorID := requestActor(r)
+	if err := h.secretManager.Delete(ctx, secretstore.DeleteRequest{
+		SecretID:  secretID,
+		ActorType: actorType,
+		ActorID:   actorID,
+	}); err != nil {
+		if errors.Is(err, secretstore.ErrSecretNotFound) {
+			respond.Error(w, http.StatusNotFound, errors.New("secret not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 type secretScanner interface {
 	Scan(dest ...any) error
 }

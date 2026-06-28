@@ -14,6 +14,7 @@ const config = [
   {
     ignores: [
       '.next/**',
+      'dist-test/**',
       'next-env.d.ts',
       'node_modules/**',
     ],

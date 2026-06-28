@@ -20,11 +20,11 @@ CREATE TABLE IF NOT EXISTS tasks (
     max_runtime_minutes     INTEGER DEFAULT 60,
     approval_requirements   JSONB DEFAULT '[]',
     metadata                JSONB DEFAULT '{}',
-    started_at              TIMESTAMP,
-    completed_at            TIMESTAMP,
-    created_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at              TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at              TIMESTAMP
+    started_at              TIMESTAMPTZ,
+    completed_at            TIMESTAMPTZ,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at              TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_project_id ON tasks(project_id);

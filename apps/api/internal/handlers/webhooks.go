@@ -235,9 +235,24 @@ func (h *WebhookHandler) IntegrationWebhook(w http.ResponseWriter, r *http.Reque
 	}
 
 	signature := webhookSignatureFromRequest(r)
-	if cfg.WebhookSecret != "" && signature != "" && !validateGenericWebhook(body, signature, cfg.WebhookSecret) {
-		respond.Error(w, http.StatusUnauthorized, errors.New("invalid webhook signature"))
-		return
+	if cfg.WebhookSecret != "" {
+		if signature == "" {
+			respond.Error(w, http.StatusUnauthorized, errors.New("missing webhook signature"))
+			return
+		}
+		switch provider {
+		case integrationTypeSlack:
+			timestamp := r.Header.Get("X-Slack-Request-Timestamp")
+			if timestamp == "" || !validateSlackWebhook(body, signature, timestamp, cfg.WebhookSecret) {
+				respond.Error(w, http.StatusUnauthorized, errors.New("invalid slack webhook signature"))
+				return
+			}
+		default:
+			if !validateGenericWebhook(body, signature, cfg.WebhookSecret) {
+				respond.Error(w, http.StatusUnauthorized, errors.New("invalid webhook signature"))
+				return
+			}
+		}
 	}
 
 	eventType := provider

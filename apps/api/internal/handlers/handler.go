@@ -3,13 +3,19 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
+	"net/http"
 
 	agentvaultclient "github.com/ai-dev-control-plane/api/internal/agentvault"
+	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
 	"golang.org/x/oauth2"
 )
@@ -33,6 +39,10 @@ type Handler struct {
 	githubToken       string
 	deployGateway     deployGateway
 	deployToken       string
+
+	// integrationValidator is an optional override for integration credential
+	// validation. When nil, the default gateway-based validation is used.
+	integrationValidator func(ctx context.Context, integrationType string, token, webhookURL *string) error
 }
 
 // githubGateway is the subset of the GitHub gateway used by handlers.
@@ -116,9 +126,31 @@ func (h *Handler) WithDeployToken(token string) *Handler {
 	return h
 }
 
+// WithIntegrationValidator overrides integration credential validation. Used
+// primarily by tests to avoid external API calls.
+func (h *Handler) WithIntegrationValidator(fn func(ctx context.Context, integrationType string, token, webhookURL *string) error) *Handler {
+	h.integrationValidator = fn
+	return h
+}
+
 func (h *Handler) kernel() *capability.Kernel {
 	if h.capabilityKernel == nil {
 		h.capabilityKernel = capability.NewKernel(nil, nil, nil, h.logger)
 	}
 	return h.capabilityKernel
+}
+
+// requireAdmin returns true if the authenticated user has an admin or owner role.
+// It writes a 403 Forbidden response and returns false for non-admin users.
+func (h *Handler) requireAdmin(w http.ResponseWriter, user *auth.Claims) bool {
+	if !policies.IsAdmin(&models.User{
+		ID:             user.UserID,
+		OrganizationID: user.OrgID,
+		Email:          user.Email,
+		Role:           user.Role,
+	}) {
+		respond.Error(w, http.StatusForbidden, errors.New("admin access required"))
+		return false
+	}
+	return true
 }

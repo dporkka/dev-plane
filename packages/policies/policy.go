@@ -3,6 +3,7 @@ package policies
 import (
 	"context"
 	"fmt"
+	"sort"
 
 	"github.com/ai-dev-control-plane/models"
 )
@@ -73,8 +74,12 @@ type Engine struct {
 }
 
 // NewEngine creates a policy engine with the given policies.
+// Policies are sorted by priority descending (higher priority first).
 func NewEngine(policies []Policy) *Engine {
-	return &Engine{policies: policies}
+	sorted := make([]Policy, len(policies))
+	copy(sorted, policies)
+	sortPoliciesByPriority(sorted)
+	return &Engine{policies: sorted}
 }
 
 // DefaultEngine returns an engine with sensible default policies.
@@ -187,9 +192,10 @@ func (e *Engine) EvaluateWithDetails(ctx context.Context, req EvaluationRequest,
 	return result, matched, nil
 }
 
-// AddPolicy appends a policy to the engine at runtime.
+// AddPolicy appends a policy to the engine at runtime and re-sorts by priority.
 func (e *Engine) AddPolicy(p Policy) {
 	e.policies = append(e.policies, p)
+	sortPoliciesByPriority(e.policies)
 }
 
 // Policies returns a copy of all configured policies.
@@ -197,6 +203,13 @@ func (e *Engine) Policies() []Policy {
 	result := make([]Policy, len(e.policies))
 	copy(result, e.policies)
 	return result
+}
+
+// sortPoliciesByPriority sorts policies in-place by priority descending.
+func sortPoliciesByPriority(policies []Policy) {
+	sort.Slice(policies, func(i, j int) bool {
+		return policies[i].Priority > policies[j].Priority
+	})
 }
 
 func checkConditions(policy Policy, req EvaluationRequest) bool {

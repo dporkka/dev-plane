@@ -14,9 +14,9 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     state           TEXT NOT NULL DEFAULT 'open',
     draft           BOOLEAN NOT NULL DEFAULT false,
     created_by      UUID NOT NULL REFERENCES users(id),
-    merged_at       TIMESTAMP,
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    merged_at       TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(repository_id, number)
 );
 

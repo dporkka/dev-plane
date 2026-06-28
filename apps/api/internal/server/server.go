@@ -229,6 +229,7 @@ func (s *Server) routes() {
 			r.Get("/organizations/{orgID}/secrets", h.ListSecrets)
 			r.Post("/organizations/{orgID}/secrets", h.CreateSecret)
 			r.Post("/secrets/{id}/rotate", h.RotateSecret)
+			r.Delete("/secrets/{id}", h.DeleteSecret)
 
 			// Dashboard
 			r.Get("/organizations/{orgID}/dashboard", h.GetDashboard)
@@ -239,6 +240,7 @@ func (s *Server) routes() {
 			r.Post("/organizations/{orgID}/integrations", h.CreateIntegration)
 			r.Get("/integrations/{id}", h.GetIntegration)
 			r.Patch("/integrations/{id}", h.UpdateIntegration)
+			r.Post("/integrations/{id}/verify", h.VerifyIntegration)
 			r.Delete("/integrations/{id}", h.DeleteIntegration)
 
 			// Voice

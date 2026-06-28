@@ -10,9 +10,9 @@ CREATE TABLE IF NOT EXISTS users (
     github_id       TEXT,
     github_username TEXT,
     settings        JSONB DEFAULT '{}',
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    deleted_at      TIMESTAMP,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at      TIMESTAMPTZ,
     UNIQUE(organization_id, email)
 );
 

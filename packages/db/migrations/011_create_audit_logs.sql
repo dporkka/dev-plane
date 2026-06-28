@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS audit_logs (
     details         JSONB DEFAULT '{}',
     ip_address      TEXT,
     user_agent      TEXT,
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_organization_id ON audit_logs(organization_id);

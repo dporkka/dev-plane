@@ -58,6 +58,10 @@ func (h *Handler) ListPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireAdmin(w, user) {
+		return
+	}
+
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT id, organization_id, project_id, name, resource_type, action, effect,
 		       conditions, priority, created_at, updated_at
@@ -112,6 +116,10 @@ func (h *Handler) CreatePolicy(w http.ResponseWriter, r *http.Request) {
 
 	if err := authz.AuthorizeOrganization(ctx, h.db, user, orgID); err != nil {
 		respond.Error(w, http.StatusNotFound, errors.New("organization not found"))
+		return
+	}
+
+	if !h.requireAdmin(w, user) {
 		return
 	}
 

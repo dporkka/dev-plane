@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "./dist-test",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "jsx": "react-jsx"
+  },
+  "include": ["lib/auth-token.ts", "lib/auth-token.test.ts"],
+  "exclude": ["node_modules", ".next"]
+}

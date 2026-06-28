@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS agent_messages (
     message_type    TEXT NOT NULL,
     content         TEXT NOT NULL,
     metadata        JSONB DEFAULT '{}',
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_messages_task_id ON agent_messages(task_id);

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -81,6 +82,58 @@ func TestRuntimeRunTestsDetectsCommandThroughProvider(t *testing.T) {
 	}
 	if decoded["passed"] != true {
 		t.Fatalf("passed = %v, want true", decoded["passed"])
+	}
+}
+
+func TestRuntimeListDirectorySendsValidShellCommand(t *testing.T) {
+	sessionID := "runtime-1"
+	provider := &fakeRuntimeProvider{
+		files:         map[string][]byte{},
+		commandResult: &runtimes.CommandResult{Stdout: "README.md\tfile\t42\nsrc\tdirectory\t0\n"},
+	}
+	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithRuntimeProvider("docker", provider)
+
+	workspace := &models.Workspace{
+		ID:               "ws-1",
+		RuntimeProvider:  "docker",
+		RuntimeSessionID: &sessionID,
+		Status:           models.WorkspaceStatusReady,
+	}
+	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", Title: "list files"}
+
+	output, err := runner.executeTool(context.Background(), run, task, workspace, "", "list_directory", json.RawMessage(`{"path":"."}`))
+	if err != nil {
+		t.Fatalf("executeTool() error: %v", err)
+	}
+	if len(provider.commands) != 1 {
+		t.Fatalf("commands = %#v, want 1 command", provider.commands)
+	}
+	cmd := provider.commands[0]
+	if cmd.Dir != "." {
+		t.Fatalf("Dir = %q, want .", cmd.Dir)
+	}
+	if !cmd.UnsafeShell {
+		t.Fatal("UnsafeShell = false, want true")
+	}
+	if !strings.Contains(cmd.Command, "name=${p#./}") {
+		t.Fatalf("list_directory command missing valid name extraction: %s", cmd.Command)
+	}
+	if strings.Contains(cmd.Command, "name=${p#./,") {
+		t.Fatalf("list_directory command still contains malformed parameter expansion: %s", cmd.Command)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	entries, ok := decoded["entries"].([]interface{})
+	if !ok || len(entries) != 2 {
+		t.Fatalf("entries = %v, want 2 entries", decoded["entries"])
+	}
+	if decoded["count"] != float64(2) {
+		t.Fatalf("count = %v, want 2", decoded["count"])
 	}
 }
 

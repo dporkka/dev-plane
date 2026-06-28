@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS policies (
     effect          TEXT NOT NULL,
     conditions      JSONB DEFAULT '{}',
     priority        INTEGER DEFAULT 100,
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_policies_organization_id ON policies(organization_id);

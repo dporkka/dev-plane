@@ -23,6 +23,7 @@ node_modules/
 .next/
 .nuxt/
 dist/
+dist-test/
 *.tsbuildinfo
 *.log
 npm-debug.log*

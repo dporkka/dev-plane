@@ -195,12 +195,10 @@ func runtimeListDirectory(ctx context.Context, provider runtimes.Provider, sessi
 		req.Path = "."
 	}
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Dir: req.Path,
+		Dir:     req.Path,
 		Command: `for p in ./*; do
   [ -e "$p" ] || continue
-  name=${p#./,
-		UnsafeShell: true,
-	}
+  name=${p#./}
   if [ -d "$p" ]; then
     printf '%s\t%s\t%s\n' "$name" directory 0
   else
@@ -208,7 +206,8 @@ func runtimeListDirectory(ctx context.Context, provider runtimes.Provider, sessi
     printf '%s\t%s\t%s\n' "$name" file "${size:-0}"
   fi
 done`,
-		Timeout: 30 * time.Second,
+		Timeout:     30 * time.Second,
+		UnsafeShell: true,
 	})
 	if err != nil {
 		return nil, err

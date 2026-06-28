@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS deployments (
     status          TEXT NOT NULL DEFAULT 'pending',
     url             TEXT,
     metadata        JSONB DEFAULT '{}',
-    created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_deployments_task_id ON deployments(task_id);

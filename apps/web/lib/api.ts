@@ -1,4 +1,7 @@
 import { DevPlaneClient, RunStream } from '@ai-cp/dev-plane-sdk';
+import { decodeTokenClaims } from './auth-token';
+
+export { decodeTokenClaims };
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
@@ -208,11 +211,10 @@ export const api = {
 
   // ─── GitHub OAuth ───────────────────────────────────────────────
   githubAuth: () => {
-    const clientId = process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID;
-    const redirectUri = `${typeof window !== 'undefined' ? window.location.origin : ''}/api/auth/github/callback`;
-    const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=repo,read:org`;
+    // Hand off to the Next.js API auth route, which forwards the user to the
+    // backend OAuth initiator and then handles the GitHub callback.
     if (typeof window !== 'undefined') {
-      window.location.href = url;
+      window.location.href = '/api/auth/github/callback';
     }
   },
 };

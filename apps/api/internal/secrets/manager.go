@@ -69,6 +69,12 @@ type RotationRequest struct {
 	ActorType string
 }
 
+type DeleteRequest struct {
+	SecretID  string
+	ActorID   string
+	ActorType string
+}
+
 type StoredSecret struct {
 	Reference models.SecretReference
 	Version   int
@@ -197,6 +203,41 @@ func (m *Manager) Rotate(ctx context.Context, req RotationRequest) (*StoredSecre
 		"version": nextVersion,
 	})
 	return &StoredSecret{Reference: *ref, Version: nextVersion, KeyID: m.keys.PrimaryID()}, nil
+}
+
+func (m *Manager) Delete(ctx context.Context, req DeleteRequest) error {
+	if err := m.validateReady(); err != nil {
+		return err
+	}
+	if req.SecretID == "" {
+		return fmt.Errorf("secret id is required")
+	}
+
+	ref, _, err := m.loadReferenceAndVersion(ctx, req.SecretID)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	result, err := m.db.ExecContext(ctx, `
+		UPDATE secret_references
+		SET deleted_at = $1, updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, now, req.SecretID)
+	if err != nil {
+		return fmt.Errorf("soft delete secret: %w", err)
+	}
+
+	rowsAffected, _ := result.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrSecretNotFound
+	}
+
+	m.auditEvent(ctx, ref.OrganizationID, req.ActorType, req.ActorID, "secret.delete", ref.ID, map[string]any{
+		"name":  ref.Name,
+		"scope": ref.Scope,
+	})
+	return nil
 }
 
 func (m *Manager) Resolve(ctx context.Context, secretID, actorType, actorID string) ([]byte, error) {

@@ -49,24 +49,23 @@ func (h *Handler) runtimeProvider(name string) (runtimes.Provider, error) {
 		return provider, nil
 	}
 
+	runnerURL := os.Getenv("RUNNER_URL")
+	runnerToken := os.Getenv("RUNNER_AUTH_TOKEN")
+	baseDir := workspaceRuntimeBaseDir()
+
 	// If a remote runner URL is configured, route all runtime traffic through it.
-	if runnerURL := os.Getenv("RUNNER_URL"); runnerURL != "" {
-		provider := runtimes.NewRemoteProvider(runnerURL, os.Getenv("RUNNER_AUTH_TOKEN"))
+	if runnerURL != "" {
+		provider := runtimes.NewRemoteProvider(runnerURL, runnerToken)
 		h.runtimeProviders[name] = provider
 		return provider, nil
 	}
 
-	switch name {
-	case "docker":
-		provider, err := runtimes.NewDockerProvider(workspaceRuntimeBaseDir())
-		if err != nil {
-			return nil, err
-		}
-		h.runtimeProviders[name] = provider
-		return provider, nil
-	default:
-		return nil, fmt.Errorf("unsupported workspace runtime provider %q", name)
+	provider, _, err := runtimes.NewProvider(name, baseDir, runnerURL, runnerToken)
+	if err != nil {
+		return nil, err
 	}
+	h.runtimeProviders[name] = provider
+	return provider, nil
 }
 
 func workspaceRuntimeBaseDir() string {

@@ -46,6 +46,16 @@ func withTestUser(ctx context.Context) context.Context {
 	return auth.WithUser(ctx, testUser())
 }
 
+// withRole injects a test user with the specified role into the context.
+func withRole(ctx context.Context, role string) context.Context {
+	return auth.WithUser(ctx, &auth.Claims{
+		UserID: testUserID,
+		OrgID:  testOrgID,
+		Email:  "test@example.com",
+		Role:   role,
+	})
+}
+
 // expectAuthorizeOrganization sets up a sqlmock expectation for organization
 // ownership authorization.
 func expectAuthorizeOrganization(mock sqlmock.Sqlmock, orgID string) {

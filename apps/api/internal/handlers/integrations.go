@@ -130,6 +130,21 @@ func (h *Handler) GetIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	i, err := h.getIntegrationByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, i)
+}
+
+// getIntegrationByID loads a single integration by ID without applying authorization.
+func (h *Handler) getIntegrationByID(ctx context.Context, id string) (Integration, error) {
 	var i Integration
 	var config sql.NullString
 	var webhookURL sql.NullString
@@ -141,12 +156,7 @@ func (h *Handler) GetIntegration(w http.ResponseWriter, r *http.Request) {
 		WHERE id = $1 AND deleted_at IS NULL
 	`, id).Scan(&i.ID, &i.OrgID, &i.IntegrationType, &i.DisplayName, &config, &i.Status, &webhookURL, &lastSync, &i.CreatedAt, &i.UpdatedAt)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
-			return
-		}
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
+		return Integration{}, err
 	}
 	if config.Valid {
 		i.Config = json.RawMessage(config.String)
@@ -161,8 +171,7 @@ func (h *Handler) GetIntegration(w http.ResponseWriter, r *http.Request) {
 		providerCopy := provider
 		i.Provider = &providerCopy
 	}
-
-	respond.JSON(w, http.StatusOK, i)
+	return i, nil
 }
 
 // CreateIntegration creates a new integration.
@@ -354,10 +363,103 @@ func (h *Handler) UpdateIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respond.JSON(w, http.StatusOK, map[string]string{"status": "updated"})
+	integration, err := h.getIntegrationByID(ctx, id)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, integration)
+}
+
+// VerifyIntegration decrypts stored credentials, validates them against the
+// provider gateway, updates the integration status, and returns the result.
+func (h *Handler) VerifyIntegration(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("integration id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeIntegration(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
+		return
+	}
+
+	if h.secretManager == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("secret manager not configured"))
+		return
+	}
+
+	var orgID, integrationType, status string
+	var credentials sql.NullString
+	err := h.db.QueryRowContext(ctx, `
+		SELECT organization_id, integration_type, status, credentials_encrypted
+		FROM integrations
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id).Scan(&orgID, &integrationType, &status, &credentials)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("integration not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if !credentials.Valid || credentials.String == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("integration has no credentials to verify"))
+		return
+	}
+
+	token, err := h.secretManager.DecryptString(credentials.String, orgID+":"+id)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("decrypt credentials: %w", err))
+		return
+	}
+
+	valid := true
+	var verifyErr error
+	if err := h.validateIntegration(ctx, integrationType, &token, nil); err != nil {
+		valid = false
+		verifyErr = err
+		status = "error"
+	} else {
+		status = "connected"
+	}
+
+	now := time.Now().UTC()
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE integrations
+		SET status = $1, updated_at = $2
+		WHERE id = $3 AND deleted_at IS NULL
+	`, status, now, id); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	errMsg := ""
+	if verifyErr != nil {
+		errMsg = verifyErr.Error()
+	}
+
+	respond.JSON(w, http.StatusOK, map[string]any{
+		"valid":  valid,
+		"status": status,
+		"error":  errMsg,
+	})
 }
 
 func (h *Handler) validateIntegration(ctx context.Context, integrationType string, token, webhookURL *string) error {
+	if h.integrationValidator != nil {
+		return h.integrationValidator(ctx, integrationType, token, webhookURL)
+	}
 	switch integrationType {
 	case "linear":
 		if token == nil || *token == "" {

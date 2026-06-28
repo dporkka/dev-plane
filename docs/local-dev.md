@@ -138,6 +138,7 @@ make db-reset
 | `DOCKER_WORKSPACE_PIDS` | `256` | Docker PID limit |
 | `RUNNER_URL` | `` | Remote runner endpoint; empty = in-process runtime |
 | `RUNNER_AUTH_TOKEN` | `` | Shared secret for remote runner calls |
+| `WORKER_HEALTH_PORT` | `8081` | Worker HTTP health endpoint port (container health checks) |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8080` | Frontend API URL |
 | `NEXT_PUBLIC_GITHUB_CLIENT_ID` | `` | Public GitHub OAuth client ID |
 | `BIFROST_URL` | `http://localhost:8081` | Bifrost AI gateway URL |
@@ -149,6 +150,7 @@ make db-reset
 ```
 localhost:3000  ->  Next.js dev server (hot reload)
 localhost:8080  ->  Go API server (auto-restart on change)
+localhost:8081  ->  Go Worker health endpoint
 localhost:8082  ->  Go Runner service (workspace runtime)
 localhost:4222  ->  NATS JetStream
 localhost:8222  ->  NATS monitoring UI

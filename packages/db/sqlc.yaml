@@ -18,6 +18,7 @@ sql:
           - db_type: "uuid"
             go_type: "github.com/google/uuid.UUID"
           - db_type: "jsonb"
-            go_type: "github.com/ai-dev-control-plane/db/types.JSONMap"
+            go_type: "github.com/sqlc-dev/pqtype.NullRawMessage"
+            nullable: true
           - db_type: "timestamptz"
             go_type: "time.Time"

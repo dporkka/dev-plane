@@ -415,6 +415,32 @@ func TestEngine_AddPolicy(t *testing.T) {
 	}
 }
 
+// TestEngine_SortsByPriorityDescending verifies policies are ordered by priority descending.
+func TestEngine_SortsByPriorityDescending(t *testing.T) {
+	engine := NewEngine([]Policy{
+		{Name: "low", ResourceType: "file", Action: "read", Effect: EffectAllow, Priority: 10},
+		{Name: "high", ResourceType: "file", Action: "read", Effect: EffectDeny, Priority: 100},
+		{Name: "medium", ResourceType: "file", Action: "read", Effect: EffectAsk, Priority: 50},
+	})
+
+	policies := engine.Policies()
+	if len(policies) != 3 {
+		t.Fatalf("expected 3 policies, got %d", len(policies))
+	}
+	expected := []string{"high", "medium", "low"}
+	for i, name := range expected {
+		if policies[i].Name != name {
+			t.Errorf("policy at index %d = %q, want %q", i, policies[i].Name, name)
+		}
+	}
+
+	engine.AddPolicy(Policy{Name: "highest", ResourceType: "file", Action: "read", Effect: EffectAdminOnly, Priority: 200})
+	policies = engine.Policies()
+	if policies[0].Name != "highest" {
+		t.Errorf("after AddPolicy, first policy = %q, want %q", policies[0].Name, "highest")
+	}
+}
+
 // TestEngine_Policies_ReturnsCopy tests that Policies() returns a copy.
 func TestEngine_Policies_ReturnsCopy(t *testing.T) {
 	engine := NewEngine([]Policy{

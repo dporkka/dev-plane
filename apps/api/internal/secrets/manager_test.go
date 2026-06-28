@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -128,6 +129,57 @@ func TestManagerRequiresConfiguredKeyring(t *testing.T) {
 	manager := NewManager(db, nil, nil, slog.Default())
 	if _, err := manager.Store(context.Background(), StoreRequest{OrganizationID: "org-1", Name: "x", Value: []byte("secret")}); err == nil {
 		t.Fatal("Store() error = nil, want keyring error")
+	}
+}
+
+func TestManagerDeleteSoftDeletesAndAudits(t *testing.T) {
+	db := setupSecretTestDB(t)
+	defer db.Close()
+	keyring, err := NewSingleKeyring("k1", bytes.Repeat([]byte{1}, 32))
+	if err != nil {
+		t.Fatalf("NewSingleKeyring() error: %v", err)
+	}
+	manager := NewManager(db, keyring, audit.NewLogger(db, slog.Default()), slog.Default())
+	ctx := context.Background()
+
+	stored, err := manager.Store(ctx, StoreRequest{
+		OrganizationID: "org-1",
+		Name:           "to-delete",
+		Scope:          "dev",
+		Value:          []byte("secret-value"),
+		ActorType:      "human",
+		ActorID:        "user-1",
+	})
+	if err != nil {
+		t.Fatalf("Store() error: %v", err)
+	}
+
+	if err := manager.Delete(ctx, DeleteRequest{
+		SecretID:  stored.Reference.ID,
+		ActorType: "human",
+		ActorID:   "user-2",
+	}); err != nil {
+		t.Fatalf("Delete() error: %v", err)
+	}
+
+	var deletedAt sql.NullTime
+	if err := db.QueryRow(`SELECT deleted_at FROM secret_references WHERE id = ?`, stored.Reference.ID).Scan(&deletedAt); err != nil {
+		t.Fatalf("query deleted_at: %v", err)
+	}
+	if !deletedAt.Valid {
+		t.Fatal("expected secret to be soft-deleted")
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM audit_logs WHERE action = 'secret.delete'`).Scan(&count); err != nil {
+		t.Fatalf("query audit: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("secret.delete audit count = %d, want 1", count)
+	}
+
+	if err := manager.Delete(ctx, DeleteRequest{SecretID: stored.Reference.ID}); !errors.Is(err, ErrSecretNotFound) {
+		t.Fatalf("second Delete() error = %v, want ErrSecretNotFound", err)
 	}
 }
 
