@@ -68,49 +68,61 @@ Agent requests tool execution
 
 ## Policy Engine
 
-Policies define the authorization rules for agent behavior. Each policy has:
+Policies define the authorization rules for operations. Each policy has:
 
-- **Subject** - The agent role or user
-- **Action** - The tool or operation
-- **Resource** - File path, command pattern, or branch
-- **Effect** - `allow`, `ask`, `deny`, or `admin-only`
+- **Resource type** - The category being accessed (`file`, `command`, `secret`, `git`, `network`, `deploy`, etc.)
+- **Action** - The operation (`read`, `write`, `execute`, `delete`, etc.)
+- **Resource** - Specific file path, command, branch, or other target (used in conditions)
+- **Effect** - `allow`, `ask`, `deny`, or `admin_only`
+- **Conditions** - Optional matching constraints (e.g., `branch == "main"`, `scope == "production"`)
 
 ### Default Policy Rules
 
 ```
-# Planner can read everything, needs approval for spec changes
-planner read_file * -> allow
-planner write_file *.md -> ask
-planner write_file * -> admin-only
+# Allow: non-destructive reads
+allow_file_reads         file    read          -> allow
+allow_repo_search        command search        -> allow
+allow_static_analysis    command analyze       -> allow
+allow_tests              command test          -> allow
 
-# Implementer can write code, needs approval for destructive ops
-implementer read_file * -> allow
-implementer write_file * -> ask
-implementer apply_patch * -> ask
-implementer run_tests * -> allow
-implementer run_command * -> ask
-implementer create_commit * -> ask
-implementer push_branch * -> ask
+# Ask: mutations and external actions
+ask_file_writes          file    write         -> ask
+ask_command_execute      command execute       -> ask
+ask_dependency_install   command install       -> ask
+ask_db_migrate           command migrate       -> ask
+ask_git_commit           git     commit        -> ask
+ask_git_push             git     push          -> ask
+ask_network              network *             -> ask
+ask_pr_create            git     create_pr     -> ask
 
-# Reviewer is read-only
-reviewer read_file * -> allow
-reviewer * * -> deny
+# Deny: dangerous operations
+deny_production_secrets  secret  read          -> deny   (scope == "production")
+deny_destructive_db      command destructive_db -> deny
+deny_large_delete        file    delete        -> deny   (min_size_mb >= 10)
+deny_push_main           git     push          -> deny   (branch == "main")
+deny_production_deploy   deploy  *             -> deny   (environment == "production")
 
-# Security reviewer can read everything
-security_reviewer read_file * -> allow
-security_reviewer * * -> deny
-
-# Release manager needs approval for all actions
-release_manager * * -> admin-only
+# Admin-only: sensitive operations
+admin_deploy_prod        deploy  *             -> admin_only  (environment == "production")
+admin_merge_pr           git     merge         -> admin_only
+admin_write_secrets      secret  write         -> admin_only
+admin_rotate_secrets     secret  rotate        -> admin_only
+admin_modify_policies    policy  *             -> admin_only
 ```
 
 ### Policy Evaluation Order
 
-1. Explicit deny rules are checked first
-2. Explicit allow rules are checked second
-3. `ask` rules trigger approval workflow
-4. `admin-only` requires admin role
-5. Default ask if no rule matches
+Policies are evaluated by finding all matching rules and returning the most restrictive effect (`admin_only` > `deny` > `ask` > `allow`). If no rule matches, the kernel's default (`ask`) is used. RBAC is checked first; `ask` and `admin_only` require approval or elevated privileges.
+
+## Role-Based Access Control (RBAC)
+
+RBAC provides organization-level permissions based on user roles: `owner`, `admin`, and `member`. The capability kernel checks RBAC before evaluating policies; if the authenticated user lacks permission for the requested resource type and action, the operation is denied immediately.
+
+- **Owner** - Full access to all resources and actions.
+- **Admin** - Can read and write files, execute commands, manage git, read networks and deployments, manage secrets, organizations, projects, users, policies, integrations, and audit logs.
+- **Member** - Can read and write files, read and write git resources, read networks and projects, and perform task actions.
+
+RBAC is the first gate; policy evaluation and sandbox checks apply after it.
 
 ## Audit Logs
 
@@ -119,18 +131,19 @@ All actions are persisted in the audit log with the following attributes:
 | Field | Description |
 |-------|-------------|
 | `organization_id` | Scope of the action |
-| `actor_type` | `user`, `agent`, `system`, `webhook` |
-| `actor_id` | ID of the actor |
+| `actor_type` | `user`, `agent`, `system` |
+| `actor_id` | ID of the actor (optional) |
 | `action` | The action performed |
 | `resource_type` | Type of resource affected |
-| `resource_id` | ID of the resource |
+| `resource_id` | ID of the resource (optional) |
 | `details` | JSON payload with additional context |
-| `ip_address` | Source IP (for human actions) |
+| `ip_address` | Source IP (for human actions, optional) |
+| `user_agent` | User agent string (for human actions, optional) |
 | `timestamp` | When the action occurred |
 
 ### Immutable Guarantee
 
-Audit logs are append-only. Once written, they cannot be modified or deleted. The audit stream uses NATS with infinite retention, providing a tamper-evident log of all system activity.
+Audit logs are append-only in the database (`audit_logs` table). The `audit` NATS stream exists for event publishing but is not currently the persistence layer and uses work-queue retention.
 
 ### Audit Events
 
@@ -138,23 +151,22 @@ Audit logs are append-only. Once written, they cannot be modified or deleted. Th
 // audit.action.logged
 type AuditEvent struct {
     OrganizationID string
-    ActorType      string // user, agent, system, webhook
-    ActorID        string
+    ActorType      string // user, agent, system
+    ActorID        string  // optional
     Action         string
     ResourceType   string
-    ResourceID     string
+    ResourceID     string  // optional
     Details        json.RawMessage
-    IPAddress      string
+    IPAddress      string  // optional
+    UserAgent      string  // optional
 }
 ```
 
-### Critical Audit Events
+### Currently Audited Events
 
-- Task created/approved/started/completed/failed
-- Agent run started/completed/failed
-- Approval requested/approved/rejected
-- Policy created/modified/deleted
-- Secret written/accessed/rotated
-- Workspace created/destroyed
-- Repository connected/disconnected
-- User login/logout/role change
+The following events are written by the audit logger today:
+
+- Capability checks (`capability_check`)
+- Budget violations (`budget_violation`)
+- Model calls (`model_call`)
+- Secret reads, writes, and rotations (`secret.read`, `secret.write`, `secret.rotate`)

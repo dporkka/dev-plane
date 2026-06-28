@@ -62,11 +62,11 @@ Pending -> Ready -> Running -> Stopped/Error -> Destroyed
 
 | Resource | Default | Configurable |
 |----------|---------|--------------|
-| CPU | 1 core | Yes |
-| Memory | 512 MB | Yes |
-| Disk | 500 MB | Yes |
-| Timeout | 30 minutes | Yes |
-| Network | Disabled | Yes |
+| CPU | 1 core | Yes (`DOCKER_WORKSPACE_CPUS`) |
+| Memory | 512 MB | Yes (`DOCKER_WORKSPACE_MEMORY`) |
+| Disk | — | Not enforced by the runtime |
+| Timeout | 60 seconds per command | Per-command `Command.Timeout` |
+| Network | Disabled | No (always `--network none`) |
 
 ## Docker Runtime
 
@@ -76,9 +76,9 @@ The Docker runtime is the required production direction for untrusted code. `pac
 
 ```
 1. CreateWorkspace called with repository info
-2. Pull base dev image (node, go, python, etc.)
+2. Docker base image is resolved (default `alpine/git:latest`; pulled implicitly by `docker run` if missing)
 3. Clone repository into host staging
-4. Create git worktree for isolated branch
+4. Check out the requested branch in the staging repo
 5. Start no-network container with named workspace volume and resource limits
 6. Copy staged repository contents into the container workspace volume
 7. Return session ID for subsequent operations
@@ -88,26 +88,23 @@ The Docker runtime is the required production direction for untrusted code. `pac
 
 - **No privileged mode** - Containers run unprivileged
 - **Read-only rootfs** - Root filesystem is read-only; writes go to the named workspace volume and tmpfs
-- **No network by default** - `--network none` unless explicitly enabled
+- **No network** - `--network none` (not configurable)
 - **Resource limits** - CPU, memory, and PID limits enforced via Docker/cgroups
 - **Seccomp profile** - Default seccomp filter blocks dangerous syscalls
 - **No host mounts** - Only workspace-specific named volumes are mounted
 
 ### Configuration
 
-```yaml
-# docker runtime config
-workspace_runtime: docker
-docker:
-  image: alpine/git:latest
-  memory_limit: 512m
-  cpu_limit: "1.0"
-  pids_limit: 256
-  network_mode: none
-  read_only_rootfs: true
-  no_new_privileges: true
-  cap_drop: all
-```
+Set via environment variables (or the runner/worker CLI flags `--workspace-runtime` and `--workspace-base-dir`):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKSPACE_RUNTIME` | `local` | Provider name: `local` or `docker` |
+| `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Base directory for workspace staging |
+| `DOCKER_WORKSPACE_IMAGE` | `alpine/git:latest` | Image used for workspace containers |
+| `DOCKER_WORKSPACE_MEMORY` | `512m` | Memory limit |
+| `DOCKER_WORKSPACE_CPUS` | `1.0` | CPU limit |
+| `DOCKER_WORKSPACE_PIDS` | `256` | PID limit |
 
 ### Current Implementation
 
@@ -122,7 +119,7 @@ Located in `packages/runtimes/docker.go`. The provider is dependency-light and s
 | `ReadFile` | Reads through `docker exec` after rejecting absolute/traversal paths |
 | `WriteFile` | Writes through `docker exec -i` after rejecting absolute/traversal paths |
 | `ApplyPatch` | Applies patch via `docker exec` |
-| `Snapshot` | Creates container snapshot or git commit |
+| `Snapshot` | Creates a git commit inside the workspace container |
 | `Restore` | Resets the workspace git repository to a snapshot commit |
 | `GetStatus` | Queries container state via Docker inspect |
 | `StreamLogs` | Streams `docker logs -f` into runtime log events |
@@ -143,28 +140,39 @@ The Local runtime runs workspaces directly on the host machine. It is intended o
 ### How It Works
 
 ```
-1. CreateWorkspace creates a temporary directory
-2. Clones repository into the temp directory
-3. Creates git worktree within the same repo
+1. CreateWorkspace creates a session directory under `WORKSPACE_BASE_DIR`
+2. Clones repository into the session directory
+3. Creates a git worktree within the same repo
 4. All commands run directly on the host
-5. Cleanup removes the temp directory
+5. Cleanup removes the session directory
 ```
 
 ### Configuration
 
-```yaml
-# local runtime config (dev only)
-workspace_runtime: local
-local:
-  base_dir: /tmp/ai-cp-workspaces
-  max_concurrent: 5
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKSPACE_RUNTIME` | `local` | Must be `local` |
+| `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Directory for local worktrees |
 
 ### Implementation
 
 Located in `packages/runtimes/local.go`. Key methods mirror the Docker implementation but execute directly on the host filesystem and shell.
 
+## Remote Runner
+
+The `runner` service (`apps/runner`) exposes any in-process provider over HTTP. The API and worker can route all runtime calls to a remote runner by setting:
+
+| Variable | Description |
+|----------|-------------|
+| `RUNNER_URL` | Runner HTTP endpoint, e.g. `http://localhost:8082` |
+| `RUNNER_AUTH_TOKEN` | Shared bearer token for runner requests |
+| `RUNNER_PORT` | Runner listen port (default `8082`) |
+
+`packages/runtimes/client.go` provides `RemoteProvider`, which implements the same `Provider` interface via the runner API.
+
 ## Future Providers
+
+> These providers are not implemented yet. The only supported providers are `local` and `docker`.
 
 ### gVisor
 

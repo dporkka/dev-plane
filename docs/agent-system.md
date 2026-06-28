@@ -27,18 +27,18 @@ Each role has a `RoleConfig` that defines:
 
 All agents have access to the 10 standard tools:
 
-| # | Tool | Description | Classification |
-|---|------|-------------|----------------|
-| 1 | `read_file` | Read file contents at a given path | Safe |
-| 2 | `write_file` | Write content to a file (create or overwrite) | Destructive |
-| 3 | `search_files` | Search for patterns across files using ripgrep | Safe |
-| 4 | `apply_patch` | Apply a unified diff patch to files | Destructive |
-| 5 | `run_command` | Run a shell command in the workspace | Dangerous |
-| 6 | `list_directory` | List directory contents with metadata | Safe |
-| 7 | `inspect_repo` | Get repository structure and language breakdown | Safe |
-| 8 | `get_git_diff` | Get git diff of current changes | Safe |
-| 9 | `create_commit` | Stage changes and create a git commit | Significant |
-| 10 | `run_tests` | Run the test suite for the project | Safe |
+| # | Tool | Description |
+|---|------|-------------|
+| 1 | `read_file` | Read file contents at a given path |
+| 2 | `write_file` | Write content to a file (create or overwrite) |
+| 3 | `search_files` | Search for patterns across files using ripgrep |
+| 4 | `apply_patch` | Apply a unified diff patch to files |
+| 5 | `run_command` | Run a shell command in the workspace |
+| 6 | `list_directory` | List directory contents with metadata |
+| 7 | `inspect_repo` | Get repository structure and language breakdown |
+| 8 | `get_git_diff` | Get git diff of current changes |
+| 9 | `create_commit` | Stage changes and create a git commit |
+| 10 | `run_tests` | Run the test suite for the project |
 
 ### Tool Registry
 
@@ -59,11 +59,14 @@ The Agent Mailbox provides durable message passing between agents in a multi-age
 
 | Message Type | Purpose |
 |-------------|---------|
-| `spec` | Planner output passed to Implementer |
-| `review` | Reviewer feedback to Implementer |
-| `test_results` | Test Runner results to Reviewer |
-| `security_report` | Security Reviewer findings to Release Manager |
-| `approval_request` | Any agent requesting human approval |
+| `handoff` | Transfer control from one agent role to another |
+| `review_comment` | Code review feedback |
+| `blocker` | Blocking issue that pauses the pipeline |
+| `escalation` | Escalation to a human or the system |
+| `watchdog` | Timeout or health-check notification |
+| `decision` | Recorded decision |
+| `question` | Question from one agent to another or a human |
+| `answer` | Answer to a `question` |
 
 ### Mailbox Behavior
 
@@ -74,7 +77,7 @@ The Agent Mailbox provides durable message passing between agents in a multi-age
 
 ## Agent Runner
 
-The Runner in `packages/agents/agent.go` orchestrates agent execution with a state machine and retry policy.
+The production Runner is in `apps/api/internal/agentrunner/runner.go`; it executes tool-calling loops, persists steps, checks budget/capabilities, and streams events. The simpler `packages/agents/agent.go` defines role/tool models but is not used by the API/worker services.
 
 ### Status Machine
 
@@ -100,20 +103,13 @@ Pending -> Queued -> Running -> Completed
 
 ### Retry Policy
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Max retries | 3 | Number of retry attempts |
-| Initial delay | 5s | First retry wait time |
-| Backoff multiplier | 2 | Exponential backoff factor |
-| Max delay | 5m | Maximum wait between retries |
-
-Retryable errors (network timeouts, transient failures) trigger automatic retry. Non-retryable errors (syntax errors, test failures) fail immediately.
+> **Not implemented yet.** The worker does not apply an application-level retry policy; only NATS-level redelivery of unacknowledged messages is used.
 
 ### Timeout Policy
 
-- Default timeout: 30 minutes per agent run
-- Configurable per-task via `AGENT_TIMEOUT_MINUTES`
-- Hard kill after timeout + 60 second grace period
+- Default timeout: 30 minutes per agent run (hardcoded in `apps/worker/internal/handlers/run_handlers.go:381`).
+- Currently not configurable via environment variable.
+- No separate grace-period kill is implemented.
 
 ### Token Tracking
 

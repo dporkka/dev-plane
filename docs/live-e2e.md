@@ -34,8 +34,10 @@ make live-e2e
 | `GITHUB_TOKEN` | Token with `repo` scope for PR creation and private clone. |
 | `GITHUB_TEST_OWNER` | Owner of the disposable GitHub repository. |
 | `GITHUB_TEST_REPO` | Name of the disposable GitHub repository. |
-| `WORKSPACE_RUNTIME` | Runtime for `TestLiveModelProviderRun`. Defaults to `docker`. |
-| `WORKSPACE_BASE_DIR` | Optional base directory for local/Docker workspaces. |
+
+`GITHUB_TOKEN`, `GITHUB_TEST_OWNER`, and `GITHUB_TEST_REPO` are required only for `TestLiveModelProviderRun` and `TestLivePRCreation`.
+
+> **Note:** The integration tests currently hard-code their runtimes and use temporary directories. `WORKSPACE_RUNTIME` and `WORKSPACE_BASE_DIR` are respected by the production worker binary, but not by these tests.
 
 At least one model provider key is required for `TestLiveModelProviderRun`:
 
@@ -44,6 +46,8 @@ At least one model provider key is required for `TestLiveModelProviderRun`:
 - `GEMINI_API_KEY`
 - `GROQ_API_KEY`
 - `FIREWORKS_API_KEY`
+
+> **Note:** The live gate currently requires one of the direct provider keys listed above. `BIFROST_API_KEY` is not checked by `TestLiveModelProviderRun`.
 
 ## Test Repository Setup
 
@@ -93,7 +97,7 @@ git push -u origin main
 
 - `make live-e2e` sets a 20-minute timeout.
 - `TestLiveModelProviderRun` will make one or more LLM calls to the configured provider. Using `gpt-4o-mini` or similar small models keeps cost under a few cents.
-- The router selects the best available model automatically; set only the provider key for the cheapest model you want to use.
+- The router scores all configured providers/models by capability, latency, and cost and selects the highest-scoring available one. Setting only one provider key restricts the pool to that provider, but it does not guarantee the cheapest model in that pool will be chosen.
 
 ## Cleanup
 

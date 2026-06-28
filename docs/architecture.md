@@ -21,37 +21,38 @@ The platform follows a control plane pattern: the web UI and API manage the life
                       |
 +-------------------------------------------------------------+
 |                        API Layer                             |
-|                    +------------------+                      |
-|                    | API Server (Go)  |                      |
-|                    | - Chi Router     |                      |
-|                    | - Auth/AuthZ     |                      |
-|                    | - REST API       |                      |
-|                    | - WebSocket      |                      |
-|                    +--------+---------+                      |
-+-----------------------------|--------------------------------+
-                              |
-            +-----------------+------------------+
-            |                                    |
-+-----------v-----------+            +-----------v-----------+
-|   Worker Pool (Go)    |            |   NATS JetStream      |
-|   - Task Consumer     |            |   - Event Bus         |
-|   - Agent Orchestrator|            |   - Command Queue     |
-|   - Step Runner       |            |   - Event Store       |
-+-----------+-----------+            +-----------+-----------+
-            |                                    |
-+-----------v-----------+            +-----------v-----------+
-|   Agent Runner (Go)   |            |   Temporal / Local    |
-|   - Model action loop |            |   - Workflow Engine   |
-|   - Tool executor     |            |   - Task Scheduling   |
-|   - Token tracking    |            |   - Retry Policies    |
-+-----------+-----------+            +-----------+-----------+
-            |                                    |
-+-----------v-----------+            +-----------v-----------+
-|   Runtime Provider    |            |   Database Layer      |
-|   - Local Mode        |            |   - SQLite (local)    |
-|   - Docker            |            |   - Neon Postgres     |
-|   - Future: gVisor    |            |   - Goose Migrations  |
-+-----------------------+            +-----------------------+
+|              +---------------------------+                  |
+|              |    API Server (Go)        |                  |
+|              |  - Chi Router             |                  |
+|              |  - Auth/AuthZ             |                  |
+|              |  - REST API               |                  |
+|              |  - Server-Sent Events     |                  |
+|              |  - Agent Runner package   |                  |
+|              +------------+--------------+                  |
++---------------------------|----------------------------------+
+                            |
+            +---------------+---------------+
+            |                               |
++-----------v-----------+       +-----------v-----------+
+|   Worker Pool (Go)    |       |   NATS JetStream      |
+|   - Task Consumer     |       |   - Event Bus         |
+|   - Run Executor      |       |   - Command Queue     |
+|   - Approval Handlers |       |   - Event Store       |
++-----------+-----------+       +-----------+-----------+
+            |                               |
+            +---------------+---------------+
+                            |
++-------------------------------------------------------------+
+|           Runner Service (workspace runtime provider)        |
+|                 local / docker / remote                      |
++----------------------------|--------------------------------+
+                             |
++-------------------------------------------------------------+
+|   Runtime Provider    |   Database Layer                    |
+|   - Local Mode        |   - SQLite (local)                  |
+|   - Docker            |   - Postgres (Neon, RDS, etc.)      |
+|   - Remote runtime    |   - Goose Migrations                |
++-----------------------+-------------------------------------+
 ```
 
 ## Data Flow
@@ -62,8 +63,9 @@ The platform follows a control plane pattern: the web UI and API manage the life
    or GitHub webhook triggers auto-task creation
 
 2. Spec Generation
-   Planner agent analyzes task -> reads repo -> generates spec
-   with acceptance criteria and file change plan
+   Spec generator builds a heuristic/template-based spec from task
+   metadata and project config; a planner agent role is defined but
+   not currently used for auto-generation
 
 3. Workspace Creation
    System provisions workspace runtime -> clones repo ->
@@ -81,7 +83,7 @@ The platform follows a control plane pattern: the web UI and API manage the life
    Review report is persisted to `review_reports`
    Code review output presented in UI
    Human reviewer approves/rejects with comments
-   Security reviewer scans for vulnerabilities
+   Review pass includes an automated security scan
 
 6. PR
    On approval, Release Manager creates PR
@@ -96,32 +98,30 @@ The platform follows a control plane pattern: the web UI and API manage the life
 - **TypeScript** - Type-safe development
 - **Tailwind CSS 4** - Utility-first styling with dark theme
 - **CodeMirror 6** - In-browser code editing
-- **xterm.js** - Terminal emulation for logs
+- **xterm.js** - Terminal UI (consuming SSE log streams)
 - **React Flow** - Interactive graph visualizations
 - **@tanstack/react-query** - Server state management
 - **Zustand** - Client state management
 - **Lucide React** - Icon system
 
 ### Backend
-- **Go 1.23** - Primary backend language
+- **Go 1.25** - Primary backend language
 - **Chi Router** - Lightweight HTTP router
 - **SQLC** - Type-safe SQL code generation
 - **Goose** - Database migrations
 - **NATS Go Client** - Event streaming
-- **Temporal SDK** - Workflow orchestration
 
 ### Database
 - **SQLite** - Local development and single-node deployments
-- **Neon Postgres** - Cloud deployments with serverless scaling
-- **20 tables** - Organizations, Users, Repositories, Projects, Workspaces, Tasks, Agent Runs, Steps, Review Reports, Approvals, Policies, Audit Logs, Model Usage, Agent Messages, Integrations, Secret References, Secret Values, generated task specs, project configs, and repository detection results
+- **Postgres (Neon, RDS, etc.)** - Cloud deployments with serverless scaling
+- **23 tables** - Organizations, Users, Repositories, Projects, Workspaces, Tasks, Agent Runs, Steps, Review Reports, Approvals, Policies, Audit Logs, Model Usage, Agent Messages, Integrations, Secret References, Secret Values, generated task specs, project configs, repository detection results, Pull Requests, Budgets, and Deployments
 
 ### Event System
 - **NATS JetStream** - Durable event streaming
 - **Subjects** - `tasks.*`, `agents.>`, `runs.*`, `review.*`, `approval.*`, `pr.*`, `webhooks.*`, `audit.>`
 
 ### Workflow Engine
-- **Temporal (cloud)** - Production workflow orchestration
-- **Local runner** - Development mode task execution
+- **NATS JetStream worker handlers** - All environments
 
 ### Runtime
 - **Local runtime** - Implemented workspace runtime for trusted development

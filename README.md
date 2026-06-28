@@ -1,11 +1,11 @@
 # AI Dev Control Plane
 
 > A production-grade, self-hostable AI development control plane. Takes tasks from
-> prompts, GitHub issues, Linear tickets, Slack/Discord commands, or voice and turns
+> prompts, GitHub issues, Linear tickets, Slack/Discord commands, or voice transcripts and turns
 > them into isolated branches, code changes, tests, reviews, pull requests, and
 > deployment-gated releases.
 
-[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?logo=go)](https://go.dev)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
 [![NATS](https://img.shields.io/badge/NATS-JetStream-27AAE1?logo=nats.io)](https://nats.io)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -36,14 +36,14 @@
  | - Event Consumer  |       | - Code Execution  |       | - (Optional)      |
  +-------------------+       +-------------------+       +-------------------+
 
- +-------------------+       +-------------------+
- |   GitHub App      |       |   AI Providers    |
- |   (Webhooks)      |       |   (Bifrost/Direct)|
- |                   |       |                   |
- | - Issue Sync      |       | - OpenAI          |
- | - PR Management   |       | - Anthropic       |
- | - Webhook Events  |       | - Bifrost Gateway |
- +-------------------+       +-------------------+
+ +-------------------+       +---------------------------------------------+
+ |   GitHub App      |       |                AI Providers                 |
+ |   (Webhooks)      |       |              (Bifrost/Direct)               |
+ |                   |       |                                             |
+ | - Issue Sync      |       | - OpenAI                                    |
+ | - PR Management   |       | - Anthropic                                 |
+ | - Webhook Events  |       | - External Bifrost AI Gateway (optional)   |
+ +-------------------+       +---------------------------------------------+
 ```
 
 ---
@@ -60,7 +60,7 @@
 - **Server-Sent Events** for live updates
 
 ### Backend
-- **Go 1.23+** with Chi router
+- **Go 1.25+** with Chi router
 - **SQLC** for type-safe database queries
 - **Goose** for database migrations
 - **log/slog** for structured logging
@@ -78,7 +78,7 @@
 
 ### Prerequisites
 
-- [Go 1.23+](https://go.dev/dl/)
+- [Go 1.25+](https://go.dev/dl/)
 - [Node.js 20+](https://nodejs.org/)
 - [Docker](https://docs.docker.com/get-docker/) & Docker Compose
 - [Git](https://git-scm.com/)
@@ -266,7 +266,12 @@ ai-dev-control-plane/
 |  |_ events/                        # NATS event schemas + bus
 |  |_ models/                        # Shared domain models
 |  |_ policies/                      # Permission + policy engine
-|  |_ gateway/                       # GitHub, webhook handlers
+|  |_ crypto/                        # Secret/key encryption keyring
+|  |_ prfactory/                     # Pull request creation helpers
+|  |_ reviewer/                      # Automated code review + security scan integration
+|  |_ securityscan/                  # gitleaks, trivy, semgrep adapters
+|  |_ sdk/typescript/                # Minimal experimental TypeScript client
+|  |_ gateway/                       # GitHub, Linear, Slack, Discord, webhook adapters
 |
 |_ infra/
    |_ docker/
@@ -282,7 +287,7 @@ ai-dev-control-plane/
 
 ### Go Workspace
 
-This project uses Go 1.23 workspaces. The root `go.work` file includes all
+This project uses Go 1.25 workspaces. The root `go.work` file includes all
 modules. To work on a specific module:
 
 ```bash
@@ -338,7 +343,7 @@ All variables are defined in `.env.example`. Key categories:
 | **Services** | `NATS_URL`, `TEMPORAL_HOST` | Message bus + workflow engine |
 | **Ports** | `PORT`, `WEB_PORT` | Service port bindings |
 | **AI** | `BIFROST_URL`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `FIREWORKS_API_KEY` | AI provider configuration |
-| **Runtime** | `WORKSPACE_BASE_DIR`, `WORKSPACE_RUNTIME`, `DOCKER_HOST` | Sandbox settings |
+| **Runtime** | `WORKSPACE_BASE_DIR`, `WORKSPACE_RUNTIME`, `DOCKER_HOST`, `RUNNER_URL` | Sandbox settings (`docker | local | remote` via `RUNNER_URL`) |
 | **Frontend** | `NEXT_PUBLIC_*` | Public frontend config |
 | **Features** | `ENABLE_TEMPORAL`, `REQUIRE_RISK_APPROVAL` | Feature toggles |
 
@@ -398,9 +403,11 @@ make docker-logs-nats
 ```
 
 Streams are created automatically by the application on startup:
-- `AICP_TASKS` -- Task lifecycle events
-- `AICP_AGENT_RUNS` -- Agent execution events
-- `AICP_AUDIT` -- Audit log events
+- `TASKS` (`tasks.*`) -- Task lifecycle events
+- `AGENTS` (`agents.>`) -- Agent execution events
+- `RUNS` (`runs.*`, `review.*`, `approval.*`, `pr.*`) -- Run, review, approval, and PR events
+- `WEBHOOKS` (`webhooks.*`) -- Incoming webhook events
+- `AUDIT` (`audit.>`) -- Audit log events
 
 ---
 
@@ -482,7 +489,7 @@ make clean-all
 
 ## Phase Roadmap
 
-### Phase 1: Foundation (Current)
+### Phase 1: Foundation (Complete)
 - [x] Monorepo structure with Go workspace
 - [x] Next.js frontend shell with CodeMirror 6
 - [x] Go API with Chi router + JWT auth
@@ -497,7 +504,7 @@ make clean-all
 ### Phase 2: Agent Runtime
 - [x] Docker sandboxed code execution
 - [x] Agent tool system (read, edit, test, git)
-- [ ] Multi-model provider support
+- [x] Multi-model provider support (OpenAI, Anthropic, Gemini, Groq, Fireworks)
 - [x] Spec generation + approval flow
 - [x] Branch isolation + workspace management
 
@@ -505,15 +512,15 @@ make clean-all
 - [x] Team management + RBAC
 - [x] Review workflows (human-in-the-loop)
 - [x] PR auto-creation
-- [ ] Merge/deployment gating
+- [x] Merge/deployment gating
 - [x] Audit logging
 
 ### Phase 4: Integrations
-- [ ] Linear ticket sync
-- [ ] Slack/Discord bot commands
-- [ ] Voice input (whisper)
-- [ ] Webhook extensibility
-- [ ] Public API + SDK
+- [x] Linear ticket sync
+- [x] Slack/Discord bot commands
+- [x] Voice transcript tasks
+- [x] Webhook extensibility
+- [x] Public API + experimental TypeScript SDK client in `packages/sdk/typescript` (not yet published)
 
 ---
 
@@ -547,8 +554,8 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-org/ai-dev-control-plane/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-org/ai-dev-control-plane/discussions)
+- **Issues**: [GitHub Issues](https://github.com/dporkka/dev-plane/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/dporkka/dev-plane/discussions)
 - **Documentation**: See `/docs` directory
 
 ---
