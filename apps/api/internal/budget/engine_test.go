@@ -7,8 +7,8 @@ import (
 	"os"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
 	"github.com/ai-dev-control-plane/models"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 // ptrFloat64 returns a pointer to a float64 value.
@@ -29,45 +29,98 @@ func setupTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open in-memory db: %v", err)
 	}
 
-	// Create agent_runs table
+	// Create projects table (real column set from 003_create_projects.sql)
 	_, err = db.Exec(`
-		CREATE TABLE agent_runs (
+		CREATE TABLE projects (
 			id TEXT PRIMARY KEY,
-			task_id TEXT,
-			organization_id TEXT,
-			status TEXT,
-			started_at DATETIME,
-			completed_at DATETIME
+			organization_id TEXT NOT NULL,
+			name TEXT NOT NULL,
+			slug TEXT NOT NULL,
+			description TEXT,
+			settings TEXT DEFAULT '{}',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			deleted_at DATETIME
 		)
 	`)
 	if err != nil {
-		t.Fatalf("create agent_runs table: %v", err)
+		t.Fatalf("create projects table: %v", err)
 	}
 
-	// Create tasks table
+	// Create tasks table (real column set from 006_create_tasks.sql)
 	_, err = db.Exec(`
 		CREATE TABLE tasks (
 			id TEXT PRIMARY KEY,
-			project_id TEXT
+			project_id TEXT NOT NULL,
+			repository_id TEXT NOT NULL,
+			workspace_id TEXT,
+			created_by TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'web',
+			source_id TEXT,
+			title TEXT NOT NULL,
+			description TEXT,
+			status TEXT NOT NULL DEFAULT 'backlog',
+			priority TEXT NOT NULL DEFAULT 'medium',
+			risk_level TEXT NOT NULL DEFAULT 'low',
+			target_branch TEXT NOT NULL DEFAULT 'main',
+			spec TEXT,
+			acceptance_criteria TEXT DEFAULT '[]',
+			max_cost REAL,
+			max_runtime_minutes INTEGER DEFAULT 60,
+			approval_requirements TEXT DEFAULT '[]',
+			metadata TEXT DEFAULT '{}',
+			started_at DATETIME,
+			completed_at DATETIME,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			deleted_at DATETIME
 		)
 	`)
 	if err != nil {
 		t.Fatalf("create tasks table: %v", err)
 	}
 
-	// Create model_usage table
+	// Create agent_runs table (real column set from 007_create_agent_runs.sql)
+	_, err = db.Exec(`
+		CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			workspace_id TEXT,
+			agent_role TEXT NOT NULL DEFAULT 'implementer',
+			model TEXT,
+			provider TEXT,
+			status TEXT NOT NULL DEFAULT 'pending',
+			started_at DATETIME,
+			completed_at DATETIME,
+			prompt_tokens INTEGER DEFAULT 0,
+			completion_tokens INTEGER DEFAULT 0,
+			total_cost REAL DEFAULT 0,
+			error_message TEXT,
+			summary TEXT,
+			metadata TEXT DEFAULT '{}',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		t.Fatalf("create agent_runs table: %v", err)
+	}
+
+	// Create model_usage table (real column set from 012_create_model_usage.sql)
 	_, err = db.Exec(`
 		CREATE TABLE model_usage (
 			id TEXT PRIMARY KEY,
 			agent_run_id TEXT,
-			task_id TEXT,
-			model TEXT,
-			provider TEXT,
-			prompt_tokens INTEGER,
-			completion_tokens INTEGER,
-			cost REAL,
-			latency_ms INTEGER,
-			created_at DATETIME
+			task_id TEXT NOT NULL,
+			model TEXT NOT NULL,
+			provider TEXT NOT NULL,
+			prompt_tokens INTEGER NOT NULL DEFAULT 0,
+			completion_tokens INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			cost REAL NOT NULL DEFAULT 0,
+			latency_ms INTEGER DEFAULT 0,
+			success INTEGER NOT NULL DEFAULT 1,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)
 	`)
 	if err != nil {
@@ -106,8 +159,9 @@ func TestCheckRun_AllLimitsPass(t *testing.T) {
 
 	// Seed data: daily spend is within limit
 	_, err := db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
-		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
 		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
@@ -340,8 +394,9 @@ func TestCheckRun_DailySpendExceeded(t *testing.T) {
 
 	// Seed high daily spend
 	_, err := db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
-		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
 		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 12.00, 1000, datetime('now'));
 	`)
@@ -351,11 +406,11 @@ func TestCheckRun_DailySpendExceeded(t *testing.T) {
 
 	// Seed a running agent for concurrent check
 	_, err = db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status)
+		INSERT INTO agent_runs (id, task_id, status)
 		VALUES
-			('run-2', 'task-1', 'org-1', 'running'),
-			('run-3', 'task-1', 'org-1', 'running'),
-			('run-4', 'task-1', 'org-1', 'running');
+			('run-2', 'task-1', 'running'),
+			('run-3', 'task-1', 'running'),
+			('run-4', 'task-1', 'running');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agents: %v", err)
@@ -399,8 +454,9 @@ func TestCheckRun_ConcurrentAgentsExceeded(t *testing.T) {
 
 	// Seed low daily spend (passes)
 	_, err := db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
-		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
 		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
@@ -410,15 +466,15 @@ func TestCheckRun_ConcurrentAgentsExceeded(t *testing.T) {
 
 	// Seed 7 running agents for project-1, exceeds limit of 5
 	_, err = db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status)
+		INSERT INTO agent_runs (id, task_id, status)
 		VALUES
-			('run-2', 'task-1', 'org-1', 'running'),
-			('run-3', 'task-1', 'org-1', 'running'),
-			('run-4', 'task-1', 'org-1', 'running'),
-			('run-5', 'task-1', 'org-1', 'running'),
-			('run-6', 'task-1', 'org-1', 'running'),
-			('run-7', 'task-1', 'org-1', 'running'),
-			('run-8', 'task-1', 'org-1', 'running');
+			('run-2', 'task-1', 'running'),
+			('run-3', 'task-1', 'running'),
+			('run-4', 'task-1', 'running'),
+			('run-5', 'task-1', 'running'),
+			('run-6', 'task-1', 'running'),
+			('run-7', 'task-1', 'running'),
+			('run-8', 'task-1', 'running');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agents: %v", err)
@@ -498,6 +554,90 @@ func TestGetDailySpend_NoDB(t *testing.T) {
 	}
 	if spend != 0 {
 		t.Errorf("GetDailySpend() = %.4f, want 0", spend)
+	}
+}
+
+// TestGetDailySpend_WithDB verifies GetDailySpend aggregates spend via tasks/projects.
+func TestGetDailySpend_WithDB(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	engine := NewEngine(db)
+	ctx := context.Background()
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 5.00, 1000, datetime('now'));
+	`)
+	if err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+
+	spend, err := engine.GetDailySpend(ctx, "org-1")
+	if err != nil {
+		t.Fatalf("GetDailySpend() error: %v", err)
+	}
+	if spend != 5.00 {
+		t.Errorf("GetDailySpend() = %.4f, want 5.0000", spend)
+	}
+}
+
+// TestGetPeriodSpend_WithDB verifies GetPeriodSpend aggregates spend via tasks/projects.
+func TestGetPeriodSpend_WithDB(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	engine := NewEngine(db)
+	ctx := context.Background()
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 7.50, 1000, datetime('now'));
+	`)
+	if err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+
+	spend, err := engine.GetPeriodSpend(ctx, "org-1", models.BudgetPeriodDaily)
+	if err != nil {
+		t.Fatalf("GetPeriodSpend() error: %v", err)
+	}
+	if spend != 7.50 {
+		t.Errorf("GetPeriodSpend() = %.4f, want 7.5000", spend)
+	}
+}
+
+// TestGetTaskCost_WithDB verifies GetTaskCost aggregates cost for a task.
+func TestGetTaskCost_WithDB(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	engine := NewEngine(db)
+	ctx := context.Background()
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
+		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
+		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 3.25, 1000, datetime('now'));
+	`)
+	if err != nil {
+		t.Fatalf("seed data: %v", err)
+	}
+
+	cost, err := engine.GetTaskCost(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTaskCost() error: %v", err)
+	}
+	if cost != 3.25 {
+		t.Errorf("GetTaskCost() = %.4f, want 3.2500", cost)
 	}
 }
 
@@ -651,8 +791,9 @@ func TestCheckRun_MultipleViolations(t *testing.T) {
 
 	// Seed high daily spend (12.00 > 10.00 limit)
 	_, err := db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
-		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
 		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 15.00, 1000, datetime('now'));
 	`)
@@ -662,18 +803,18 @@ func TestCheckRun_MultipleViolations(t *testing.T) {
 
 	// Seed 10 running agents for concurrent check
 	_, err = db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status)
+		INSERT INTO agent_runs (id, task_id, status)
 		VALUES
-			('run-2', 'task-1', 'org-1', 'running'),
-			('run-3', 'task-1', 'org-1', 'running'),
-			('run-4', 'task-1', 'org-1', 'running'),
-			('run-5', 'task-1', 'org-1', 'running'),
-			('run-6', 'task-1', 'org-1', 'running'),
-			('run-7', 'task-1', 'org-1', 'running'),
-			('run-8', 'task-1', 'org-1', 'running'),
-			('run-9', 'task-1', 'org-1', 'running'),
-			('run-10', 'task-1', 'org-1', 'running'),
-			('run-11', 'task-1', 'org-1', 'running');
+			('run-2', 'task-1', 'running'),
+			('run-3', 'task-1', 'running'),
+			('run-4', 'task-1', 'running'),
+			('run-5', 'task-1', 'running'),
+			('run-6', 'task-1', 'running'),
+			('run-7', 'task-1', 'running'),
+			('run-8', 'task-1', 'running'),
+			('run-9', 'task-1', 'running'),
+			('run-10', 'task-1', 'running'),
+			('run-11', 'task-1', 'running');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agents: %v", err)
@@ -733,8 +874,9 @@ func TestEngine_WithLogger(t *testing.T) {
 func seedPassingDBData(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status) VALUES ('run-1', 'task-1', 'org-1', 'completed');
-		INSERT INTO tasks (id, project_id) VALUES ('task-1', 'project-1');
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'completed');
 		INSERT INTO model_usage (id, agent_run_id, task_id, model, provider, prompt_tokens, completion_tokens, cost, latency_ms, created_at)
 		VALUES ('mu-1', 'run-1', 'task-1', 'gpt-4o', 'openai', 1000, 500, 2.50, 1000, datetime('now'));
 	`)
@@ -744,11 +886,11 @@ func seedPassingDBData(t *testing.T, db *sql.DB) {
 
 	// Seed 3 running agents (within limit of 5)
 	_, err = db.Exec(`
-		INSERT INTO agent_runs (id, task_id, organization_id, status)
+		INSERT INTO agent_runs (id, task_id, status)
 		VALUES
-			('run-2', 'task-1', 'org-1', 'running'),
-			('run-3', 'task-1', 'org-1', 'running'),
-			('run-4', 'task-1', 'org-1', 'running');
+			('run-2', 'task-1', 'running'),
+			('run-3', 'task-1', 'running'),
+			('run-4', 'task-1', 'running');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agents: %v", err)

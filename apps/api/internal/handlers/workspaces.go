@@ -260,6 +260,10 @@ func (h *Handler) GetWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
+	if err := workspaceDiffPath(workspacePath); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
 	if workspacePath == "" {
 		respond.JSON(w, http.StatusOK, map[string]string{"diff": ""})
 		return
@@ -282,12 +286,18 @@ func workspaceDiffPath(workspacePath string) error {
 	if workspacePath == "" {
 		return nil
 	}
+	baseDir := workspaceRuntimeBaseDir()
+	cleanBase := filepath.Clean(baseDir) + string(os.PathSeparator)
+
 	resolved, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(resolved) == "" || resolved == "/" {
 		return fmt.Errorf("invalid workspace path")
+	}
+	if !strings.HasPrefix(resolved+string(os.PathSeparator), cleanBase) && resolved != filepath.Clean(baseDir) {
+		return fmt.Errorf("workspace path outside base directory")
 	}
 	return nil
 }

@@ -113,8 +113,9 @@ make db-reset
 |----------|---------|-------------|
 | `DATABASE_URL` | `file:./data/dev.db?_journal_mode=WAL` | Database connection string |
 | `NATS_URL` | `nats://localhost:4222` | NATS server URL |
-| `PORT` | `8080` | API server port (runner also reads `PORT`; see note below) |
+| `PORT` | `8080` | API server port |
 | `WEB_PORT` | `3000` | Next.js dev server port |
+| `RUNNER_PORT` | `8082` | Runner service port |
 | `JWT_SECRET` | *(required, ≥32 chars)* | JWT signing secret |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS origins |
 | `OAUTH_COOKIE_SECURE` | `true` | Set `false` for local HTTP dev |
@@ -142,8 +143,6 @@ make db-reset
 | `BIFROST_URL` | `http://localhost:8081` | Bifrost AI gateway URL |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GROQ_API_KEY` / `FIREWORKS_API_KEY` | `` | Direct model provider keys |
 | `DEFAULT_MODEL` / `DEFAULT_PROVIDER` | `gpt-4o` / `openai` | Default model for agent runs |
-
-> **Runner port note**: `apps/runner/internal/config/config.go` reads `PORT`, not `RUNNER_PORT`. Because `Makefile` exports `PORT=8080`, `make dev` will make the runner try to bind `8080` and collide with the API. Start the runner on a different port with `PORT=8082 make dev-runner` until the runner is updated to honor `RUNNER_PORT`.
 
 ## Service Architecture (Dev Mode)
 

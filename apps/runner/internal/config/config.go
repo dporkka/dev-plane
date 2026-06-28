@@ -37,7 +37,12 @@ func Load() *Config {
 	if cfg.RuntimeBaseDir == "" {
 		cfg.RuntimeBaseDir = os.TempDir() + "/ai-dev-control-plane-workspaces"
 	}
-	if portStr := os.Getenv("PORT"); portStr != "" {
+	if portStr := os.Getenv("RUNNER_PORT"); portStr != "" {
+		if port, err := strconv.Atoi(portStr); err == nil {
+			cfg.Port = port
+		}
+	} else if portStr := os.Getenv("PORT"); portStr != "" {
+		// Backward compatibility: fall back to generic PORT if RUNNER_PORT is unset.
 		if port, err := strconv.Atoi(portStr); err == nil {
 			cfg.Port = port
 		}

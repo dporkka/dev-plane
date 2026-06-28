@@ -9,6 +9,7 @@
 //	tasks.created        -> trigger spec generation
 //	tasks.approved       -> create workspace + start agent run
 //	agents.run.completed  -> consume mailbox handoffs or review completed work
+//	agents.run.failed     -> transition task to failed and notify integrations
 //	review.completed     -> request human PR approval
 //	approval.approved    -> create PR if type=pr_create
 //	approval.rejected    -> update task status, notify user
@@ -176,6 +177,20 @@ func main() {
 	}
 	ctx.addSubscription(subRunCompleted)
 	logger.Info("subscribed to agents.run.completed")
+
+	// agents.run.failed -> fail task and notify integrations
+	subRunFailed, err := eventBus.Subscribe("agents.run.failed", func(msg *nats.Msg) {
+		logger.Debug("received agents.run.failed event")
+		if err := runHandler.HandleRunFailed(msg); err != nil {
+			logger.Error("failed to handle run failed", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to agents.run.failed", "error", err)
+		os.Exit(1)
+	}
+	ctx.addSubscription(subRunFailed)
+	logger.Info("subscribed to agents.run.failed")
 
 	// review.completed -> PR approval request
 	subReviewCompleted, err := eventBus.Subscribe("review.completed", func(msg *nats.Msg) {

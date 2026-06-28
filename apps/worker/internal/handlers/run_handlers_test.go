@@ -183,6 +183,66 @@ func TestHandleRunCompletedReturnsReviewError(t *testing.T) {
 	}
 }
 
+func TestHandleRunFailedTransitionsTaskAndPublishesFailedEvent(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","agent_role":"implementer","status":"failed","data":{"error":"model provider unavailable"}}`)}
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&status); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("task status = %q, want failed", status)
+	}
+
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.TaskFailed)
+	}
+	if !contains(string(publisher.data), "task-1") || !contains(string(publisher.data), "failed") {
+		t.Fatalf("published data = %q, want task failed event", string(publisher.data))
+	}
+}
+
+func TestHandleRunFailedReturnsUnmarshalError(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+
+	handler := NewRunHandler(db, slog.Default(), nil)
+	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`not json`)})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !contains(err.Error(), "unmarshal") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestHandleRunFailedReturnsPublishError(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	publisher := &fakeWorkerEventPublisher{err: errors.New("nats disconnected")}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+
+	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !contains(err.Error(), "nats disconnected") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestHandleRunTriggeredExecutesQueuedRun(t *testing.T) {
 	executor := &fakeRunExecutor{}
 	handler := NewRunHandler(nil, slog.Default(), nil).WithRunExecutor(executor)

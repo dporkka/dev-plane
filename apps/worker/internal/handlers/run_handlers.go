@@ -2,6 +2,7 @@
 //
 // Run handlers process agent run lifecycle events:
 //   - agents.run.completed -> consume mailbox handoffs or review completed work
+//   - agents.run.failed -> transition task to failed and notify integrations
 //   - review.completed -> request human approval for PR creation
 package handlers
 
@@ -27,7 +28,7 @@ import (
 type RunHandler struct {
 	db       *sql.DB
 	logger   *slog.Logger
-	eventBus *events.Bus
+	eventBus WorkerEventPublisher
 	executor RunExecutor
 	reviewer ReviewService
 }
@@ -43,7 +44,7 @@ type ReviewService interface {
 }
 
 // NewRunHandler creates a new run handler.
-func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus *events.Bus) *RunHandler {
+func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublisher) *RunHandler {
 	return &RunHandler{db: db, logger: logger, eventBus: eventBus}
 }
 
@@ -56,6 +57,12 @@ func (h *RunHandler) WithRunExecutor(executor RunExecutor) *RunHandler {
 // WithReviewer enables completed-run review generation before approval flow.
 func (h *RunHandler) WithReviewer(reviewer ReviewService) *RunHandler {
 	h.reviewer = reviewer
+	return h
+}
+
+// WithEventPublisher replaces the event publisher, primarily for tests.
+func (h *RunHandler) WithEventPublisher(eventBus WorkerEventPublisher) *RunHandler {
+	h.eventBus = eventBus
 	return h
 }
 
@@ -118,6 +125,44 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		"run_id", event.RunID,
 		"risk_level", report.RiskLevel,
 		"approvable", report.Approvable,
+	)
+	return ackMessage(msg)
+}
+
+// HandleRunFailed processes agents.run.failed events.
+// It transitions the associated task to failed and publishes a tasks.failed event.
+func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
+	var event events.AgentRunEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		return fmt.Errorf("unmarshal agent run event: %w", err)
+	}
+
+	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
+
+	now := time.Now().UTC()
+	_, err := h.db.Exec(`
+		UPDATE tasks SET status = 'failed', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, now, event.TaskID)
+	if err != nil {
+		return fmt.Errorf("update task status to failed: %w", err)
+	}
+
+	if h.eventBus != nil {
+		failedEvent := events.TaskEvent{
+			TaskID: event.TaskID,
+			Status: string(models.TaskStatusFailed),
+			Data:   event.Data,
+		}
+		data, _ := json.Marshal(failedEvent)
+		if pubErr := h.eventBus.Publish(events.TaskFailed, data); pubErr != nil {
+			return fmt.Errorf("publish tasks.failed event: %w", pubErr)
+		}
+	}
+
+	h.logger.Info("run failure processed, task transitioned to failed",
+		"run_id", event.RunID,
+		"task_id", event.TaskID,
 	)
 	return ackMessage(msg)
 }

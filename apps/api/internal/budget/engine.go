@@ -166,10 +166,12 @@ func (e *Engine) GetDailySpend(ctx context.Context, orgID string) (float64, erro
 	since := time.Now().UTC().Truncate(24 * time.Hour)
 	var total sql.NullFloat64
 	err := e.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(cost), 0)
+		SELECT COALESCE(SUM(mu.cost), 0)
 		FROM model_usage mu
 		JOIN agent_runs ar ON mu.agent_run_id = ar.id
-		WHERE ar.organization_id = $1
+		JOIN tasks t ON ar.task_id = t.id
+		JOIN projects p ON t.project_id = p.id
+		WHERE p.organization_id = $1
 		  AND mu.created_at >= $2
 	`, orgID, since).Scan(&total)
 
@@ -274,10 +276,12 @@ func (e *Engine) GetPeriodSpend(ctx context.Context, orgID string, period string
 
 	var total sql.NullFloat64
 	err := e.db.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(cost), 0)
+		SELECT COALESCE(SUM(mu.cost), 0)
 		FROM model_usage mu
 		JOIN agent_runs ar ON mu.agent_run_id = ar.id
-		WHERE ar.organization_id = $1
+		JOIN tasks t ON ar.task_id = t.id
+		JOIN projects p ON t.project_id = p.id
+		WHERE p.organization_id = $1
 		  AND mu.created_at >= $2
 	`, orgID, since).Scan(&total)
 
