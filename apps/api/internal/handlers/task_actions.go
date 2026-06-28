@@ -17,6 +17,38 @@ import (
 	"github.com/ai-dev-control-plane/events"
 )
 
+// GetTaskSpec returns the generated spec for a task.
+func (h *Handler) GetTaskSpec(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	taskID := chi.URLParam(r, "id")
+	if taskID == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("task id is required"))
+		return
+	}
+
+	if err := authz.AuthorizeTask(ctx, h.db, user, taskID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("task not found"))
+		return
+	}
+
+	spec, err := specgenerator.NewGenerator(h.db, h.logger).GetSpec(ctx, taskID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if spec == nil {
+		respond.Error(w, http.StatusNotFound, errors.New("spec not found"))
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, spec)
+}
+
 // GenerateSpec triggers spec generation for a task.
 // It transitions the task to "spec_review" and publishes an event for the worker.
 func (h *Handler) GenerateSpec(w http.ResponseWriter, r *http.Request) {

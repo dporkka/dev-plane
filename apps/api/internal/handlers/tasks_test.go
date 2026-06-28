@@ -609,6 +609,88 @@ func TestCancelTask_AlreadyDone(t *testing.T) {
 	}
 }
 
+func TestGetTaskSpec(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	now := time.Now()
+
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT id, task_id, summary, problem_statement, implementation_plan").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "summary", "problem_statement", "implementation_plan",
+			"files_to_change", "files_to_create", "acceptance_criteria", "test_plan",
+			"risk_assessment", "rollback_plan", "required_approvals", "estimated_cost",
+			"recommended_agent", "generated_by", "generated_at",
+		}).AddRow(
+			"spec-1", taskID, "Implement feature", "Problem statement",
+			`["step 1","step 2"]`, `["file.go"]`, `["new.go"]`, `["criteria"]`,
+			"Test plan", "Risk assessment", "Rollback plan", `["approval"]`,
+			0.05, "backend-engineer", "template-heuristic", now,
+		))
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/spec", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.GetTaskSpec(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	var spec map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if spec["id"] != "spec-1" {
+		t.Errorf("expected spec id 'spec-1', got %q", spec["id"])
+	}
+	if spec["task_id"] != taskID {
+		t.Errorf("expected task_id %q, got %q", taskID, spec["task_id"])
+	}
+	if spec["summary"] != "Implement feature" {
+		t.Errorf("expected summary 'Implement feature', got %q", spec["summary"])
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestGetTaskSpec_NotFound(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT id, task_id, summary, problem_statement, implementation_plan").
+		WithArgs(taskID).
+		WillReturnError(sql.ErrNoRows)
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/spec", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.GetTaskSpec(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 func TestGetTask_CrossOrgDenied(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()

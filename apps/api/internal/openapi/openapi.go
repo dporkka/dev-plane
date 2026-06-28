@@ -264,6 +264,28 @@ func buildComponents() Components {
 					"deleted_at":            {Type: "string", Format: "date-time", Nullable: true},
 				},
 			},
+			"TaskSpec": {
+				Type:     "object",
+				Required: []string{"id", "task_id", "summary", "problem_statement", "implementation_plan", "files_to_change", "files_to_create", "acceptance_criteria", "test_plan", "risk_assessment", "rollback_plan", "required_approvals", "estimated_cost", "recommended_agent", "generated_by", "generated_at"},
+				Properties: map[string]*Schema{
+					"id":                  {Type: "string", Format: "uuid"},
+					"task_id":             {Type: "string", Format: "uuid"},
+					"summary":             {Type: "string"},
+					"problem_statement":   {Type: "string"},
+					"implementation_plan": {Type: "array", Items: &Schema{Type: "string"}},
+					"files_to_change":     {Type: "array", Items: &Schema{Type: "string"}},
+					"files_to_create":     {Type: "array", Items: &Schema{Type: "string"}},
+					"acceptance_criteria": {Type: "array", Items: &Schema{Type: "string"}},
+					"test_plan":           {Type: "string"},
+					"risk_assessment":     {Type: "string"},
+					"rollback_plan":       {Type: "string"},
+					"required_approvals":  {Type: "array", Items: &Schema{Type: "string"}},
+					"estimated_cost":      {Type: "number"},
+					"recommended_agent":   {Type: "string"},
+					"generated_by":        {Type: "string"},
+					"generated_at":        {Type: "string", Format: "date-time"},
+				},
+			},
 			"AgentRun": {
 				Type:     "object",
 				Required: []string{"id", "task_id", "agent_role", "status", "prompt_tokens", "completion_tokens", "total_cost", "created_at", "updated_at"},
@@ -1274,6 +1296,24 @@ func buildPaths() map[string]PathItem {
 			Responses: map[string]Response{
 				"200": {Description: "Spec approved"},
 				"400": {Description: "Task not in spec_review status"},
+			},
+		},
+	}
+	paths["/api/v1/tasks/{id}/spec"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Tasks"},
+			Summary:     "Get task spec",
+			Description: "Returns the generated technical specification for a task.",
+			OperationID: "getTaskSpec",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Task ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Task spec", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/TaskSpec"}},
+				}},
+				"404": {Description: "Task or spec not found"},
 			},
 		},
 	}

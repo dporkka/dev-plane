@@ -169,6 +169,25 @@ export interface Task {
   deleted_at?: string;
 }
 
+export interface TaskSpec {
+  id: string;
+  task_id: string;
+  summary: string;
+  problem_statement: string;
+  implementation_plan: string[];
+  files_to_change: string[];
+  files_to_create: string[];
+  acceptance_criteria: string[];
+  test_plan: string;
+  risk_assessment: string;
+  rollback_plan: string;
+  required_approvals: string[];
+  estimated_cost: number;
+  recommended_agent: string;
+  generated_by: string;
+  generated_at: string;
+}
+
 export interface AgentRun {
   id: string;
   task_id: string;

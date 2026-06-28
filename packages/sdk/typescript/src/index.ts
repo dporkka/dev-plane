@@ -47,6 +47,7 @@ import type {
   StopServiceRequest,
   StopServiceResponse,
   Task,
+  TaskSpec,
   UpdateIntegrationPayload,
   UpdateTaskRequest,
   VoiceTaskPayload,
@@ -309,6 +310,10 @@ export class DevPlaneClient {
 
   getTask(id: string) {
     return this.request<Task>(`/api/v1/tasks/${id}`);
+  }
+
+  getTaskSpec(taskId: string) {
+    return this.request<TaskSpec>(`/api/v1/tasks/${taskId}/spec`);
   }
 
   createTask(projectId: string, payload: CreateTaskRequest) {

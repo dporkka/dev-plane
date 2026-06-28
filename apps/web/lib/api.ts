@@ -47,27 +47,6 @@ function adaptRunStream(runStream: RunStream): SSELike {
   return sse;
 }
 
-// Fallback fetch helper for endpoints not yet exposed by the SDK.
-async function fetchJSON<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = getToken();
-  const res = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` }),
-      ...options?.headers,
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
-  }
-  if (res.status === 204) {
-    return undefined as T;
-  }
-  return res.json() as T;
-}
-
 export const api = {
   // ─── Tasks ──────────────────────────────────────────────────────
   listTasks: (projectId: string): Promise<any> =>
@@ -93,7 +72,7 @@ export const api = {
 
   // ─── Spec ───────────────────────────────────────────────────────
   getTaskSpec: (taskId: string): Promise<any> =>
-    fetchJSON(`/api/v1/tasks/${taskId}/spec`),
+    getClient().getTaskSpec(taskId),
 
   // ─── Agent Runs ─────────────────────────────────────────────────
   listRuns: (taskId: string): Promise<any> =>
