@@ -134,8 +134,8 @@ The platform follows a control plane pattern: the web UI and API manage the life
 |-------|---------|
 | `organizations` | Multi-tenant org boundary |
 | `users` | Authenticated users with roles |
-| `repositories` | Git repos with metadata |
 | `projects` | Project grouping of tasks |
+| `repositories` | Git repos with metadata |
 | `workspaces` | Isolated dev environments |
 
 ### Task & Agent Tables (006-009)
@@ -144,7 +144,6 @@ The platform follows a control plane pattern: the web UI and API manage the life
 | `tasks` | Task definitions with spec + status |
 | `agent_runs` | Run records for agent pipeline |
 | `agent_steps` | Individual step execution logs |
-| `review_reports` | Persisted automated code review output |
 | `approvals` | Human approval requests/decisions |
 
 ### Governance Tables (010-013)
@@ -155,15 +154,43 @@ The platform follows a control plane pattern: the web UI and API manage the life
 | `model_usage` | LLM token/cost tracking |
 | `integrations` | External service connections |
 
-### Agent Coordination & Secret Tables (014-017)
+### Project & Spec Tables (015)
 | Table | Purpose |
 |-------|---------|
-| `task_specs` | Generated implementation specs and plans |
 | `project_configs` | Detected repo commands and framework metadata |
+| `task_specs` | Generated implementation specs and plans |
 | `detection_results` | Historical repository detection output |
+
+### Secret Storage Tables (016)
+| Table | Purpose |
+|-------|---------|
 | `secret_references` | Metadata for encrypted secret handles |
 | `secret_values` | Versioned encrypted secret ciphertext |
+
+### Agent Coordination Tables (017-018)
+| Table | Purpose |
+|-------|---------|
 | `agent_messages` | Durable mailbox handoffs between roles |
+
+### Review Reports (019)
+| Table | Purpose |
+|-------|---------|
+| `review_reports` | Persisted automated code review output |
+
+### Pull Requests (020)
+| Table | Purpose |
+|-------|---------|
+| `pull_requests` | GitHub pull request records |
+
+### Budgets (021)
+| Table | Purpose |
+|-------|---------|
+| `budgets` | Org/project/task budget and usage limits |
+
+### Deployments (022)
+| Table | Purpose |
+|-------|---------|
+| `deployments` | Deployment records and status |
 
 ### Relationships
 ```
@@ -172,17 +199,26 @@ organizations --< repositories
 organizations --< projects
 projects --< tasks
 repositories --< workspaces
+repositories --< project_configs
+repositories --< detection_results
 workspaces --< tasks
+tasks --< task_specs
 tasks --< agent_runs
-agent_runs --< agent_steps
-agent_runs --< review_reports
 tasks --< agent_messages
 tasks --< approvals
+tasks --< pull_requests
+tasks --< budgets
+tasks --< deployments
+agent_runs --< agent_steps
+agent_runs --< review_reports
+agent_runs --< pull_requests
 organizations --< policies
 organizations --< audit_logs
 organizations --< model_usage
 organizations --< integrations
 organizations --< secret_references
+organizations --< budgets
+projects --< budgets
 ```
 
 ## Event Architecture
@@ -192,10 +228,10 @@ organizations --< secret_references
 | Stream | Subjects | Retention |
 |--------|----------|-----------|
 | `TASKS` | `tasks.>` | Work queue |
-| `AGENTS` | `agents.>` | Limits (10K) |
+| `AGENTS` | `agents.>` | Work queue |
 | `RUNS` | `runs.>`, `review.>`, `approval.>`, `pr.>` | Work queue |
-| `WEBHOOKS` | `webhooks.>` | Limits (5K) |
-| `AUDIT` | `audit.>` | Forever |
+| `WEBHOOKS` | `webhooks.>` | Work queue |
+| `AUDIT` | `audit.>` | Work queue |
 
 ### Event Flow
 

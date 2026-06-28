@@ -26,10 +26,10 @@ The following constraints define the production security target. Agent-run tool 
 
 | Rule | Enforcement |
 |------|-------------|
-| Never modify `main` directly | Pre-commit hook rejects pushes to main |
+| Never modify `main` directly | Policy engine denies pushes to `main` |
 | Never merge automatically | All merges require human approval |
 | Never deploy to production without approval | Deployment gates require explicit sign-off |
-| Sandboxed execution by default | Docker provider creates no-network containers with read-only rootfs, named workspace volumes, dropped capabilities, no-new-privileges, and CPU/memory/PID limits; live Docker integration tests are still required before production use |
+| Sandboxed execution by default | Docker provider enforces sandboxing when `WORKSPACE_RUNTIME=docker` is active; `ENABLE_SANDBOXED_RUNTIME` remains off by default in local dev |
 | No network egress by default | Workspaces have no outbound network access unless explicitly allowed |
 | Read-only by default | File system writes require capability grants |
 | Time bounded | All agent runs have a configurable timeout (default 30 min) |
