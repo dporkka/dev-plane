@@ -85,6 +85,7 @@ func (s *Server) routes() {
 	// OpenAPI documentation (public)
 	s.router.Get("/api/docs", openapi.DocsHandler)
 	s.router.Get("/api/openapi.json", openapi.SpecHandler)
+	s.router.Get("/api/public/v1/openapi.json", openapi.SpecHandler)
 
 	// Initialize handlers
 	auditLogger := audit.NewLogger(s.db, s.logger)
@@ -111,7 +112,8 @@ func (s *Server) routes() {
 		WithWebhookSecret(s.config.GitHubWebhookSecret).
 		WithLinearWebhookSecret(s.config.LinearWebhookSecret).
 		WithSlackSigningSecret(s.config.SlackSigningSecret).
-		WithDiscordWebhookSecret(s.config.DiscordWebhookSecret)
+		WithDiscordWebhookSecret(s.config.DiscordWebhookSecret).
+		WithHandler(h)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
 	}
@@ -131,6 +133,7 @@ func (s *Server) routes() {
 		r.Post("/webhooks/linear", wh.LinearWebhook)
 		r.Post("/webhooks/slack", wh.SlackWebhook)
 		r.Post("/webhooks/discord", wh.DiscordWebhook)
+		r.Post("/webhooks/{provider}/{integrationID}", wh.IntegrationWebhook)
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
@@ -230,10 +233,15 @@ func (s *Server) routes() {
 			r.Get("/organizations/{orgID}/dashboard", h.GetDashboard)
 
 			// Integrations
+			r.Get("/integrations/providers", h.ListIntegrationProviders)
 			r.Get("/organizations/{orgID}/integrations", h.ListIntegrations)
 			r.Post("/organizations/{orgID}/integrations", h.CreateIntegration)
+			r.Get("/integrations/{id}", h.GetIntegration)
 			r.Patch("/integrations/{id}", h.UpdateIntegration)
 			r.Delete("/integrations/{id}", h.DeleteIntegration)
+
+			// Voice
+			r.Post("/projects/{projectID}/voice-tasks", h.CreateVoiceTask)
 		})
 	})
 }

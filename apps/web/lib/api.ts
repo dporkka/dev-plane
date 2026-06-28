@@ -303,6 +303,9 @@ export const api = {
     }),
 
   // ─── Integrations ───────────────────────────────────────────────
+  listIntegrationProviders: () =>
+    fetchAPI(`/api/v1/integrations/providers`),
+
   listIntegrations: (orgId: string) =>
     fetchAPI(`/api/v1/organizations/${orgId}/integrations`),
 
@@ -312,6 +315,9 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  getIntegration: (id: string) =>
+    fetchAPI(`/api/v1/integrations/${id}`),
+
   updateIntegration: (id: string, data: any) =>
     fetchAPI(`/api/v1/integrations/${id}`, {
       method: 'PATCH',
@@ -320,6 +326,12 @@ export const api = {
 
   deleteIntegration: (id: string) =>
     fetchAPI(`/api/v1/integrations/${id}`, { method: 'DELETE' }),
+
+  createVoiceTask: (projectId: string, data: any) =>
+    fetchAPI(`/api/v1/projects/${projectId}/voice-tasks`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // ─── Audit Logs ─────────────────────────────────────────────────
   listAuditLogs: (orgId: string) =>

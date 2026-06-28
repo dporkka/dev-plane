@@ -1,249 +1,365 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { api } from '@/lib/api';
+import type { ElementType } from 'react';
+import { useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Github,
-  Slack,
-  MessageSquare,
+  AudioLines,
   CheckCircle,
-  XCircle,
+  Github,
+  MessageSquare,
   Plug,
+  Slack,
+  Webhook,
+  XCircle,
 } from 'lucide-react';
+import { StatusBadge } from '@/components/common/StatusBadge';
+import { Loading } from '@/components/common/Loading';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { api } from '@/lib/api';
+import { useStore } from '@/lib/store';
+import type { Integration, IntegrationProvider, IntegrationType } from '@/lib/types';
 
-interface Integration {
-  id: string;
-  organization_id: string;
-  integration_type: string;
-  display_name: string;
-  status: string;
-}
+const iconMap: Record<IntegrationType, ElementType> = {
+  github: Github,
+  linear: CheckCircle,
+  slack: Slack,
+  discord: MessageSquare,
+  webhook: Webhook,
+  voice: AudioLines,
+};
 
-interface IntegrationDef {
-  id: string;
-  name: string;
-  description: string;
-  icon: React.ElementType;
-}
+const defaultVoiceProvider = 'whisper';
 
-const INTEGRATION_DEFS: IntegrationDef[] = [
-  {
-    id: 'github',
-    name: 'GitHub',
-    description: 'Connect GitHub repositories, create PRs, and manage webhooks',
-    icon: Github,
-  },
-  {
-    id: 'linear',
-    name: 'Linear',
-    description: 'Sync tasks with Linear issues and track progress',
-    icon: CheckCircle,
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    description: 'Get notifications and approve tasks from Slack',
-    icon: Slack,
-  },
-  {
-    id: 'discord',
-    name: 'Discord',
-    description: 'Receive notifications and run commands via Discord',
-    icon: MessageSquare,
-  },
-];
-
-interface IntegrationCardProps {
-  definition: IntegrationDef;
-  integration?: Integration;
-  onConnect: (type: string, token: string, webhookUrl: string) => void;
-  onDisconnect: (id: string) => void;
-}
-
-function IntegrationCard({
-  definition,
-  integration,
-  onConnect,
-  onDisconnect,
-}: IntegrationCardProps) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [token, setToken] = useState('');
-  const [webhookUrl, setWebhookUrl] = useState('');
-  const isConnected = integration?.status === 'connected';
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    onConnect(definition.id, token, webhookUrl);
-    setToken('');
-    setWebhookUrl('');
-    setIsEditing(false);
-  };
-
-  return (
-    <Card>
-      <div className="flex items-start justify-between">
-        <div className="flex items-start gap-3">
-          <div className={`p-2 rounded-lg ${isConnected ? 'bg-green-500/10' : 'bg-gray-800'}`}>
-            <definition.icon className={`w-6 h-6 ${isConnected ? 'text-green-400' : 'text-gray-400'}`} />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-semibold text-white">{definition.name}</h3>
-              <StatusBadge status={integration?.status || 'disconnected'} />
-            </div>
-            <p className="text-sm text-gray-500 mt-1">{definition.description}</p>
-          </div>
-        </div>
-        <button
-          onClick={() => {
-            if (isConnected && integration) {
-              onDisconnect(integration.id);
-            } else {
-              setIsEditing(!isEditing);
-            }
-          }}
-          className={isConnected ? 'btn-secondary text-red-400' : 'btn-primary'}
-        >
-          {isConnected ? (
-            <>
-              <XCircle className="w-4 h-4 mr-1" />
-              Disconnect
-            </>
-          ) : (
-            <>
-              <Plug className="w-4 h-4 mr-1" />
-              Connect
-            </>
-          )}
-        </button>
-      </div>
-
-      {!isConnected && isEditing && (
-        <form onSubmit={handleSubmit} className="mt-4 space-y-3 border-t border-gray-800 pt-4">
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              {definition.id === 'discord' ? 'Bot Token (optional)' : 'API Token'}
-            </label>
-            <input
-              type="password"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder={definition.id === 'discord' ? 'Bot token' : 'API token'}
-              className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white"
-            />
-          </div>
-          {definition.id === 'discord' && (
-            <div>
-              <label className="block text-sm text-gray-400 mb-1">Webhook URL (optional)</label>
-              <input
-                type="url"
-                value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
-                placeholder="https://discord.com/api/webhooks/..."
-                className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white"
-              />
-            </div>
-          )}
-          <div className="flex gap-2">
-            <button type="submit" className="btn-primary text-sm">Save</button>
-            <button
-              type="button"
-              onClick={() => setIsEditing(false)}
-              className="btn-secondary text-sm"
-            >
-              Cancel
-            </button>
-          </div>
-        </form>
-      )}
-    </Card>
-  );
+function defaultConfig(provider: IntegrationProvider, selectedProject: string | null) {
+  const baseConfig: Record<string, string> = {};
+  provider.required_config_fields.forEach((field) => {
+    baseConfig[field] = field === 'project_id' && selectedProject ? selectedProject : '';
+  });
+  if (provider.type === 'voice') {
+    baseConfig.voice_provider = defaultVoiceProvider;
+  }
+  return JSON.stringify(baseConfig, null, 2);
 }
 
 export default function IntegrationsPage() {
-  const [integrations, setIntegrations] = useState<Integration[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
+  const { selectedOrg, selectedProject } = useStore();
+  const [drafts, setDrafts] = useState<Record<string, { displayName: string; config: string }>>({});
+  const [credentials, setCredentials] = useState<
+    Record<string, { token: string; webhookUrl: string }>
+  >({});
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const orgId = 'current'; // TODO: replace with actual org context when available
+  const { data: providersData, isLoading: providersLoading } = useQuery({
+    queryKey: ['integration-providers'],
+    queryFn: () => api.listIntegrationProviders(),
+  });
+  const { data: integrationsData, isLoading: integrationsLoading } = useQuery({
+    queryKey: ['integrations', selectedOrg],
+    queryFn: () =>
+      selectedOrg ? api.listIntegrations(selectedOrg) : Promise.resolve([]),
+    enabled: !!selectedOrg,
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listIntegrations(orgId)
-      .then((data) => {
-        if (!cancelled) setIntegrations(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.message || 'Failed to load integrations');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [orgId]);
+  const providers: IntegrationProvider[] = useMemo(
+    () => providersData?.data || providersData || [],
+    [providersData]
+  );
+  const integrations: Integration[] = useMemo(
+    () => integrationsData?.data || integrationsData || [],
+    [integrationsData]
+  );
 
-  const handleConnect = async (type: string, token: string, webhookUrl: string) => {
-    try {
-      const payload: any = {
-        integration_type: type,
-        display_name: INTEGRATION_DEFS.find((d) => d.id === type)?.name || type,
+  const draftValues = useMemo(() => {
+    const values: Record<string, { displayName: string; config: string }> = {};
+    for (const provider of providers) {
+      const existing = integrations.find((item) => item.integration_type === provider.type);
+      values[provider.type] = drafts[provider.type] || {
+        displayName: existing?.display_name || provider.name,
+        config: existing?.config
+          ? JSON.stringify(existing.config, null, 2)
+          : defaultConfig(provider, selectedProject),
       };
-      if (token) payload.token = token;
-      if (webhookUrl) payload.webhook_url = webhookUrl;
-      const created = await api.createIntegration(orgId, payload);
-      setIntegrations((prev) => [...prev, created]);
-    } catch (err: any) {
-      setError(err.message || `Failed to connect ${type}`);
     }
+    return values;
+  }, [drafts, integrations, providers, selectedProject]);
+
+  const credentialValues = useMemo(() => {
+    const values: Record<string, { token: string; webhookUrl: string }> = {};
+    for (const provider of providers) {
+      const existing = integrations.find((item) => item.integration_type === provider.type);
+      values[provider.type] = credentials[provider.type] || {
+        token: '',
+        webhookUrl: existing?.webhook_url || '',
+      };
+    }
+    return values;
+  }, [credentials, providers, integrations]);
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['integrations', selectedOrg] });
   };
 
-  const handleDisconnect = async (id: string) => {
-    try {
-      await api.deleteIntegration(id);
-      setIntegrations((prev) => prev.filter((i) => i.id !== id));
-    } catch (err: any) {
-      setError(err.message || 'Failed to disconnect integration');
-    }
-  };
+  const createMutation = useMutation({
+    mutationFn: async (provider: IntegrationProvider) => {
+      if (!selectedOrg) throw new Error('Select an organization first.');
+      const draft = draftValues[provider.type];
+      const creds = credentialValues[provider.type];
+      const payload: Record<string, unknown> = {
+        integration_type: provider.type,
+        display_name: draft.displayName,
+        config: JSON.parse(draft.config || '{}'),
+      };
+      if (creds.token) payload.token = creds.token;
+      if (creds.webhookUrl) payload.webhook_url = creds.webhookUrl;
+      return api.createIntegration(selectedOrg, payload);
+    },
+    onSuccess: refresh,
+  });
 
-  const getIntegration = (type: string) =>
-    integrations.find((i) => i.integration_type === type);
+  const updateMutation = useMutation({
+    mutationFn: async ({
+      integration,
+      provider,
+      status,
+    }: {
+      integration: Integration;
+      provider: IntegrationProvider;
+      status?: string;
+    }) => {
+      const draft = draftValues[provider.type];
+      const creds = credentialValues[provider.type];
+      const payload: Record<string, unknown> = {
+        display_name: draft.displayName,
+        config: JSON.parse(draft.config || '{}'),
+        ...(status ? { status } : {}),
+      };
+      if (creds.token) payload.token = creds.token;
+      if (creds.webhookUrl) payload.webhook_url = creds.webhookUrl;
+      return api.updateIntegration(integration.id, payload);
+    },
+    onSuccess: refresh,
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (integration: Integration) => api.deleteIntegration(integration.id),
+    onSuccess: refresh,
+  });
+
+  const isBusy = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
+
+  if (providersLoading || integrationsLoading) return <Loading />;
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Integrations</h1>
         <p className="text-gray-500 mt-1">
-          Connect third-party services to your workspace
+          Connect Phase 4 providers, review required config, and copy webhook endpoints.
         </p>
       </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-lg text-sm">
-          {error}
-        </div>
+      {!selectedOrg && (
+        <Card>
+          <p className="text-sm text-gray-400">
+            Select an organization before managing integrations.
+          </p>
+        </Card>
       )}
 
-      {loading ? (
-        <div className="text-gray-500 text-sm">Loading integrations...</div>
-      ) : (
-        <div className="space-y-4 max-w-3xl">
-          {INTEGRATION_DEFS.map((definition) => (
-            <IntegrationCard
-              key={definition.id}
-              definition={definition}
-              integration={getIntegration(definition.id)}
-              onConnect={handleConnect}
-              onDisconnect={handleDisconnect}
-            />
-          ))}
-        </div>
+      {errorMessage && (
+        <Card className="border border-red-500/30">
+          <p className="text-sm text-red-300">{errorMessage}</p>
+        </Card>
       )}
+
+      <div className="space-y-4 max-w-4xl">
+        {providers.map((provider) => {
+          const integration = integrations.find((item) => item.integration_type === provider.type);
+          const Icon = iconMap[provider.type] || Plug;
+          const draft = draftValues[provider.type];
+          const creds = credentialValues[provider.type];
+          const status = integration?.status || 'disconnected';
+          const isConnected = !!integration && integration.status !== 'disconnected';
+          const usesToken = provider.type !== 'github';
+          const usesWebhookUrl = provider.supports_webhook;
+
+          return (
+            <Card key={provider.type}>
+              <div className="space-y-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <div className={`p-2 rounded-lg ${isConnected ? 'bg-green-500/10' : 'bg-gray-800'}`}>
+                      <Icon className={`w-6 h-6 ${isConnected ? 'text-green-400' : 'text-gray-400'}`} />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <h3 className="font-semibold text-white">{provider.name}</h3>
+                        <StatusBadge status={status} />
+                      </div>
+                      <p className="text-sm text-gray-500">{provider.description}</p>
+                      <div className="flex flex-wrap gap-2 text-xs text-gray-400">
+                        {provider.capabilities.map((capability) => (
+                          <span
+                            key={capability}
+                            className="rounded-full border border-[#30363d] px-2 py-0.5"
+                          >
+                            {capability}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex gap-2">
+                    {integration ? (
+                      <>
+                        <Button
+                          variant="secondary"
+                          disabled={!selectedOrg || isBusy}
+                          onClick={async () => {
+                            setErrorMessage(null);
+                            try {
+                              await updateMutation.mutateAsync({
+                                integration,
+                                provider,
+                                status: 'connected',
+                              });
+                            } catch (error) {
+                              setErrorMessage(error instanceof Error ? error.message : 'Failed to update integration.');
+                            }
+                          }}
+                        >
+                          <Plug className="w-4 h-4" />
+                          Save
+                        </Button>
+                        <Button
+                          variant="danger"
+                          disabled={!selectedOrg || isBusy}
+                          onClick={async () => {
+                            setErrorMessage(null);
+                            try {
+                              await deleteMutation.mutateAsync(integration);
+                            } catch (error) {
+                              setErrorMessage(error instanceof Error ? error.message : 'Failed to disconnect integration.');
+                            }
+                          }}
+                        >
+                          <XCircle className="w-4 h-4" />
+                          Disconnect
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        disabled={!selectedOrg || isBusy}
+                        onClick={async () => {
+                          setErrorMessage(null);
+                          try {
+                            await createMutation.mutateAsync(provider);
+                          } catch (error) {
+                            setErrorMessage(error instanceof Error ? error.message : 'Failed to create integration.');
+                          }
+                        }}
+                      >
+                        <Plug className="w-4 h-4" />
+                        Connect
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-300">
+                      Display name
+                    </label>
+                    <Input
+                      value={draft.displayName}
+                      onChange={(event) =>
+                        setDrafts((current) => ({
+                          ...current,
+                          [provider.type]: { ...draft, displayName: event.target.value },
+                        }))
+                      }
+                    />
+                  </div>
+
+                  {usesWebhookUrl && (
+                    <div className="space-y-2">
+                      <label className="block text-sm font-medium text-gray-300">
+                        Webhook URL
+                      </label>
+                      <Input
+                        value={creds.webhookUrl}
+                        placeholder={integration?.webhook_url || 'https://…'}
+                        onChange={(event) =>
+                          setCredentials((current) => ({
+                            ...current,
+                            [provider.type]: { ...creds, webhookUrl: event.target.value },
+                          }))
+                        }
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {usesToken && (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-medium text-gray-300">
+                      {provider.type === 'discord' ? 'Bot Token (optional)' : 'API Token'}
+                    </label>
+                    <Input
+                      type="password"
+                      value={creds.token}
+                      placeholder={provider.type === 'discord' ? 'Bot token' : 'API token'}
+                      onChange={(event) =>
+                        setCredentials((current) => ({
+                          ...current,
+                          [provider.type]: { ...creds, token: event.target.value },
+                        }))
+                      }
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <label className="block text-sm font-medium text-gray-300">
+                    Config JSON
+                  </label>
+                  <Textarea
+                    value={draft.config}
+                    onChange={(event) =>
+                      setDrafts((current) => ({
+                        ...current,
+                        [provider.type]: { ...draft, config: event.target.value },
+                      }))
+                    }
+                    placeholder='{"project_id":"","repository_id":"","created_by":""}'
+                  />
+                  <p className="text-xs text-gray-500">
+                    Required fields: {provider.required_config_fields.join(', ')}
+                  </p>
+                  {provider.supports_voice && (
+                    <p className="text-xs text-gray-500">
+                      Voice tasks use the authenticated <code>{'/api/v1/projects/{projectID}/voice-tasks'}</code> endpoint with a Whisper transcript payload.
+                    </p>
+                  )}
+                </div>
+
+                {integration?.last_synced_at && (
+                  <p className="text-xs text-gray-500">
+                    Last synced at {new Date(integration.last_synced_at).toLocaleString()}
+                  </p>
+                )}
+              </div>
+            </Card>
+          );
+        })}
+      </div>
     </div>
   );
 }

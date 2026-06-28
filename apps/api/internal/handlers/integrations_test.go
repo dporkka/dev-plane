@@ -18,7 +18,7 @@ func TestCreateIntegrationWithoutToken(t *testing.T) {
 
 	expectAuthorizeOrganization(mock, testOrgID)
 	mock.ExpectExec("INSERT INTO integrations").
-		WithArgs(sqlmock.AnyArg(), testOrgID, "slack", "Team Slack", []byte(`{"channel_id":"#alerts"}`), nil, nil, "pending", sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), testOrgID, "slack", "Team Slack", []byte(`{"channel_id":"#alerts"}`), nil, sqlmock.AnyArg(), "pending", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	reqBody, _ := json.Marshal(CreateIntegrationRequest{
