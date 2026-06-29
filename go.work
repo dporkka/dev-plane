@@ -7,6 +7,7 @@ use (
 	./apps/cli
 	./apps/runner
 	./apps/worker
+	./infra/networking
 	./packages/agents
 	./packages/crypto
 	./packages/db

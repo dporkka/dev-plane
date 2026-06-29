@@ -1,0 +1,145 @@
+# cache-mapping.yaml -- Edge semantic cache mapping variables and vector store
+# schema for prompt embeddings.
+#
+# This file is loaded by Bifrost (and by the local command-tower status line)
+# to understand how prompts map to cache keys, which vector collections are
+# used, and how embeddings are indexed.
+
+apiVersion: bifrost.dev-plane.io/v1
+kind: CacheMapping
+metadata:
+  name: agent-prompt-cache
+  labels:
+    component: gateway
+    layer: edge-cache
+
+spec:
+  # -------------------------------------------------------------------------
+  # Mapping variables: these are interpolated into cache keys and query
+  # predicates so that similar prompts across different agent types or owners
+  # are bucketed correctly.
+  # -------------------------------------------------------------------------
+  mapping_variables:
+    - name: agent_type
+      description: Agent specialization (e.g. coder, reviewer, tester)
+      source: header
+      header: x-agent-type
+      default: unknown
+
+    - name: owner
+      description: Owning entity or team
+      source: header
+      header: x-agent-owner
+      default: default
+
+    - name: session_id
+      description: Logical agent session
+      source: header
+      header: x-session-id
+      default: global
+
+    - name: model
+      description: Upstream model name; embeddings must match the model used
+      source: header
+      header: x-model
+      default: default
+
+    - name: response_format
+      description: Desired output shape (json, text, stream)
+      source: header
+      header: accept
+      default: text
+
+  # Cache key template.  The semantic part is the embedding vector; the scalar
+  # prefix prevents cross-tenant collisions.
+  key_template: "bifrost:cache:{agent_type}:{owner}:{model}:{response_format}:{embedding_hash}"
+
+  # -------------------------------------------------------------------------
+  # Vector store schema.
+  # -------------------------------------------------------------------------
+  vector_store:
+    # One collection per (agent_type, owner, model) combination is recommended
+    # for isolation and recall tuning.
+    collection_template: "bifrost_cache_{agent_type}_{owner}_{model}"
+
+    embedding:
+      # Dimensionality must match the embedding model configured in
+      # bifrost.yaml.template.
+      dimensions: 1536
+      metric: cosine
+      # Bifrost only serves a cached response when cosine similarity is >= 0.85.
+      similarity_threshold: 0.85
+
+    index:
+      # HNSW is used for approximate nearest-neighbor search at scale.
+      type: hnsw
+      params:
+        m: 16
+        ef_construction: 128
+        ef_search: 64
+
+    payload_schema:
+      - name: prompt_text
+        type: string
+        indexed: true
+      - name: prompt_hash
+        type: string
+        indexed: true
+      - name: response_text
+        type: string
+        indexed: false
+      - name: response_hash
+        type: string
+        indexed: true
+      - name: model
+        type: string
+        indexed: true
+      - name: response_format
+        type: string
+        indexed: true
+      - name: created_at
+        type: timestamp
+        indexed: true
+      - name: hit_count
+        type: integer
+        indexed: true
+      - name: last_hit_at
+        type: timestamp
+        indexed: true
+
+  # -------------------------------------------------------------------------
+  # TTL and invalidation.
+  # -------------------------------------------------------------------------
+  ttl:
+    default: 3600s
+    # Per-bucket overrides.
+    buckets:
+      - match:
+          agent_type: coder
+        ttl: 7200s
+      - match:
+          agent_type: reviewer
+        ttl: 1800s
+      - match:
+          response_format: stream
+        ttl: 300s
+
+  invalidation:
+    # Re-validate cached entries after this many hits to avoid stale responses.
+    revalidate_after_hits: 100
+    # Webhook endpoint called when an explicit invalidation key is published.
+    webhook_url: http://127.0.0.1:8090/_cache/invalidate
+
+  # -------------------------------------------------------------------------
+  # Variants that must match exactly for a semantic hit (headers, query params).
+  # -------------------------------------------------------------------------
+  vary:
+    headers:
+      - accept
+      - accept-encoding
+      - x-response-format
+      - x-tool-version
+    query_params:
+      - temperature
+      - top_p
+      - max_tokens

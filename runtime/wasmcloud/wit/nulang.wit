@@ -1,0 +1,148 @@
+// nulang.wit -- WIT interface for the Nulang runtime embedded in WASM.
+//
+// Nulang is a domain-specific language used by agent components to generate
+// and evaluate logic.  This interface exposes AST nodes, evaluation, and
+// compilation to WASI P2 components.
+
+package nulang:runtime@0.1.0;
+
+/// Shared type definitions used across the Nulang runtime interfaces.
+interface types {
+    /// Primitive value types supported by the Nulang evaluator.
+    variant value {
+        nil,
+        boolean(bool),
+        integer(s64),
+        float(f64),
+        string(string),
+        list(list<value>),
+        map(list<tuple<string, value>>),
+    }
+
+    /// Core AST node kinds.  The evaluator walks this tree recursively.
+    variant ast-node {
+        /// A literal value.
+        literal(value),
+
+        /// Identifier reference by name.
+        identifier(string),
+
+        /// Variable assignment: `name = value`.
+        assign(tuple<string, ast-node>),
+
+        /// Function call with positional arguments.
+        call(tuple<string, list<ast-node>>),
+
+        /// Lambda expression: parameters and body.
+        lambda(tuple<list<string>, ast-node>),
+
+        /// Conditional: predicate, consequent, alternate.
+        if(tuple<ast-node, ast-node, option<ast-node>>),
+
+        /// Sequence of expressions evaluated in order.
+        block(list<ast-node>),
+
+        /// Loop over a collection.
+        for-loop(tuple<string, ast-node, ast-node>),
+
+        /// Return from the current function scope.
+        return(option<ast-node>),
+
+        /// Binary operator expression.
+        binary(tuple<binary-op, ast-node, ast-node>),
+
+        /// Unary operator expression.
+        unary(tuple<unary-op, ast-node>),
+    }
+
+    enum binary-op {
+        add,
+        subtract,
+        multiply,
+        divide,
+        modulo,
+        equal,
+        not-equal,
+        less-than,
+        less-than-or-equal,
+        greater-than,
+        greater-than-or-equal,
+        and,
+        or,
+    }
+
+    enum unary-op {
+        not,
+        negate,
+    }
+
+    /// Source span for error reporting.
+    record span {
+        line: u32,
+        column: u32,
+        length: u32,
+    }
+
+    /// Error returned when evaluation or compilation fails.
+    record error {
+        /// Machine-readable error code.
+        code: string,
+        /// Human-readable message.
+        message: string,
+        /// Source location if available.
+        span: option<span>,
+    }
+}
+
+/// Compilation interface.
+interface compile {
+    use types.{ast-node, error};
+
+    /// Result of compiling a Nulang AST into a deployable artifact.
+    record compile-result {
+        /// True when compilation succeeded.
+        ok: bool,
+        /// Generated WASM component bytes on success.
+        wasm: option<list<u8>>,
+        /// Diagnostics emitted during compilation.
+        diagnostics: list<string>,
+        /// Errors, if any.
+        errors: list<error>,
+    }
+
+    /// Compile an AST to a WASI P2 component.
+    compile: func(ast: ast-node) -> compile-result;
+}
+
+/// Evaluation interface.
+interface eval {
+    use types.{value, ast-node, error};
+
+    /// Evaluation result.
+    record eval-result {
+        ok: bool,
+        value: option<value>,
+        errors: list<error>,
+    }
+
+    /// Evaluate an AST node in a fresh environment.
+    eval: func(node: ast-node) -> eval-result;
+
+    /// Evaluate with an initial variable binding map.
+    eval-with-bindings: func(node: ast-node, bindings: list<tuple<string, value>>) -> eval-result;
+}
+
+/// Parser interface (optional, provided by host for string sources).
+interface parse {
+    use types.{ast-node, error};
+
+    /// Parse Nulang source text into an AST.
+    parse: func(source: string) -> result<ast-node, error>;
+}
+
+/// World exposed by a Nulang runtime component.
+world nulang-runtime {
+    export compile;
+    export eval;
+    export parse;
+}

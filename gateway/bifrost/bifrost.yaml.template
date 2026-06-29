@@ -1,0 +1,192 @@
+# bifrost.yaml.template -- Bifrost AI Gateway clustered configuration.
+#
+# Rendered with Go text/template.  Expected variables:
+#
+#   .NodeID              string  -- unique gateway node identifier
+#   .BindAddr            string  -- Tailscale IP to bind the gateway HTTP/gRPC interface
+#   .BindPort            int     -- gateway listen port
+#   .GossipBindAddr      string  -- address for memberlist gossip
+#   .GossipBindPort      int     -- gossip UDP/TCP port
+#   .GossipPeers         []string-- seed peer addresses, e.g. "100.64.0.10:7946"
+#   .RedisAddr           string  -- Redis/Valkey endpoint for distributed state
+#   .VectorStoreAddr     string  -- vector store endpoint for semantic cache lookups
+#   .CacheEmbeddingModel string  -- model used for cache embeddings
+#   .UpstreamProviders   []map[string]string -- provider definitions
+
+node_id: {{ .NodeID }}
+
+server:
+  bind_addr: {{ .BindAddr }}
+  bind_port: {{ .BindPort }}
+  # Binds only to the Tailscale overlay; TLS terminates at the gateway using
+  # internal PKI or Tailscale's mesh certificates.
+  tls:
+    enabled: true
+    cert_file: /etc/bifrost/tls/server.crt
+    key_file: /etc/bifrost/tls/server.key
+    client_ca_file: /etc/bifrost/tls/ca.crt
+    client_auth: require_and_verify
+
+# ---------------------------------------------------------------------------
+# Gossip synchronization across clustered gateway nodes.
+# ---------------------------------------------------------------------------
+gossip:
+  bind_addr: {{ .GossipBindAddr }}
+  bind_port: {{ .GossipBindPort }}
+  advertise_addr: {{ .GossipBindAddr }}
+  advertise_port: {{ .GossipBindPort }}
+  peers:
+    {{- range .GossipPeers }}
+    - {{ . }}
+    {{- end }}
+  # Memberlist encryption key shared across the mesh.
+  encryption_key: ${BIFROST_GOSSIP_KEY}
+  # Failure detection tuned for LAN-like Tailscale latency.
+  probe_interval: 1s
+  probe_timeout: 500ms
+  suspect_mult: 4
+  sync_interval: 30s
+
+# ---------------------------------------------------------------------------
+# Token-bucket rate regulator.
+# ---------------------------------------------------------------------------
+rate_regulator:
+  # Shared token state is backed by Redis so all nodes share global buckets.
+  backend: redis
+  redis_addr: {{ .RedisAddr }}
+
+  # Default bucket applied when a request does not match any tier.
+  default_bucket:
+    capacity: 60
+    refill_rate_per_second: 10
+    burst: 20
+
+  # Named rate-limit tiers.
+  tiers:
+    - name: internal
+      capacity: 10000
+      refill_rate_per_second: 1000
+      burst: 500
+      match:
+        headers:
+          x-bifrost-tier: internal
+
+    - name: premium
+      capacity: 5000
+      refill_rate_per_second: 200
+      burst: 100
+      match:
+        headers:
+          x-bifrost-tier: premium
+
+    - name: standard
+      capacity: 1000
+      refill_rate_per_second: 50
+      burst: 50
+      match:
+        headers:
+          x-bifrost-tier: standard
+
+    - name: batch
+      capacity: 500
+      refill_rate_per_second: 10
+      burst: 20
+      match:
+        headers:
+          x-bifrost-priority: batch
+
+# ---------------------------------------------------------------------------
+# Edge semantic cache.
+# ---------------------------------------------------------------------------
+semantic_cache:
+  enabled: true
+  # Prompt embeddings are stored and matched in the configured vector store.
+  vector_store_addr: {{ .VectorStoreAddr }}
+  embedding_model: {{ .CacheEmbeddingModel }}
+  # Cosine similarity threshold: only cache hits above this score are served.
+  cosine_similarity_threshold: 0.85
+  # Max age of a cached response before re-validation is required.
+  ttl: 3600s
+  # Maximum size of a single cached entry.
+  max_entry_bytes: 1048576
+  # HTTP response codes that may be cached.
+  cacheable_statuses: [200]
+  # Headers that must match exactly for a cache hit (besides embedding similarity).
+  vary_headers:
+    - accept
+    - accept-encoding
+    - x-bifrost-response-format
+
+# ---------------------------------------------------------------------------
+# Upstream AI provider definitions.
+# ---------------------------------------------------------------------------
+providers:
+  {{- range .UpstreamProviders }}
+  - name: {{ .name }}
+    type: {{ .type }}
+    base_url: {{ .base_url }}
+    timeout: {{ .timeout | default "30s" }}
+    weight: {{ .weight | default 1 }}
+    retry:
+      max_retries: {{ .max_retries | default 3 }}
+      backoff_base: {{ .backoff_base | default "1s" }}
+      backoff_max: {{ .backoff_max | default "30s" }}
+    auth:
+      api_key: ${ {{- .api_key_env | default (printf "BIFROST_%s_API_KEY" (.name | upper)) }} }
+    headers:
+      x-requested-by: bifrost
+    {{- if .models }}
+    models:
+      {{- range .models }}
+      - {{ . }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+
+  # Local cache provider: a placeholder for an on-prem model or cached stub.
+  - name: local-cache
+    type: http
+    base_url: http://127.0.0.1:8090
+    timeout: 5s
+    weight: 0
+    retry:
+      max_retries: 1
+      backoff_base: 100ms
+      backoff_max: 1s
+    auth:
+      api_key: ${BIFROST_LOCAL_CACHE_KEY}
+
+# ---------------------------------------------------------------------------
+# Routing rules.
+# ---------------------------------------------------------------------------
+routing:
+  default_provider: openai
+  rules:
+    - name: nulang-compile
+      match:
+        path_prefix: /v1/nulang/compile
+      provider: local-cache
+      cache: false
+
+    - name: agent-prompts
+      match:
+        path_prefix: /v1/agents/prompt
+      provider: openai
+      cache: true
+
+# ---------------------------------------------------------------------------
+# Observability.
+# ---------------------------------------------------------------------------
+observer:
+  metrics:
+    enabled: true
+    bind_addr: {{ .BindAddr }}
+    bind_port: 9090
+    path: /metrics
+  tracing:
+    enabled: true
+    endpoint: ${BIFROST_OTEL_ENDPOINT}
+    sample_rate: 0.1
+  logging:
+    level: info
+    format: json

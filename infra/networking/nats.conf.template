@@ -1,0 +1,158 @@
+// NATS JetStream cluster configuration for the Multi-Agent Developer Mesh.
+// Processed with Go text/template; inject Tailscale IPs and computed resource limits.
+// All listeners bind only to the Tailscale overlay interface (100.x.x.x/32).
+
+{{- /* Required template variables:
+  .NodeName           string  -- e.g. "nats-core-0"
+  .TailscaleIP        string  -- e.g. "100.64.0.10"
+  .ClusterPort        int     -- default 6222
+  .ClientPort         int     -- default 4222
+  .HttpPort           int     -- default 8222
+  .Peers              []string-- Tailscale IPs of all cluster peers (including self)
+  .RamBytes           int64   -- total system RAM in bytes
+  .MaxMemoryStoreBytes int64  -- JetStream memory store limit (caller computes 5% RAM)
+  .TLSCertFile        string  -- path to server certificate
+  .TLSKeyFile         string  -- path to server key
+  .TLSCAFile          string  -- path to CA bundle
+*/ -}}
+
+listen: {{ .TailscaleIP }}:{{ .ClientPort }}
+server_name: {{ .NodeName }}
+
+// Management/monitoring interface is exposed only on the Tailscale overlay.
+http: {{ .TailscaleIP }}:{{ .HttpPort }}
+
+// Logging: structured JSON for agent telemetry correlation.
+logfile: "/var/log/nats/nats.log"
+log_size_limit: 100MB
+log_max_num: 5
+log_max_age: 7
+trace: false
+debug: false
+
+// Do not expose to any untrusted interface; Tailscale provides transport security.
+// Internal TLS is still enabled for defense-in-depth inside the mesh.
+tls {
+  cert_file: "{{ .TLSCertFile }}"
+  key_file:  "{{ .TLSKeyFile }}"
+  ca_file:   "{{ .TLSCAFile }}"
+  verify:    true
+  verify_and_map: true
+  handshake_timeout: "2s"
+}
+
+// JetStream with memory store sizing computed from 5% of total RAM.
+jetstream {
+  store_dir: "/var/lib/nats/jetstream"
+  max_memory_store: {{ .MaxMemoryStoreBytes }}
+  max_file_store: 0
+
+  {{- if eq (len .Peers) 1 }}
+  unique_tag: "{{ .NodeName }}"
+  {{- else }}
+  unique_tag: "{{ .NodeName }}"
+  domain: "agent-mesh"
+  {{- end }}
+}
+
+// Clustering: routes are constructed from the supplied peer Tailscale IPs.
+cluster {
+  name: "agent-mesh"
+  listen: {{ .TailscaleIP }}:{{ .ClusterPort }}
+
+  tls {
+    cert_file: "{{ .TLSCertFile }}"
+    key_file:  "{{ .TLSKeyFile }}"
+    ca_file:   "{{ .TLSCAFile }}"
+    verify:    true
+    verify_and_map: true
+  }
+
+  routes: [
+    {{- range $i, $peer := .Peers }}
+    "tls://{{ $peer }}:{{ $.ClusterPort }}"
+    {{- end }}
+  ]
+
+  // Static cluster -- no auto-discovery across untrusted networks.
+  no_advertise: true
+  connect_retries: 30
+}
+
+// Accounts: dedicated agent account plus system account.
+accounts: {
+  AGENTS: {
+    jetstream: enabled
+    users: [
+      {
+        user: agent_service
+        password: $AGENT_SERVICE_PASSWORD
+        permissions: {
+          publish: {
+            allow: [
+              "agents.prompt.>",
+              "agents.hb.>",
+              "agents.telemetry.>",
+              "agents.chat.>",
+              "$JS.API.>",
+              "$KV.nodes.inventory.>"
+            ]
+          }
+          subscribe: {
+            allow: [
+              "agents.prompt.*.*.*",
+              "agents.hb.*.*.*",
+              "agents.telemetry.*.*.*",
+              "agents.chat.*.*.*",
+              "$JS.API.>",
+              "$JS.ACK.>",
+              "$KV.nodes.inventory.>"
+            ]
+          }
+        }
+      }
+    ]
+  }
+
+  SYS: {
+    users: [
+      { user: sys, password: $SYS_PASSWORD }
+    ]
+  }
+}
+
+system_account: SYS
+
+// Leafnode support for future edge nodes; bound to Tailscale only.
+leafnodes {
+  listen: {{ .TailscaleIP }}:7422
+  tls {
+    cert_file: "{{ .TLSCertFile }}"
+    key_file:  "{{ .TLSKeyFile }}"
+    ca_file:   "{{ .TLSCAFile }}"
+    verify:    true
+    verify_and_map: true
+  }
+  authorization: {
+    user: leaf
+    password: $LEAF_PASSWORD
+    timeout: 2
+  }
+}
+
+// WebSocket is disabled for production; loopback-only is available for local debugging.
+websocket {
+  listen: 127.0.0.1:9222
+  no_tls: true
+  compression: true
+}
+
+// Limits tuned for a high-churn agent mesh.
+max_connections: 65536
+max_subscriptions: 131072
+max_payload: 8MB
+max_pending: 64MB
+write_deadline: "10s"
+
+// Lame-duck period for graceful removal during rolling updates.
+lame_duck_duration: "30s"

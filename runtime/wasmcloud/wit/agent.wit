@@ -1,0 +1,99 @@
+// agent.wit -- WIT interface schema for an agent microservice in the
+// Multi-Agent Developer Mesh.
+//
+// Components implementing this interface are registered under the NATS
+// microservice namespace `agents` and consume subjects of the form:
+//   agents.prompt.{agent_type}.{owner}.{session_id}
+//   agents.hb.{agent_type}.{owner}.{session_id}
+
+package dev-plane:agent@0.1.0;
+
+/// Prompt handling: the core request/response interface for agent work units.
+interface prompt-handler {
+    /// A single unit of work dispatched to an agent.
+    record prompt {
+        /// Unique prompt identifier (UUID).
+        id: string,
+        /// Agent specialization, e.g. "reviewer", "coder", "tester".
+        agent-type: string,
+        /// Owning entity or team.
+        owner: string,
+        /// Logical session this prompt belongs to.
+        session-id: string,
+        /// Opaque payload; typically JSON or serialized DSL.
+        payload: list<u8>,
+        /// Deadline in milliseconds from receipt.
+        timeout-ms: u32,
+    }
+
+    /// Result of processing a prompt.
+    record prompt-result {
+        prompt-id: string,
+        /// Whether the prompt was accepted for processing.
+        accepted: bool,
+        /// Opaque response bytes.
+        payload: list<u8>,
+        /// Optional structured status string.
+        status: string,
+    }
+
+    /// Process a single prompt and return a result.
+    handle-prompt: func(prompt: prompt) -> prompt-result;
+}
+
+/// Heartbeat interface used by the orchestrator to gauge liveness.
+interface heartbeat {
+    record beat {
+        agent-type: string,
+        owner: string,
+        session-id: string,
+        /// UTC wall-clock timestamp in RFC3339 format.
+        timestamp: string,
+        /// Free-form capacity metric, e.g. "idle" or "busy:N".
+        capacity: string,
+    }
+
+    /// Emit a heartbeat frame.  Fire-and-forget.
+    emit: func(beat: beat);
+}
+
+/// Health interface exposed to the lattice management plane.
+interface health {
+    record health-status {
+        /// Overall health enumeration.
+        status: health-state,
+        /// Human-readable detail.
+        message: string,
+        /// Microseconds since epoch.
+        timestamp-us: u64,
+    }
+
+    enum health-state {
+        healthy,
+        degraded,
+        unhealthy,
+    }
+
+    /// Returns the current health of the component instance.
+    check: func() -> health-status;
+}
+
+/// Re-export of the Nulang runtime so the agent can spawn compile jobs.
+interface nulang-compile {
+    use nulang:runtime/types@0.1.0.{ast-node};
+    use nulang:runtime/compile@0.1.0.{compile-result};
+
+    /// Compile a Nulang AST into a WASM component bytes.
+    compile: func(ast: ast-node) -> compile-result;
+}
+
+/// Aggregate world implemented by an agent component.
+world agent {
+    import prompt-handler;
+    import heartbeat;
+    import nulang-compile;
+
+    export health;
+    export prompt-handler;
+    export heartbeat;
+}

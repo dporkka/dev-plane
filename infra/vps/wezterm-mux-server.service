@@ -1,0 +1,67 @@
+[Unit]
+Description=Persistent headless WezTerm multiplexer server for Command Tower
+Documentation=https://wezfurlong.org/wezterm/multiplexing.html
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+# NOTE: 'wezterm' is the placeholder runtime service account.  Replace with the
+# actual unprivileged user/group on the target host, or convert this file to a
+# template unit named wezterm-mux-server@.service and instantiate it as
+# wezterm-mux-server@USERNAME.service.
+User=wezterm
+Group=wezterm
+
+# The daemon starts a headless multiplexer server.  It accepts domain
+# connections from the local WezTerm WebGpu frontend over the Tailscale
+# overlay.  If a Tailscale IP is available it is passed via WEZTERM_MUX_BIND.
+Environment="WEZTERM_MUX_LOG=/var/log/wezterm-mux-server/mux.log"
+Environment="WEZTERM_MUX_UNIX_DOMAIN=/run/wezterm-mux-server/wezterm.sock"
+Environment="WEZTERM_MUX_ENABLE_SCROLLBAR=1"
+Environment="WEZTERM_MUX_BIND=127.0.0.1:8080"
+
+# Prefer the Tailscale interface when available; override in a drop-in if the
+# mesh uses a different overlay.  The helper attempts to discover the first
+# 100.x address and rebind the listening address.
+Environment="TAILSCALE_BIND_PREFERENCE=100."
+
+WorkingDirectory=/home/wezterm
+ExecStartPre=-/bin/mkdir -p /run/wezterm-mux-server /var/log/wezterm-mux-server
+ExecStartPre=-/bin/chown wezterm:wezterm /run/wezterm-mux-server /var/log/wezterm-mux-server
+ExecStartPre=-/bin/chmod 0750 /run/wezterm-mux-server
+
+ExecStart=/bin/bash -c 'set -a; TAIL_IP=$(ip -4 -o addr show to 100.0.0.0/8 | awk '\''{print $4}'\'' | cut -d/ -f1 | head -1); if [[ -n "${TAIL_IP}" ]]; then export WEZTERM_MUX_BIND="${TAIL_IP}:8080"; echo "Binding wezterm-mux-server to Tailscale ${WEZTERM_MUX_BIND}"; else echo "Tailscale IP not found; binding wezterm-mux-server to loopback ${WEZTERM_MUX_BIND}"; fi; exec /usr/bin/wezterm-mux-server --daemonize no'
+
+ExecStop=/bin/kill -TERM $MAINPID
+ExecReload=/bin/kill -HUP $MAINPID
+
+# Restart policy: always restart unless cleanly stopped by the operator.
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Resource limits are inherited from the agent-mesh-workers slice if the
+# instance is dropped into that slice via a drop-in override.  These defaults
+# are conservative for a single multiplexer process.
+MemoryMax=2G
+MemorySwapMax=0
+TasksMax=4096
+
+# Security hardening (tailored for a headless terminal multiplexer).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/wezterm-mux-server /var/log/wezterm-mux-server
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=multi-user.target

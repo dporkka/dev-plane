@@ -1,0 +1,142 @@
+# workspace.yaml -- Beads Viewer TUI workspace template for Command Tower.
+#
+# This workspace aggregates the repositories that make up the Multi-Agent
+# Developer Mesh and defines triage rules for incoming issues/PRs.
+
+workspace:
+  name: dev-plane-command-tower
+  version: "0.1.0"
+  description: |
+    Multi-repo Beads Viewer workspace for the hybrid agent mesh.
+    Used by the local Command Tower to navigate code, review changes,
+    and triage work across infrastructure, runtime, gateway, and UI modules.
+
+  # ---------------------------------------------------------------------------
+  # Repositories -- namespaced repo IDs prevent collisions in multi-repo views.
+  # ---------------------------------------------------------------------------
+  repos:
+    - id: infra.networking
+      name: networking
+      path: ../../infra/networking
+      default_branch: main
+      tags: [infra, nats, networking]
+
+    - id: infra.vps
+      name: vps
+      path: ../../infra/vps
+      default_branch: main
+      tags: [infra, vps, onboarding]
+
+    - id: runtime.wasmcloud
+      name: wasmcloud
+      path: ../../runtime/wasmcloud
+      default_branch: main
+      tags: [runtime, wasm, wasi, wrpc]
+
+    - id: gateway.bifrost
+      name: bifrost
+      path: ../../gateway/bifrost
+      default_branch: main
+      tags: [gateway, ai, cache]
+
+    - id: local.command-tower
+      name: command-tower
+      path: ..
+      default_branch: main
+      tags: [local, ui, wezterm]
+
+    - id: verification.gates
+      name: gates
+      path: ../../verification/gates
+      default_branch: main
+      tags: [verification, pts, ci]
+
+  # ---------------------------------------------------------------------------
+  # Views -- pre-defined filtered views over the repos.
+  # ---------------------------------------------------------------------------
+  views:
+    - name: infra
+      filter:
+        tags: [infra]
+
+    - name: runtime
+      filter:
+        tags: [runtime]
+
+    - name: gateway
+      filter:
+        tags: [gateway]
+
+    - name: all-open
+      filter:
+        state: open
+
+  # ---------------------------------------------------------------------------
+  # Triage rules -- assign labels and priorities based on path/content.
+  # ---------------------------------------------------------------------------
+  triage:
+    rules:
+      - name: networking-changes
+        match:
+          repos: [infra.networking]
+          paths: ["*.go", "*.template"]
+        labels: ["area/networking", "needs-review"]
+        priority: high
+
+      - name: vps-onboarding
+        match:
+          repos: [infra.vps]
+          paths: ["*.sh", "*.service"]
+        labels: ["area/vps", "ops"]
+        priority: medium
+
+      - name: wasm-runtime
+        match:
+          repos: [runtime.wasmcloud]
+          paths: ["*.wit", "*.yaml", "*.py"]
+        labels: ["area/runtime", "wasm"]
+        priority: high
+
+      - name: gateway-config
+        match:
+          repos: [gateway.bifrost]
+          paths: ["*.yaml", "*.template"]
+        labels: ["area/gateway", "config"]
+        priority: medium
+
+      - name: ui-local
+        match:
+          repos: [local.command-tower]
+          paths: ["*.lua", "*.yaml"]
+        labels: ["area/ui", "wezterm"]
+        priority: low
+
+      - name: verification-gates
+        match:
+          repos: [verification.gates]
+          paths: ["*.sh"]
+        labels: ["area/verification", "pts"]
+        priority: medium
+
+    # Default rule when no other rule matches.
+    default:
+      labels: ["triage"]
+      priority: low
+
+  # ---------------------------------------------------------------------------
+  # Metadata for Beads Viewer extensions.
+  # ---------------------------------------------------------------------------
+  metadata:
+    beads:
+      # Show agent-mesh status in the TUI header.
+      status_command: "cat ~/.cache/dev-plane/node-health.json 2>/dev/null || echo '{}'"
+      refresh_interval_seconds: 5
+
+      # Keybindings local to this workspace.
+      keybindings:
+        - key: "g"
+          action: "open_gateway_logs"
+        - key: "n"
+          action: "open_nats_top"
+        - key: "w"
+          action: "worktree_teleport"
