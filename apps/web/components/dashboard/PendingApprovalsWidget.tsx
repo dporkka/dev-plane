@@ -1,23 +1,22 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import type { Approval, ApprovalType, ApprovalResponse } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { SkeletonCard } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { TimeAgo } from '@/components/common/TimeAgo';
+import { TimeAgo } from "@/components/common/TimeAgo";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import type { Approval, ApprovalResponse } from "@/lib/types";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   AlertCircle,
   CheckCircle,
-  XCircle,
-  Clock,
-  Shield,
   FileText,
   Play,
   Rocket,
-} from 'lucide-react';
+  Shield,
+  XCircle,
+} from "lucide-react";
+import type React from "react";
 
 interface PendingApprovalsWidgetProps {
   approvals: Approval[];
@@ -32,21 +31,28 @@ const typeIcons: Record<string, React.ElementType> = {
 };
 
 const typeColors: Record<string, string> = {
-  spec: 'bg-blue-500/10 text-blue-400 border-blue-500/30',
-  execution: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
-  deploy: 'bg-green-500/10 text-green-400 border-green-500/30',
-  risky_action: 'bg-red-500/10 text-red-400 border-red-500/30',
+  spec: "bg-blue-500/10 text-blue-400 border-blue-500/30",
+  execution: "bg-purple-500/10 text-purple-400 border-purple-500/30",
+  deploy: "bg-green-500/10 text-green-400 border-green-500/30",
+  risky_action: "bg-red-500/10 text-red-400 border-red-500/30",
 };
 
-export function PendingApprovalsWidget({ approvals, isLoading }: PendingApprovalsWidgetProps) {
+export function PendingApprovalsWidget({
+  approvals,
+  isLoading,
+}: PendingApprovalsWidgetProps) {
   const queryClient = useQueryClient();
 
   const respondMutation = useMutation({
-    mutationFn: ({ id, response, note }: { id: string; response: ApprovalResponse; note?: string }) =>
+    mutationFn: ({
+      id,
+      response,
+      note,
+    }: { id: string; response: ApprovalResponse; note?: string }) =>
       api.respondApproval(id, response, note),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['approvals'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+      queryClient.invalidateQueries({ queryKey: ["approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] });
     },
   });
 
@@ -82,7 +88,8 @@ export function PendingApprovalsWidget({ approvals, isLoading }: PendingApproval
       <div className="space-y-2">
         {pending.map((approval) => {
           const Icon = typeIcons[approval.approval_type] || Shield;
-          const colorClass = typeColors[approval.approval_type] || typeColors.risky_action;
+          const colorClass =
+            typeColors[approval.approval_type] || typeColors.risky_action;
 
           return (
             <Card key={approval.id} className="py-3">
@@ -93,8 +100,11 @@ export function PendingApprovalsWidget({ approvals, isLoading }: PendingApproval
                   </div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <Badge variant="outline" className={`${colorClass} text-xs capitalize`}>
-                        {approval.approval_type.replace('_', ' ')}
+                      <Badge
+                        variant="outline"
+                        className={`${colorClass} text-xs capitalize`}
+                      >
+                        {approval.approval_type.replace("_", " ")}
                       </Badge>
                       <span className="text-xs text-gray-500">
                         <TimeAgo date={approval.created_at} />
@@ -111,7 +121,10 @@ export function PendingApprovalsWidget({ approvals, isLoading }: PendingApproval
                 <div className="flex items-center gap-1 flex-shrink-0">
                   <button
                     onClick={() =>
-                      respondMutation.mutate({ id: approval.id, response: 'approved' })
+                      respondMutation.mutate({
+                        id: approval.id,
+                        response: "approved",
+                      })
                     }
                     disabled={respondMutation.isPending}
                     className="p-1.5 rounded hover:bg-green-500/10 text-gray-500 hover:text-green-400 transition-colors"
@@ -121,7 +134,10 @@ export function PendingApprovalsWidget({ approvals, isLoading }: PendingApproval
                   </button>
                   <button
                     onClick={() =>
-                      respondMutation.mutate({ id: approval.id, response: 'rejected' })
+                      respondMutation.mutate({
+                        id: approval.id,
+                        response: "rejected",
+                      })
                     }
                     disabled={respondMutation.isPending}
                     className="p-1.5 rounded hover:bg-red-500/10 text-gray-500 hover:text-red-400 transition-colors"

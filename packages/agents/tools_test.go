@@ -85,7 +85,7 @@ func TestToolRegistry_Register(t *testing.T) {
 	assertEqual(t, err, nil)
 
 	// Verify it was added
-	 retrieved, ok := reg.Get("custom_tool")
+	retrieved, ok := reg.Get("custom_tool")
 	assertTrue(t, ok, "custom_tool should be registered")
 	assertEqual(t, retrieved.Name, "custom_tool")
 }

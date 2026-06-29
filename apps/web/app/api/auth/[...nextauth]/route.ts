@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { type NextRequest, NextResponse } from "next/server";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 /**
  * Custom GitHub OAuth handler for the Next.js app.
@@ -18,19 +18,19 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
  */
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const code = searchParams.get('code');
-  const state = searchParams.get('state');
-  const token = searchParams.get('token');
+  const code = searchParams.get("code");
+  const state = searchParams.get("state");
+  const token = searchParams.get("token");
 
   if (token) {
     return renderTokenCallback(token);
   }
 
   if (code && state) {
-    const cookieHeader = req.headers.get('cookie') || '';
+    const cookieHeader = req.headers.get("cookie") || "";
     const backendUrl = new URL(`${API_BASE}/api/v1/auth/github/callback`);
-    backendUrl.searchParams.set('code', code);
-    backendUrl.searchParams.set('state', state);
+    backendUrl.searchParams.set("code", code);
+    backendUrl.searchParams.set("state", state);
 
     const response = await fetch(backendUrl.toString(), {
       headers: { cookie: cookieHeader },
@@ -39,13 +39,13 @@ export async function GET(req: NextRequest) {
     if (!response.ok) {
       const text = await response.text();
       return renderError(
-        `GitHub sign-in failed: ${text || response.statusText}`
+        `GitHub sign-in failed: ${text || response.statusText}`,
       );
     }
 
     const data = (await response.json()) as { token?: string };
     if (!data.token) {
-      return renderError('GitHub sign-in did not return a token.');
+      return renderError("GitHub sign-in did not return a token.");
     }
 
     return renderTokenCallback(data.token);
@@ -54,7 +54,7 @@ export async function GET(req: NextRequest) {
   // Initiate GitHub OAuth through the backend.
   const redirectUri = `${req.nextUrl.origin}/api/auth/github/callback`;
   const url = new URL(`${API_BASE}/api/v1/auth/github`);
-  url.searchParams.set('redirect_uri', redirectUri);
+  url.searchParams.set("redirect_uri", redirectUri);
   return NextResponse.redirect(url);
 }
 
@@ -78,12 +78,12 @@ function renderTokenCallback(token: string) {
   </body>
 </html>`;
   return new NextResponse(html, {
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }
 
 function renderError(message: string) {
-  const safeMessage = message.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const safeMessage = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const html = `<!doctype html>
 <html lang="en">
   <body>
@@ -94,6 +94,6 @@ function renderError(message: string) {
 </html>`;
   return new NextResponse(html, {
     status: 400,
-    headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    headers: { "Content-Type": "text/html; charset=utf-8" },
   });
 }

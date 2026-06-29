@@ -1,17 +1,15 @@
-'use client';
-
-import React from 'react';
-import type { Task, TaskStatus } from '@/lib/types';
-import { TaskCard } from './TaskCard';
+"use client";
+import type { Task, TaskStatus } from "@/lib/types";
+import { TaskCard } from "./TaskCard";
 
 const columns: { status: TaskStatus; title: string }[] = [
-  { status: 'backlog', title: 'Backlog' },
-  { status: 'spec_review', title: 'Spec Review' },
-  { status: 'approved', title: 'Approved' },
-  { status: 'running', title: 'Running' },
-  { status: 'reviewing', title: 'Reviewing' },
-  { status: 'pr_created', title: 'PR Created' },
-  { status: 'done', title: 'Done' },
+  { status: "backlog", title: "Backlog" },
+  { status: "spec_review", title: "Spec Review" },
+  { status: "approved", title: "Approved" },
+  { status: "running", title: "Running" },
+  { status: "reviewing", title: "Reviewing" },
+  { status: "pr_created", title: "PR Created" },
+  { status: "done", title: "Done" },
 ];
 
 interface TaskBoardProps {
@@ -27,7 +25,9 @@ export function TaskBoard({ tasks, onTaskMove }: TaskBoardProps) {
         return (
           <div key={col.status} className="flex-shrink-0 w-80 flex flex-col">
             <div className="flex items-center justify-between mb-3 px-1">
-              <h3 className="font-semibold text-sm text-gray-300">{col.title}</h3>
+              <h3 className="font-semibold text-sm text-gray-300">
+                {col.title}
+              </h3>
               <span className="text-xs text-gray-500 bg-[#21262d] px-2 py-0.5 rounded-full">
                 {colTasks.length}
               </span>

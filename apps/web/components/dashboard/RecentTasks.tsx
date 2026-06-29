@@ -1,13 +1,11 @@
-'use client';
-
-import React from 'react';
-import Link from 'next/link';
-import type { Task } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { TimeAgo } from '@/components/common/TimeAgo';
-import { SkeletonCard } from '@/components/ui/skeleton';
-import { ListTodo } from 'lucide-react';
+"use client";
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { TimeAgo } from "@/components/common/TimeAgo";
+import { Card } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import type { Task } from "@/lib/types";
+import { ListTodo } from "lucide-react";
+import Link from "next/link";
 
 interface RecentTasksProps {
   tasks: Task[];
@@ -45,7 +43,10 @@ export function RecentTasks({ tasks, isLoading }: RecentTasksProps) {
                     {task.title}
                   </span>
                 </div>
-                <TimeAgo date={task.created_at} className="text-xs text-gray-500 flex-shrink-0" />
+                <TimeAgo
+                  date={task.created_at}
+                  className="text-xs text-gray-500 flex-shrink-0"
+                />
               </div>
             </Card>
           </Link>

@@ -1,8 +1,9 @@
-'use client';
+"use client";
 
-import React, { useRef, useEffect } from 'react';
-import { cn } from '@/lib/utils';
-import { X } from 'lucide-react';
+import { cn } from "@/lib/utils";
+import { X } from "lucide-react";
+import type React from "react";
+import { useEffect, useRef } from "react";
 
 interface DialogProps {
   open: boolean;
@@ -12,20 +13,26 @@ interface DialogProps {
   className?: string;
 }
 
-export function Dialog({ open, onClose, title, children, className }: DialogProps) {
+export function Dialog({
+  open,
+  onClose,
+  title,
+  children,
+  className,
+}: DialogProps) {
   const overlayRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === "Escape") onClose();
     };
     if (open) {
-      document.addEventListener('keydown', handleKey);
-      document.body.style.overflow = 'hidden';
+      document.addEventListener("keydown", handleKey);
+      document.body.style.overflow = "hidden";
     }
     return () => {
-      document.removeEventListener('keydown', handleKey);
-      document.body.style.overflow = '';
+      document.removeEventListener("keydown", handleKey);
+      document.body.style.overflow = "";
     };
   }, [open, onClose]);
 
@@ -41,9 +48,9 @@ export function Dialog({ open, onClose, title, children, className }: DialogProp
     >
       <div
         className={cn(
-          'bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl',
-          'w-full max-w-lg max-h-[90vh] overflow-auto',
-          className
+          "bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl",
+          "w-full max-w-lg max-h-[90vh] overflow-auto",
+          className,
         )}
       >
         {title && (

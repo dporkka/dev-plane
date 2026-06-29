@@ -1,9 +1,9 @@
-import { DevPlaneClient, RunStream } from '@ai-cp/dev-plane-sdk';
-import { decodeTokenClaims } from './auth-token';
+import { DevPlaneClient, type RunStream } from "@ai-cp/dev-plane-sdk";
+import { decodeTokenClaims } from "./auth-token";
 
 export { decodeTokenClaims };
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 // Minimal EventSource-like interface used for secure SSE streaming.
 // Callers can treat the returned object as a drop-in replacement for
@@ -16,8 +16,8 @@ export interface SSELike {
 }
 
 function getToken(): string | undefined {
-  if (typeof window === 'undefined') return undefined;
-  return localStorage.getItem('token') || undefined;
+  if (typeof window === "undefined") return undefined;
+  return localStorage.getItem("token") || undefined;
 }
 
 function getClient(): DevPlaneClient {
@@ -35,16 +35,16 @@ function adaptRunStream(runStream: RunStream): SSELike {
   };
 
   runStream.onopen = () => {
-    sse.onopen?.call(sse, new Event('open'));
+    sse.onopen?.call(sse, new Event("open"));
   };
 
   runStream.onmessage = (event) => {
     const data = JSON.stringify(event.data);
-    sse.onmessage?.call(sse, new MessageEvent('message', { data }));
+    sse.onmessage?.call(sse, new MessageEvent("message", { data }));
   };
 
   runStream.onerror = () => {
-    sse.onerror?.call(sse, new Event('error'));
+    sse.onerror?.call(sse, new Event("error"));
   };
 
   return sse;
@@ -55,8 +55,7 @@ export const api = {
   listTasks: (projectId: string): Promise<any> =>
     getClient().listTasks(projectId),
 
-  getTask: (id: string): Promise<any> =>
-    getClient().getTask(id),
+  getTask: (id: string): Promise<any> => getClient().getTask(id),
 
   createTask: (projectId: string, data: any): Promise<any> =>
     getClient().createTask(projectId, data),
@@ -64,38 +63,30 @@ export const api = {
   updateTask: (id: string, data: any): Promise<any> =>
     getClient().updateTask(id, data),
 
-  cancelTask: (id: string): Promise<any> =>
-    getClient().cancelTask(id),
+  cancelTask: (id: string): Promise<any> => getClient().cancelTask(id),
 
   approveSpec: (id: string, spec?: any): Promise<any> =>
     getClient().approveSpec(id, spec),
 
-  generateSpec: (id: string): Promise<any> =>
-    getClient().generateSpec(id),
+  generateSpec: (id: string): Promise<any> => getClient().generateSpec(id),
 
   // ─── Spec ───────────────────────────────────────────────────────
   getTaskSpec: (taskId: string): Promise<any> =>
     getClient().getTaskSpec(taskId),
 
   // ─── Agent Runs ─────────────────────────────────────────────────
-  listRuns: (taskId: string): Promise<any> =>
-    getClient().listRuns(taskId),
+  listRuns: (taskId: string): Promise<any> => getClient().listRuns(taskId),
 
-  getRun: (id: string): Promise<any> =>
-    getClient().getRun(id),
+  getRun: (id: string): Promise<any> => getClient().getRun(id),
 
-  getRunSteps: (id: string): Promise<any> =>
-    getClient().getRunSteps(id),
+  getRunSteps: (id: string): Promise<any> => getClient().getRunSteps(id),
 
-  streamRun: (id: string): SSELike =>
-    adaptRunStream(getClient().streamRun(id)),
+  streamRun: (id: string): SSELike => adaptRunStream(getClient().streamRun(id)),
 
-  cancelRun: (id: string): Promise<any> =>
-    getClient().cancelRun(id),
+  cancelRun: (id: string): Promise<any> => getClient().cancelRun(id),
 
   // ─── Reviews ────────────────────────────────────────────────────
-  getReview: (runId: string): Promise<any> =>
-    getClient().getReview(runId),
+  getReview: (runId: string): Promise<any> => getClient().getReview(runId),
 
   // ─── Pull Requests ──────────────────────────────────────────────
   createPullRequest: (taskId: string): Promise<any> =>
@@ -108,8 +99,7 @@ export const api = {
   listProjects: (orgId: string): Promise<any> =>
     getClient().listProjects(orgId),
 
-  getProject: (id: string): Promise<any> =>
-    getClient().getProject(id),
+  getProject: (id: string): Promise<any> => getClient().getProject(id),
 
   createProject: (orgId: string, data: any): Promise<any> =>
     getClient().createProject(orgId, data),
@@ -118,24 +108,20 @@ export const api = {
   listRepos: (projectId: string): Promise<any> =>
     getClient().listRepos(projectId),
 
-  getRepo: (id: string): Promise<any> =>
-    getClient().getRepo(id),
+  getRepo: (id: string): Promise<any> => getClient().getRepo(id),
 
   connectRepo: (projectId: string, data: any): Promise<any> =>
     getClient().connectRepo(projectId, data),
 
-  disconnectRepo: (id: string): Promise<any> =>
-    getClient().disconnectRepo(id),
+  disconnectRepo: (id: string): Promise<any> => getClient().disconnectRepo(id),
 
-  syncRepo: (id: string): Promise<any> =>
-    getClient().syncRepo(id),
+  syncRepo: (id: string): Promise<any> => getClient().syncRepo(id),
 
   // ─── Workspaces ─────────────────────────────────────────────────
   listWorkspaces: (taskId: string): Promise<any> =>
     getClient().listWorkspaces(taskId),
 
-  getWorkspace: (id: string): Promise<any> =>
-    getClient().getWorkspace(id),
+  getWorkspace: (id: string): Promise<any> => getClient().getWorkspace(id),
 
   destroyWorkspace: (id: string): Promise<any> =>
     getClient().destroyWorkspace(id),
@@ -146,11 +132,17 @@ export const api = {
   readWorkspaceFile: (id: string, path: string): Promise<any> =>
     getClient().readWorkspaceFile(id, path),
 
-  writeWorkspaceFile: (id: string, path: string, content: string): Promise<any> =>
-    getClient().writeWorkspaceFile(id, path, content),
+  writeWorkspaceFile: (
+    id: string,
+    path: string,
+    content: string,
+  ): Promise<any> => getClient().writeWorkspaceFile(id, path, content),
 
-  execWorkspaceCommand: (id: string, command: string, timeout?: number): Promise<any> =>
-    getClient().execWorkspaceCommand(id, command, timeout),
+  execWorkspaceCommand: (
+    id: string,
+    command: string,
+    timeout?: number,
+  ): Promise<any> => getClient().execWorkspaceCommand(id, command, timeout),
 
   getWorkspaceDiff: (id: string): Promise<any> =>
     getClient().getWorkspaceDiff(id),
@@ -159,16 +151,18 @@ export const api = {
   listApprovals: (orgId: string): Promise<any> =>
     getClient().listApprovals(orgId),
 
-  respondApproval: (id: string, response: 'approved' | 'rejected', note?: string): Promise<any> =>
-    getClient().respondApproval(id, response, note),
+  respondApproval: (
+    id: string,
+    response: "approved" | "rejected",
+    note?: string,
+  ): Promise<any> => getClient().respondApproval(id, response, note),
 
   // ─── Dashboard ──────────────────────────────────────────────────
   getDashboard: (orgId: string): Promise<any> =>
     getClient().getDashboard(orgId),
 
   // ─── Organizations ──────────────────────────────────────────────
-  listOrganizations: (): Promise<any> =>
-    getClient().listOrganizations(),
+  listOrganizations: (): Promise<any> => getClient().listOrganizations(),
 
   getOrganization: (id: string): Promise<any> =>
     getClient().getOrganization(id),
@@ -193,8 +187,7 @@ export const api = {
   createIntegration: (orgId: string, data: any): Promise<any> =>
     getClient().createIntegration(orgId, data),
 
-  getIntegration: (id: string): Promise<any> =>
-    getClient().getIntegration(id),
+  getIntegration: (id: string): Promise<any> => getClient().getIntegration(id),
 
   updateIntegration: (id: string, data: any): Promise<any> =>
     getClient().updateIntegration(id, data),
@@ -213,8 +206,8 @@ export const api = {
   githubAuth: () => {
     // Hand off to the Next.js API auth route, which forwards the user to the
     // backend OAuth initiator and then handles the GitHub callback.
-    if (typeof window !== 'undefined') {
-      window.location.href = '/api/auth/github/callback';
+    if (typeof window !== "undefined") {
+      window.location.href = "/api/auth/github/callback";
     }
   },
 };

@@ -1,21 +1,21 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import {
-  Loader2,
+  Activity,
   CheckCircle,
-  XCircle,
-  Pause,
   Clock,
   DollarSign,
+  Loader2,
+  Pause,
+  XCircle,
   Zap,
-  Activity,
-} from 'lucide-react';
+} from "lucide-react";
+import type React from "react";
 
 export interface RunStatus {
-  status: 'running' | 'paused' | 'completed' | 'failed' | 'idle';
+  status: "running" | "paused" | "completed" | "failed" | "idle";
   currentStep: number;
   totalSteps: number;
   currentAction: string;
@@ -31,20 +31,44 @@ interface RunStatusBarProps {
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
 }
 
 export function RunStatusBar({ runStatus }: RunStatusBarProps) {
-  const progress = runStatus.totalSteps > 0
-    ? (runStatus.currentStep / runStatus.totalSteps) * 100
-    : 0;
+  const progress =
+    runStatus.totalSteps > 0
+      ? (runStatus.currentStep / runStatus.totalSteps) * 100
+      : 0;
 
-  const statusConfig: Record<string, { color: string; icon: React.ElementType; label: string }> = {
-    running: { color: 'text-blue-400 bg-blue-500/10 border-blue-500/30', icon: Loader2, label: 'Running' },
-    paused: { color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30', icon: Pause, label: 'Paused' },
-    completed: { color: 'text-green-400 bg-green-500/10 border-green-500/30', icon: CheckCircle, label: 'Completed' },
-    failed: { color: 'text-red-400 bg-red-500/10 border-red-500/30', icon: XCircle, label: 'Failed' },
-    idle: { color: 'text-gray-400 bg-gray-500/10 border-gray-500/30', icon: Clock, label: 'Idle' },
+  const statusConfig: Record<
+    string,
+    { color: string; icon: React.ElementType; label: string }
+  > = {
+    running: {
+      color: "text-blue-400 bg-blue-500/10 border-blue-500/30",
+      icon: Loader2,
+      label: "Running",
+    },
+    paused: {
+      color: "text-yellow-400 bg-yellow-500/10 border-yellow-500/30",
+      icon: Pause,
+      label: "Paused",
+    },
+    completed: {
+      color: "text-green-400 bg-green-500/10 border-green-500/30",
+      icon: CheckCircle,
+      label: "Completed",
+    },
+    failed: {
+      color: "text-red-400 bg-red-500/10 border-red-500/30",
+      icon: XCircle,
+      label: "Failed",
+    },
+    idle: {
+      color: "text-gray-400 bg-gray-500/10 border-gray-500/30",
+      icon: Clock,
+      label: "Idle",
+    },
   };
 
   const config = statusConfig[runStatus.status] || statusConfig.idle;
@@ -54,7 +78,12 @@ export function RunStatusBar({ runStatus }: RunStatusBarProps) {
     <div className="h-10 bg-[#161b22] border-t border-[#30363d] flex items-center px-3 gap-4 text-xs flex-shrink-0">
       {/* Status badge */}
       <Badge variant="outline" className={config.color}>
-        <StatusIcon className={cn('w-3 h-3 mr-1', runStatus.status === 'running' && 'animate-spin')} />
+        <StatusIcon
+          className={cn(
+            "w-3 h-3 mr-1",
+            runStatus.status === "running" && "animate-spin",
+          )}
+        />
         {config.label}
       </Badge>
 
@@ -63,11 +92,14 @@ export function RunStatusBar({ runStatus }: RunStatusBarProps) {
         <div className="flex-1 h-1.5 bg-[#30363d] rounded-full overflow-hidden">
           <div
             className={cn(
-              'h-full rounded-full transition-all duration-500',
-              runStatus.status === 'running' ? 'bg-blue-500' :
-              runStatus.status === 'completed' ? 'bg-green-500' :
-              runStatus.status === 'failed' ? 'bg-red-500' :
-              'bg-gray-600'
+              "h-full rounded-full transition-all duration-500",
+              runStatus.status === "running"
+                ? "bg-blue-500"
+                : runStatus.status === "completed"
+                  ? "bg-green-500"
+                  : runStatus.status === "failed"
+                    ? "bg-red-500"
+                    : "bg-gray-600",
             )}
             style={{ width: `${Math.min(progress, 100)}%` }}
           />

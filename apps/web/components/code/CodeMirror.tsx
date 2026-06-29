@@ -1,15 +1,15 @@
-'use client';
+"use client";
 
-import React, { useMemo } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
-import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-import { javascript } from '@codemirror/lang-javascript';
-import { json } from '@codemirror/lang-json';
-import { markdown } from '@codemirror/lang-markdown';
+import { javascript } from "@codemirror/lang-javascript";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
+import CodeMirror from "@uiw/react-codemirror";
+import { useMemo } from "react";
 
 interface CodeEditorProps {
   value: string;
-  language?: 'javascript' | 'typescript' | 'json' | 'markdown';
+  language?: "javascript" | "typescript" | "json" | "markdown";
   readOnly?: boolean;
   onChange?: (value: string) => void;
   height?: string;
@@ -25,10 +25,10 @@ const langMap = {
 
 export function CodeEditor({
   value,
-  language = 'typescript',
+  language = "typescript",
   readOnly = false,
   onChange,
-  height = '400px',
+  height = "400px",
   className,
 }: CodeEditorProps) {
   const extensions = useMemo(() => [langMap[language]()], [language]);
@@ -41,7 +41,7 @@ export function CodeEditor({
       extensions={extensions}
       readOnly={readOnly}
       onChange={onChange}
-      className={`rounded-md border border-[#30363d] overflow-hidden text-sm ${className || ''}`}
+      className={`rounded-md border border-[#30363d] overflow-hidden text-sm ${className || ""}`}
       basicSetup={{
         lineNumbers: true,
         highlightActiveLineGutter: true,

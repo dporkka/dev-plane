@@ -1,21 +1,21 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
 import {
-  ChevronRight,
   ChevronDown,
+  ChevronRight,
+  File,
   FileCode,
+  FileJson,
+  FileText,
   Folder,
   FolderOpen,
-  FileText,
-  FileJson,
-  File,
-} from 'lucide-react';
+} from "lucide-react";
+import { useState } from "react";
 
 export interface FileNode {
   name: string;
-  type: 'file' | 'directory';
+  type: "file" | "directory";
   path: string;
   children?: FileNode[];
   language?: string;
@@ -29,10 +29,10 @@ interface FileTreeProps {
 }
 
 function getFileIcon(filename: string) {
-  if (filename.endsWith('.ts') || filename.endsWith('.tsx')) return FileCode;
-  if (filename.endsWith('.js') || filename.endsWith('.jsx')) return FileCode;
-  if (filename.endsWith('.json')) return FileJson;
-  if (filename.endsWith('.md')) return FileText;
+  if (filename.endsWith(".ts") || filename.endsWith(".tsx")) return FileCode;
+  if (filename.endsWith(".js") || filename.endsWith(".jsx")) return FileCode;
+  if (filename.endsWith(".json")) return FileJson;
+  if (filename.endsWith(".md")) return FileText;
   return File;
 }
 
@@ -50,15 +50,15 @@ function FileTreeNode({
   const [expanded, setExpanded] = useState(depth < 2);
   const isSelected = selectedPath === node.path;
 
-  if (node.type === 'directory') {
+  if (node.type === "directory") {
     return (
       <div>
         <button
           onClick={() => setExpanded(!expanded)}
           className={cn(
-            'flex items-center gap-1 w-full text-left py-1 px-2 rounded-md transition-colors',
-            'hover:bg-[#21262d] text-gray-300',
-            isSelected && 'bg-blue-500/10 text-blue-400'
+            "flex items-center gap-1 w-full text-left py-1 px-2 rounded-md transition-colors",
+            "hover:bg-[#21262d] text-gray-300",
+            isSelected && "bg-blue-500/10 text-blue-400",
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
         >
@@ -97,9 +97,9 @@ function FileTreeNode({
     <button
       onClick={() => onSelect?.(node)}
       className={cn(
-        'flex items-center gap-1.5 w-full text-left py-1 px-2 rounded-md transition-colors',
-        'hover:bg-[#21262d] text-gray-400 hover:text-gray-200',
-        isSelected && 'bg-blue-500/10 text-blue-400'
+        "flex items-center gap-1.5 w-full text-left py-1 px-2 rounded-md transition-colors",
+        "hover:bg-[#21262d] text-gray-400 hover:text-gray-200",
+        isSelected && "bg-blue-500/10 text-blue-400",
       )}
       style={{ paddingLeft: `${depth * 12 + 24}px` }}
     >
@@ -109,9 +109,14 @@ function FileTreeNode({
   );
 }
 
-export function FileTree({ nodes, onSelect, selectedPath, className }: FileTreeProps) {
+export function FileTree({
+  nodes,
+  onSelect,
+  selectedPath,
+  className,
+}: FileTreeProps) {
   return (
-    <div className={cn('space-y-0.5', className)}>
+    <div className={cn("space-y-0.5", className)}>
       {nodes.map((node) => (
         <FileTreeNode
           key={node.path}

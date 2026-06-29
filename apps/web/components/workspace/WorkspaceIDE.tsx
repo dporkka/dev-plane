@@ -1,26 +1,25 @@
-'use client';
+"use client";
 
-import React, { useState, useCallback, useEffect } from 'react';
-import { useQuery, useMutation } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { FileBrowser } from './FileBrowser';
-import { WorkspaceTabs } from './WorkspaceTabs';
-import { RunStatusBar } from './RunStatusBar';
-import type { RunStatus } from './RunStatusBar';
-import type { EditorTab, RightTab } from './WorkspaceTabs';
-import type { FileWithStatus } from './FileBrowser';
-import { CodeEditor } from '@/components/code/CodeMirror';
-import { DiffViewer } from '@/components/code/DiffViewer';
-import { Terminal } from '@/components/run/Terminal';
-import type { FileNode } from '@/components/code/FileTree';
+import { CodeEditor } from "@/components/code/CodeMirror";
+import { DiffViewer } from "@/components/code/DiffViewer";
+import { Terminal } from "@/components/run/Terminal";
+import { api } from "@/lib/api";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  Terminal as TerminalIcon,
-  Globe,
-  ScrollText,
   FileCode,
   FolderGit,
+  Globe,
   Loader2,
-} from 'lucide-react';
+  ScrollText,
+  Terminal as TerminalIcon,
+} from "lucide-react";
+import React, { useState, useCallback, useEffect } from "react";
+import { FileBrowser } from "./FileBrowser";
+import type { FileWithStatus } from "./FileBrowser";
+import { RunStatusBar } from "./RunStatusBar";
+import type { RunStatus } from "./RunStatusBar";
+import { WorkspaceTabs } from "./WorkspaceTabs";
+import type { EditorTab, RightTab } from "./WorkspaceTabs";
 
 interface WorkspaceIDEProps {
   workspaceId: string;
@@ -30,38 +29,43 @@ interface WorkspaceIDEProps {
 interface OpenFile {
   path: string;
   content: string;
-  language: 'typescript' | 'javascript' | 'json' | 'markdown';
+  language: "typescript" | "javascript" | "json" | "markdown";
   isDirty: boolean;
 }
 
-export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProps) {
+export function WorkspaceIDE({
+  workspaceId,
+  initialRunStatus,
+}: WorkspaceIDEProps) {
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([]);
   const [activeEditorTab, setActiveEditorTab] = useState<string | null>(null);
-  const [activeRightTab, setActiveRightTab] = useState('terminal');
+  const [activeRightTab, setActiveRightTab] = useState("terminal");
   const [openFiles, setOpenFiles] = useState<Map<string, OpenFile>>(new Map());
   const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
-  const [diffContent, setDiffContent] = useState<string>('');
+  const [diffContent, setDiffContent] = useState<string>("");
   const [showDiff, setShowDiff] = useState(false);
 
-  const [runStatus, setRunStatus] = useState<RunStatus>(initialRunStatus || {
-    status: 'idle',
-    currentStep: 0,
-    totalSteps: 0,
-    currentAction: '',
-    cost: 0,
-    elapsedSeconds: 0,
-  });
+  const [runStatus, _setRunStatus] = useState<RunStatus>(
+    initialRunStatus || {
+      status: "idle",
+      currentStep: 0,
+      totalSteps: 0,
+      currentAction: "",
+      cost: 0,
+      elapsedSeconds: 0,
+    },
+  );
 
   // Fetch file tree
   const { data: fileTreeData, isLoading: filesLoading } = useQuery({
-    queryKey: ['workspace-files', workspaceId],
+    queryKey: ["workspace-files", workspaceId],
     queryFn: () => api.listWorkspaceFiles(workspaceId),
     enabled: !!workspaceId,
   });
 
   // Fetch diff
   const { data: diffData } = useQuery({
-    queryKey: ['workspace-diff', workspaceId],
+    queryKey: ["workspace-diff", workspaceId],
     queryFn: () => api.getWorkspaceDiff(workspaceId),
     enabled: !!workspaceId,
     retry: false,
@@ -69,7 +73,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 
   // Fetch workspace for run data
   const { data: workspace } = useQuery({
-    queryKey: ['workspace', workspaceId],
+    queryKey: ["workspace", workspaceId],
     queryFn: () => api.getWorkspace(workspaceId),
     enabled: !!workspaceId,
   });
@@ -82,7 +86,8 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 
   // Exec command mutation
   const execMutation = useMutation({
-    mutationFn: (command: string) => api.execWorkspaceCommand(workspaceId, command),
+    mutationFn: (command: string) =>
+      api.execWorkspaceCommand(workspaceId, command),
     onSuccess: (data: any) => {
       if (data?.output) {
         setTerminalLogs((prev) => [...prev, data.output]);
@@ -96,7 +101,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
   }, [fileTreeData]);
 
   useEffect(() => {
-    if (diffData && typeof diffData === 'string') {
+    if (diffData && typeof diffData === "string") {
       setDiffContent(diffData);
     } else if (diffData?.diff) {
       setDiffContent(diffData.diff);
@@ -105,7 +110,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 
   const handleSelectFile = useCallback(
     async (node: FileWithStatus) => {
-      if (node.type === 'directory') return;
+      if (node.type === "directory") return;
 
       const path = node.path;
       const existing = openFiles.get(path);
@@ -116,7 +121,8 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 
       try {
         const result = await api.readWorkspaceFile(workspaceId, path);
-        const content = typeof result === 'string' ? result : result.content || '';
+        const content =
+          typeof result === "string" ? result : result.content || "";
         const lang = detectLanguage(path);
 
         const openFile: OpenFile = {
@@ -140,7 +146,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
         ]);
       }
     },
-    [workspaceId, openFiles]
+    [workspaceId, openFiles],
   );
 
   const handleCloseEditorTab = useCallback(
@@ -148,7 +154,9 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
       setEditorTabs((prev) => {
         const filtered = prev.filter((t) => t.id !== id);
         if (activeEditorTab === id) {
-          setActiveEditorTab(filtered.length > 0 ? filtered[filtered.length - 1].id : null);
+          setActiveEditorTab(
+            filtered.length > 0 ? filtered[filtered.length - 1].id : null,
+          );
         }
         return filtered;
       });
@@ -158,24 +166,21 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
         return next;
       });
     },
-    [activeEditorTab]
+    [activeEditorTab],
   );
 
-  const handleFileChange = useCallback(
-    (path: string, value: string) => {
-      setOpenFiles((prev) => {
-        const file = prev.get(path);
-        if (!file) return prev;
-        const next = new Map(prev);
-        next.set(path, { ...file, content: value, isDirty: true });
-        return next;
-      });
-      setEditorTabs((prev) =>
-        prev.map((t) => (t.id === path ? { ...t, isDirty: true } : t))
-      );
-    },
-    []
-  );
+  const handleFileChange = useCallback((path: string, value: string) => {
+    setOpenFiles((prev) => {
+      const file = prev.get(path);
+      if (!file) return prev;
+      const next = new Map(prev);
+      next.set(path, { ...file, content: value, isDirty: true });
+      return next;
+    });
+    setEditorTabs((prev) =>
+      prev.map((t) => (t.id === path ? { ...t, isDirty: true } : t)),
+    );
+  }, []);
 
   const handleSaveFile = useCallback(
     async (path: string) => {
@@ -189,7 +194,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
           return next;
         });
         setEditorTabs((prev) =>
-          prev.map((t) => (t.id === path ? { ...t, isDirty: false } : t))
+          prev.map((t) => (t.id === path ? { ...t, isDirty: false } : t)),
         );
         setTerminalLogs((prev) => [...prev, `[Saved] ${path}`]);
       } catch (err) {
@@ -199,10 +204,10 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
         ]);
       }
     },
-    [openFiles, writeMutation]
+    [openFiles, writeMutation],
   );
 
-  const handleRequestDiff = useCallback((path: string) => {
+  const handleRequestDiff = useCallback((_path: string) => {
     setShowDiff(true);
     setActiveEditorTab(null);
   }, []);
@@ -210,23 +215,23 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
   const activeFile = activeEditorTab ? openFiles.get(activeEditorTab) : null;
 
   const rightTabs: RightTab[] = [
-    { id: 'terminal', label: 'Terminal', icon: TerminalIcon },
-    { id: 'preview', label: 'Preview', icon: Globe },
-    { id: 'logs', label: 'Logs', icon: ScrollText },
+    { id: "terminal", label: "Terminal", icon: TerminalIcon },
+    { id: "preview", label: "Preview", icon: Globe },
+    { id: "logs", label: "Logs", icon: ScrollText },
   ];
 
   // Keyboard shortcut: Ctrl+S to save
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         if (activeEditorTab) {
           handleSaveFile(activeEditorTab);
         }
       }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeEditorTab, handleSaveFile]);
 
   return (
@@ -281,7 +286,11 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
         <div className="flex-1 flex flex-col min-w-0">
           {showDiff && diffContent ? (
             <div className="flex-1 overflow-auto">
-              <DiffViewer oldValue="" newValue={diffContent} filename="Changes" />
+              <DiffViewer
+                oldValue=""
+                newValue={diffContent}
+                filename="Changes"
+              />
             </div>
           ) : activeFile ? (
             <div className="flex-1 overflow-auto">
@@ -305,7 +314,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 
         {/* Right: Terminal / Preview / Logs */}
         <div className="w-96 flex-shrink-0 border-l border-[#30363d] bg-[#0d1117] flex flex-col">
-          {activeRightTab === 'terminal' && (
+          {activeRightTab === "terminal" && (
             <div className="flex-1 flex flex-col">
               <div className="flex-1 overflow-auto p-2">
                 <Terminal logs={terminalLogs} height="100%" />
@@ -317,12 +326,12 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
                   className="flex-1 bg-transparent text-xs text-gray-300 ml-2 outline-none"
                   placeholder="Type command..."
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
+                    if (e.key === "Enter") {
                       const cmd = e.currentTarget.value;
                       if (cmd.trim()) {
                         setTerminalLogs((prev) => [...prev, `$ ${cmd}`]);
                         execMutation.mutate(cmd);
-                        e.currentTarget.value = '';
+                        e.currentTarget.value = "";
                       }
                     }
                   }}
@@ -330,7 +339,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
               </div>
             </div>
           )}
-          {activeRightTab === 'preview' && (
+          {activeRightTab === "preview" && (
             <div className="flex-1 flex items-center justify-center">
               {workspace?.preview_url ? (
                 <iframe
@@ -349,7 +358,7 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
               )}
             </div>
           )}
-          {activeRightTab === 'logs' && (
+          {activeRightTab === "logs" && (
             <div className="flex-1 overflow-auto p-2">
               <Terminal logs={terminalLogs} height="100%" />
             </div>
@@ -367,19 +376,21 @@ export function WorkspaceIDE({ workspaceId, initialRunStatus }: WorkspaceIDEProp
 function normalizeFileTree(raw: any[]): FileWithStatus[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((item) => ({
-    name: item.name || '',
-    type: item.type || 'file',
-    path: item.path || '',
+    name: item.name || "",
+    type: item.type || "file",
+    path: item.path || "",
     language: item.language,
     gitStatus: item.git_status,
     children: item.children ? normalizeFileTree(item.children) : undefined,
   }));
 }
 
-function detectLanguage(path: string): 'typescript' | 'javascript' | 'json' | 'markdown' {
-  if (path.endsWith('.ts') || path.endsWith('.tsx')) return 'typescript';
-  if (path.endsWith('.js') || path.endsWith('.jsx')) return 'javascript';
-  if (path.endsWith('.json')) return 'json';
-  if (path.endsWith('.md')) return 'markdown';
-  return 'typescript';
+function detectLanguage(
+  path: string,
+): "typescript" | "javascript" | "json" | "markdown" {
+  if (path.endsWith(".ts") || path.endsWith(".tsx")) return "typescript";
+  if (path.endsWith(".js") || path.endsWith(".jsx")) return "javascript";
+  if (path.endsWith(".json")) return "json";
+  if (path.endsWith(".md")) return "markdown";
+  return "typescript";
 }

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/ai-dev-control-plane/models"
@@ -69,10 +68,8 @@ func (h *Handler) runtimeProvider(name string) (runtimes.Provider, error) {
 }
 
 func workspaceRuntimeBaseDir() string {
-	if baseDir := os.Getenv("WORKSPACE_BASE_DIR"); baseDir != "" {
-		return baseDir
-	}
-	return filepath.Join(os.TempDir(), "ai-dev-control-plane-workspaces")
+	baseDir, _ := runtimes.EnsureTmpfsBaseDir("")
+	return baseDir
 }
 
 func (h *Handler) loadWorkspaceRuntimeMetadata(ctx context.Context, workspaceID string) (*models.Workspace, error) {

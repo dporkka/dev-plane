@@ -1,15 +1,8 @@
-'use client';
-
-import React from 'react';
-import type { DashboardStats } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { SkeletonStats } from '@/components/ui/skeleton';
-import {
-  Activity,
-  ListTodo,
-  DollarSign,
-  AlertCircle,
-} from 'lucide-react';
+"use client";
+import { Card } from "@/components/ui/card";
+import { SkeletonStats } from "@/components/ui/skeleton";
+import type { DashboardStats } from "@/lib/types";
+import { Activity, AlertCircle, DollarSign, ListTodo } from "lucide-react";
 
 interface StatsCardsProps {
   data?: DashboardStats;
@@ -23,32 +16,32 @@ export function StatsCards({ data, isLoading }: StatsCardsProps) {
 
   const stats = [
     {
-      label: 'Active Runs',
+      label: "Active Runs",
       value: data.active_runs,
       icon: Activity,
-      color: 'text-blue-400',
-      bg: 'bg-blue-500/10',
+      color: "text-blue-400",
+      bg: "bg-blue-500/10",
     },
     {
-      label: 'Tasks Today',
+      label: "Tasks Today",
       value: data.tasks_today,
       icon: ListTodo,
-      color: 'text-green-400',
-      bg: 'bg-green-500/10',
+      color: "text-green-400",
+      bg: "bg-green-500/10",
     },
     {
-      label: 'Cost Today',
+      label: "Cost Today",
       value: `$${data.cost_today.toFixed(2)}`,
       icon: DollarSign,
-      color: 'text-yellow-400',
-      bg: 'bg-yellow-500/10',
+      color: "text-yellow-400",
+      bg: "bg-yellow-500/10",
     },
     {
-      label: 'Pending Approvals',
+      label: "Pending Approvals",
       value: data.pending_approvals,
       icon: AlertCircle,
-      color: 'text-red-400',
-      bg: 'bg-red-500/10',
+      color: "text-red-400",
+      bg: "bg-red-500/10",
     },
   ];
 

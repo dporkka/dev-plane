@@ -1,36 +1,30 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import Link from 'next/link';
-import { Card } from '@/components/ui/card';
-import { Tabs } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Button } from '@/components/ui/button';
-import {
-  Settings,
-  Building2,
-  Plug,
-  Shield,
-  Cpu,
-  Save,
-} from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Building2, Cpu, Plug, Save, Settings, Shield } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
 export default function SettingsPage() {
-  const [orgName, setOrgName] = useState('');
-  const [orgSlug, setOrgSlug] = useState('');
+  const [orgName, setOrgName] = useState("");
+  const [orgSlug, setOrgSlug] = useState("");
 
   const tabs = [
-    { id: 'general', label: 'General', icon: Building2 },
-    { id: 'integrations', label: 'Integrations', icon: Plug },
-    { id: 'policies', label: 'Policies', icon: Shield },
-    { id: 'models', label: 'Models', icon: Cpu },
+    { id: "general", label: "General", icon: Building2 },
+    { id: "integrations", label: "Integrations", icon: Plug },
+    { id: "policies", label: "Policies", icon: Shield },
+    { id: "models", label: "Models", icon: Cpu },
   ];
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Organization Settings</h1>
-        <p className="text-gray-500 mt-1">Manage your organization preferences</p>
+        <p className="text-gray-500 mt-1">
+          Manage your organization preferences
+        </p>
       </div>
 
       {/* Settings tabs as links */}
@@ -38,15 +32,11 @@ export default function SettingsPage() {
         {tabs.map((tab) => (
           <Link
             key={tab.id}
-            href={
-              tab.id === 'general'
-                ? '/settings'
-                : `/settings/${tab.id}`
-            }
+            href={tab.id === "general" ? "/settings" : `/settings/${tab.id}`}
             className={`flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-              tab.id === 'general'
-                ? 'border-blue-500 text-blue-400'
-                : 'border-transparent text-gray-400 hover:text-gray-200'
+              tab.id === "general"
+                ? "border-blue-500 text-blue-400"
+                : "border-transparent text-gray-400 hover:text-gray-200"
             }`}
           >
             <tab.icon className="w-4 h-4" />
@@ -101,13 +91,13 @@ export default function SettingsPage() {
           <div className="space-y-4">
             <div className="flex items-center gap-2 mb-4">
               <Settings className="w-5 h-5 text-yellow-400" />
-              <h2 className="text-lg font-semibold text-white">
-                Danger Zone
-              </h2>
+              <h2 className="text-lg font-semibold text-white">Danger Zone</h2>
             </div>
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-white font-medium">Delete Organization</div>
+                <div className="text-white font-medium">
+                  Delete Organization
+                </div>
                 <div className="text-sm text-gray-500">
                   This action cannot be undone
                 </div>

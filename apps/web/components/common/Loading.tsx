@@ -1,18 +1,16 @@
-'use client';
-
-import React from 'react';
-import { SkeletonCard, SkeletonStats } from '@/components/ui/skeleton';
-import { Loader2 } from 'lucide-react';
-import { cn } from '@/lib/utils';
+"use client";
+import { SkeletonCard, SkeletonStats } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+import { Loader2 } from "lucide-react";
 
 interface LoadingProps {
   className?: string;
   text?: string;
 }
 
-export function Loading({ className, text = 'Loading...' }: LoadingProps) {
+export function Loading({ className, text = "Loading..." }: LoadingProps) {
   return (
-    <div className={cn('flex items-center justify-center py-12', className)}>
+    <div className={cn("flex items-center justify-center py-12", className)}>
       <Loader2 className="w-6 h-6 text-blue-400 animate-spin mr-3" />
       <span className="text-gray-400">{text}</span>
     </div>
@@ -41,6 +39,6 @@ export function LoadingPage() {
 
 export function LoadingSpinner({ className }: { className?: string }) {
   return (
-    <Loader2 className={cn('w-5 h-5 text-blue-400 animate-spin', className)} />
+    <Loader2 className={cn("w-5 h-5 text-blue-400 animate-spin", className)} />
   );
 }

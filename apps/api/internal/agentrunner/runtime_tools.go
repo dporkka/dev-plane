@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -54,10 +53,8 @@ func (r *Runner) runtimeProviderForWorkspace(ctx context.Context, workspace *mod
 }
 
 func agentRuntimeBaseDir() string {
-	if baseDir := os.Getenv("WORKSPACE_BASE_DIR"); baseDir != "" {
-		return baseDir
-	}
-	return filepath.Join(os.TempDir(), "ai-dev-control-plane-workspaces")
+	baseDir, _ := runtimes.EnsureTmpfsBaseDir("")
+	return baseDir
 }
 
 func (r *Runner) executeRuntimeTool(ctx context.Context, provider runtimes.Provider, sessionID, toolName string, input json.RawMessage) (json.RawMessage, error) {

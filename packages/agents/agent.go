@@ -12,13 +12,13 @@ type AgentRole string
 
 // AgentRole constants for all supported agent types.
 const (
-	RolePlanner         AgentRole = "planner"
-	RoleImplementer     AgentRole = "implementer"
-	RoleReviewer        AgentRole = "reviewer"
-	RoleTestRunner      AgentRole = "test_runner"
-	RoleSecurity        AgentRole = "security_reviewer"
-	RoleDocs            AgentRole = "docs_writer"
-	RoleReleaseManager  AgentRole = "release_manager"
+	RolePlanner        AgentRole = "planner"
+	RoleImplementer    AgentRole = "implementer"
+	RoleReviewer       AgentRole = "reviewer"
+	RoleTestRunner     AgentRole = "test_runner"
+	RoleSecurity       AgentRole = "security_reviewer"
+	RoleDocs           AgentRole = "docs_writer"
+	RoleReleaseManager AgentRole = "release_manager"
 )
 
 // String returns the string representation of the role.
@@ -45,23 +45,23 @@ type TokenUsage struct {
 
 // AgentStepResult represents the outcome of a single execution step.
 type AgentStepResult struct {
-	Type      string        `json:"type"`
-	Content   string        `json:"content"`
-	Success   bool          `json:"success"`
-	Error     string        `json:"error,omitempty"`
-	Cost      float64       `json:"cost"`
-	LatencyMs int           `json:"latency_ms"`
+	Type      string         `json:"type"`
+	Content   string         `json:"content"`
+	Success   bool           `json:"success"`
+	Error     string         `json:"error,omitempty"`
+	Cost      float64        `json:"cost"`
+	LatencyMs int            `json:"latency_ms"`
 	Metadata  map[string]any `json:"metadata,omitempty"`
 }
 
 // AgentResult is the aggregate result of an agent execution.
 type AgentResult struct {
-	Success bool              `json:"success"`
-	Summary string            `json:"summary"`
-	Steps   []AgentStepResult `json:"steps"`
-	Cost    float64           `json:"cost"`
-	Tokens  TokenUsage        `json:"tokens"`
-	Duration time.Duration    `json:"duration_ms"`
+	Success  bool              `json:"success"`
+	Summary  string            `json:"summary"`
+	Steps    []AgentStepResult `json:"steps"`
+	Cost     float64           `json:"cost"`
+	Tokens   TokenUsage        `json:"tokens"`
+	Duration time.Duration     `json:"duration_ms"`
 }
 
 // Agent defines the interface that all agent types must implement.

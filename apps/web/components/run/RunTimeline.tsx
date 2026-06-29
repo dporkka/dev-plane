@@ -1,34 +1,33 @@
-'use client';
+"use client";
 
-import React, { useState, useRef, useEffect } from 'react';
-import { cn } from '@/lib/utils';
-import type { AgentRun, AgentStep } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { TimeAgo } from '@/components/common/TimeAgo';
-import { CostBadge } from './CostBadge';
-import { RunStepDetail } from './RunStepDetail';
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { TimeAgo } from "@/components/common/TimeAgo";
+import { Card } from "@/components/ui/card";
+import type { AgentRun, AgentStep } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import {
+  Activity,
+  AlertCircle,
+  Bot,
+  Brain,
+  CheckCircle,
   ChevronDown,
   ChevronRight,
-  Bot,
-  Cpu,
-  Zap,
-  Brain,
-  Wrench,
-  Terminal,
-  FileDiff,
-  AlertCircle,
-  MessageSquare,
-  CheckCircle,
-  Loader2,
-  XCircle,
   Clock,
+  Cpu,
+  FileDiff,
+  Loader2,
+  MessageSquare,
   Play,
-  Pause,
-  DollarSign,
-  Activity,
-} from 'lucide-react';
+  Terminal,
+  Wrench,
+  XCircle,
+  Zap,
+} from "lucide-react";
+import type React from "react";
+import { useEffect, useRef, useState } from "react";
+import { CostBadge } from "./CostBadge";
+import { RunStepDetail } from "./RunStepDetail";
 
 interface RunTimelineProps {
   run: AgentRun;
@@ -36,7 +35,13 @@ interface RunTimelineProps {
   isLive?: boolean;
 }
 
-type Phase = 'setup' | 'planning' | 'execution' | 'testing' | 'review' | 'other';
+type Phase =
+  | "setup"
+  | "planning"
+  | "execution"
+  | "testing"
+  | "review"
+  | "other";
 
 interface GroupedSteps {
   phase: Phase;
@@ -65,13 +70,13 @@ const typeIcons: Record<string, React.ElementType> = {
 };
 
 const typeColors: Record<string, string> = {
-  thought: 'text-purple-400 bg-purple-500/10',
-  tool_call: 'text-blue-400 bg-blue-500/10',
-  command_run: 'text-yellow-400 bg-yellow-500/10',
-  file_patch: 'text-green-400 bg-green-500/10',
-  approval_request: 'text-orange-400 bg-orange-500/10',
-  message: 'text-gray-400 bg-gray-500/10',
-  error: 'text-red-400 bg-red-500/10',
+  thought: "text-purple-400 bg-purple-500/10",
+  tool_call: "text-blue-400 bg-blue-500/10",
+  command_run: "text-yellow-400 bg-yellow-500/10",
+  file_patch: "text-green-400 bg-green-500/10",
+  approval_request: "text-orange-400 bg-orange-500/10",
+  message: "text-gray-400 bg-gray-500/10",
+  error: "text-red-400 bg-red-500/10",
 };
 
 const statusIcons: Record<string, React.ElementType> = {
@@ -82,23 +87,35 @@ const statusIcons: Record<string, React.ElementType> = {
 };
 
 const statusColors: Record<string, string> = {
-  pending: 'text-gray-500',
-  running: 'text-blue-400',
-  completed: 'text-green-400',
-  failed: 'text-red-400',
+  pending: "text-gray-500",
+  running: "text-blue-400",
+  completed: "text-green-400",
+  failed: "text-red-400",
 };
 
 function getPhaseForStep(step: AgentStep): Phase {
   const type = step.step_type;
-  const content = (step.content || '').toLowerCase();
-  const toolName = (step.tool_name || '').toLowerCase();
+  const content = (step.content || "").toLowerCase();
+  const toolName = (step.tool_name || "").toLowerCase();
 
-  if (content.includes('test') || toolName.includes('test')) return 'testing';
-  if (content.includes('review') || toolName.includes('review')) return 'review';
-  if (content.includes('plan') || type === 'thought') return 'planning';
-  if (type === 'command_run' && (content.includes('setup') || content.includes('install') || content.includes('clone'))) return 'setup';
-  if (type === 'file_patch' || content.includes('implement') || content.includes('write')) return 'execution';
-  return 'other';
+  if (content.includes("test") || toolName.includes("test")) return "testing";
+  if (content.includes("review") || toolName.includes("review"))
+    return "review";
+  if (content.includes("plan") || type === "thought") return "planning";
+  if (
+    type === "command_run" &&
+    (content.includes("setup") ||
+      content.includes("install") ||
+      content.includes("clone"))
+  )
+    return "setup";
+  if (
+    type === "file_patch" ||
+    content.includes("implement") ||
+    content.includes("write")
+  )
+    return "execution";
+  return "other";
 }
 
 function groupStepsByPhase(steps: AgentStep[]): GroupedSteps[] {
@@ -117,12 +134,12 @@ function groupStepsByPhase(steps: AgentStep[]): GroupedSteps[] {
   });
 
   const labels: Record<Phase, string> = {
-    setup: 'Setup',
-    planning: 'Planning',
-    execution: 'Execution',
-    testing: 'Testing',
-    review: 'Review',
-    other: 'Other',
+    setup: "Setup",
+    planning: "Planning",
+    execution: "Execution",
+    testing: "Testing",
+    review: "Review",
+    other: "Other",
   };
 
   return (Object.keys(groups) as Phase[])
@@ -147,12 +164,12 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
   const Icon = roleIcons[run.agent_role] || Bot;
   const groupedSteps = groupStepsByPhase(steps);
   const totalSteps = steps.length;
-  const completedSteps = steps.filter((s) => s.status === 'completed').length;
+  const completedSteps = steps.filter((s) => s.status === "completed").length;
 
   // Auto-scroll to bottom when live
   useEffect(() => {
     if (isLive && timelineEndRef.current) {
-      timelineEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      timelineEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [steps, isLive]);
 
@@ -183,31 +200,31 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
           )}
           <div
             className={`p-1.5 rounded-lg ${
-              run.status === 'running'
-                ? 'bg-blue-500/10'
-                : run.status === 'completed'
-                ? 'bg-green-500/10'
-                : run.status === 'failed'
-                ? 'bg-red-500/10'
-                : 'bg-gray-800'
+              run.status === "running"
+                ? "bg-blue-500/10"
+                : run.status === "completed"
+                  ? "bg-green-500/10"
+                  : run.status === "failed"
+                    ? "bg-red-500/10"
+                    : "bg-gray-800"
             }`}
           >
             <Icon
               className={`w-5 h-5 ${
-                run.status === 'running'
-                  ? 'text-blue-400'
-                  : run.status === 'completed'
-                  ? 'text-green-400'
-                  : run.status === 'failed'
-                  ? 'text-red-400'
-                  : 'text-gray-400'
+                run.status === "running"
+                  ? "text-blue-400"
+                  : run.status === "completed"
+                    ? "text-green-400"
+                    : run.status === "failed"
+                      ? "text-red-400"
+                      : "text-gray-400"
               }`}
             />
           </div>
           <div className="text-left">
             <div className="flex items-center gap-2">
               <span className="font-medium text-white capitalize">
-                {run.agent_role.replace('_', ' ')}
+                {run.agent_role.replace("_", " ")}
               </span>
               <StatusBadge status={run.status} size="sm" />
               {isLive && (
@@ -219,7 +236,9 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
             </div>
             <div className="text-xs text-gray-500 flex items-center gap-2 mt-0.5">
               {run.model && <span>{run.model}</span>}
-              {run.provider && <span className="text-gray-600">via {run.provider}</span>}
+              {run.provider && (
+                <span className="text-gray-600">via {run.provider}</span>
+              )}
               {totalSteps > 0 && (
                 <span>
                   {completedSteps}/{totalSteps} steps
@@ -232,7 +251,8 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
           <CostBadge cost={run.total_cost} />
           <span className="flex items-center gap-1">
             <Zap className="w-3 h-3" />
-            {(run.prompt_tokens + run.completion_tokens).toLocaleString()} tokens
+            {(run.prompt_tokens + run.completion_tokens).toLocaleString()}{" "}
+            tokens
           </span>
           <TimeAgo date={run.created_at} />
         </div>
@@ -258,7 +278,7 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
                   Waiting for steps...
                 </div>
               ) : (
-                'No steps recorded'
+                "No steps recorded"
               )}
             </div>
           )}
@@ -280,12 +300,12 @@ function PhaseGroup({
 }) {
   const [expanded, setExpanded] = useState(true);
   const phaseColors: Record<Phase, string> = {
-    setup: 'border-gray-600',
-    planning: 'border-purple-500',
-    execution: 'border-blue-500',
-    testing: 'border-yellow-500',
-    review: 'border-green-500',
-    other: 'border-gray-700',
+    setup: "border-gray-600",
+    planning: "border-purple-500",
+    execution: "border-blue-500",
+    testing: "border-yellow-500",
+    review: "border-green-500",
+    other: "border-gray-700",
   };
 
   const phaseIcons: Record<Phase, React.ElementType> = {
@@ -346,14 +366,14 @@ function TimelineStep({
   const typeColor = typeColors[step.step_type] || typeColors.message;
   const StatusIcon = statusIcons[step.status] || statusIcons.pending;
   const statusColor = statusColors[step.status] || statusColors.pending;
-  const isRunning = step.status === 'running';
+  const isRunning = step.status === "running";
 
   return (
     <div
       className={cn(
-        'rounded-md transition-colors',
-        isRunning && 'bg-blue-500/5',
-        isExpanded && 'bg-[#161b22]'
+        "rounded-md transition-colors",
+        isRunning && "bg-blue-500/5",
+        isExpanded && "bg-[#161b22]",
       )}
     >
       <button
@@ -366,7 +386,7 @@ function TimelineStep({
         </div>
 
         {/* Type icon */}
-        <div className={cn('flex-shrink-0 mt-0.5 p-1 rounded', typeColor)}>
+        <div className={cn("flex-shrink-0 mt-0.5 p-1 rounded", typeColor)}>
           <StepIcon className="w-3.5 h-3.5" />
         </div>
 
@@ -374,7 +394,7 @@ function TimelineStep({
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-xs font-medium text-gray-400 capitalize">
-              {step.step_type.replace('_', ' ')}
+              {step.step_type.replace("_", " ")}
             </span>
             {step.tool_name && (
               <span className="text-[10px] bg-[#21262d] text-gray-400 px-1.5 py-0.5 rounded">
@@ -388,7 +408,7 @@ function TimelineStep({
             )}
           </div>
           <p className="text-sm text-gray-300 mt-0.5 truncate">
-            {step.content || step.command || step.tool_name || '...'}
+            {step.content || step.command || step.tool_name || "..."}
           </p>
         </div>
 
@@ -404,8 +424,10 @@ function TimelineStep({
               {formatDuration(step.latency_ms)}
             </span>
           )}
-          <div className={cn('flex-shrink-0', statusColor)}>
-            <StatusIcon className={cn('w-4 h-4', isRunning && 'animate-spin')} />
+          <div className={cn("flex-shrink-0", statusColor)}>
+            <StatusIcon
+              className={cn("w-4 h-4", isRunning && "animate-spin")}
+            />
           </div>
           {isExpanded ? (
             <ChevronDown className="w-3 h-3 text-gray-500" />

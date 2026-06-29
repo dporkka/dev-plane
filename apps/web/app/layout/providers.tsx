@@ -1,11 +1,11 @@
-'use client';
+"use client";
 
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ReactNode, useEffect, useState } from 'react';
-import { ToastProvider } from '@/components/ui/toast';
-import { Loading } from '@/components/common/Loading';
-import { api, decodeTokenClaims } from '@/lib/api';
-import { useStore } from '@/lib/store';
+import { Loading } from "@/components/common/Loading";
+import { ToastProvider } from "@/components/ui/toast";
+import { api, decodeTokenClaims } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { type ReactNode, useEffect, useState } from "react";
 
 function BootstrapProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -21,7 +21,7 @@ function BootstrapProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function bootstrap() {
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem("token");
       if (!token) {
         setBootstrapped(true);
         setReady(true);
@@ -34,11 +34,11 @@ function BootstrapProvider({ children }: { children: ReactNode }) {
           id: claims.user_id,
           organization_id: claims.org_id,
           email: claims.email,
-          role: claims.role as 'owner' | 'admin' | 'member',
-          name: claims.name || claims.email.split('@')[0],
+          role: claims.role as "owner" | "admin" | "member",
+          name: claims.name || claims.email.split("@")[0],
           avatar_url: claims.avatar_url,
-          created_at: '',
-          updated_at: '',
+          created_at: "",
+          updated_at: "",
         });
       }
 
@@ -61,7 +61,7 @@ function BootstrapProvider({ children }: { children: ReactNode }) {
         // If the token is invalid or the API is unavailable, leave the user
         // signed out and let the UI surface the auth state.
         setUser(null);
-        localStorage.removeItem('token');
+        localStorage.removeItem("token");
       } finally {
         if (!cancelled) {
           setBootstrapped(true);
@@ -98,7 +98,7 @@ export function Providers({ children }: { children: ReactNode }) {
             retry: 2,
           },
         },
-      })
+      }),
   );
 
   return (

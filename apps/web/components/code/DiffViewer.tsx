@@ -1,7 +1,5 @@
-'use client';
-
-import React from 'react';
-import { diffLines } from 'diff';
+"use client";
+import { diffLines } from "diff";
 
 interface DiffViewerProps {
   oldValue: string;
@@ -26,22 +24,22 @@ export function DiffViewer({ oldValue, newValue, filename }: DiffViewerProps) {
               key={i}
               className={`px-4 ${
                 part.added
-                  ? 'bg-green-900/20 text-green-300'
+                  ? "bg-green-900/20 text-green-300"
                   : part.removed
-                  ? 'bg-red-900/20 text-red-300'
-                  : 'text-gray-300'
+                    ? "bg-red-900/20 text-red-300"
+                    : "text-gray-300"
               }`}
             >
-              {part.value.split('\n').map(
+              {part.value.split("\n").map(
                 (line, j) =>
-                  j < part.value.split('\n').length - 1 && (
+                  j < part.value.split("\n").length - 1 && (
                     <div key={j} className="flex">
                       <span className="select-none w-6 text-gray-600 text-right mr-3 flex-shrink-0">
-                        {part.added ? '+' : part.removed ? '-' : ' '}
+                        {part.added ? "+" : part.removed ? "-" : " "}
                       </span>
                       <span className="break-all">{line}</span>
                     </div>
-                  )
+                  ),
               )}
             </div>
           ))}

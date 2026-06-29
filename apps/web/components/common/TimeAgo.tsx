@@ -1,8 +1,6 @@
-'use client';
-
-import React from 'react';
-import { formatDistanceToNow, parseISO } from 'date-fns';
-import { cn } from '@/lib/utils';
+"use client";
+import { cn } from "@/lib/utils";
+import { formatDistanceToNow, parseISO } from "date-fns";
 
 interface TimeAgoProps {
   date?: string | Date;
@@ -10,18 +8,21 @@ interface TimeAgoProps {
 }
 
 export function TimeAgo({ date, className }: TimeAgoProps) {
-  if (!date) return <span className={cn('text-gray-500', className)}>—</span>;
+  if (!date) return <span className={cn("text-gray-500", className)}>—</span>;
 
   try {
-    const parsed = typeof date === 'string' ? parseISO(date) : date;
+    const parsed = typeof date === "string" ? parseISO(date) : date;
     const distance = formatDistanceToNow(parsed, { addSuffix: true });
 
     return (
-      <span className={cn('text-gray-500', className)} title={parsed.toISOString()}>
+      <span
+        className={cn("text-gray-500", className)}
+        title={parsed.toISOString()}
+      >
         {distance}
       </span>
     );
   } catch {
-    return <span className={cn('text-gray-500', className)}>—</span>;
+    return <span className={cn("text-gray-500", className)}>—</span>;
   }
 }

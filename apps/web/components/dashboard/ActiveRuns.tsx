@@ -1,19 +1,12 @@
-'use client';
+"use client";
 
-import React from 'react';
-import Link from 'next/link';
-import type { AgentRun } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { CostBadge } from '@/components/run/CostBadge';
-import { SkeletonCard } from '@/components/ui/skeleton';
-import {
-  Activity,
-  Loader2,
-  Bot,
-  Cpu,
-  Zap,
-} from 'lucide-react';
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { CostBadge } from "@/components/run/CostBadge";
+import { Card } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
+import type { AgentRun } from "@/lib/types";
+import { Activity, Bot, Cpu, Loader2, Zap } from "lucide-react";
+import type React from "react";
 
 interface ActiveRunsProps {
   runs: AgentRun[];
@@ -45,7 +38,7 @@ export function ActiveRuns({ runs, isLoading }: ActiveRunsProps) {
   }
 
   const activeRuns = runs.filter(
-    (r) => r.status === 'running' || r.status === 'pending'
+    (r) => r.status === "running" || r.status === "pending",
   );
 
   return (
@@ -72,7 +65,7 @@ export function ActiveRuns({ runs, isLoading }: ActiveRunsProps) {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-200 capitalize truncate">
-                        {run.agent_role.replace('_', ' ')}
+                        {run.agent_role.replace("_", " ")}
                       </span>
                       <StatusBadge status={run.status} size="sm" />
                     </div>
@@ -83,7 +76,7 @@ export function ActiveRuns({ runs, isLoading }: ActiveRunsProps) {
                 </div>
                 <div className="flex items-center gap-3 flex-shrink-0">
                   <CostBadge cost={run.total_cost} />
-                  {run.status === 'running' && (
+                  {run.status === "running" && (
                     <Loader2 className="w-4 h-4 text-blue-400 animate-spin" />
                   )}
                 </div>

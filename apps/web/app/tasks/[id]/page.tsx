@@ -1,52 +1,55 @@
-'use client';
-
-import { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { useParams } from 'next/navigation';
-import Link from 'next/link';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Loading } from '@/components/common/Loading';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { TimeAgo } from '@/components/common/TimeAgo';
-import { CostBadge } from '@/components/run/CostBadge';
-import { TaskSpecPreview } from '@/components/task/TaskSpecPreview';
-import { TaskActions } from '@/components/task/TaskActions';
-import type { TaskSpec } from '@/lib/types';
+"use client";
+import { Loading } from "@/components/common/Loading";
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { TimeAgo } from "@/components/common/TimeAgo";
+import { CostBadge } from "@/components/run/CostBadge";
+import { TaskActions } from "@/components/task/TaskActions";
+import { TaskSpecPreview } from "@/components/task/TaskSpecPreview";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { api } from "@/lib/api";
+import type { TaskSpec } from "@/lib/types";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowLeft,
-  GitCommit,
+  CheckCircle,
   Clock,
   DollarSign,
-  Layers,
-  AlertTriangle,
-  FolderGit,
-  CheckCircle,
-  XCircle,
-  GitPullRequest,
   ExternalLink,
-} from 'lucide-react';
+  FolderGit,
+  GitCommit,
+  GitPullRequest,
+  Layers,
+  XCircle,
+} from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 
 function parseSpec(task: any): TaskSpec | null {
   if (!task?.spec) return null;
-  if (typeof task.spec === 'object' && task.spec.summary) {
+  if (typeof task.spec === "object" && task.spec.summary) {
     return {
       id: task.spec.id || `spec-${task.id}`,
       task_id: task.id,
       summary: task.spec.summary || task.title,
-      problem_statement: task.spec.problem_statement || task.spec.problem || task.description || '',
-      implementation_plan: task.spec.implementation_plan || task.spec.plan || [],
+      problem_statement:
+        task.spec.problem_statement ||
+        task.spec.problem ||
+        task.description ||
+        "",
+      implementation_plan:
+        task.spec.implementation_plan || task.spec.plan || [],
       files_to_change: task.spec.files_to_change || [],
       files_to_create: task.spec.files_to_create || [],
       acceptance_criteria: task.spec.acceptance_criteria || [],
-      test_plan: task.spec.test_plan || '',
-      risk_assessment: task.spec.risk_assessment || task.spec.risk || 'low',
-      rollback_plan: task.spec.rollback_plan || '',
+      test_plan: task.spec.test_plan || "",
+      risk_assessment: task.spec.risk_assessment || task.spec.risk || "low",
+      rollback_plan: task.spec.rollback_plan || "",
       required_approvals: task.spec.required_approvals || [],
       estimated_cost: task.spec.estimated_cost || task.max_cost || 0,
-      recommended_agent: task.spec.recommended_agent || 'implementer',
-      generated_by: task.spec.generated_by || 'planner',
+      recommended_agent: task.spec.recommended_agent || "implementer",
+      generated_by: task.spec.generated_by || "planner",
     };
   }
   return null;
@@ -58,24 +61,24 @@ export default function TaskDetailPage() {
   const queryClient = useQueryClient();
 
   const { data: task, isLoading: taskLoading } = useQuery({
-    queryKey: ['task', taskId],
+    queryKey: ["task", taskId],
     queryFn: () => api.getTask(taskId),
   });
 
   const { data: runs } = useQuery({
-    queryKey: ['runs', taskId],
+    queryKey: ["runs", taskId],
     queryFn: () => api.listRuns(taskId),
     enabled: !!taskId,
   });
 
   const { data: approvals } = useQuery({
-    queryKey: ['approvals', taskId],
+    queryKey: ["approvals", taskId],
     queryFn: () => api.listApprovals(taskId),
     enabled: !!taskId,
   });
 
   const { data: workspaces } = useQuery({
-    queryKey: ['workspaces', taskId],
+    queryKey: ["workspaces", taskId],
     queryFn: () => api.listWorkspaces(taskId),
     enabled: !!taskId,
   });
@@ -83,15 +86,15 @@ export default function TaskDetailPage() {
   const generateSpecMutation = useMutation({
     mutationFn: () => api.generateSpec(taskId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['task', taskId] });
-      queryClient.invalidateQueries({ queryKey: ['spec', taskId] });
+      queryClient.invalidateQueries({ queryKey: ["task", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["spec", taskId] });
     },
   });
 
   const retryMutation = useMutation({
-    mutationFn: () => api.updateTask(taskId, { status: 'backlog' }),
+    mutationFn: () => api.updateTask(taskId, { status: "backlog" }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['task', taskId] });
+      queryClient.invalidateQueries({ queryKey: ["task", taskId] });
     },
   });
 
@@ -104,10 +107,14 @@ export default function TaskDetailPage() {
 
   const getPriorityColor = (p: string) => {
     switch (p) {
-      case 'urgent': return 'bg-red-500/10 text-red-400 border-red-500/30';
-      case 'high': return 'bg-orange-500/10 text-orange-400 border-orange-500/30';
-      case 'medium': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
-      default: return 'bg-gray-500/10 text-gray-400 border-gray-500/30';
+      case "urgent":
+        return "bg-red-500/10 text-red-400 border-red-500/30";
+      case "high":
+        return "bg-orange-500/10 text-orange-400 border-orange-500/30";
+      case "medium":
+        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
+      default:
+        return "bg-gray-500/10 text-gray-400 border-gray-500/30";
     }
   };
 
@@ -132,7 +139,7 @@ export default function TaskDetailPage() {
               >
                 {task?.priority}
               </Badge>
-              {task?.risk_level !== 'low' && (
+              {task?.risk_level !== "low" && (
                 <Badge
                   variant="outline"
                   className="bg-red-500/10 text-red-400 border-red-500/30"
@@ -144,7 +151,9 @@ export default function TaskDetailPage() {
             </div>
             <h1 className="text-2xl font-bold text-white">{task?.title}</h1>
             {task?.description && (
-              <p className="text-gray-400 mt-2 max-w-3xl">{task?.description}</p>
+              <p className="text-gray-400 mt-2 max-w-3xl">
+                {task?.description}
+              </p>
             )}
           </div>
           <TaskActions
@@ -172,7 +181,9 @@ export default function TaskDetailPage() {
             <GitCommit className="w-3 h-3" />
             Branch
           </div>
-          <div className="text-white font-medium truncate">{task?.target_branch || 'main'}</div>
+          <div className="text-white font-medium truncate">
+            {task?.target_branch || "main"}
+          </div>
         </Card>
         <Card>
           <div className="flex items-center gap-2 text-gray-500 text-xs mb-1">
@@ -180,7 +191,7 @@ export default function TaskDetailPage() {
             Max Cost
           </div>
           <div className="text-white font-medium">
-            {task?.max_cost ? `$${task.max_cost}` : 'Unlimited'}
+            {task?.max_cost ? `$${task.max_cost}` : "Unlimited"}
           </div>
         </Card>
         <Card>
@@ -188,30 +199,35 @@ export default function TaskDetailPage() {
             <Layers className="w-3 h-3" />
             Source
           </div>
-          <div className="text-white font-medium capitalize">{task?.source || 'web'}</div>
+          <div className="text-white font-medium capitalize">
+            {task?.source || "web"}
+          </div>
         </Card>
       </div>
 
       {/* Spec Preview Section */}
       {spec && (
         <div>
-          <h2 className="text-lg font-semibold text-white mb-3">Specification</h2>
+          <h2 className="text-lg font-semibold text-white mb-3">
+            Specification
+          </h2>
           <TaskSpecPreview taskId={taskId} spec={spec} />
         </div>
       )}
 
       {/* Generate Spec button for backlog */}
-      {task?.status === 'backlog' && !spec && (
+      {task?.status === "backlog" && !spec && (
         <Card className="p-6 text-center">
           <div className="text-gray-500 mb-3">
-            No specification generated yet. Generate one to review the implementation plan.
+            No specification generated yet. Generate one to review the
+            implementation plan.
           </div>
           <button
             onClick={() => generateSpecMutation.mutate()}
             disabled={generateSpecMutation.isPending}
             className="btn-primary"
           >
-            {generateSpecMutation.isPending ? 'Generating...' : 'Generate Spec'}
+            {generateSpecMutation.isPending ? "Generating..." : "Generate Spec"}
           </button>
         </Card>
       )}
@@ -265,7 +281,7 @@ export default function TaskDetailPage() {
                 <div className="flex items-center gap-3">
                   <StatusBadge status={run.status} />
                   <span className="text-white font-medium capitalize">
-                    {run.agent_role.replace('_', ' ')}
+                    {run.agent_role.replace("_", " ")}
                   </span>
                   {run.model && (
                     <span className="text-xs text-gray-500">{run.model}</span>
@@ -273,7 +289,9 @@ export default function TaskDetailPage() {
                 </div>
                 <div className="flex items-center gap-4 text-sm text-gray-500">
                   <CostBadge cost={run.total_cost} />
-                  <span>{run.prompt_tokens + run.completion_tokens} tokens</span>
+                  <span>
+                    {run.prompt_tokens + run.completion_tokens} tokens
+                  </span>
                   <TimeAgo date={run.created_at} />
                   <Link
                     href={`/runs/${run.id}`}
@@ -302,21 +320,21 @@ export default function TaskDetailPage() {
               <Card key={approval.id}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    {approval.response === 'approved' ? (
+                    {approval.response === "approved" ? (
                       <CheckCircle className="w-5 h-5 text-green-400" />
-                    ) : approval.response === 'rejected' ? (
+                    ) : approval.response === "rejected" ? (
                       <XCircle className="w-5 h-5 text-red-400" />
                     ) : (
                       <Clock className="w-5 h-5 text-yellow-400" />
                     )}
                     <div>
                       <span className="text-white font-medium capitalize">
-                        {approval.approval_type.replace('_', ' ')}
+                        {approval.approval_type.replace("_", " ")}
                       </span>
                       <div className="text-xs text-gray-500">
                         {approval.response
                           ? `${approval.response} by ${approval.responded_by}`
-                          : 'Pending approval'}
+                          : "Pending approval"}
                       </div>
                     </div>
                   </div>
@@ -329,9 +347,11 @@ export default function TaskDetailPage() {
       )}
 
       {/* PR Section */}
-      {task?.status === 'pr_created' && (
+      {task?.status === "pr_created" && (
         <div>
-          <h2 className="text-lg font-semibold text-white mb-3">Pull Request</h2>
+          <h2 className="text-lg font-semibold text-white mb-3">
+            Pull Request
+          </h2>
           <Card>
             <div className="flex items-center gap-3">
               <GitPullRequest className="w-5 h-5 text-purple-400" />

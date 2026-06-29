@@ -129,6 +129,8 @@ type dockerSession struct {
 }
 
 // NewDockerProvider creates a new Docker runtime provider.
+// The base directory is ensured to exist and, when possible, backed by tmpfs
+// so that repository staging data stays in RAM.
 func NewDockerProvider(baseDir string) (*DockerProvider, error) {
 	image := os.Getenv("DOCKER_WORKSPACE_IMAGE")
 	if image == "" {
@@ -146,6 +148,7 @@ func NewDockerProvider(baseDir string) (*DockerProvider, error) {
 	if pidsLimit == "" {
 		pidsLimit = defaultDockerPIDs
 	}
+	baseDir, _ = EnsureTmpfsBaseDir(baseDir)
 	return &DockerProvider{
 		baseDir:     baseDir,
 		image:       image,

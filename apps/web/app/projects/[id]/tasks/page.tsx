@@ -1,14 +1,14 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { useParams } from 'next/navigation';
-import { TaskBoard } from '@/components/task/TaskBoard';
-import { CreateTaskDialog } from '@/components/task/CreateTaskDialog';
-import { Loading } from '@/components/common/Loading';
-import Link from 'next/link';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { Loading } from "@/components/common/Loading";
+import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
+import { TaskBoard } from "@/components/task/TaskBoard";
+import { api } from "@/lib/api";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Plus } from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import { useState } from "react";
 
 export default function ProjectTaskBoardPage() {
   const params = useParams();
@@ -17,13 +17,13 @@ export default function ProjectTaskBoardPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   const { data: tasks, isLoading: tasksLoading } = useQuery({
-    queryKey: ['tasks', projectId],
+    queryKey: ["tasks", projectId],
     queryFn: () => api.listTasks(projectId),
     enabled: !!projectId,
   });
 
   const { data: repos, isLoading: reposLoading } = useQuery({
-    queryKey: ['repos', projectId],
+    queryKey: ["repos", projectId],
     queryFn: () => api.listRepos(projectId),
     enabled: !!projectId,
   });
@@ -69,7 +69,7 @@ export default function ProjectTaskBoardPage() {
         open={dialogOpen}
         onClose={() => {
           setDialogOpen(false);
-          queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
+          queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
         }}
       />
     </div>

@@ -1,23 +1,21 @@
-'use client';
+"use client";
 
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { useStore } from '@/lib/store';
-import { useParams } from 'next/navigation';
-import Link from 'next/link';
-import { Card } from '@/components/ui/card';
-import { Tabs } from '@/components/ui/tabs';
-import { Loading } from '@/components/common/Loading';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { TimeAgo } from '@/components/common/TimeAgo';
+import { Loading } from "@/components/common/Loading";
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { TimeAgo } from "@/components/common/TimeAgo";
+import { Card } from "@/components/ui/card";
+import { api } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   FolderGit,
   GitBranch,
   ListTodo,
   Settings,
-  ArrowLeft,
-  ExternalLink,
-} from 'lucide-react';
+} from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -25,18 +23,18 @@ export default function ProjectDetailPage() {
   const { setSelectedProject } = useStore();
 
   const { data: project, isLoading: projectLoading } = useQuery({
-    queryKey: ['project', projectId],
+    queryKey: ["project", projectId],
     queryFn: () => api.getProject(projectId),
   });
 
   const { data: repos } = useQuery({
-    queryKey: ['repos', projectId],
+    queryKey: ["repos", projectId],
     queryFn: () => api.listRepos(projectId),
     enabled: !!projectId,
   });
 
   const { data: tasks } = useQuery({
-    queryKey: ['tasks', projectId],
+    queryKey: ["tasks", projectId],
     queryFn: () => api.listTasks(projectId),
     enabled: !!projectId,
   });
@@ -46,11 +44,11 @@ export default function ProjectDetailPage() {
   const repoList = repos?.data || repos || [];
   const taskList = tasks?.data || tasks || [];
 
-  const tabs = [
-    { id: 'overview', label: 'Overview', icon: FolderGit },
-    { id: 'tasks', label: 'Tasks', icon: ListTodo },
-    { id: 'repositories', label: 'Repositories', icon: GitBranch },
-    { id: 'settings', label: 'Settings', icon: Settings },
+  const _tabs = [
+    { id: "overview", label: "Overview", icon: FolderGit },
+    { id: "tasks", label: "Tasks", icon: ListTodo },
+    { id: "repositories", label: "Repositories", icon: GitBranch },
+    { id: "settings", label: "Settings", icon: Settings },
   ];
 
   return (
@@ -76,7 +74,9 @@ export default function ProjectDetailPage() {
           <div className="flex items-center gap-3">
             <ListTodo className="w-5 h-5 text-blue-400" />
             <div>
-              <div className="text-2xl font-bold text-white">{taskList.length}</div>
+              <div className="text-2xl font-bold text-white">
+                {taskList.length}
+              </div>
               <div className="text-xs text-gray-500">Tasks</div>
             </div>
           </div>
@@ -85,7 +85,9 @@ export default function ProjectDetailPage() {
           <div className="flex items-center gap-3">
             <GitBranch className="w-5 h-5 text-green-400" />
             <div>
-              <div className="text-2xl font-bold text-white">{repoList.length}</div>
+              <div className="text-2xl font-bold text-white">
+                {repoList.length}
+              </div>
               <div className="text-xs text-gray-500">Repositories</div>
             </div>
           </div>
@@ -95,7 +97,7 @@ export default function ProjectDetailPage() {
             <FolderGit className="w-5 h-5 text-purple-400" />
             <div>
               <div className="text-2xl font-bold text-white">
-                {taskList.filter((t: any) => t.status === 'running').length}
+                {taskList.filter((t: any) => t.status === "running").length}
               </div>
               <div className="text-xs text-gray-500">Active Runs</div>
             </div>
@@ -109,7 +111,10 @@ export default function ProjectDetailPage() {
           <ListTodo className="w-4 h-4 mr-2" />
           View Task Board
         </Link>
-        <Link href={`/projects/${projectId}/settings`} className="btn-secondary">
+        <Link
+          href={`/projects/${projectId}/settings`}
+          className="btn-secondary"
+        >
           <Settings className="w-4 h-4 mr-2" />
           Project Settings
         </Link>
@@ -145,7 +150,9 @@ export default function ProjectDetailPage() {
 
       {/* Connected Repos */}
       <div>
-        <h2 className="text-lg font-semibold text-white mb-3">Connected Repositories</h2>
+        <h2 className="text-lg font-semibold text-white mb-3">
+          Connected Repositories
+        </h2>
         <div className="space-y-2">
           {repoList.map((repo: any) => (
             <Card key={repo.id}>
@@ -153,8 +160,12 @@ export default function ProjectDetailPage() {
                 <div className="flex items-center gap-3">
                   <GitBranch className="w-5 h-5 text-gray-400" />
                   <div>
-                    <div className="text-white font-medium">{repo.full_name}</div>
-                    <div className="text-xs text-gray-500">{repo.clone_url}</div>
+                    <div className="text-white font-medium">
+                      {repo.full_name}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {repo.clone_url}
+                    </div>
                   </div>
                 </div>
                 <StatusBadge status={repo.connection_status} />

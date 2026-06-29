@@ -1,15 +1,9 @@
-'use client';
+"use client";
 
-import { useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import {
-  Shield,
-  Plus,
-  Edit3,
-  Trash2,
-  FileText,
-} from 'lucide-react';
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import { Edit3, Plus, Shield, Trash2 } from "lucide-react";
+import { useState } from "react";
 
 interface PolicyItem {
   id: string;
@@ -23,46 +17,51 @@ interface PolicyItem {
 export default function PoliciesPage() {
   const [policies, setPolicies] = useState<PolicyItem[]>([
     {
-      id: '1',
-      name: 'Protect main branch',
-      resource_type: 'git',
-      action: 'write',
-      effect: 'admin_only',
+      id: "1",
+      name: "Protect main branch",
+      resource_type: "git",
+      action: "write",
+      effect: "admin_only",
       priority: 100,
     },
     {
-      id: '2',
-      name: 'No production secrets',
-      resource_type: 'secret',
-      action: 'read',
-      effect: 'deny',
+      id: "2",
+      name: "No production secrets",
+      resource_type: "secret",
+      action: "read",
+      effect: "deny",
       priority: 90,
     },
     {
-      id: '3',
-      name: 'Review destructive commands',
-      resource_type: 'command',
-      action: 'execute',
-      effect: 'ask',
+      id: "3",
+      name: "Review destructive commands",
+      resource_type: "command",
+      action: "execute",
+      effect: "ask",
       priority: 80,
     },
     {
-      id: '4',
-      name: 'Allow file reads',
-      resource_type: 'file',
-      action: 'read',
-      effect: 'allow',
+      id: "4",
+      name: "Allow file reads",
+      resource_type: "file",
+      action: "read",
+      effect: "allow",
       priority: 10,
     },
   ]);
 
   const getEffectColor = (effect: string) => {
     switch (effect) {
-      case 'allow': return 'bg-green-500/10 text-green-400 border-green-500/30';
-      case 'deny': return 'bg-red-500/10 text-red-400 border-red-500/30';
-      case 'ask': return 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30';
-      case 'admin_only': return 'bg-purple-500/10 text-purple-400 border-purple-500/30';
-      default: return 'bg-gray-500/10 text-gray-400';
+      case "allow":
+        return "bg-green-500/10 text-green-400 border-green-500/30";
+      case "deny":
+        return "bg-red-500/10 text-red-400 border-red-500/30";
+      case "ask":
+        return "bg-yellow-500/10 text-yellow-400 border-yellow-500/30";
+      case "admin_only":
+        return "bg-purple-500/10 text-purple-400 border-purple-500/30";
+      default:
+        return "bg-gray-500/10 text-gray-400";
     }
   };
 
@@ -89,7 +88,9 @@ export default function PoliciesPage() {
                 <Shield className="w-5 h-5 text-gray-400" />
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-white font-medium">{policy.name}</span>
+                    <span className="text-white font-medium">
+                      {policy.name}
+                    </span>
                     <Badge
                       variant="outline"
                       className={getEffectColor(policy.effect)}

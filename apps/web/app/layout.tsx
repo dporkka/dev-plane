@@ -1,12 +1,12 @@
-import type { Metadata } from 'next';
-import './globals.css';
-import { Providers } from './layout/providers';
-import { Sidebar } from './layout/Sidebar';
-import { TopBar } from './layout/TopBar';
+import type { Metadata } from "next";
+import "./globals.css";
+import { Sidebar } from "./layout/Sidebar";
+import { TopBar } from "./layout/TopBar";
+import { Providers } from "./layout/providers";
 
 export const metadata: Metadata = {
-  title: 'AI Dev Control Plane',
-  description: 'Control plane for AI software teams',
+  title: "AI Dev Control Plane",
+  description: "Control plane for AI software teams",
 };
 
 export default function RootLayout({

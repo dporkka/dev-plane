@@ -8,9 +8,9 @@
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
         test test-api test-cli test-packages test-race test-sdk \
-        lint lint-go lint-web lint-sdk \
+        lint lint-go lint-web lint-fix-web lint-sdk \
         build build-api build-cli build-worker build-runner build-web build-sdk \
-        clean help
+        clean help install-tools
 
 # --- Variables ---------------------------------------------------------------
 
@@ -255,8 +255,17 @@ test-coverage: ## Run tests with coverage report
 
 lint: lint-go lint-web ## Run all linters (Go + frontend)
 
-lint-go: ## Run Go vet across all Go modules
-	@echo "$(BLUE)[lint]$(RESET) Running Go vet..."
+lint-go: ## Run golangci-lint across all Go modules
+	@echo "$(BLUE)[lint]$(RESET) Running golangci-lint..."
+	@for pkg in $(GO_PACKAGES); do \
+		echo "  --> $$pkg"; \
+		cd $$pkg && golangci-lint run ./... && cd - > /dev/null || exit 1; \
+	done
+	@for app in $(GO_APPS); do \
+		echo "  --> $$app"; \
+		cd $$app && golangci-lint run ./... && cd - > /dev/null || exit 1; \
+	done
+	@echo "$(BLUE)[lint]$(RESET) Running Go vet as secondary check..."
 	@for pkg in $(GO_PACKAGES); do \
 		echo "  --> $$pkg"; \
 		cd $$pkg && go vet ./... && cd - > /dev/null || exit 1; \
@@ -270,6 +279,10 @@ lint-go: ## Run Go vet across all Go modules
 lint-web: ## Run npm lint in frontend
 	@echo "$(BLUE)[lint]$(RESET) Running web lint..."
 	cd apps/web && npm run lint
+
+lint-fix-web: ## Run web linter with auto-fix
+	@echo "$(BLUE)[lint]$(RESET) Running web lint with auto-fix..."
+	cd apps/web && npm run lint:fix
 
 lint-sdk: ## Run TypeScript SDK typecheck
 	@echo "$(BLUE)[lint]$(RESET) Running SDK typecheck..."
@@ -335,11 +348,12 @@ clean-all: clean ## Remove all artifacts including Docker volumes (DESTRUCTIVE)
 
 # --- Utility targets ---------------------------------------------------------
 
-install-tools: ## Install development tools (Air, Goose, SQLC)
+install-tools: ## Install development tools (Air, Goose, SQLC, golangci-lint)
 	@echo "$(BLUE)[tools]$(RESET) Installing dev tools..."
 	go install github.com/air-verse/air@latest
 	go install github.com/pressly/goose/v3/cmd/goose@latest
 	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	@echo "$(GREEN)Dev tools installed.$(RESET)"
 
 deps: ## Download and verify Go module dependencies

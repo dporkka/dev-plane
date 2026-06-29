@@ -1,15 +1,15 @@
-'use client';
+"use client";
 
-import { type FormEvent, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { Button } from '@/components/ui/button';
-import { Dialog } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Select } from '@/components/ui/select';
-import { Textarea } from '@/components/ui/textarea';
-import { useToast } from '@/components/ui/toast';
-import type { Priority, Repository, RiskLevel } from '@/lib/types';
+import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Select } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
+import { api } from "@/lib/api";
+import type { Priority, Repository, RiskLevel } from "@/lib/types";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { type FormEvent, useState } from "react";
 
 interface CreateTaskDialogProps {
   projectId: string;
@@ -19,17 +19,17 @@ interface CreateTaskDialogProps {
 }
 
 const priorityOptions: { value: Priority; label: string }[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'urgent', label: 'Urgent' },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "urgent", label: "Urgent" },
 ];
 
 const riskOptions: { value: RiskLevel; label: string }[] = [
-  { value: 'low', label: 'Low' },
-  { value: 'medium', label: 'Medium' },
-  { value: 'high', label: 'High' },
-  { value: 'critical', label: 'Critical' },
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+  { value: "critical", label: "Critical" },
 ];
 
 export function CreateTaskDialog({
@@ -40,13 +40,13 @@ export function CreateTaskDialog({
 }: CreateTaskDialogProps) {
   const queryClient = useQueryClient();
   const { addToast } = useToast();
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [repositoryId, setRepositoryId] = useState('');
-  const [priority, setPriority] = useState<Priority>('medium');
-  const [riskLevel, setRiskLevel] = useState<RiskLevel>('low');
-  const [targetBranch, setTargetBranch] = useState('main');
-  const [maxCost, setMaxCost] = useState('');
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [repositoryId, setRepositoryId] = useState("");
+  const [priority, setPriority] = useState<Priority>("medium");
+  const [riskLevel, setRiskLevel] = useState<RiskLevel>("low");
+  const [targetBranch, setTargetBranch] = useState("main");
+  const [maxCost, setMaxCost] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
 
   const createTask = useMutation({
@@ -57,29 +57,31 @@ export function CreateTaskDialog({
         description: description.trim(),
         priority,
         risk_level: riskLevel,
-        target_branch: targetBranch.trim() || 'main',
+        target_branch: targetBranch.trim() || "main",
         max_cost: maxCost ? Number(maxCost) : undefined,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
-      addToast('Task created successfully', 'success');
+      await queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
+      addToast("Task created successfully", "success");
       reset();
       onClose();
     },
     onError: (error) => {
-      setFormError(error instanceof Error ? error.message : 'Failed to create task.');
-      addToast('Failed to create task', 'error');
+      setFormError(
+        error instanceof Error ? error.message : "Failed to create task.",
+      );
+      addToast("Failed to create task", "error");
     },
   });
 
   function reset() {
-    setTitle('');
-    setDescription('');
-    setRepositoryId('');
-    setPriority('medium');
-    setRiskLevel('low');
-    setTargetBranch('main');
-    setMaxCost('');
+    setTitle("");
+    setDescription("");
+    setRepositoryId("");
+    setPriority("medium");
+    setRiskLevel("low");
+    setTargetBranch("main");
+    setMaxCost("");
     setFormError(null);
   }
 
@@ -92,11 +94,11 @@ export function CreateTaskDialog({
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!title.trim()) {
-      setFormError('Title is required.');
+      setFormError("Title is required.");
       return;
     }
     if (!repositoryId) {
-      setFormError('Select a repository for this task.');
+      setFormError("Select a repository for this task.");
       return;
     }
     setFormError(null);
@@ -112,7 +114,10 @@ export function CreateTaskDialog({
     <Dialog open={open} onClose={handleClose} title="New Task">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
-          <label htmlFor="task-title" className="block text-sm font-medium text-gray-300">
+          <label
+            htmlFor="task-title"
+            className="block text-sm font-medium text-gray-300"
+          >
             Title
           </label>
           <Input
@@ -126,7 +131,10 @@ export function CreateTaskDialog({
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="task-repo" className="block text-sm font-medium text-gray-300">
+          <label
+            htmlFor="task-repo"
+            className="block text-sm font-medium text-gray-300"
+          >
             Repository
           </label>
           <Select
@@ -135,14 +143,23 @@ export function CreateTaskDialog({
             onChange={(event) => setRepositoryId(event.target.value)}
             disabled={createTask.isPending || repos.length === 0}
             options={[
-              { value: '', label: repos.length === 0 ? 'No repositories connected' : 'Select a repository' },
+              {
+                value: "",
+                label:
+                  repos.length === 0
+                    ? "No repositories connected"
+                    : "Select a repository",
+              },
               ...repoOptions,
             ]}
           />
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="task-description" className="block text-sm font-medium text-gray-300">
+          <label
+            htmlFor="task-description"
+            className="block text-sm font-medium text-gray-300"
+          >
             Description
           </label>
           <Textarea
@@ -156,7 +173,10 @@ export function CreateTaskDialog({
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label htmlFor="task-priority" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="task-priority"
+              className="block text-sm font-medium text-gray-300"
+            >
               Priority
             </label>
             <Select
@@ -169,13 +189,18 @@ export function CreateTaskDialog({
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="task-risk" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="task-risk"
+              className="block text-sm font-medium text-gray-300"
+            >
               Risk level
             </label>
             <Select
               id="task-risk"
               value={riskLevel}
-              onChange={(event) => setRiskLevel(event.target.value as RiskLevel)}
+              onChange={(event) =>
+                setRiskLevel(event.target.value as RiskLevel)
+              }
               disabled={createTask.isPending}
               options={riskOptions}
             />
@@ -184,7 +209,10 @@ export function CreateTaskDialog({
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <label htmlFor="task-branch" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="task-branch"
+              className="block text-sm font-medium text-gray-300"
+            >
               Target branch
             </label>
             <Input
@@ -197,7 +225,10 @@ export function CreateTaskDialog({
           </div>
 
           <div className="space-y-2">
-            <label htmlFor="task-cost" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="task-cost"
+              className="block text-sm font-medium text-gray-300"
+            >
               Max cost (USD)
             </label>
             <Input
@@ -220,11 +251,19 @@ export function CreateTaskDialog({
         )}
 
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="secondary" onClick={handleClose} disabled={createTask.isPending}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleClose}
+            disabled={createTask.isPending}
+          >
             Cancel
           </Button>
-          <Button type="submit" disabled={createTask.isPending || repos.length === 0}>
-            {createTask.isPending ? 'Creating...' : 'Create Task'}
+          <Button
+            type="submit"
+            disabled={createTask.isPending || repos.length === 0}
+          >
+            {createTask.isPending ? "Creating..." : "Create Task"}
           </Button>
         </div>
       </form>

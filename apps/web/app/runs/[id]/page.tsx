@@ -1,32 +1,29 @@
-'use client';
+"use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useParams } from 'next/navigation';
-import { useQuery } from '@tanstack/react-query';
-import { api, type SSELike } from '@/lib/api';
-import type { AgentRun, AgentStep } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { Loading } from '@/components/common/Loading';
-import { StatusBadge } from '@/components/common/StatusBadge';
-import { CostBadge } from '@/components/run/CostBadge';
-import { TimeAgo } from '@/components/common/TimeAgo';
-import { RunTimeline } from '@/components/run/RunTimeline';
-import { Terminal } from '@/components/run/Terminal';
+import { Loading } from "@/components/common/Loading";
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { CostBadge } from "@/components/run/CostBadge";
+import { RunTimeline } from "@/components/run/RunTimeline";
+import { Terminal } from "@/components/run/Terminal";
+import { Card } from "@/components/ui/card";
+import { type SSELike, api } from "@/lib/api";
+import type { AgentRun, AgentStep } from "@/lib/types";
+import { useQuery } from "@tanstack/react-query";
 import {
+  Activity,
   ArrowLeft,
   Bot,
-  Cpu,
-  Zap,
-  DollarSign,
   Clock,
-  Pause,
-  Play,
+  Cpu,
+  DollarSign,
   RotateCcw,
   ScrollText,
-  Activity,
   StopCircle,
-} from 'lucide-react';
-import Link from 'next/link';
+  Zap,
+} from "lucide-react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 
 const roleIcons: Record<string, React.ElementType> = {
   planner: Cpu,
@@ -40,7 +37,9 @@ const roleIcons: Record<string, React.ElementType> = {
 
 function useLiveSteps(runId: string, isRunning: boolean) {
   const [liveSteps, setLiveSteps] = useState<AgentStep[]>([]);
-  const [connectionStatus, setConnectionStatus] = useState<'connecting' | 'connected' | 'disconnected' | 'complete'>('connecting');
+  const [connectionStatus, setConnectionStatus] = useState<
+    "connecting" | "connected" | "disconnected" | "complete"
+  >("connecting");
   const eventSourceRef = useRef<SSELike | null>(null);
   const reconnectCount = useRef(0);
 
@@ -49,13 +48,13 @@ function useLiveSteps(runId: string, isRunning: boolean) {
       eventSourceRef.current.close();
     }
 
-    setConnectionStatus('connecting');
+    setConnectionStatus("connecting");
 
     const sse = api.streamRun(runId);
     eventSourceRef.current = sse;
 
     sse.onopen = () => {
-      setConnectionStatus('connected');
+      setConnectionStatus("connected");
       reconnectCount.current = 0;
     };
 
@@ -64,7 +63,7 @@ function useLiveSteps(runId: string, isRunning: boolean) {
         const parsed = JSON.parse(event.data);
 
         switch (parsed.type) {
-          case 'step': {
+          case "step": {
             const newStep = parsed.data as AgentStep;
             setLiveSteps((prev) => {
               const exists = prev.find((s) => s.id === newStep.id);
@@ -75,24 +74,24 @@ function useLiveSteps(runId: string, isRunning: boolean) {
             });
             break;
           }
-          case 'complete':
-            setConnectionStatus('complete');
+          case "complete":
+            setConnectionStatus("complete");
             sse.close();
             break;
-          case 'error':
-            console.error('SSE error:', parsed.data);
+          case "error":
+            console.error("SSE error:", parsed.data);
             break;
         }
       } catch (err) {
-        console.error('Failed to parse SSE event:', err);
+        console.error("Failed to parse SSE event:", err);
       }
     };
 
     sse.onerror = () => {
-      setConnectionStatus('disconnected');
+      setConnectionStatus("disconnected");
       sse.close();
       if (reconnectCount.current < 5) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectCount.current), 30000);
+        const delay = Math.min(1000 * 2 ** reconnectCount.current, 30000);
         setTimeout(() => {
           reconnectCount.current += 1;
           connect();
@@ -105,7 +104,7 @@ function useLiveSteps(runId: string, isRunning: boolean) {
 
   useEffect(() => {
     if (!isRunning) {
-      setConnectionStatus('complete');
+      setConnectionStatus("complete");
       return;
     }
 
@@ -124,20 +123,20 @@ export default function RunDetailPage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   const { data: run, isLoading: runLoading } = useQuery<AgentRun>({
-    queryKey: ['run', runId],
+    queryKey: ["run", runId],
     queryFn: () => api.getRun(runId),
     enabled: !!runId,
     refetchInterval: (query) =>
-      query.state.data?.status === 'running' ? 5000 : false,
+      query.state.data?.status === "running" ? 5000 : false,
   });
 
   const { data: stepsData } = useQuery({
-    queryKey: ['run-steps', runId],
+    queryKey: ["run-steps", runId],
     queryFn: () => api.getRunSteps(runId),
     enabled: !!runId,
   });
 
-  const isRunning = run?.status === 'running';
+  const isRunning = run?.status === "running";
   const { liveSteps, connectionStatus } = useLiveSteps(runId, isRunning);
 
   // Merge stored steps with live steps
@@ -149,7 +148,7 @@ export default function RunDetailPage() {
   const allSteps: AgentStep[] = React.useMemo(() => {
     if (liveSteps.length === 0) return storedSteps;
 
-    const storedIds = new Set(storedSteps.map((s) => s.id));
+    const _storedIds = new Set(storedSteps.map((s) => s.id));
     const merged = [...storedSteps];
 
     liveSteps.forEach((liveStep) => {
@@ -175,7 +174,7 @@ export default function RunDetailPage() {
         if (s.exit_code !== undefined && s.exit_code !== null) {
           lines.push(`[exit code: ${s.exit_code}]`);
         }
-        return lines.join('\n');
+        return lines.join("\n");
       });
   }, [allSteps]);
 
@@ -204,7 +203,7 @@ export default function RunDetailPage() {
     try {
       await api.cancelRun(runId);
     } catch (err) {
-      console.error('Failed to cancel run:', err);
+      console.error("Failed to cancel run:", err);
     }
   };
 
@@ -217,7 +216,7 @@ export default function RunDetailPage() {
     );
   }
 
-  const Icon = roleIcons[run.agent_role || 'implementer'] || Bot;
+  const Icon = roleIcons[run.agent_role || "implementer"] || Bot;
   const mins = Math.floor(elapsedSeconds / 60);
   const secs = elapsedSeconds % 60;
 
@@ -226,45 +225,45 @@ export default function RunDetailPage() {
       {/* Header */}
       <div>
         <Link
-          href={run?.task_id ? `/tasks/${run.task_id}` : '/dashboard'}
+          href={run?.task_id ? `/tasks/${run.task_id}` : "/dashboard"}
           className="text-sm text-gray-500 hover:text-gray-300 flex items-center gap-1 mb-3"
         >
           <ArrowLeft className="w-4 h-4" />
-          {run?.task_id ? 'Back to Task' : 'Back to Dashboard'}
+          {run?.task_id ? "Back to Task" : "Back to Dashboard"}
         </Link>
 
         <div className="flex items-start justify-between flex-wrap gap-4">
           <div className="flex items-center gap-4">
             <div
               className={`p-2 rounded-lg ${
-                run?.status === 'running'
-                  ? 'bg-blue-500/10'
-                  : run?.status === 'completed'
-                  ? 'bg-green-500/10'
-                  : run?.status === 'failed'
-                  ? 'bg-red-500/10'
-                  : 'bg-gray-800'
+                run?.status === "running"
+                  ? "bg-blue-500/10"
+                  : run?.status === "completed"
+                    ? "bg-green-500/10"
+                    : run?.status === "failed"
+                      ? "bg-red-500/10"
+                      : "bg-gray-800"
               }`}
             >
               <Icon
                 className={`w-6 h-6 ${
-                  run?.status === 'running'
-                    ? 'text-blue-400'
-                    : run?.status === 'completed'
-                    ? 'text-green-400'
-                    : run?.status === 'failed'
-                    ? 'text-red-400'
-                    : 'text-gray-400'
+                  run?.status === "running"
+                    ? "text-blue-400"
+                    : run?.status === "completed"
+                      ? "text-green-400"
+                      : run?.status === "failed"
+                        ? "text-red-400"
+                        : "text-gray-400"
                 }`}
               />
             </div>
             <div>
               <div className="flex items-center gap-3 mb-1">
                 <h1 className="text-2xl font-bold text-white capitalize">
-                  {run?.agent_role?.replace('_', ' ') || 'Run'}
+                  {run?.agent_role?.replace("_", " ") || "Run"}
                 </h1>
                 <StatusBadge status={run.status} />
-                {connectionStatus === 'connected' && (
+                {connectionStatus === "connected" && (
                   <span className="text-xs text-green-400 flex items-center gap-1">
                     <span className="relative flex h-2 w-2">
                       <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
@@ -291,7 +290,7 @@ export default function RunDetailPage() {
                 Cancel
               </button>
             )}
-            {run?.status === 'failed' && (
+            {run?.status === "failed" && (
               <button className="btn-secondary flex items-center gap-2">
                 <RotateCcw className="w-4 h-4" />
                 Retry
@@ -316,7 +315,9 @@ export default function RunDetailPage() {
             Tokens
           </div>
           <div className="text-white font-medium">
-            {((run?.prompt_tokens || 0) + (run?.completion_tokens || 0)).toLocaleString()}
+            {(
+              (run?.prompt_tokens || 0) + (run?.completion_tokens || 0)
+            ).toLocaleString()}
           </div>
         </Card>
         <Card>
@@ -325,7 +326,7 @@ export default function RunDetailPage() {
             Duration
           </div>
           <div className="text-white font-medium">
-            {mins}:{secs.toString().padStart(2, '0')}
+            {mins}:{secs.toString().padStart(2, "0")}
           </div>
         </Card>
         <Card>
@@ -345,7 +346,7 @@ export default function RunDetailPage() {
       </div>
 
       {/* Connection status */}
-      {connectionStatus === 'disconnected' && isRunning && (
+      {connectionStatus === "disconnected" && isRunning && (
         <Card className="p-3 bg-yellow-500/10 border-yellow-500/30">
           <div className="text-sm text-yellow-400 flex items-center gap-2">
             <Clock className="w-4 h-4" />
@@ -356,7 +357,11 @@ export default function RunDetailPage() {
 
       {/* Timeline */}
       {run && (
-        <RunTimeline run={run} steps={allSteps} isLive={isRunning && connectionStatus === 'connected'} />
+        <RunTimeline
+          run={run}
+          steps={allSteps}
+          isLive={isRunning && connectionStatus === "connected"}
+        />
       )}
 
       {/* Terminal */}

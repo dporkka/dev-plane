@@ -1,8 +1,8 @@
-'use client';
+"use client";
 
-import React from 'react';
-import { cn } from '@/lib/utils';
-import { X } from 'lucide-react';
+import { cn } from "@/lib/utils";
+import { X } from "lucide-react";
+import type React from "react";
 
 export interface EditorTab {
   id: string;
@@ -46,10 +46,10 @@ export function WorkspaceTabs({
             key={tab.id}
             onClick={() => onSelectEditorTab(tab.id)}
             className={cn(
-              'group flex items-center gap-1.5 px-3 py-2 text-xs border-r border-[#30363d] transition-colors min-w-0',
+              "group flex items-center gap-1.5 px-3 py-2 text-xs border-r border-[#30363d] transition-colors min-w-0",
               activeEditorTab === tab.id
-                ? 'bg-[#0d1117] text-white border-b-0'
-                : 'text-gray-500 hover:text-gray-300 hover:bg-[#161b22]'
+                ? "bg-[#0d1117] text-white border-b-0"
+                : "text-gray-500 hover:text-gray-300 hover:bg-[#161b22]",
             )}
           >
             <span className="truncate max-w-[120px]">{tab.label}</span>
@@ -75,10 +75,10 @@ export function WorkspaceTabs({
               key={tab.id}
               onClick={() => onSelectRightTab(tab.id)}
               className={cn(
-                'flex items-center gap-1.5 px-3 py-2 text-xs border-l border-[#30363d] transition-colors',
+                "flex items-center gap-1.5 px-3 py-2 text-xs border-l border-[#30363d] transition-colors",
                 activeRightTab === tab.id
-                  ? 'bg-[#0d1117] text-blue-400'
-                  : 'text-gray-500 hover:text-gray-300 hover:bg-[#161b22]'
+                  ? "bg-[#0d1117] text-blue-400"
+                  : "text-gray-500 hover:text-gray-300 hover:bg-[#161b22]",
               )}
               title={tab.label}
             >

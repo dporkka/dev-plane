@@ -1,5 +1,5 @@
-import React from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
+import type React from "react";
 
 interface Tab {
   id: string;
@@ -21,10 +21,10 @@ export function Tabs({ tabs, activeTab, onChange }: TabsProps) {
           key={tab.id}
           onClick={() => onChange(tab.id)}
           className={cn(
-            'flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors',
+            "flex items-center gap-2 px-4 py-2 text-sm font-medium border-b-2 transition-colors",
             activeTab === tab.id
-              ? 'border-blue-500 text-blue-400'
-              : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-700'
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-700",
           )}
         >
           {tab.icon && <tab.icon className="w-4 h-4" />}

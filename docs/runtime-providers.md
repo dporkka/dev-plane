@@ -58,6 +58,18 @@ Pending -> Ready -> Running -> Stopped/Error -> Destroyed
 | `error` | Workspace encountered an error |
 | `destroyed` | Workspace has been cleaned up |
 
+### RAM-Backed Workspace Storage
+
+Agent worktrees are ephemeral and short-lived, so the runtime attempts to keep workspace staging data in RAM using a tmpfs mount at `WORKSPACE_BASE_DIR`. When tmpfs is available, the `local` provider clones repositories and creates git worktrees directly in memory, and the `docker` provider stages repositories in memory before copying them into isolated container volumes.
+
+The mount is created automatically on the first call to create or look up a workspace and is shared across all workspaces for the lifetime of the process. If tmpfs cannot be mounted (non-Linux host, missing privileges, or the path is already tmpfs), the runtime falls back to regular disk storage and logs a warning.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Directory to back with tmpfs |
+| `WORKSPACE_TMPFS_SIZE` | _(unset)_ | Optional tmpfs size limit (e.g. `4g`, `50%`); defaults to half of RAM when unset |
+| `WORKSPACE_TMPFS_DISABLE` | _(unset)_ | Set to `1` or `true` to skip tmpfs mounting and use regular disk |
+
 ### Session Resource Limits
 
 | Resource | Default | Configurable |
@@ -101,6 +113,8 @@ Set via environment variables (or the runner/worker CLI flags `--workspace-runti
 |----------|---------|-------------|
 | `WORKSPACE_RUNTIME` | `local` | Provider name: `local` or `docker` |
 | `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Base directory for workspace staging |
+| `WORKSPACE_TMPFS_SIZE` | _(unset)_ | Optional tmpfs size (e.g. `4g`, `50%`) |
+| `WORKSPACE_TMPFS_DISABLE` | _(unset)_ | Set to `1` or `true` to use regular disk |
 | `DOCKER_WORKSPACE_IMAGE` | `alpine/git:latest` | Image used for workspace containers |
 | `DOCKER_WORKSPACE_MEMORY` | `512m` | Memory limit |
 | `DOCKER_WORKSPACE_CPUS` | `1.0` | CPU limit |
@@ -152,7 +166,9 @@ The Local runtime runs workspaces directly on the host machine. It is intended o
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WORKSPACE_RUNTIME` | `local` | Must be `local` |
-| `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Directory for local worktrees |
+| `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Directory for local worktrees; tmpfs-backed when possible |
+| `WORKSPACE_TMPFS_SIZE` | _(unset)_ | Optional tmpfs size limit |
+| `WORKSPACE_TMPFS_DISABLE` | _(unset)_ | Set to `1` or `true` to use regular disk |
 
 ### Implementation
 

@@ -32,7 +32,9 @@ type localSession struct {
 
 // NewLocalProvider creates a new local runtime provider.
 // baseDir is the root directory where all workspace worktrees will be stored.
+// The directory is ensured to exist and, when possible, backed by tmpfs.
 func NewLocalProvider(baseDir string) *LocalProvider {
+	baseDir, _ = EnsureTmpfsBaseDir(baseDir)
 	return &LocalProvider{
 		baseDir:  baseDir,
 		sessions: make(map[string]*localSession),

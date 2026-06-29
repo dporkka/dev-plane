@@ -1,15 +1,20 @@
-'use client';
+"use client";
 
-import React, { useState, useRef, useEffect } from 'react';
-import { cn } from '@/lib/utils';
+import { cn } from "@/lib/utils";
+import type React from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface DropdownMenuProps {
   trigger: React.ReactNode;
   children: React.ReactNode;
-  align?: 'left' | 'right';
+  align?: "left" | "right";
 }
 
-export function DropdownMenu({ trigger, children, align = 'right' }: DropdownMenuProps) {
+export function DropdownMenu({
+  trigger,
+  children,
+  align = "right",
+}: DropdownMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -19,8 +24,8 @@ export function DropdownMenu({ trigger, children, align = 'right' }: DropdownMen
         setOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
   return (
@@ -31,8 +36,8 @@ export function DropdownMenu({ trigger, children, align = 'right' }: DropdownMen
       {open && (
         <div
           className={cn(
-            'absolute z-50 mt-1 w-48 rounded-md border border-[#30363d] bg-[#161b22] shadow-lg py-1',
-            align === 'right' ? 'right-0' : 'left-0'
+            "absolute z-50 mt-1 w-48 rounded-md border border-[#30363d] bg-[#161b22] shadow-lg py-1",
+            align === "right" ? "right-0" : "left-0",
           )}
         >
           {children}
@@ -55,8 +60,8 @@ export function DropdownMenuItem({
     <button
       onClick={onClick}
       className={cn(
-        'w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-[#21262d] hover:text-gray-100 transition-colors flex items-center gap-2',
-        className
+        "w-full text-left px-3 py-2 text-sm text-gray-300 hover:bg-[#21262d] hover:text-gray-100 transition-colors flex items-center gap-2",
+        className,
       )}
     >
       {children}

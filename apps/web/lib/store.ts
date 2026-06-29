@@ -1,5 +1,12 @@
-import { create } from 'zustand';
-import type { Task, Project, Repository, AgentRun, User, Organization } from './types';
+import { create } from "zustand";
+import type {
+  AgentRun,
+  Organization,
+  Project,
+  Repository,
+  Task,
+  User,
+} from "./types";
 
 interface AppState {
   // Auth
@@ -67,24 +74,19 @@ export const useStore = create<AppState>((set) => ({
   setActiveRuns: (runs) => set({ activeRuns: runs }),
   updateRun: (run) =>
     set((state) => ({
-      activeRuns: state.activeRuns.map((r) =>
-        r.id === run.id ? run : r
-      ),
+      activeRuns: state.activeRuns.map((r) => (r.id === run.id ? run : r)),
     })),
 
   // UI state
   sidebarOpen: true,
-  toggleSidebar: () =>
-    set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+  toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
 
   // Tasks cache
   tasks: [],
   setTasks: (tasks) => set({ tasks }),
   updateTask: (task) =>
     set((state) => ({
-      tasks: state.tasks.map((t) =>
-        t.id === task.id ? task : t
-      ),
+      tasks: state.tasks.map((t) => (t.id === task.id ? task : t)),
     })),
 
   // Repositories cache

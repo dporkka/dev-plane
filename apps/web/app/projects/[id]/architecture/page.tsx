@@ -1,14 +1,14 @@
-'use client';
+"use client";
 
-import { useCallback } from 'react';
-import { useParams } from 'next/navigation';
-import dynamic from 'next/dynamic';
-import { GitFork, FolderTree } from 'lucide-react';
+import { FolderTree, GitFork } from "lucide-react";
+import dynamic from "next/dynamic";
+import { useParams } from "next/navigation";
+import { useCallback } from "react";
 
 const RepoArchitectureGraph = dynamic(
   () =>
-    import('@/components/graph/RepoArchitectureGraph').then(
-      (mod) => mod.RepoArchitectureGraph
+    import("@/components/graph/RepoArchitectureGraph").then(
+      (mod) => mod.RepoArchitectureGraph,
     ),
   {
     ssr: false,
@@ -17,21 +17,14 @@ const RepoArchitectureGraph = dynamic(
         <div className="text-gray-500">Loading repository graph...</div>
       </div>
     ),
-  }
+  },
 );
 
 export default function ProjectArchitecturePage() {
   const params = useParams();
   const projectId = params.id as string;
 
-  const handleNodeClick = useCallback(
-    (path: string) => {
-      // In a real implementation, this would navigate to a file viewer
-      // or open the file in the code editor
-      console.log(`Navigate to file: ${path} (project: ${projectId})`);
-    },
-    [projectId]
-  );
+  const handleNodeClick = useCallback((_path: string) => {}, [projectId]);
 
   return (
     <div className="space-y-4 h-full">
@@ -42,7 +35,7 @@ export default function ProjectArchitecturePage() {
             Repository Architecture
           </h1>
           <p className="text-gray-500 mt-1">
-            Interactive dependency graph for project{' '}
+            Interactive dependency graph for project{" "}
             <span className="text-blue-400 font-mono text-sm">{projectId}</span>
           </p>
         </div>
@@ -55,7 +48,7 @@ export default function ProjectArchitecturePage() {
 
       <div
         className="rounded-lg border border-gray-700 bg-[#0d1117] overflow-hidden"
-        style={{ height: 'calc(100vh - 200px)' }}
+        style={{ height: "calc(100vh - 200px)" }}
       >
         <RepoArchitectureGraph onNodeClick={handleNodeClick} />
       </div>
@@ -67,7 +60,9 @@ export default function ProjectArchitecturePage() {
             Directory Structure
           </h3>
           <p className="text-xs text-gray-400">
-            Directories are shown as blue nodes. Click to explore subdirectories. The graph shows the full hierarchy from root to leaf files.
+            Directories are shown as blue nodes. Click to explore
+            subdirectories. The graph shows the full hierarchy from root to leaf
+            files.
           </p>
         </div>
         <div className="card">
@@ -76,13 +71,17 @@ export default function ProjectArchitecturePage() {
             Import Dependencies
           </h3>
           <p className="text-xs text-gray-400">
-            Dashed violet edges show import relationships between packages. Orange dashed edges indicate inter-package dependencies.
+            Dashed violet edges show import relationships between packages.
+            Orange dashed edges indicate inter-package dependencies.
           </p>
         </div>
         <div className="card">
-          <h3 className="text-sm font-semibold text-gray-200 mb-2">File Types</h3>
+          <h3 className="text-sm font-semibold text-gray-200 mb-2">
+            File Types
+          </h3>
           <p className="text-xs text-gray-400">
-            Files are color-coded by extension: TypeScript (blue), Go (green), CSS (pink), JSON (yellow), SQL (orange), Markdown (gray).
+            Files are color-coded by extension: TypeScript (blue), Go (green),
+            CSS (pink), JSON (yellow), SQL (orange), Markdown (gray).
           </p>
         </div>
       </div>

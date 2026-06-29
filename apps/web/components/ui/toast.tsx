@@ -1,10 +1,11 @@
-'use client';
+"use client";
 
-import React, { createContext, useContext, useState, useCallback } from 'react';
-import { cn } from '@/lib/utils';
-import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react';
+import { cn } from "@/lib/utils";
+import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from "lucide-react";
+import type React from "react";
+import { createContext, useCallback, useContext, useState } from "react";
 
-type ToastType = 'success' | 'error' | 'info' | 'warning';
+type ToastType = "success" | "error" | "info" | "warning";
 
 interface Toast {
   id: string;
@@ -25,14 +26,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   const addToast = useCallback(
-    (message: string, type: ToastType = 'info', duration = 5000) => {
+    (message: string, type: ToastType = "info", duration = 5000) => {
       const id = Math.random().toString(36).substring(2, 9);
       setToasts((prev) => [...prev, { id, message, type, duration }]);
       setTimeout(() => {
         setToasts((prev) => prev.filter((t) => t.id !== id));
       }, duration);
     },
-    []
+    [],
   );
 
   const removeToast = useCallback((id: string) => {
@@ -66,18 +67,18 @@ function ToastItem({
   };
 
   const borders = {
-    success: 'border-green-500/30',
-    error: 'border-red-500/30',
-    info: 'border-blue-500/30',
-    warning: 'border-yellow-500/30',
+    success: "border-green-500/30",
+    error: "border-red-500/30",
+    info: "border-blue-500/30",
+    warning: "border-yellow-500/30",
   };
 
   return (
     <div
       className={cn(
-        'flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg',
-        'bg-[#161b22] min-w-[300px] max-w-[400px]',
-        borders[toast.type]
+        "flex items-center gap-3 px-4 py-3 rounded-lg border shadow-lg",
+        "bg-[#161b22] min-w-[300px] max-w-[400px]",
+        borders[toast.type],
       )}
     >
       {icons[toast.type]}
@@ -95,7 +96,7 @@ function ToastItem({
 export function useToast() {
   const context = useContext(ToastContext);
   if (!context) {
-    throw new Error('useToast must be used within a ToastProvider');
+    throw new Error("useToast must be used within a ToastProvider");
   }
   return context;
 }

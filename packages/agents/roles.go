@@ -7,71 +7,71 @@ import (
 
 // RoleConfig defines the configuration for an agent role.
 type RoleConfig struct {
-	Role           AgentRole
-	Name           string
-	Description    string
-	SystemPrompt   string
-	DefaultModel   string
-	AllowedTools   []string
+	Role             AgentRole
+	Name             string
+	Description      string
+	SystemPrompt     string
+	DefaultModel     string
+	AllowedTools     []string
 	RequiresApproval bool
 }
 
 // RoleConfigs maps each role to its configuration.
 var RoleConfigs = map[AgentRole]RoleConfig{
 	RolePlanner: {
-		Role:        RolePlanner,
-		Name:        "Planner",
-		Description: "Analyzes tasks and creates detailed implementation plans with acceptance criteria.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "search_files", "list_directory", "inspect_repo"},
+		Role:             RolePlanner,
+		Name:             "Planner",
+		Description:      "Analyzes tasks and creates detailed implementation plans with acceptance criteria.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "search_files", "list_directory", "inspect_repo"},
 		RequiresApproval: true,
 	},
 	RoleImplementer: {
-		Role:        RoleImplementer,
-		Name:        "Implementer",
-		Description: "Writes code changes, tests, and documentation to fulfill the task specification.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "write_file", "search_files", "apply_patch", "run_command", "list_directory", "inspect_repo", "get_git_diff", "create_commit"},
+		Role:             RoleImplementer,
+		Name:             "Implementer",
+		Description:      "Writes code changes, tests, and documentation to fulfill the task specification.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "write_file", "search_files", "apply_patch", "run_command", "list_directory", "inspect_repo", "get_git_diff", "create_commit"},
 		RequiresApproval: false,
 	},
 	RoleReviewer: {
-		Role:        RoleReviewer,
-		Name:        "Code Reviewer",
-		Description: "Reviews code changes for quality, correctness, security, and adherence to best practices.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "search_files", "list_directory", "get_git_diff", "inspect_repo"},
+		Role:             RoleReviewer,
+		Name:             "Code Reviewer",
+		Description:      "Reviews code changes for quality, correctness, security, and adherence to best practices.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "search_files", "list_directory", "get_git_diff", "inspect_repo"},
 		RequiresApproval: false,
 	},
 	RoleTestRunner: {
-		Role:        RoleTestRunner,
-		Name:        "Test Runner",
-		Description: "Executes tests, validates behavior against acceptance criteria, and reports results.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "run_command", "list_directory", "run_tests", "get_git_diff"},
+		Role:             RoleTestRunner,
+		Name:             "Test Runner",
+		Description:      "Executes tests, validates behavior against acceptance criteria, and reports results.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "run_command", "list_directory", "run_tests", "get_git_diff"},
 		RequiresApproval: false,
 	},
 	RoleSecurity: {
-		Role:        RoleSecurity,
-		Name:        "Security Reviewer",
-		Description: "Analyzes code for security vulnerabilities, injection risks, and unsafe patterns.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "search_files", "list_directory", "get_git_diff"},
+		Role:             RoleSecurity,
+		Name:             "Security Reviewer",
+		Description:      "Analyzes code for security vulnerabilities, injection risks, and unsafe patterns.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "search_files", "list_directory", "get_git_diff"},
 		RequiresApproval: true,
 	},
 	RoleDocs: {
-		Role:        RoleDocs,
-		Name:        "Documentation Writer",
-		Description: "Writes and updates documentation, README files, API docs, and inline comments.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "write_file", "search_files", "list_directory"},
+		Role:             RoleDocs,
+		Name:             "Documentation Writer",
+		Description:      "Writes and updates documentation, README files, API docs, and inline comments.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "write_file", "search_files", "list_directory"},
 		RequiresApproval: false,
 	},
 	RoleReleaseManager: {
-		Role:        RoleReleaseManager,
-		Name:        "Release Manager",
-		Description: "Manages versioning, changelogs, release notes, and deployment preparation.",
-		DefaultModel: "claude-sonnet-4-20250514",
-		AllowedTools: []string{"read_file", "write_file", "search_files", "list_directory", "run_command"},
+		Role:             RoleReleaseManager,
+		Name:             "Release Manager",
+		Description:      "Manages versioning, changelogs, release notes, and deployment preparation.",
+		DefaultModel:     "claude-sonnet-4-20250514",
+		AllowedTools:     []string{"read_file", "write_file", "search_files", "list_directory", "run_command"},
 		RequiresApproval: true,
 	},
 }

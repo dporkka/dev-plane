@@ -1,20 +1,19 @@
-'use client';
+"use client";
 
-import React from 'react';
-import Link from 'next/link';
-import type { AgentRun } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { SkeletonCard } from '@/components/ui/skeleton';
-import { StatusBadge } from '@/components/common/StatusBadge';
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { Card } from "@/components/ui/card";
+import { SkeletonCard } from "@/components/ui/skeleton";
 import {
   Activity,
-  Loader2,
   Bot,
-  Cpu,
-  Zap,
   Clock,
+  Cpu,
   DollarSign,
-} from 'lucide-react';
+  Loader2,
+  Zap,
+} from "lucide-react";
+import Link from "next/link";
+import type React from "react";
 
 interface ActiveRun {
   id: string;
@@ -47,7 +46,7 @@ const roleIcons: Record<string, React.ElementType> = {
 function formatElapsed(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  return `${mins}:${secs.toString().padStart(2, '0')}`;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
 }
 
 export function ActiveRunsWidget({ runs, isLoading }: ActiveRunsWidgetProps) {
@@ -67,7 +66,9 @@ export function ActiveRunsWidget({ runs, isLoading }: ActiveRunsWidgetProps) {
     );
   }
 
-  const activeRuns = runs.filter((r) => r.status === 'running' || r.status === 'pending');
+  const activeRuns = runs.filter(
+    (r) => r.status === "running" || r.status === "pending",
+  );
 
   return (
     <div>
@@ -84,7 +85,7 @@ export function ActiveRunsWidget({ runs, isLoading }: ActiveRunsWidgetProps) {
         {runs.slice(0, 6).map((run) => {
           const Icon = roleIcons[run.agent_role] || Bot;
           const progress = run.progress || 0;
-          const isRunning = run.status === 'running';
+          const isRunning = run.status === "running";
 
           return (
             <Link href={`/runs/${run.id}`} key={run.id}>
@@ -97,12 +98,14 @@ export function ActiveRunsWidget({ runs, isLoading }: ActiveRunsWidgetProps) {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm text-gray-200 capitalize truncate">
-                          {run.task_name || run.agent_role.replace('_', ' ')}
+                          {run.task_name || run.agent_role.replace("_", " ")}
                         </span>
                         <StatusBadge status={run.status} size="sm" />
                       </div>
                       {run.repository && (
-                        <span className="text-xs text-gray-600">{run.repository}</span>
+                        <span className="text-xs text-gray-600">
+                          {run.repository}
+                        </span>
                       )}
                     </div>
                   </div>
@@ -123,7 +126,9 @@ export function ActiveRunsWidget({ runs, isLoading }: ActiveRunsWidgetProps) {
                 {isRunning && (
                   <div className="space-y-1">
                     <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span className="truncate max-w-[60%]">{run.current_step || 'Running...'}</span>
+                      <span className="truncate max-w-[60%]">
+                        {run.current_step || "Running..."}
+                      </span>
                       <div className="flex items-center gap-2">
                         {run.elapsed_seconds !== undefined && (
                           <span className="flex items-center gap-1">

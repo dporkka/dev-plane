@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint .",
+    "lint": "biome check .",
+    "lint:fix": "biome check . --write",
+    "format": "biome format . --write",
     "typecheck": "tsc --noEmit",
     "test": "tsc -p tsconfig.test.json && node --test dist-test/**/*.test.js"
   },
@@ -41,8 +43,7 @@
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "eslint": "^9.0.0",
-    "eslint-config-next": "^16.2.7",
+    "@biomejs/biome": "^1.9.4",
     "tailwindcss": "^4.0.0",
     "typescript": "^5.7.0"
   },

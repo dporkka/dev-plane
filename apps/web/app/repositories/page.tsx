@@ -1,33 +1,33 @@
-'use client';
+"use client";
 
-import { type FormEvent, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { useStore } from '@/lib/store';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Loading } from '@/components/common/Loading';
-import { StatusBadge } from '@/components/common/StatusBadge';
+import { Loading } from "@/components/common/Loading";
+import { StatusBadge } from "@/components/common/StatusBadge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { api } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ExternalLink,
   GitBranch,
   Plus,
-  Search,
   RefreshCw,
-  ExternalLink,
+  Search,
   Trash2,
-} from 'lucide-react';
+} from "lucide-react";
+import { type FormEvent, useState } from "react";
 
 function parseRepositoryInput(value: string) {
   const normalized = value
     .trim()
-    .replace(/^https?:\/\/github\.com\//i, '')
-    .replace(/^git@github\.com:/i, '')
-    .replace(/\.git$/i, '')
-    .replace(/^\/+|\/+$/g, '');
-  const [owner, name, extra] = normalized.split('/');
+    .replace(/^https?:\/\/github\.com\//i, "")
+    .replace(/^git@github\.com:/i, "")
+    .replace(/\.git$/i, "")
+    .replace(/^\/+|\/+$/g, "");
+  const [owner, name, extra] = normalized.split("/");
   if (!owner || !name || extra) {
-    throw new Error('Enter a GitHub repository as owner/repo or a GitHub URL.');
+    throw new Error("Enter a GitHub repository as owner/repo or a GitHub URL.");
   }
   return { owner, name };
 }
@@ -35,36 +35,38 @@ function parseRepositoryInput(value: string) {
 export default function RepositoriesPage() {
   const { selectedProject } = useStore();
   const queryClient = useQueryClient();
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState("");
   const [showConnect, setShowConnect] = useState(false);
-  const [newRepoUrl, setNewRepoUrl] = useState('');
+  const [newRepoUrl, setNewRepoUrl] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
   const { data: repos, isLoading } = useQuery({
-    queryKey: ['repos', selectedProject],
+    queryKey: ["repos", selectedProject],
     queryFn: () =>
-      selectedProject
-        ? api.listRepos(selectedProject)
-        : Promise.resolve([]),
+      selectedProject ? api.listRepos(selectedProject) : Promise.resolve([]),
     enabled: !!selectedProject,
   });
   const invalidateRepos = () =>
-    queryClient.invalidateQueries({ queryKey: ['repos', selectedProject] });
+    queryClient.invalidateQueries({ queryKey: ["repos", selectedProject] });
   const connectRepo = useMutation({
     mutationFn: () => {
       if (!selectedProject) {
-        throw new Error('Select a project before connecting a repository.');
+        throw new Error("Select a project before connecting a repository.");
       }
       return api.connectRepo(selectedProject, parseRepositoryInput(newRepoUrl));
     },
     onSuccess: async () => {
       await invalidateRepos();
-      setNewRepoUrl('');
+      setNewRepoUrl("");
       setShowConnect(false);
       setActionError(null);
     },
     onError: (error) => {
-      setActionError(error instanceof Error ? error.message : 'Failed to connect repository.');
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Failed to connect repository.",
+      );
     },
   });
   const syncRepo = useMutation({
@@ -74,7 +76,9 @@ export default function RepositoriesPage() {
       setActionError(null);
     },
     onError: (error) => {
-      setActionError(error instanceof Error ? error.message : 'Failed to sync repository.');
+      setActionError(
+        error instanceof Error ? error.message : "Failed to sync repository.",
+      );
     },
   });
   const disconnectRepo = useMutation({
@@ -84,7 +88,11 @@ export default function RepositoriesPage() {
       setActionError(null);
     },
     onError: (error) => {
-      setActionError(error instanceof Error ? error.message : 'Failed to disconnect repository.');
+      setActionError(
+        error instanceof Error
+          ? error.message
+          : "Failed to disconnect repository.",
+      );
     },
   });
 
@@ -92,12 +100,12 @@ export default function RepositoriesPage() {
 
   const repoList = repos?.data || repos || [];
   const filtered = repoList.filter((r: any) =>
-    r.full_name?.toLowerCase().includes(search.toLowerCase())
+    r.full_name?.toLowerCase().includes(search.toLowerCase()),
   );
   const submitRepository = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!newRepoUrl.trim()) {
-      setActionError('Repository is required.');
+      setActionError("Repository is required.");
       return;
     }
     setActionError(null);
@@ -109,9 +117,7 @@ export default function RepositoriesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Repositories</h1>
-          <p className="text-gray-500 mt-1">
-            Connected GitHub repositories
-          </p>
+          <p className="text-gray-500 mt-1">Connected GitHub repositories</p>
         </div>
         <button
           onClick={() => setShowConnect(!showConnect)}
@@ -127,7 +133,10 @@ export default function RepositoriesPage() {
       {showConnect && (
         <Card>
           <form onSubmit={submitRepository} className="space-y-3">
-            <label htmlFor="repository-url" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="repository-url"
+              className="block text-sm font-medium text-gray-300"
+            >
               Repository URL or full name (owner/repo)
             </label>
             <div className="flex flex-col gap-2 sm:flex-row">
@@ -144,7 +153,7 @@ export default function RepositoriesPage() {
                 disabled={connectRepo.isPending || !selectedProject}
                 className="shrink-0"
               >
-                {connectRepo.isPending ? 'Connecting...' : 'Connect'}
+                {connectRepo.isPending ? "Connecting..." : "Connect"}
               </Button>
             </div>
           </form>
@@ -178,7 +187,7 @@ export default function RepositoriesPage() {
                 <div>
                   <div className="text-white font-medium">{repo.full_name}</div>
                   <div className="text-xs text-gray-500 flex items-center gap-2">
-                    <span>Branch: {repo.default_branch || 'main'}</span>
+                    <span>Branch: {repo.default_branch || "main"}</span>
                     {repo.private && (
                       <span className="bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">
                         Private
@@ -208,7 +217,7 @@ export default function RepositoriesPage() {
                 </a>
                 <button
                   onClick={() => {
-                    if (confirm('Disconnect this repository?')) {
+                    if (confirm("Disconnect this repository?")) {
                       disconnectRepo.mutate(repo.id);
                     }
                   }}

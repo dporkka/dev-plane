@@ -1,17 +1,17 @@
 // Task types
 export type TaskStatus =
-  | 'backlog'
-  | 'spec_review'
-  | 'approved'
-  | 'running'
-  | 'reviewing'
-  | 'pr_created'
-  | 'done'
-  | 'failed'
-  | 'cancelled';
+  | "backlog"
+  | "spec_review"
+  | "approved"
+  | "running"
+  | "reviewing"
+  | "pr_created"
+  | "done"
+  | "failed"
+  | "cancelled";
 
-export type Priority = 'low' | 'medium' | 'high' | 'urgent';
-export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type Priority = "low" | "medium" | "high" | "urgent";
+export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export interface Task {
   id: string;
@@ -42,15 +42,21 @@ export interface Task {
 
 // Agent run types
 export type AgentRole =
-  | 'planner'
-  | 'implementer'
-  | 'reviewer'
-  | 'test_runner'
-  | 'security_reviewer'
-  | 'docs_writer'
-  | 'release_manager';
+  | "planner"
+  | "implementer"
+  | "reviewer"
+  | "test_runner"
+  | "security_reviewer"
+  | "docs_writer"
+  | "release_manager";
 
-export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface AgentRun {
   id: string;
@@ -74,15 +80,15 @@ export interface AgentRun {
 
 // Agent step types
 export type StepType =
-  | 'thought'
-  | 'tool_call'
-  | 'command_run'
-  | 'file_patch'
-  | 'approval_request'
-  | 'message'
-  | 'error';
+  | "thought"
+  | "tool_call"
+  | "command_run"
+  | "file_patch"
+  | "approval_request"
+  | "message"
+  | "error";
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type StepStatus = "pending" | "running" | "completed" | "failed";
 
 export interface AgentStep {
   id: string;
@@ -118,7 +124,7 @@ export interface Project {
 }
 
 // Repository types
-export type ConnectionStatus = 'pending' | 'connected' | 'error';
+export type ConnectionStatus = "pending" | "connected" | "error";
 
 export interface Repository {
   id: string;
@@ -139,7 +145,7 @@ export interface Repository {
 }
 
 // User types
-export type UserRole = 'owner' | 'admin' | 'member';
+export type UserRole = "owner" | "admin" | "member";
 
 export interface User {
   id: string;
@@ -156,7 +162,7 @@ export interface User {
 }
 
 // Organization types
-export type Plan = 'free' | 'pro' | 'enterprise';
+export type Plan = "free" | "pro" | "enterprise";
 
 export interface Organization {
   id: string;
@@ -170,8 +176,13 @@ export interface Organization {
 }
 
 // Approval types
-export type ApprovalType = 'spec' | 'execution' | 'deploy' | 'risky_action' | 'pr_create';
-export type ApprovalResponse = 'approved' | 'rejected';
+export type ApprovalType =
+  | "spec"
+  | "execution"
+  | "deploy"
+  | "risky_action"
+  | "pr_create";
+export type ApprovalResponse = "approved" | "rejected";
 
 export interface Approval {
   id: string;
@@ -191,9 +202,15 @@ export interface Approval {
 }
 
 // Policy types
-export type ResourceType = 'file' | 'command' | 'secret' | 'deploy' | 'git' | 'network';
-export type Action = 'read' | 'write' | 'execute' | 'delete';
-export type Effect = 'allow' | 'ask' | 'deny' | 'admin_only';
+export type ResourceType =
+  | "file"
+  | "command"
+  | "secret"
+  | "deploy"
+  | "git"
+  | "network";
+export type Action = "read" | "write" | "execute" | "delete";
+export type Effect = "allow" | "ask" | "deny" | "admin_only";
 
 export interface Policy {
   id: string;
@@ -210,8 +227,18 @@ export interface Policy {
 }
 
 // Integration types
-export type IntegrationType = 'github' | 'linear' | 'slack' | 'discord' | 'webhook' | 'voice';
-export type IntegrationStatus = 'pending' | 'connected' | 'error' | 'disconnected';
+export type IntegrationType =
+  | "github"
+  | "linear"
+  | "slack"
+  | "discord"
+  | "webhook"
+  | "voice";
+export type IntegrationStatus =
+  | "pending"
+  | "connected"
+  | "error"
+  | "disconnected";
 
 export interface IntegrationProvider {
   type: IntegrationType;
@@ -241,13 +268,13 @@ export interface Integration {
 
 // Workspace types
 export type WorkspaceStatus =
-  | 'pending'
-  | 'preparing'
-  | 'ready'
-  | 'running'
-  | 'stopped'
-  | 'error'
-  | 'destroyed';
+  | "pending"
+  | "preparing"
+  | "ready"
+  | "running"
+  | "stopped"
+  | "error"
+  | "destroyed";
 
 export interface Workspace {
   id: string;
@@ -342,7 +369,7 @@ export interface PullRequest {
   branch: string;
   base_branch: string;
   url: string;
-  status: 'open' | 'merged' | 'closed';
+  status: "open" | "merged" | "closed";
   created_at: string;
   updated_at: string;
 }

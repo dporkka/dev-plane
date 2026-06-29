@@ -1,11 +1,9 @@
-'use client';
-
-import React from 'react';
-import type { TaskSpec } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { AlertTriangle, DollarSign, Bot, FileText } from 'lucide-react';
-import Link from 'next/link';
+"use client";
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import type { TaskSpec } from "@/lib/types";
+import { AlertTriangle, Bot, DollarSign, FileText } from "lucide-react";
+import Link from "next/link";
 
 interface TaskSpecPreviewProps {
   taskId: string;
@@ -14,14 +12,23 @@ interface TaskSpecPreviewProps {
 
 function RiskBadge({ level }: { level: string }) {
   const config: Record<string, { color: string; bg: string }> = {
-    low: { color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/30' },
-    medium: { color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
-    high: { color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/30' },
-    critical: { color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30' },
+    low: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+    medium: {
+      color: "text-yellow-400",
+      bg: "bg-yellow-500/10 border-yellow-500/30",
+    },
+    high: {
+      color: "text-orange-400",
+      bg: "bg-orange-500/10 border-orange-500/30",
+    },
+    critical: { color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
   };
   const c = config[level] || config.low;
   return (
-    <Badge variant="outline" className={`${c.bg} ${c.color} capitalize text-xs`}>
+    <Badge
+      variant="outline"
+      className={`${c.bg} ${c.color} capitalize text-xs`}
+    >
       <AlertTriangle className="w-3 h-3 mr-1" />
       {level}
     </Badge>
@@ -29,13 +36,13 @@ function RiskBadge({ level }: { level: string }) {
 }
 
 export function TaskSpecPreview({ taskId, spec }: TaskSpecPreviewProps) {
-  const riskLevel = spec.risk_assessment?.toLowerCase().includes('critical')
-    ? 'critical'
-    : spec.risk_assessment?.toLowerCase().includes('high')
-    ? 'high'
-    : spec.risk_assessment?.toLowerCase().includes('medium')
-    ? 'medium'
-    : 'low';
+  const riskLevel = spec.risk_assessment?.toLowerCase().includes("critical")
+    ? "critical"
+    : spec.risk_assessment?.toLowerCase().includes("high")
+      ? "high"
+      : spec.risk_assessment?.toLowerCase().includes("medium")
+        ? "medium"
+        : "low";
 
   return (
     <Card className="p-4">
@@ -58,12 +65,18 @@ export function TaskSpecPreview({ taskId, spec }: TaskSpecPreviewProps) {
       {/* Badges */}
       <div className="flex items-center gap-2 flex-wrap">
         <RiskBadge level={riskLevel} />
-        <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30 text-xs">
+        <Badge
+          variant="outline"
+          className="bg-blue-500/10 text-blue-400 border-blue-500/30 text-xs"
+        >
           <DollarSign className="w-3 h-3 mr-1" />
-          Est. ${spec.estimated_cost?.toFixed(4) || '0.0000'}
+          Est. ${spec.estimated_cost?.toFixed(4) || "0.0000"}
         </Badge>
         {spec.recommended_agent && (
-          <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/30 text-xs">
+          <Badge
+            variant="outline"
+            className="bg-purple-500/10 text-purple-400 border-purple-500/30 text-xs"
+          >
             <Bot className="w-3 h-3 mr-1" />
             {spec.recommended_agent}
           </Badge>

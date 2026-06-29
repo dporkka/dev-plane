@@ -1,24 +1,25 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import type { TaskSpec } from '@/lib/types';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge } from "@/components/ui/badge";
+import { Card } from "@/components/ui/card";
+import type { TaskSpec } from "@/lib/types";
 import {
+  AlertTriangle,
+  Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   DollarSign,
-  AlertTriangle,
-  CheckCircle2,
   FileEdit,
   FilePlus,
-  ListChecks,
   FlaskConical,
-  ShieldAlert,
+  ListChecks,
   RotateCcw,
+  ShieldAlert,
   Sparkles,
-  Bot,
-} from 'lucide-react';
+} from "lucide-react";
+import type React from "react";
+import { useState } from "react";
 
 interface SpecReviewProps {
   spec: TaskSpec;
@@ -30,10 +31,16 @@ interface SpecReviewProps {
 
 function RiskBadge({ level }: { level: string }) {
   const config: Record<string, { color: string; bg: string }> = {
-    low: { color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/30' },
-    medium: { color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/30' },
-    high: { color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/30' },
-    critical: { color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/30' },
+    low: { color: "text-green-400", bg: "bg-green-500/10 border-green-500/30" },
+    medium: {
+      color: "text-yellow-400",
+      bg: "bg-yellow-500/10 border-yellow-500/30",
+    },
+    high: {
+      color: "text-orange-400",
+      bg: "bg-orange-500/10 border-orange-500/30",
+    },
+    critical: { color: "text-red-400", bg: "bg-red-500/10 border-red-500/30" },
   };
   const c = config[level] || config.low;
   return (
@@ -46,7 +53,10 @@ function RiskBadge({ level }: { level: string }) {
 
 function CostBadge({ cost }: { cost: number }) {
   return (
-    <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30">
+    <Badge
+      variant="outline"
+      className="bg-blue-500/10 text-blue-400 border-blue-500/30"
+    >
       <DollarSign className="w-3 h-3 mr-1" />
       Est. ${cost.toFixed(4)}
     </Badge>
@@ -81,12 +91,20 @@ function CollapsibleSection({
           <ChevronRight className="w-4 h-4 text-gray-500" />
         )}
       </button>
-      {open && <div className="px-4 py-3 border-t border-[#30363d]">{children}</div>}
+      {open && (
+        <div className="px-4 py-3 border-t border-[#30363d]">{children}</div>
+      )}
     </Card>
   );
 }
 
-export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: SpecReviewProps) {
+export function SpecReview({
+  spec,
+  onApprove,
+  onEdit,
+  onReject,
+  isApproving,
+}: SpecReviewProps) {
   const [editedSpec, setEditedSpec] = useState<TaskSpec | null>(null);
   const isEditing = !!editedSpec;
   const currentSpec = editedSpec || spec;
@@ -109,13 +127,29 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
     <div className="space-y-4">
       {/* Header badges */}
       <div className="flex items-center gap-3 flex-wrap">
-        <RiskBadge level={spec.risk_assessment?.toLowerCase().includes('critical') ? 'critical' : spec.risk_assessment?.toLowerCase().includes('high') ? 'high' : spec.risk_assessment?.toLowerCase().includes('medium') ? 'medium' : 'low'} />
+        <RiskBadge
+          level={
+            spec.risk_assessment?.toLowerCase().includes("critical")
+              ? "critical"
+              : spec.risk_assessment?.toLowerCase().includes("high")
+                ? "high"
+                : spec.risk_assessment?.toLowerCase().includes("medium")
+                  ? "medium"
+                  : "low"
+          }
+        />
         <CostBadge cost={spec.estimated_cost} />
-        <Badge variant="outline" className="bg-purple-500/10 text-purple-400 border-purple-500/30">
+        <Badge
+          variant="outline"
+          className="bg-purple-500/10 text-purple-400 border-purple-500/30"
+        >
           <Bot className="w-3 h-3 mr-1" />
           {spec.recommended_agent}
         </Badge>
-        <Badge variant="outline" className="bg-gray-500/10 text-gray-400 border-gray-500/30">
+        <Badge
+          variant="outline"
+          className="bg-gray-500/10 text-gray-400 border-gray-500/30"
+        >
           <Sparkles className="w-3 h-3 mr-1" />
           {spec.generated_by}
         </Badge>
@@ -124,11 +158,17 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
       {/* Edit controls */}
       {isEditing && (
         <div className="flex items-center gap-2">
-          <button onClick={saveEditing} className="btn-primary text-sm flex items-center gap-1">
+          <button
+            onClick={saveEditing}
+            className="btn-primary text-sm flex items-center gap-1"
+          >
             <CheckCircle2 className="w-3 h-3" />
             Save Changes
           </button>
-          <button onClick={cancelEditing} className="btn-secondary text-sm flex items-center gap-1">
+          <button
+            onClick={cancelEditing}
+            className="btn-secondary text-sm flex items-center gap-1"
+          >
             <RotateCcw className="w-3 h-3" />
             Cancel
           </button>
@@ -140,11 +180,13 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
         {isEditing ? (
           <textarea
             value={currentSpec.summary}
-            onChange={(e) => handleEdit('summary', e.target.value)}
+            onChange={(e) => handleEdit("summary", e.target.value)}
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[80px]"
           />
         ) : (
-          <p className="text-gray-300 text-sm leading-relaxed">{spec.summary}</p>
+          <p className="text-gray-300 text-sm leading-relaxed">
+            {spec.summary}
+          </p>
         )}
       </CollapsibleSection>
 
@@ -153,11 +195,13 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
         {isEditing ? (
           <textarea
             value={currentSpec.problem_statement}
-            onChange={(e) => handleEdit('problem_statement', e.target.value)}
+            onChange={(e) => handleEdit("problem_statement", e.target.value)}
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[100px]"
           />
         ) : (
-          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">{spec.problem_statement}</p>
+          <p className="text-gray-300 text-sm leading-relaxed whitespace-pre-wrap">
+            {spec.problem_statement}
+          </p>
         )}
       </CollapsibleSection>
 
@@ -165,15 +209,23 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
       <CollapsibleSection title="Implementation Plan" icon={ListChecks}>
         {isEditing ? (
           <textarea
-            value={(currentSpec.implementation_plan || []).join('\n')}
-            onChange={(e) => handleEdit('implementation_plan', e.target.value.split('\n').filter(Boolean))}
+            value={(currentSpec.implementation_plan || []).join("\n")}
+            onChange={(e) =>
+              handleEdit(
+                "implementation_plan",
+                e.target.value.split("\n").filter(Boolean),
+              )
+            }
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[150px]"
             placeholder="One step per line"
           />
         ) : (
           <ol className="space-y-2">
             {(spec.implementation_plan || []).map((step, i) => (
-              <li key={i} className="flex items-start gap-3 text-sm text-gray-300">
+              <li
+                key={i}
+                className="flex items-start gap-3 text-sm text-gray-300"
+              >
                 <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-medium">
                   {i + 1}
                 </span>
@@ -188,17 +240,27 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
       <CollapsibleSection title="Files to Change" icon={FileEdit}>
         {isEditing ? (
           <textarea
-            value={(currentSpec.files_to_change || []).join('\n')}
-            onChange={(e) => handleEdit('files_to_change', e.target.value.split('\n').filter(Boolean))}
+            value={(currentSpec.files_to_change || []).join("\n")}
+            onChange={(e) =>
+              handleEdit(
+                "files_to_change",
+                e.target.value.split("\n").filter(Boolean),
+              )
+            }
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[100px]"
             placeholder="One file path per line"
           />
         ) : (
           <ul className="space-y-1">
             {(spec.files_to_change || []).map((file, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm text-gray-300">
+              <li
+                key={i}
+                className="flex items-center gap-2 text-sm text-gray-300"
+              >
                 <FileEdit className="w-3.5 h-3.5 text-yellow-400" />
-                <code className="bg-[#21262d] px-1.5 py-0.5 rounded text-xs">{file}</code>
+                <code className="bg-[#21262d] px-1.5 py-0.5 rounded text-xs">
+                  {file}
+                </code>
               </li>
             ))}
           </ul>
@@ -209,17 +271,27 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
       <CollapsibleSection title="Files to Create" icon={FilePlus}>
         {isEditing ? (
           <textarea
-            value={(currentSpec.files_to_create || []).join('\n')}
-            onChange={(e) => handleEdit('files_to_create', e.target.value.split('\n').filter(Boolean))}
+            value={(currentSpec.files_to_create || []).join("\n")}
+            onChange={(e) =>
+              handleEdit(
+                "files_to_create",
+                e.target.value.split("\n").filter(Boolean),
+              )
+            }
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[100px]"
             placeholder="One file path per line"
           />
         ) : (
           <ul className="space-y-1">
             {(spec.files_to_create || []).map((file, i) => (
-              <li key={i} className="flex items-center gap-2 text-sm text-gray-300">
+              <li
+                key={i}
+                className="flex items-center gap-2 text-sm text-gray-300"
+              >
                 <FilePlus className="w-3.5 h-3.5 text-green-400" />
-                <code className="bg-[#21262d] px-1.5 py-0.5 rounded text-xs">{file}</code>
+                <code className="bg-[#21262d] px-1.5 py-0.5 rounded text-xs">
+                  {file}
+                </code>
               </li>
             ))}
           </ul>
@@ -230,15 +302,23 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
       <CollapsibleSection title="Acceptance Criteria" icon={CheckCircle2}>
         {isEditing ? (
           <textarea
-            value={(currentSpec.acceptance_criteria || []).join('\n')}
-            onChange={(e) => handleEdit('acceptance_criteria', e.target.value.split('\n').filter(Boolean))}
+            value={(currentSpec.acceptance_criteria || []).join("\n")}
+            onChange={(e) =>
+              handleEdit(
+                "acceptance_criteria",
+                e.target.value.split("\n").filter(Boolean),
+              )
+            }
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[150px]"
             placeholder="One criterion per line"
           />
         ) : (
           <ul className="space-y-2">
             {(spec.acceptance_criteria || []).map((criteria, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
+              <li
+                key={i}
+                className="flex items-start gap-2 text-sm text-gray-300"
+              >
                 <CheckCircle2 className="w-4 h-4 text-green-400 flex-shrink-0 mt-0.5" />
                 <span>{criteria}</span>
               </li>
@@ -252,47 +332,69 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
         {isEditing ? (
           <textarea
             value={currentSpec.test_plan}
-            onChange={(e) => handleEdit('test_plan', e.target.value)}
+            onChange={(e) => handleEdit("test_plan", e.target.value)}
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[120px]"
           />
         ) : (
-          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{spec.test_plan}</div>
+          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {spec.test_plan}
+          </div>
         )}
       </CollapsibleSection>
 
       {/* Risk Assessment */}
-      <CollapsibleSection title="Risk Assessment" icon={ShieldAlert} defaultOpen={false}>
+      <CollapsibleSection
+        title="Risk Assessment"
+        icon={ShieldAlert}
+        defaultOpen={false}
+      >
         {isEditing ? (
           <textarea
             value={currentSpec.risk_assessment}
-            onChange={(e) => handleEdit('risk_assessment', e.target.value)}
+            onChange={(e) => handleEdit("risk_assessment", e.target.value)}
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[100px]"
           />
         ) : (
-          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{spec.risk_assessment}</div>
+          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {spec.risk_assessment}
+          </div>
         )}
       </CollapsibleSection>
 
       {/* Rollback Plan */}
-      <CollapsibleSection title="Rollback Plan" icon={RotateCcw} defaultOpen={false}>
+      <CollapsibleSection
+        title="Rollback Plan"
+        icon={RotateCcw}
+        defaultOpen={false}
+      >
         {isEditing ? (
           <textarea
             value={currentSpec.rollback_plan}
-            onChange={(e) => handleEdit('rollback_plan', e.target.value)}
+            onChange={(e) => handleEdit("rollback_plan", e.target.value)}
             className="w-full bg-[#0d1117] border border-[#30363d] rounded-md p-3 text-gray-300 text-sm min-h-[100px]"
           />
         ) : (
-          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">{spec.rollback_plan}</div>
+          <div className="text-sm text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {spec.rollback_plan}
+          </div>
         )}
       </CollapsibleSection>
 
       {/* Required Approvals */}
       {spec.required_approvals && spec.required_approvals.length > 0 && (
-        <CollapsibleSection title="Required Approvals" icon={CheckCircle2} defaultOpen={false}>
+        <CollapsibleSection
+          title="Required Approvals"
+          icon={CheckCircle2}
+          defaultOpen={false}
+        >
           <div className="flex flex-wrap gap-2">
             {spec.required_approvals.map((approval, i) => (
-              <Badge key={i} variant="outline" className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 capitalize">
-                {approval.replace('_', ' ')}
+              <Badge
+                key={i}
+                variant="outline"
+                className="bg-yellow-500/10 text-yellow-400 border-yellow-500/30 capitalize"
+              >
+                {approval.replace("_", " ")}
               </Badge>
             ))}
           </div>
@@ -309,7 +411,7 @@ export function SpecReview({ spec, onApprove, onEdit, onReject, isApproving }: S
               className="btn-primary flex items-center gap-2"
             >
               <CheckCircle2 className="w-4 h-4" />
-              {isApproving ? 'Approving...' : 'Approve & Start'}
+              {isApproving ? "Approving..." : "Approve & Start"}
             </button>
           )}
           {onEdit && (

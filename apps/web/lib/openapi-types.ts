@@ -7,86 +7,102 @@
 // ─── Enums ───────────────────────────────────────────────────────────
 
 export type TaskStatus =
-  | 'backlog'
-  | 'spec_review'
-  | 'approved'
-  | 'running'
-  | 'reviewing'
-  | 'pr_created'
-  | 'done'
-  | 'failed'
-  | 'cancelled';
+  | "backlog"
+  | "spec_review"
+  | "approved"
+  | "running"
+  | "reviewing"
+  | "pr_created"
+  | "done"
+  | "failed"
+  | "cancelled";
 
-export type Priority = 'low' | 'medium' | 'high' | 'urgent';
+export type Priority = "low" | "medium" | "high" | "urgent";
 
-export type RiskLevel = 'low' | 'medium' | 'high' | 'critical';
+export type RiskLevel = "low" | "medium" | "high" | "critical";
 
 export type AgentRole =
-  | 'planner'
-  | 'implementer'
-  | 'reviewer'
-  | 'test_runner'
-  | 'security_reviewer'
-  | 'docs_writer'
-  | 'release_manager';
+  | "planner"
+  | "implementer"
+  | "reviewer"
+  | "test_runner"
+  | "security_reviewer"
+  | "docs_writer"
+  | "release_manager";
 
-export type RunStatus = 'pending' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type RunStatus =
+  | "pending"
+  | "running"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export type StepType =
-  | 'thought'
-  | 'tool_call'
-  | 'command_run'
-  | 'file_patch'
-  | 'approval_request'
-  | 'message'
-  | 'error';
+  | "thought"
+  | "tool_call"
+  | "command_run"
+  | "file_patch"
+  | "approval_request"
+  | "message"
+  | "error";
 
-export type StepStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type StepStatus = "pending" | "running" | "completed" | "failed";
 
-export type ConnectionStatus = 'pending' | 'connected' | 'error';
+export type ConnectionStatus = "pending" | "connected" | "error";
 
-export type UserRole = 'owner' | 'admin' | 'member';
+export type UserRole = "owner" | "admin" | "member";
 
-export type Plan = 'free' | 'pro' | 'enterprise';
+export type Plan = "free" | "pro" | "enterprise";
 
-export type ApprovalType = 'spec' | 'execution' | 'deploy' | 'risky_action';
+export type ApprovalType = "spec" | "execution" | "deploy" | "risky_action";
 
-export type ApprovalResponse = 'approved' | 'rejected';
+export type ApprovalResponse = "approved" | "rejected";
 
-export type ResourceType = 'file' | 'command' | 'secret' | 'deploy' | 'git' | 'network';
+export type ResourceType =
+  | "file"
+  | "command"
+  | "secret"
+  | "deploy"
+  | "git"
+  | "network";
 
-export type Action = 'read' | 'write' | 'execute' | 'delete';
+export type Action = "read" | "write" | "execute" | "delete";
 
-export type Effect = 'allow' | 'ask' | 'deny' | 'admin_only';
+export type Effect = "allow" | "ask" | "deny" | "admin_only";
 
-export type IntegrationType = 'github' | 'linear' | 'slack' | 'discord';
+export type IntegrationType = "github" | "linear" | "slack" | "discord";
 
-export type IntegrationStatus = 'pending' | 'connected' | 'error' | 'disconnected';
+export type IntegrationStatus =
+  | "pending"
+  | "connected"
+  | "error"
+  | "disconnected";
 
 export type WorkspaceStatus =
-  | 'pending'
-  | 'preparing'
-  | 'ready'
-  | 'running'
-  | 'stopped'
-  | 'error'
-  | 'destroyed';
+  | "pending"
+  | "preparing"
+  | "ready"
+  | "running"
+  | "stopped"
+  | "error"
+  | "destroyed";
 
-export type PRState = 'open' | 'closed' | 'merged';
+export type PRState = "open" | "closed" | "merged";
 
 export type MessageType =
-  | 'handoff'
-  | 'review_comment'
-  | 'blocker'
-  | 'escalation'
-  | 'watchdog'
-  | 'decision'
-  | 'question'
-  | 'answer';
+  | "handoff"
+  | "review_comment"
+  | "blocker"
+  | "escalation"
+  | "watchdog"
+  | "decision"
+  | "question"
+  | "answer";
 
-export type SecretProvider = 'sops' | 'env' | 'vault' | 'encrypted_db';
+export type SecretProvider = "sops" | "env" | "vault" | "encrypted_db";
 
-export type SecretScope = 'dev' | 'staging' | 'prod';
+export type SecretScope = "dev" | "staging" | "prod";
 
 // ─── Core Models ─────────────────────────────────────────────────────
 

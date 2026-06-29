@@ -1,25 +1,25 @@
-'use client';
+"use client";
 
-import { type FormEvent, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
-import { useStore } from '@/lib/store';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Dialog } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Loading } from '@/components/common/Loading';
-import { FolderGit, GitBranch, ListTodo, ArrowRight, Plus } from 'lucide-react';
-import Link from 'next/link';
+import { Loading } from "@/components/common/Loading";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Dialog } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { api } from "@/lib/api";
+import { useStore } from "@/lib/store";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowRight, FolderGit, GitBranch, ListTodo, Plus } from "lucide-react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { type FormEvent, useMemo, useState } from "react";
 
 function slugify(value: string) {
   return value
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
     .slice(0, 80);
 }
 
@@ -28,24 +28,24 @@ export default function ProjectsPage() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [showCreateProject, setShowCreateProject] = useState(false);
-  const [projectName, setProjectName] = useState('');
-  const [projectSlug, setProjectSlug] = useState('');
-  const [projectDescription, setProjectDescription] = useState('');
+  const [projectName, setProjectName] = useState("");
+  const [projectSlug, setProjectSlug] = useState("");
+  const [projectDescription, setProjectDescription] = useState("");
   const [formError, setFormError] = useState<string | null>(null);
   const { data: projects, isLoading } = useQuery({
-    queryKey: ['projects', selectedOrg],
+    queryKey: ["projects", selectedOrg],
     queryFn: () =>
       selectedOrg ? api.listProjects(selectedOrg) : Promise.resolve([]),
     enabled: !!selectedOrg,
   });
   const effectiveSlug = useMemo(
     () => projectSlug.trim() || slugify(projectName),
-    [projectName, projectSlug]
+    [projectName, projectSlug],
   );
   const createProject = useMutation({
     mutationFn: () => {
       if (!selectedOrg) {
-        throw new Error('Select an organization before creating a project.');
+        throw new Error("Select an organization before creating a project.");
       }
       return api.createProject(selectedOrg, {
         name: projectName.trim(),
@@ -54,18 +54,22 @@ export default function ProjectsPage() {
       });
     },
     onSuccess: async (project: any) => {
-      await queryClient.invalidateQueries({ queryKey: ['projects', selectedOrg] });
+      await queryClient.invalidateQueries({
+        queryKey: ["projects", selectedOrg],
+      });
       setShowCreateProject(false);
-      setProjectName('');
-      setProjectSlug('');
-      setProjectDescription('');
+      setProjectName("");
+      setProjectSlug("");
+      setProjectDescription("");
       setFormError(null);
       if (project?.id) {
         router.push(`/projects/${project.id}`);
       }
     },
     onError: (error) => {
-      setFormError(error instanceof Error ? error.message : 'Failed to create project.');
+      setFormError(
+        error instanceof Error ? error.message : "Failed to create project.",
+      );
     },
   });
 
@@ -76,11 +80,11 @@ export default function ProjectsPage() {
   const submitProject = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!projectName.trim()) {
-      setFormError('Project name is required.');
+      setFormError("Project name is required.");
       return;
     }
     if (!effectiveSlug) {
-      setFormError('Project slug is required.');
+      setFormError("Project slug is required.");
       return;
     }
     setFormError(null);
@@ -92,7 +96,9 @@ export default function ProjectsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Projects</h1>
-          <p className="text-gray-500 mt-1">Manage your projects and repositories</p>
+          <p className="text-gray-500 mt-1">
+            Manage your projects and repositories
+          </p>
         </div>
         <button
           className="btn-primary flex items-center gap-2"
@@ -116,7 +122,10 @@ export default function ProjectsPage() {
       >
         <form onSubmit={submitProject} className="space-y-4">
           <div className="space-y-2">
-            <label htmlFor="project-name" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="project-name"
+              className="block text-sm font-medium text-gray-300"
+            >
               Name
             </label>
             <Input
@@ -129,19 +138,25 @@ export default function ProjectsPage() {
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="project-slug" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="project-slug"
+              className="block text-sm font-medium text-gray-300"
+            >
               Slug
             </label>
             <Input
               id="project-slug"
               value={projectSlug}
               onChange={(event) => setProjectSlug(slugify(event.target.value))}
-              placeholder={slugify(projectName) || 'mobile-checkout'}
+              placeholder={slugify(projectName) || "mobile-checkout"}
               disabled={createProject.isPending}
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="project-description" className="block text-sm font-medium text-gray-300">
+            <label
+              htmlFor="project-description"
+              className="block text-sm font-medium text-gray-300"
+            >
               Description
             </label>
             <Textarea
@@ -169,8 +184,11 @@ export default function ProjectsPage() {
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={createProject.isPending || !selectedOrg}>
-              {createProject.isPending ? 'Creating...' : 'Create Project'}
+            <Button
+              type="submit"
+              disabled={createProject.isPending || !selectedOrg}
+            >
+              {createProject.isPending ? "Creating..." : "Create Project"}
             </Button>
           </div>
         </form>
@@ -189,7 +207,7 @@ export default function ProjectsPage() {
                     {project.name}
                   </h3>
                   <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                    {project.description || 'No description'}
+                    {project.description || "No description"}
                   </p>
                   <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
                     <span className="flex items-center gap-1">
@@ -213,7 +231,9 @@ export default function ProjectsPage() {
         <div className="text-center py-12 text-gray-500">
           <FolderGit className="w-12 h-12 mx-auto mb-3 text-gray-700" />
           <p className="text-lg font-medium">No projects yet</p>
-          <p className="text-sm mt-1">Create your first project to get started</p>
+          <p className="text-sm mt-1">
+            Create your first project to get started
+          </p>
         </div>
       )}
     </div>

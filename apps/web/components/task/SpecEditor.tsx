@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { CodeEditor } from '@/components/code/CodeMirror';
-import { Card } from '@/components/ui/card';
-import { CheckCircle, XCircle, Edit3, Save } from 'lucide-react';
+import { CodeEditor } from "@/components/code/CodeMirror";
+import { Card } from "@/components/ui/card";
+import { CheckCircle, Edit3, Save, XCircle } from "lucide-react";
+import { useState } from "react";
 
 interface SpecEditorProps {
   spec: string;
@@ -26,7 +26,9 @@ export function SpecEditor({
     <div className="space-y-4">
       <Card className="p-0 overflow-hidden">
         <div className="flex items-center justify-between px-4 py-3 border-b border-[#30363d] bg-[#161b22]">
-          <span className="text-sm text-gray-400 font-medium">Generated Specification</span>
+          <span className="text-sm text-gray-400 font-medium">
+            Generated Specification
+          </span>
           {!readOnly && (
             <button
               onClick={() => {
