@@ -87,6 +87,9 @@ accounts: {
       {
         user: agent_service
         password: $AGENT_SERVICE_PASSWORD
+        // The agent_service user is the runtime identity for mesh agents.
+        // It can publish/subscribe agent subjects, JetStream/KV control
+        // subjects, microservice discovery ($SRV.>), and request/reply inboxes.
         permissions: {
           publish: {
             allow: [
@@ -95,18 +98,23 @@ accounts: {
               "agents.telemetry.>",
               "agents.chat.>",
               "$JS.API.>",
-              "$KV.nodes.inventory.>"
+              "$JS.ACK.>",
+              "$KV.nodes.inventory.>",
+              "$SRV.>",
+              "_INBOX.>"
             ]
           }
           subscribe: {
             allow: [
-              "agents.prompt.*.*.*",
-              "agents.hb.*.*.*",
-              "agents.telemetry.*.*.*",
-              "agents.chat.*.*.*",
+              "agents.prompt.>",
+              "agents.hb.>",
+              "agents.telemetry.>",
+              "agents.chat.>",
               "$JS.API.>",
               "$JS.ACK.>",
-              "$KV.nodes.inventory.>"
+              "$KV.nodes.inventory.>",
+              "$SRV.>",
+              "_INBOX.>"
             ]
           }
         }

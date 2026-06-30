@@ -1,10 +1,12 @@
 // agent.wit -- WIT interface schema for an agent microservice in the
 // Multi-Agent Developer Mesh.
 //
-// Components implementing this interface are registered under the NATS
-// microservice namespace `agents` and consume subjects of the form:
+// Components implementing this interface register under the NATS microservice
+// namespace `agents` and consume subjects of the form:
 //   agents.prompt.{agent_type}.{owner}.{session_id}
 //   agents.hb.{agent_type}.{owner}.{session_id}
+// Telemetry frames are published on:
+//   agents.telemetry.{agent_type}.{owner}.{session_id}
 
 package dev-plane:agent@0.1.0;
 
@@ -83,7 +85,7 @@ interface nulang-compile {
     use nulang:runtime/types@0.1.0.{ast-node};
     use nulang:runtime/compile@0.1.0.{compile-result};
 
-    /// Compile a Nulang AST into a WASM component bytes.
+    /// Compile a Nulang AST into WASM component bytes.
     compile: func(ast: ast-node) -> compile-result;
 }
 
@@ -96,4 +98,9 @@ world agent {
     export health;
     export prompt-handler;
     export heartbeat;
+
+    /// Export the standard WASI HTTP incoming-handler so the lattice HTTP
+    /// server provider can route /health (and other management paths) to the
+    /// agent component.
+    export wasi:http/incoming-handler@0.2.0;
 }

@@ -1,12 +1,12 @@
 -- wezterm.lua -- Master WezTerm configuration for the Command Tower.
 --
 -- Features:
---   * WebGpu frontend, capped at 60 FPS.
---   * 10,000-line scrollback.
---   * Leader keymaps for window/tab/workspace management.
---   * CMD+SHIFT+J "Worktree Teleportation" macro.
---   * OSC 52 clipboard integration.
---   * Ambient status line pulled from a local node-health cache file.
+--   * WebGpu frontend capped at 60 FPS.
+--   * 10,000-line scrollback, Catppuccin Mocha, JetBrainsMono Nerd Font.
+--   * Tailscale-bound multiplexer domains for WSL2, Mini-PC, and Contabo VPS.
+--   * Leader keymaps for pane/window management.
+--   * CMD+SHIFT+J "Worktree Teleportation" to /mnt/agent-swarms/{task_id}.
+--   * OSC 52 clipboard integration and OSC 777 bell-driven push alerts.
 
 local wezterm = require("wezterm")
 local act = wezterm.action
@@ -38,56 +38,79 @@ config.hide_tab_bar_if_only_one_tab = false
 config.show_new_tab_button_in_tab_bar = true
 
 -- ---------------------------------------------------------------------------
--- Leader key and keymaps
+-- Leader key
 -- ---------------------------------------------------------------------------
 config.leader = { key = "Space", mods = "CTRL", timeout_milliseconds = 1000 }
 
+-- ---------------------------------------------------------------------------
+-- Multiplexer domains -- all remote mux servers are reached over Tailscale.
+-- ---------------------------------------------------------------------------
+config.unix_domains = {
+  {
+    name = "local",
+  },
+}
+
+config.ssh_domains = {
+  {
+    name = "wsl2",
+    remote_address = "100.64.0.2",
+    -- username defaults to the local user; override if your WSL user differs.
+  },
+  {
+    name = "mini-pc",
+    remote_address = "100.64.0.3",
+  },
+  {
+    name = "contabo-vps",
+    remote_address = "100.64.0.10",
+  },
+}
+
+config.default_gui_startup_args = { "connect", "local" }
+config.mux_enforce_ssh_agent = false
+
+-- ---------------------------------------------------------------------------
+-- CMD+SHIFT+J Worktree Teleportation
+--
+-- Prompts for a Swarm Task ID, computes the remote RAM-disk path
+-- /mnt/agent-swarms/{task_id}, and opens a split in the Contabo VPS domain
+-- running Neovim in that directory.
+-- ---------------------------------------------------------------------------
 config.keys = {
-  -- Worktree Teleportation: CMD+SHIFT+J
   {
     key = "J",
     mods = "CMD|SHIFT",
     action = wezterm.action_callback(function(window, pane)
-      local home = os.getenv("HOME") or "/home/user"
-      local candidates = {}
-      -- Collect known worktree roots from a flat directory.
-      local worktree_root = home .. "/worktrees"
-      local handle = io.popen('ls -1 "' .. worktree_root .. '" 2>/dev/null')
-      if handle then
-        for name in handle:lines() do
-          table.insert(candidates, { label = name, id = worktree_root .. "/" .. name })
-        end
-        handle:close()
-      end
-
       window:perform_action(
-        act.InputSelector({
-          action = wezterm.action_callback(function(inner_window, inner_pane, id, label)
-            if not id then
+        act.PromptInputLine({
+          description = "Swarm Task ID",
+          action = wezterm.action_callback(function(inner_window, inner_pane, line)
+            if not line or line == "" then
               return
             end
-            -- Spawn a new tab in the selected worktree.
+            local task_id = line:gsub("^%s*(.-)%s*$", "%1")
+            local remote_path = "/mnt/agent-swarms/" .. task_id
             inner_window:perform_action(
-              act.SpawnCommandInNewTab({
-                cwd = id,
-                args = { os.getenv("SHELL") or "/bin/bash", "-l" },
-                set_environment_variables = {
-                  DEV_PLANE_WORKTREE = label,
+              act.SplitPane({
+                direction = "Right",
+                size = { Percent = 50 },
+                domain = { DomainName = "contabo-vps" },
+                command = {
+                  cwd = remote_path,
+                  args = { "nvim", "." },
                 },
               }),
               inner_pane
             )
           end),
-          title = "Worktree Teleportation",
-          choices = candidates,
-          fuzzy = true,
         }),
         pane
       )
     end),
   },
 
-  -- Leader keymaps
+  -- Leader keymaps: tabs, panes, and windows.
   { key = "c", mods = "LEADER", action = act.SpawnTab("CurrentPaneDomain") },
   { key = "x", mods = "LEADER", action = act.CloseCurrentTab({ confirm = true }) },
   { key = "n", mods = "LEADER", action = act.ActivateTabRelative(1) },
@@ -99,10 +122,11 @@ config.keys = {
   { key = "k", mods = "LEADER", action = act.ActivatePaneDirection("Up") },
   { key = "l", mods = "LEADER", action = act.ActivatePaneDirection("Right") },
   { key = "z", mods = "LEADER", action = act.TogglePaneZoomState },
+  { key = "w", mods = "LEADER", action = act.SpawnWindow },
   { key = "r", mods = "LEADER", action = act.ReloadConfiguration },
   { key = "q", mods = "LEADER", action = act.QuitApplication },
 
-  -- Clipboard via OSC 52 (explicit for terminals that need a nudge).
+  -- Clipboard (OSC 52 keeps the Windows host clipboard hydrated from yanks).
   { key = "c", mods = "CMD", action = act.CopyTo("ClipboardAndPrimarySelection") },
   { key = "v", mods = "CMD", action = act.PasteFrom("Clipboard") },
 }
@@ -114,7 +138,6 @@ config.enable_wayland = true
 config.enable_csi_u_key_encoding = true
 config.allow_win32_input_mode = false
 
--- OSC 52: allow both setting and querying the clipboard from remote hosts.
 config.mouse_bindings = {
   {
     event = { Down = { streak = 1, button = "Middle" } },
@@ -124,25 +147,38 @@ config.mouse_bindings = {
 }
 
 -- ---------------------------------------------------------------------------
--- Multiplexer domain (Tailscale-bound wezterm-mux-server)
+-- OSC 777 push alerts on bell events
+--
+-- Worker errors and manual triage boundaries can ring the bell; turn that
+-- into a native desktop notification.
 -- ---------------------------------------------------------------------------
-config.unix_domains = {
-  {
-    name = "local",
-  },
+wezterm.on("bell", function(window, pane)
+  -- toast_notification is available in recent WezTerm nightly/stable builds.
+  -- Fall back silently on older builds to keep the config portable.
+  if not window.toast_notification then
+    return
+  end
+  local domain = pane.get_domain_name and pane:get_domain_name() or "unknown"
+  window:toast_notification(
+    "Command Tower Alert",
+    "Worker error or manual triage boundary triggered (domain: " .. domain .. ")",
+    nil,
+    4000
+  )
+end)
+
+config.audible_bell = "Disabled"
+config.visual_bell = {
+  fade_in_function = "EaseIn",
+  fade_in_duration_ms = 75,
+  fade_out_function = "EaseOut",
+  fade_out_duration_ms = 75,
 }
-
-config.ssh_domains = {}
-config.tls_clients = {}
-
--- Optional: connect to a remote wezterm-mux-server over Tailscale.
-config.mux_enforce_ssh_agent = false
-config.default_gui_startup_args = { "connect", "local" }
 
 -- ---------------------------------------------------------------------------
 -- Ambient status line -- node health from local cache file.
 -- ---------------------------------------------------------------------------
-local NODE_HEALTH_FILE = os.getenv("HOME") .. "/.cache/dev-plane/node-health.json"
+local NODE_HEALTH_FILE = (os.getenv("HOME") or "/tmp") .. "/.cache/dev-plane/node-health.json"
 
 local function read_node_health()
   local f = io.open(NODE_HEALTH_FILE, "r")
@@ -151,6 +187,9 @@ local function read_node_health()
   end
   local data = f:read("*a")
   f:close()
+  if not data or data == "" then
+    return nil
+  end
   local ok, parsed = pcall(wezterm.json_parse, data)
   if not ok then
     return nil
@@ -190,12 +229,5 @@ end)
 -- Hyperlink and bell rules
 -- ---------------------------------------------------------------------------
 config.hyperlink_rules = wezterm.default_hyperlink_rules()
-config.audible_bell = "Disabled"
-config.visual_bell = {
-  fade_in_function = "EaseIn",
-  fade_in_duration_ms = 75,
-  fade_out_function = "EaseOut",
-  fade_out_duration_ms = 75,
-}
 
 return config

@@ -1,8 +1,8 @@
 // nulang.wit -- WIT interface for the Nulang runtime embedded in WASM.
 //
 // Nulang is a domain-specific language used by agent components to generate
-// and evaluate logic.  This interface exposes AST nodes, evaluation, and
-// compilation to WASI P2 components.
+// and evaluate logic.  This interface exposes AST nodes, evaluation, parsing,
+// and compilation to WASI P2 components.
 
 package nulang:runtime@0.1.0;
 
@@ -140,7 +140,8 @@ interface parse {
     parse: func(source: string) -> result<ast-node, error>;
 }
 
-/// World exposed by a Nulang runtime component.
+/// World exposed by a Nulang runtime component.  It is designed to target
+/// WASI Preview 2 so the component can run headless in the wasmCloud lattice.
 world nulang-runtime {
     export compile;
     export eval;

@@ -1,4 +1,4 @@
-# wadm.yaml -- wasmCloud Application Deployment Manager manifest for the
+# wadm.yaml -- wasmCloud v2 Application Deployment Manager manifest for the
 # Multi-Agent Developer Mesh agent component lattice.
 #
 # This manifest defines:
@@ -6,8 +6,13 @@
 #   - A mock Nulang compiler component used for local development and CI
 #   - A NATS messaging provider for wRPC over the mesh
 #   - A KV provider for lattice-wide state
-#   - Links between components and capability providers
+#   - An HTTP server provider for health / management endpoints
+#   - Links between components and capability providers (as component traits)
 #   - Traits and policies for spread/scaling
+#
+# Image references below use placeholder tokens (e.g. __AGENT_SERVICE_VERSION__)
+# that are substituted by the deployment pipeline.  No production image tag is
+# hardcoded here.
 
 apiVersion: core.oam.dev/v1beta1
 kind: Application
@@ -15,7 +20,7 @@ metadata:
   name: agent-mesh
   annotations:
     description: "Multi-Agent Developer Mesh agent lattice"
-    version: "0.1.0"
+    version: "0.2.0"
 spec:
   components:
     # -------------------------------------------------------------------------
@@ -24,7 +29,7 @@ spec:
     - name: agent-service
       type: component
       properties:
-        image: ghcr.io/dev-plane/agent-service:0.1.0
+        image: ghcr.io/dev-plane/agent-service:__AGENT_SERVICE_VERSION__
       traits:
         - type: spreadscaler
           properties:
@@ -39,25 +44,73 @@ spec:
                 requirements:
                   node: remote-vps
 
+        # Agent service -> NATS messaging (prompt, heartbeat, telemetry)
+        - type: link
+          properties:
+            name: agent-nats
+            target: nats-messaging
+            namespace: wasmcloud
+            package: messaging
+            interfaces: [consumer, publisher]
+            source_config:
+              - name: agent-nats-config
+                properties:
+                  # Subscribe to the prompt and heartbeat subject hierarchies.
+                  subscriptions: agents.prompt.*.*.*,agents.hb.*.*.*
+                  # Prefix for telemetry publishes.
+                  publish_prefix: agents.telemetry
+
+        # Agent service -> KV store (nodes.inventory)
+        - type: link
+          properties:
+            name: agent-kv
+            target: kv-nats
+            namespace: wasi
+            package: keyvalue
+            interfaces: [atomics, store]
+            target_config:
+              - name: agent-kv-config
+                properties:
+                  bucket: nodes.inventory
+
     # -------------------------------------------------------------------------
     # Mock Nulang compiler component (development / CI only)
     # -------------------------------------------------------------------------
     - name: nulang-compiler
       type: component
       properties:
-        image: ghcr.io/dev-plane/nulang-compiler-mock:0.1.0
+        image: ghcr.io/dev-plane/nulang-compiler-mock:__NULANG_COMPILER_VERSION__
       traits:
         - type: spreadscaler
           properties:
             instances: 1
 
+        # Nulang compiler -> NATS messaging (request/reply compile jobs)
+        - type: link
+          properties:
+            name: nulang-nats
+            target: nats-messaging
+            namespace: wasmcloud
+            package: messaging
+            interfaces: [consumer, publisher]
+            source_config:
+              - name: nulang-nats-config
+                properties:
+                  subscriptions: agents.nulang.compile
+                  publish_prefix: agents.nulang
+
     # -------------------------------------------------------------------------
     # NATS messaging capability provider (wRPC transport)
+    #
+    # Replace __NATS_MESSAGING_VERSION__ with the actual wasmCloud provider
+    # version that matches your wash/wadm toolchain. Official images are
+    # published by the wasmCloud project; verify the registry and tag before
+    # deploying.
     # -------------------------------------------------------------------------
     - name: nats-messaging
       type: capability
       properties:
-        image: wasmcloud.azurecr.io/nats-messaging:0.24.0
+        image: ghcr.io/wasmcloud/nats-messaging:__NATS_MESSAGING_VERSION__
       traits:
         - type: spreadscaler
           properties:
@@ -65,11 +118,15 @@ spec:
 
     # -------------------------------------------------------------------------
     # Key-value capability provider (lattice state)
+    #
+    # Replace __KV_NATs_VERSION__ with the actual provider version. This
+    # example uses the NATS-backed keyvalue provider; swap for redis or another
+    # backend if your lattice requires it.
     # -------------------------------------------------------------------------
-    - name: kvredis
+    - name: kv-nats
       type: capability
       properties:
-        image: wasmcloud.azurecr.io/kvredis:0.26.0
+        image: ghcr.io/wasmcloud/keyvalue-nats:__KV_NATs_VERSION__
       traits:
         - type: spreadscaler
           properties:
@@ -77,15 +134,33 @@ spec:
 
     # -------------------------------------------------------------------------
     # HTTP server capability provider (health / management endpoints)
+    #
+    # Replace __HTTP_SERVER_VERSION__ with the actual wasmCloud HTTP server
+    # provider version. The listen address below is a placeholder Tailscale IP;
+    # update it to the IP assigned to the host where this provider runs.
     # -------------------------------------------------------------------------
     - name: httpserver
       type: capability
       properties:
-        image: wasmcloud.azurecr.io/httpserver:0.22.0
+        image: ghcr.io/wasmcloud/http-server:__HTTP_SERVER_VERSION__
       traits:
         - type: spreadscaler
           properties:
             instances: 1
+
+        # HTTP server -> Agent service (health endpoint)
+        - type: link
+          properties:
+            name: agent-health
+            target: agent-service
+            namespace: wasi
+            package: http
+            interfaces: [incoming-handler]
+            source_config:
+              - name: agent-health-config
+                properties:
+                  address: 100.64.0.10:8080
+                  route: /health
 
   policies:
     # Require that all remote copies run on nodes labeled secure=true.
@@ -98,82 +173,3 @@ spec:
             required: true
             node_labels:
               secure: "true"
-
-  # ---------------------------------------------------------------------------
-  # Links: describe which components use which capability providers.
-  # ---------------------------------------------------------------------------
-  links:
-    # Agent service -> NATS messaging
-    - name: agent-nats
-      from:
-        component: agent-service
-        namespace: dev-plane
-        package: agent
-        interfaces: [messaging]
-      to:
-        component: nats-messaging
-        namespace: dev-plane
-        package: messaging
-        interfaces: [consumer, publisher]
-      properties:
-        source_config:
-          - name: agent-nats-config
-            properties:
-              subscriptions: agents.prompt.*.*.*,agents.hb.*.*.*
-              publish_prefix: agents.telemetry
-
-    # Agent service -> KV store
-    - name: agent-kv
-      from:
-        component: agent-service
-        namespace: dev-plane
-        package: agent
-        interfaces: [state]
-      to:
-        component: kvredis
-        namespace: dev-plane
-        package: keyvalue
-        interfaces: [atomics, store]
-      properties:
-        target_config:
-          - name: agent-kv-config
-            properties:
-              bucket: nodes.inventory
-
-    # Agent service -> HTTP server (health endpoint)
-    - name: agent-health
-      from:
-        component: httpserver
-        namespace: dev-plane
-        package: httpserver
-        interfaces: [incoming-handler]
-      to:
-        component: agent-service
-        namespace: dev-plane
-        package: agent
-        interfaces: [health]
-      properties:
-        target_config:
-          - name: agent-health-config
-            properties:
-              address: 127.0.0.1:8080
-              route: /health
-
-    # Nulang compiler -> NATS messaging (request/reply compile jobs)
-    - name: nulang-nats
-      from:
-        component: nulang-compiler
-        namespace: dev-plane
-        package: nulang
-        interfaces: [compile]
-      to:
-        component: nats-messaging
-        namespace: dev-plane
-        package: messaging
-        interfaces: [consumer, publisher]
-      properties:
-        source_config:
-          - name: nulang-nats-config
-            properties:
-              subscriptions: agents.nulang.compile
-              publish_prefix: agents.nulang

@@ -1,0 +1,51 @@
+[Unit]
+Description=Persistent headless WezTerm multiplexer server for %i
+Documentation=https://wezfurlong.org/wezterm/multiplexing.html
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=%i
+Group=%i
+
+Environment="WEZTERM_MUX_LOG=/var/log/wezterm-mux-server/%i-mux.log"
+Environment="WEZTERM_MUX_UNIX_DOMAIN=/run/wezterm-mux-server/%i.sock"
+Environment="WEZTERM_MUX_BIND=127.0.0.1:8080"
+Environment="TAILSCALE_BIND_PREFERENCE=100."
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+
+WorkingDirectory=/var/lib/%i
+ExecStartPre=-/bin/mkdir -p /run/wezterm-mux-server /var/log/wezterm-mux-server
+ExecStartPre=-/bin/chown %i:%i /run/wezterm-mux-server /var/log/wezterm-mux-server
+ExecStartPre=-/bin/chmod 0750 /run/wezterm-mux-server
+
+ExecStart=/bin/bash -c 'set -a; TAIL_IP=$(ip -4 -o addr show to 100.0.0.0/8 | awk '\''{print $4}'\'' | cut -d/ -f1 | head -1); MUX_BIN=$(command -v wezterm-mux-server || echo /usr/bin/wezterm-mux-server); if [[ -n "${TAIL_IP}" ]]; then export WEZTERM_MUX_BIND="${TAIL_IP}:8080"; echo "Binding wezterm-mux-server for %i to Tailscale ${WEZTERM_MUX_BIND}"; else echo "Tailscale IP not found; binding wezterm-mux-server for %i to loopback ${WEZTERM_MUX_BIND}"; fi; exec "${MUX_BIN}" --daemonize no'
+
+ExecStop=/bin/kill -TERM $MAINPID
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=on-failure
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Inherit dynamic MemoryMax from the agent-mesh-workers slice.
+Slice=agent-mesh-workers.slice
+
+# Security hardening (tailored for a headless terminal multiplexer).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/run/wezterm-mux-server /var/log/wezterm-mux-server
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+
+[Install]
+WantedBy=multi-user.target

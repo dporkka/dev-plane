@@ -64,3 +64,7 @@ coverage.html
 
 # Generated code
 packages/db/gen/
+
+# Runtime artifacts
+.pts-reports/
+__pycache__/

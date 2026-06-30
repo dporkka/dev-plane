@@ -1,0 +1,62 @@
+# verification/gates/bifrost/cluster.yaml
+#
+# EXAMPLE configuration for a gossip-synchronized AI gateway cluster.  The
+# `bifrost.dev-plane.io/v1` API group is illustrative; replace it with the CRD
+# or config schema of the gateway you actually run.  All listeners bind to the
+# Tailscale overlay address assigned to the host.
+#
+# Render with environment variables, e.g.:
+#   envsubst < cluster.yaml > /etc/bifrost/verification-gates-cluster.yaml
+
+apiVersion: bifrost.dev-plane.io/v1
+kind: Cluster
+metadata:
+  name: verification-gates-bifrost
+  namespace: verification-gates
+  labels:
+    layer: gateway
+    component: bifrost
+spec:
+  node_id: ${BIFROST_NODE_ID}
+
+  server:
+    bind_addr: ${BIFROST_BIND_ADDR}
+    bind_port: ${BIFROST_BIND_PORT:-8443}
+    # Bind only to the Tailscale 100.x overlay. TLS terminates at the gateway
+    # using internal PKI or Tailscale mesh certificates.
+    tls:
+      enabled: true
+      cert_file: /etc/bifrost/tls/server.crt
+      key_file: /etc/bifrost/tls/server.key
+      client_ca_file: /etc/bifrost/tls/ca.crt
+      client_auth: require_and_verify
+
+  gossip:
+    bind_addr: ${BIFROST_GOSSIP_BIND_ADDR}
+    bind_port: ${BIFROST_GOSSIP_BIND_PORT:-7946}
+    advertise_addr: ${BIFROST_GOSSIP_BIND_ADDR}
+    advertise_port: ${BIFROST_GOSSIP_BIND_PORT:-7946}
+    peers:
+      - ${BIFROST_PEER_1}
+      - ${BIFROST_PEER_2}
+      - ${BIFROST_PEER_3}
+    encryption_key: ${BIFROST_GOSSIP_KEY}
+    # Tuned for LAN-like Tailscale latency.
+    probe_interval: 1s
+    probe_timeout: 500ms
+    suspect_mult: 4
+    sync_interval: 30s
+
+  observer:
+    metrics:
+      enabled: true
+      bind_addr: ${BIFROST_BIND_ADDR}
+      bind_port: 9090
+      path: /metrics
+    tracing:
+      enabled: true
+      endpoint: ${BIFROST_OTEL_ENDPOINT}
+      sample_rate: 0.1
+    logging:
+      level: info
+      format: json

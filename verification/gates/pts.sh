@@ -16,10 +16,12 @@
 #      - a historical coverage mapping file, and
 #      - language-specific heuristics (Go, TypeScript, JavaScript, etc.).
 #   4. Lint the changed files with Biome.
-#   5. Execute the selected tests.
-#   6. If tests fail, enter a self-correction loop that retries up to N times,
-#      expanding the test selection on each iteration.
-#   7. Emit a human-readable report and/or JSON machine output.
+#   5. Check formatting of the changed files with Biome.
+#   6. Execute the selected tests.
+#   7. If tests fail, enter a self-correction loop that retries up to D turns,
+#      captures stderr, publishes it to a WASM actor over NATS, and expands the
+#      test selection on each iteration.
+#   8. Emit a human-readable report and/or JSON machine output.
 #
 # Usage:
 #   ./verification/gates/pts.sh [--staged] [--unstaged] [--all] [--json]
@@ -28,8 +30,8 @@
 #                               [--test-runner CMD] [--report-dir DIR]
 #
 # Exit codes:
-#   0  - gate passed (lint clean and all selected tests passed)
-#   1  - gate failed (lint errors, test failures, or runtime error)
+#   0  - gate passed (lint and format clean and all selected tests passed)
+#   1  - gate failed (lint/format errors, test failures, or runtime error)
 #   2  - bad arguments or missing required tooling
 #
 # Environment overrides:
@@ -38,7 +40,12 @@
 #   PTS_BIOME_CONFIG      - path to biome.json
 #   PTS_TEST_RUNNER       - test command prefix (default: "go test")
 #   PTS_REPORT_DIR        - where to write reports (default: .pts-reports)
-#   PTS_MAX_RETRIES       - self-correction retry budget (default: 2)
+#   PTS_MAX_RETRIES       - self-correction turn budget D (default: 5)
+#   PTS_OWNER             - owner tag for self-correction feedback (default: mesh)
+#   PTS_SESSION_ID        - session id for self-correction feedback
+#                           (default: git short HEAD)
+#   PTS_NATS_URL          - NATS server URL for self-correction feedback
+#   PTS_NATS_CREDS        - NATS credentials file for self-correction feedback
 #   PTS_JSON              - set to "1" to enable JSON output
 #   PTS_VERBOSE           - set to "1" for debug logging
 #
@@ -54,7 +61,10 @@ set -euo pipefail
 : "${PTS_BIOME_CONFIG:=${PWD}/biome.json}"
 : "${PTS_TEST_RUNNER:=go test}"
 : "${PTS_REPORT_DIR:=${PWD}/.pts-reports}"
-: "${PTS_MAX_RETRIES:=2}"
+: "${PTS_MAX_RETRIES:=5}"
+: "${PTS_OWNER:=mesh}"
+: "${PTS_NATS_URL:=}"
+: "${PTS_NATS_CREDS:=}"
 : "${PTS_JSON:=0}"
 : "${PTS_VERBOSE:=0}"
 
@@ -65,11 +75,20 @@ declare -A TEST_TARGETS=()
 declare -A COVERAGE_MAP=()
 declare -a TEST_LOGS=()
 declare LINT_STATUS=0
+declare FORMAT_STATUS=0
 
 # Scratch array used by mapping functions to collect targets for the current
 # changed file.  We use a global array instead of namerefs to avoid Bash
 # circular-name-reference warnings when nested mapping helpers are called.
 declare -a __PTS_CURRENT_TARGETS=()
+
+# Captured stderr from the most recent test attempt, used for self-correction
+# feedback published to the WASM actor over NATS.
+declare TEST_STDERR=""
+
+# Self-correction feedback context.
+declare SELF_CORRECT_OWNER="mesh"
+declare SELF_CORRECT_SESSION="default"
 
 declare JSON_OUTPUT=0
 declare STAGED=0
@@ -120,7 +139,7 @@ Options:
   --unstaged            Include unstaged changes.
   --all                 Include both staged and unstaged changes.
   --json                Emit JSON result to stdout instead of human text.
-  --max-retries N       Retry failed tests up to N times (default: 2).
+  --max-retries N       Maximum self-correction turns D (default: 5).
   --coverage-file PATH  Historical coverage mapping file.
   --ast-grep-config PATH
                         ast-grep rule configuration file.
@@ -128,6 +147,12 @@ Options:
   --test-runner CMD     Test command prefix (default: "go test").
   --report-dir DIR      Directory for written reports.
   -h, --help            Show this help message.
+
+Environment:
+  PTS_OWNER             Owner tag for agents.selfcorrect.feedback.{owner}.{session}
+  PTS_SESSION_ID        Session id (default: git short HEAD)
+  PTS_NATS_URL          NATS server URL for feedback publishing
+  PTS_NATS_CREDS        NATS credentials file for feedback publishing
 
 Examples:
   pts.sh --unstaged
@@ -235,7 +260,7 @@ require_cmds() {
   fi
 
   if ! command -v biome &>/dev/null; then
-    warn "biome not found; lint step will be skipped"
+    warn "biome not found; lint/format steps will be skipped"
   fi
 }
 
@@ -248,6 +273,78 @@ ensure_git_root() {
   fi
   cd "${git_root}"
   log_debug "Working from git root: ${git_root}"
+}
+
+# ---------------------------------------------------------------------------
+# Self-correction feedback context
+# ---------------------------------------------------------------------------
+
+init_selfcorrect_context() {
+  SELF_CORRECT_OWNER="${PTS_OWNER}"
+  SELF_CORRECT_SESSION="${PTS_SESSION_ID:-$(git rev-parse --short HEAD 2>/dev/null || echo 'default')}"
+}
+
+# Build the self-correction feedback JSON payload.
+build_selfcorrect_payload() {
+  local attempt="$1"
+  local stderr_payload="$2"
+
+  # Truncate enormous stderr so the NATS message stays well under 1 MiB.
+  local truncated
+  truncated="${stderr_payload:0:1048576}"
+
+  PTS_FEEDBACK_STDERR="${truncated}" \
+  PTS_FEEDBACK_ATTEMPT="${attempt}" \
+  PTS_FEEDBACK_OWNER="${SELF_CORRECT_OWNER}" \
+  PTS_FEEDBACK_SESSION="${SELF_CORRECT_SESSION}" \
+  PTS_FEEDBACK_TARGETS="$(printf '%s\t' "${!TEST_TARGETS[@]}")" \
+  python3 - <<'PY'
+import json, os, datetime
+payload = {
+    "stderr": os.environ.get("PTS_FEEDBACK_STDERR", ""),
+    "attempt": int(os.environ.get("PTS_FEEDBACK_ATTEMPT", "1")),
+    "owner": os.environ.get("PTS_FEEDBACK_OWNER", "mesh"),
+    "session": os.environ.get("PTS_FEEDBACK_SESSION", "default"),
+    "targets": [t for t in os.environ.get("PTS_FEEDBACK_TARGETS", "").split("\t") if t],
+    "timestamp": datetime.datetime.utcnow().isoformat() + "Z"
+}
+print(json.dumps(payload, ensure_ascii=False))
+PY
+}
+
+# Publish captured test stderr to the WASM actor over NATS.
+# If the nats CLI is unavailable, write the payload to a local file so the
+# feedback is not lost. This keeps the gate usable in minimal CI environments.
+publish_selfcorrect_feedback() {
+  local attempt="$1"
+  local stderr_payload="$2"
+
+  local payload
+  payload="$(build_selfcorrect_payload "${attempt}" "${stderr_payload}")"
+
+  local subject
+  subject="agents.selfcorrect.feedback.${SELF_CORRECT_OWNER}.${SELF_CORRECT_SESSION}"
+
+  if command -v nats &>/dev/null; then
+    local nats_args=()
+    if [[ -n "${PTS_NATS_URL:-}" ]]; then
+      nats_args+=("--server=${PTS_NATS_URL}")
+    fi
+    if [[ -n "${PTS_NATS_CREDS:-}" ]]; then
+      nats_args+=("--creds=${PTS_NATS_CREDS}")
+    fi
+
+    log_debug "Publishing self-correction feedback to ${subject}"
+    if ! nats pub "${nats_args[@]}" "${subject}" "${payload}" >/dev/null 2>&1; then
+      warn "Failed to publish self-correction feedback to ${subject}"
+    fi
+  else
+    log_debug "nats CLI not found; writing self-correction feedback to local file"
+    local fallback
+    fallback="${PTS_REPORT_DIR}/selfcorrect-feedback-${attempt}-$(date +%s).json"
+    printf '%s\n' "${payload}" > "${fallback}"
+    log "Self-correction feedback written to ${fallback} (nats CLI unavailable)"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -690,6 +787,56 @@ run_biome_lint() {
 }
 
 # ---------------------------------------------------------------------------
+# Biome format check on changed files
+# ---------------------------------------------------------------------------
+
+run_biome_format() {
+  if ! command -v biome &>/dev/null; then
+    warn "biome not installed; skipping format check"
+    FORMAT_STATUS=0
+    return 0
+  fi
+
+  local -a biome_files=()
+  for f in "${CHANGED_FILES[@]}"; do
+    case "${f}" in
+      *.js|*.jsx|*.ts|*.tsx|*.mjs|*.cjs|*.json|*.css|*.html)
+        biome_files+=("${f}")
+        ;;
+    esac
+  done
+
+  if [[ ${#biome_files[@]} -eq 0 ]]; then
+    log "No Biome-supported files changed; skipping format check"
+    FORMAT_STATUS=0
+    return 0
+  fi
+
+  log "Running Biome format check on ${#biome_files[@]} file(s)..."
+
+  local biome_args=()
+  if [[ -f "${PTS_BIOME_CONFIG}" ]]; then
+    biome_args+=("--config-path=$(dirname "${PTS_BIOME_CONFIG}")")
+  elif [[ -d "${PTS_BIOME_CONFIG}" ]]; then
+    biome_args+=("--config-path=${PTS_BIOME_CONFIG}")
+  fi
+
+  local format_output
+  FORMAT_STATUS=0
+  format_output="$(biome format "${biome_args[@]}" --max-diagnostics=200 "${biome_files[@]}" 2>&1)" || FORMAT_STATUS=$?
+
+  TEST_LOGS+=("BIOME FORMAT CHECK" "${format_output}")
+
+  if [[ "${FORMAT_STATUS}" -ne 0 ]]; then
+    error "Biome format check failed with status ${FORMAT_STATUS}"
+  else
+    log "Biome format check passed"
+  fi
+
+  return "${FORMAT_STATUS}"
+}
+
+# ---------------------------------------------------------------------------
 # Test execution with self-correction retries
 # ---------------------------------------------------------------------------
 
@@ -748,6 +895,7 @@ run_tests() {
 
   if [[ -z "${cmd}" ]]; then
     log "No test targets to execute"
+    TEST_STDERR=""
     return 0
   fi
 
@@ -756,9 +904,17 @@ run_tests() {
 
   local test_output
   local test_status=0
-  test_output="$(eval "${cmd}" 2>&1)" || test_status=$?
+  local stderr_file
+  stderr_file="$(mktemp)"
+
+  test_output="$(eval "${cmd}" 2> "${stderr_file}")" || test_status=$?
+  TEST_STDERR="$(cat "${stderr_file}" 2>/dev/null || true)"
+  rm -f "${stderr_file}"
 
   TEST_LOGS+=("TEST ATTEMPT ${attempt}" "${cmd}" "${test_output}")
+  if [[ -n "${TEST_STDERR}" ]]; then
+    TEST_LOGS+=("TEST STDERR ${attempt}" "${TEST_STDERR}")
+  fi
 
   if [[ "${test_status}" -ne 0 ]]; then
     warn "Test attempt ${attempt} failed with status ${test_status}"
@@ -772,6 +928,7 @@ run_tests() {
 self_correction_loop() {
   if [[ ${#TEST_TARGETS[@]} -eq 0 ]]; then
     log "No tests selected; skipping execution"
+    TEST_STDERR=""
     return 0
   fi
 
@@ -781,8 +938,11 @@ self_correction_loop() {
       return 0
     fi
 
-    if [[ "${attempt}" -gt "${MAX_RETRIES}" ]]; then
-      error "Exhausted ${MAX_RETRIES} retry attempt(s); tests still failing"
+    # Feed captured stderr back to the WASM actor over NATS.
+    publish_selfcorrect_feedback "${attempt}" "${TEST_STDERR}"
+
+    if [[ "${attempt}" -ge "${MAX_RETRIES}" ]]; then
+      error "Exhausted ${MAX_RETRIES} self-correction turn(s); tests still failing"
       return 1
     fi
 
@@ -814,6 +974,7 @@ write_text_report() {
     echo "HEAD: $(git rev-parse HEAD 2>/dev/null || echo 'unknown')"
     echo ""
     echo "Scope: staged=${STAGED} unstaged=${UNSTAGED}"
+    echo "Self-correction context: owner=${SELF_CORRECT_OWNER} session=${SELF_CORRECT_SESSION}"
     echo "Changed files (${#CHANGED_FILES[@]}):"
     for f in "${CHANGED_FILES[@]}"; do echo "  - ${f}"; done
     echo ""
@@ -824,6 +985,7 @@ write_text_report() {
     for t in "${!TEST_TARGETS[@]}"; do echo "  - ${t} (trigger: ${TEST_TARGETS[${t}]})"; done
     echo ""
     echo "Lint status: ${LINT_STATUS}"
+    echo "Format status: ${FORMAT_STATUS}"
     echo ""
     echo "--- Execution logs ---"
     for entry in "${TEST_LOGS[@]}"; do
@@ -836,7 +998,7 @@ write_text_report() {
 
 write_json_output() {
   local overall_status="passed"
-  if [[ "${LINT_STATUS}" -ne 0 ]]; then
+  if [[ "${LINT_STATUS}" -ne 0 || "${FORMAT_STATUS}" -ne 0 ]]; then
     overall_status="failed"
   fi
 
@@ -846,6 +1008,8 @@ write_json_output() {
     printf '  "timestamp": %s,\n' "$(json_escape "$(date -Iseconds)")"
     printf '  "head": %s,\n' "$(json_escape "$(git rev-parse HEAD 2>/dev/null || echo 'unknown')")"
     printf '  "scope": {"staged": %s, "unstaged": %s},\n' "${STAGED}" "${UNSTAGED}"
+    printf '  "self_correction": {"owner": %s, "session": %s, "max_retries": %s},\n' \
+      "$(json_escape "${SELF_CORRECT_OWNER}")" "$(json_escape "${SELF_CORRECT_SESSION}")" "${MAX_RETRIES}"
 
     printf '  "changed_files": [\n'
     local first=1
@@ -875,6 +1039,7 @@ write_json_output() {
     printf '\n  },\n'
 
     printf '  "lint_status": %s,\n' "${LINT_STATUS}"
+    printf '  "format_status": %s,\n' "${FORMAT_STATUS}"
     printf '  "max_retries": %s,\n' "${MAX_RETRIES}"
 
     printf '  "logs": [\n'
@@ -898,6 +1063,7 @@ main() {
   parse_args "$@"
   require_cmds
   ensure_git_root
+  init_selfcorrect_context
   ensure_report_dir
 
   discover_changed_files
@@ -905,6 +1071,7 @@ main() {
   run_ast_grep_scan
   resolve_test_targets
   run_biome_lint
+  run_biome_format
 
   local test_status=0
   if ! self_correction_loop; then
@@ -917,7 +1084,7 @@ main() {
     write_text_report
   fi
 
-  if [[ "${LINT_STATUS}" -ne 0 || "${test_status}" -ne 0 ]]; then
+  if [[ "${LINT_STATUS}" -ne 0 || "${FORMAT_STATUS}" -ne 0 || "${test_status}" -ne 0 ]]; then
     error "PTS gate failed"
     return 1
   fi

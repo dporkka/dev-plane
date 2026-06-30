@@ -1,0 +1,41 @@
+# verification/gates/bifrost/semantic-cache.yaml
+#
+# Local semantic cache configuration for the Bifrost AI Gateway.  Cache keys
+# are derived from prompt embeddings and scalar routing headers.  A response is
+# only served from cache when cosine similarity is at least 0.85.
+
+apiVersion: bifrost.dev-plane.io/v1
+kind: SemanticCache
+metadata:
+  name: local-semantic-cache
+  namespace: verification-gates
+  labels:
+    layer: gateway
+    component: cache
+spec:
+  enabled: true
+  mode: local
+
+  vector_store:
+    addr: ${BIFROST_VECTOR_STORE_ADDR:-http://127.0.0.1:6333}
+    collection: bifrost_cache_verification_gates
+
+  embedding:
+    model: ${BIFROST_CACHE_EMBEDDING_MODEL:-text-embedding-3-small}
+    dimensions: 1536
+    metric: cosine
+    # Strict similarity threshold to avoid stale or subtly-wrong cache hits.
+    similarity_threshold: 0.85
+
+  ttl: 3600s
+  max_entry_bytes: 1048576
+  cacheable_statuses: [200]
+
+  vary_headers:
+    - accept
+    - accept-encoding
+    - x-bifrost-response-format
+
+  invalidation:
+    revalidate_after_hits: 100
+    webhook_url: http://127.0.0.1:8090/_cache/invalidate

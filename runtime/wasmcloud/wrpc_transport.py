@@ -5,7 +5,8 @@ wrpc_transport.py -- Development helper for invoking wRPC methods over NATS.
 This script provides:
   - An async NATS connection helper with bounded reconnect backoff.
   - wRPC-style framed chunk encoding/decoding.
-  - Explicit ACK-chunking frames with 0-byte terminal signals for "wired chat".
+  - ACK-first chunk streams: an immediate ACK frame, then DATA/QUERY chunks,
+    terminated by a strict 0-byte frame.
   - Example invocations for agent prompt handling and Nulang compilation.
 
 Install dependencies:
@@ -15,7 +16,7 @@ Example:
     python wrpc_transport.py \
         --nats nats://100.64.0.10:4222 \
         --subject agents.prompt.coder.team-alpha.session-001 \
-        --prompt '{"task":"hello"}'
+        prompt --payload '{"task":"hello"}'
 """
 
 from __future__ import annotations
@@ -26,7 +27,8 @@ import json
 import logging
 import struct
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable
 
 import nats
@@ -45,46 +47,130 @@ TERMINAL: bytes = b"\x00"
 CHUNK_HEADER_FMT = ">I"  # big-endian 4-byte length prefix
 
 
-def encode_framed(payload: bytes, chunk_size: int = 8192) -> bytes:
-    """
-    Encode a payload as a sequence of length-prefixed chunks followed by a
-    0-byte terminal signal.
+class ChunkType(Enum):
+    """Typed chunk kinds used in response pipes."""
 
-    Each non-terminal chunk is sent as: [4-byte length][payload bytes]
-    The terminal signal is a bare 0x00 byte.
+    ACK = "ACK"
+    DATA = "DATA"
+    QUERY = "QUERY"
+
+
+@dataclass
+class ChunkFrame:
+    """A single typed frame in a chunk stream."""
+
+    kind: ChunkType
+    seq: int
+    payload: bytes
+
+    def encode(self) -> bytes:
+        """Encode the frame as a length-prefixed byte string."""
+        header = f"{self.kind.value}:{self.seq}:".encode("utf-8")
+        body = header + self.payload
+        return struct.pack(CHUNK_HEADER_FMT, len(body)) + body
+
+    @staticmethod
+    def decode(data: bytes) -> "ChunkFrame":
+        """Decode a single length-prefixed frame from raw bytes."""
+        if len(data) < 4:
+            raise ValueError("Truncated chunk header")
+        (length,) = struct.unpack(CHUNK_HEADER_FMT, data[:4])
+        body = data[4 : 4 + length]
+        if len(body) != length:
+            raise ValueError("Truncated chunk body")
+
+        prefix, sep, rest = body.partition(b":")
+        if not sep:
+            raise ValueError("Malformed chunk frame: missing kind")
+        try:
+            kind = ChunkType(prefix.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise ValueError(f"Unknown chunk kind: {prefix!r}") from exc
+
+        seq_str, sep2, payload = rest.partition(b":")
+        if not sep2:
+            raise ValueError("Malformed chunk frame: missing sequence")
+        return ChunkFrame(kind=kind, seq=int(seq_str), payload=payload)
+
+
+def encode_chunk_stream(
+    ack_payload: bytes = b"",
+    data_chunks: list[bytes] | None = None,
+    query_chunks: list[bytes] | None = None,
+) -> bytes:
+    """
+    Encode a complete ACK-first chunk stream.
+
+    The stream is: ACK:0, DATA:1..N, QUERY:N+1..M, terminal 0x00 byte.
     """
     out = bytearray()
-    offset = 0
-    while offset < len(payload):
-        end = min(offset + chunk_size, len(payload))
-        chunk = payload[offset:end]
-        out.extend(struct.pack(CHUNK_HEADER_FMT, len(chunk)))
-        out.extend(chunk)
-        offset = end
+    out.extend(ChunkFrame(ChunkType.ACK, seq=0, payload=ack_payload).encode())
+
+    seq = 1
+    for chunk in data_chunks or []:
+        out.extend(ChunkFrame(ChunkType.DATA, seq=seq, payload=chunk).encode())
+        seq += 1
+    for chunk in query_chunks or []:
+        out.extend(ChunkFrame(ChunkType.QUERY, seq=seq, payload=chunk).encode())
+        seq += 1
+
     out.extend(TERMINAL)
     return bytes(out)
 
 
-def decode_framed(data: bytes) -> bytes:
+def decode_chunk_stream(data: bytes) -> list[ChunkFrame]:
     """
-    Decode a stream of length-prefixed chunks until a 0-byte terminal is seen.
+    Decode a chunk stream until the terminal 0-byte frame is seen.
 
-    Raises ValueError on malformed input.
+    Returns all non-terminal frames.  Raises ValueError on malformed input.
     """
-    out = bytearray()
+    frames: list[ChunkFrame] = []
     i = 0
     while i < len(data):
         if data[i : i + 1] == TERMINAL:
-            return bytes(out)
+            if i != len(data) - 1:
+                raise ValueError("Terminal frame must be the final byte")
+            return frames
         if i + 4 > len(data):
             raise ValueError("Truncated chunk header")
         (length,) = struct.unpack(CHUNK_HEADER_FMT, data[i : i + 4])
-        i += 4
-        if i + length > len(data):
+        frame_end = i + 4 + length
+        if frame_end > len(data):
             raise ValueError("Truncated chunk body")
-        out.extend(data[i : i + length])
-        i += length
+        frames.append(ChunkFrame.decode(data[i:frame_end]))
+        i = frame_end
     raise ValueError("Missing terminal signal")
+
+
+def decode_chunk_stream_payloads(data: bytes) -> dict[ChunkType, list[bytes]]:
+    """Convenience helper that groups decoded payloads by chunk type."""
+    grouped: dict[ChunkType, list[bytes]] = {
+        ChunkType.ACK: [],
+        ChunkType.DATA: [],
+        ChunkType.QUERY: [],
+    }
+    for frame in decode_chunk_stream(data):
+        grouped[frame.kind].append(frame.payload)
+    return grouped
+
+
+# Legacy helpers retained for compatibility with simple length-prefixed streams.
+def encode_framed(payload: bytes, chunk_size: int = 8192) -> bytes:
+    """
+    Encode a payload as a sequence of length-prefixed DATA chunks followed by
+    a 0-byte terminal signal.
+    """
+    chunks = [payload[i : i + chunk_size] for i in range(0, len(payload), chunk_size)]
+    return encode_chunk_stream(ack_payload=b"", data_chunks=chunks)
+
+
+def decode_framed(data: bytes) -> bytes:
+    """
+    Decode a DATA-only chunk stream, concatenating payloads and ignoring the
+    leading ACK frame if present.
+    """
+    grouped = decode_chunk_stream_payloads(data)
+    return b"".join(grouped[ChunkType.DATA])
 
 
 @dataclass
@@ -141,7 +227,7 @@ async def connect_nats(url: str, token: str | None = None, creds: str | None = N
             logger.info("Connected to NATS: %s", nc.connected_url.netloc)
             return nc
         except Exception as exc:  # noqa: BLE001
-            wait = min(2 ** attempt, 30)
+            wait = min(2**attempt, 30)
             logger.warning("NATS connect attempt %d failed: %s; retrying in %ss", attempt, exc, wait)
             await asyncio.sleep(wait)
     raise RuntimeError("Unable to connect to NATS after retries")
@@ -150,6 +236,24 @@ async def connect_nats(url: str, token: str | None = None, creds: str | None = N
 # ---------------------------------------------------------------------------
 # wRPC caller
 # ---------------------------------------------------------------------------
+@dataclass
+class WrpcResponse:
+    """Parsed ACK-first response with separated data and query chunks."""
+
+    ack: bytes
+    data: list[bytes] = field(default_factory=list)
+    queries: list[bytes] = field(default_factory=list)
+
+    @property
+    def body(self) -> bytes:
+        """Concatenated DATA payloads."""
+        return b"".join(self.data)
+
+    def json(self) -> Any:
+        """Parse concatenated DATA payloads as JSON."""
+        return json.loads(self.body.decode("utf-8"))
+
+
 class WrpcClient:
     """Minimal wRPC-over-NATS caller using request/reply framing."""
 
@@ -161,31 +265,72 @@ class WrpcClient:
         self,
         subject: str,
         payload: bytes,
-        reply_subject: str | None = None,
+        ack_payload: bytes = b"",
         chunk_size: int = 8192,
-    ) -> bytes:
+    ) -> WrpcResponse:
         """
-        Send a framed request and wait for a framed reply.
+        Send a framed request and wait for an ACK-first framed reply.
 
-        If reply_subject is None, a NATS-generated inbox is used.
+        The request body is sent as DATA chunks; the reply is parsed into
+        ACK/DATA/QUERY frames and returned as a WrpcResponse.
         """
-        data = encode_framed(payload, chunk_size=chunk_size)
-        if reply_subject:
-            msg = await self.nc.request(subject, data, timeout=self.timeout)
-        else:
-            msg = await self.nc.request(subject, data, timeout=self.timeout)
-        return decode_framed(msg.data)
+        data_chunks = [payload[i : i + chunk_size] for i in range(0, len(payload), chunk_size)]
+        data = encode_chunk_stream(ack_payload=ack_payload, data_chunks=data_chunks)
+        msg = await self.nc.request(subject, data, timeout=self.timeout)
+        frames = decode_chunk_stream_payloads(msg.data)
+        return WrpcResponse(
+            ack=b"".join(frames[ChunkType.ACK]),
+            data=frames[ChunkType.DATA],
+            queries=frames[ChunkType.QUERY],
+        )
 
     async def call_json(
         self,
         subject: str,
         payload: dict[str, Any],
-        reply_subject: str | None = None,
+        ack_payload: bytes = b"",
         chunk_size: int = 8192,
-    ) -> dict[str, Any]:
+    ) -> Any:
         data = json.dumps(payload).encode("utf-8")
-        raw = await self.call(subject, data, reply_subject=reply_subject, chunk_size=chunk_size)
-        return json.loads(raw.decode("utf-8"))
+        resp = await self.call(subject, data, ack_payload=ack_payload, chunk_size=chunk_size)
+        return resp.json()
+
+    async def call_with_query(
+        self,
+        subject: str,
+        payload: dict[str, Any],
+        query_handler: Callable[[str], str] | None = None,
+        ack_payload: bytes = b"",
+        chunk_size: int = 8192,
+    ) -> Any:
+        """
+        Send a request and handle any interactive QUERY chunks in the reply.
+
+        When the server asks a question via a QUERY frame, query_handler is
+        called with the question text and the answer is published back on the
+        reply subject.
+        """
+        data = json.dumps(payload).encode("utf-8")
+        data_chunks = [data[i : i + chunk_size] for i in range(0, len(data), chunk_size)]
+        request_data = encode_chunk_stream(ack_payload=ack_payload, data_chunks=data_chunks)
+        msg = await self.nc.request(subject, request_data, timeout=self.timeout)
+        frames = decode_chunk_stream(msg.data)
+
+        # The last DATA chunk's reply subject is where interactive answers go.
+        reply_to = msg.reply
+        collected: list[bytes] = []
+        for frame in frames:
+            if frame.kind == ChunkType.DATA:
+                collected.append(frame.payload)
+            elif frame.kind == ChunkType.QUERY:
+                question = frame.payload.decode("utf-8")
+                if query_handler is None:
+                    raise RuntimeError(f"Received query but no handler: {question}")
+                answer = query_handler(question).encode("utf-8")
+                answer_stream = encode_chunk_stream(ack_payload=b"", data_chunks=[answer])
+                await self.nc.publish(reply_to, answer_stream)
+
+        return json.loads(b"".join(collected).decode("utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -211,13 +356,45 @@ async def subscribe_wired_chat(
     return sub
 
 
+async def subscribe_chunk_stream(
+    nc: NatsClient,
+    subject: str,
+    handler: Callable[[WrpcResponse], bytes | None],
+) -> Subscription:
+    """
+    Subscribe to a subject and deliver fully decoded ACK-first responses.
+
+    If the handler returns non-None bytes, they are sent back as an ACK-first
+    reply on msg.reply.
+    """
+
+    async def _cb(msg: Msg) -> None:
+        try:
+            frames = decode_chunk_stream_payloads(msg.data)
+            resp = WrpcResponse(
+                ack=b"".join(frames[ChunkType.ACK]),
+                data=frames[ChunkType.DATA],
+                queries=frames[ChunkType.QUERY],
+            )
+            reply = handler(resp)
+            if reply is not None and msg.reply:
+                ack_first = encode_chunk_stream(ack_payload=b"ACK", data_chunks=[reply])
+                await msg.respond(ack_first)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Chunk stream handler error: %s", exc)
+
+    sub = await nc.subscribe(subject, cb=_cb)
+    return sub
+
+
 # ---------------------------------------------------------------------------
 # Example service handler
 # ---------------------------------------------------------------------------
 async def example_prompt_handler(msg: Msg) -> None:
     """Echo-style prompt handler for local development."""
     try:
-        payload = decode_framed(msg.data)
+        frames = decode_chunk_stream_payloads(msg.data)
+        payload = b"".join(frames[ChunkType.DATA])
         req = json.loads(payload.decode("utf-8"))
         logger.info("Received prompt: %s", req)
 
@@ -228,13 +405,19 @@ async def example_prompt_handler(msg: Msg) -> None:
             "status": "ok",
         }
         if msg.reply:
-            await msg.respond(encode_framed(json.dumps(response).encode("utf-8")))
+            ack_first = encode_chunk_stream(
+                ack_payload=b"ACK",
+                data_chunks=[json.dumps(response).encode("utf-8")],
+            )
+            await msg.respond(ack_first)
     except Exception as exc:  # noqa: BLE001
         logger.exception("Prompt handler error: %s", exc)
         if msg.reply:
-            await msg.respond(
-                encode_framed(json.dumps({"accepted": False, "error": str(exc)}).encode("utf-8"))
+            error_stream = encode_chunk_stream(
+                ack_payload=b"NACK",
+                data_chunks=[json.dumps({"accepted": False, "error": str(exc)}).encode("utf-8")],
             )
+            await msg.respond(error_stream)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +467,7 @@ async def main() -> int:
                 "payload": args.payload.encode("utf-8"),
                 "timeout_ms": 5000,
             }
-            result = await client.call_json(args.subject, payload)
+            result = await client.call_json(args.subject, payload, ack_payload=b"ACK")
             print(json.dumps(result, indent=2))
 
         elif args.command == "compile":

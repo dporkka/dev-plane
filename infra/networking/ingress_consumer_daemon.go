@@ -21,6 +21,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net/url"
 	"os"
 	"os/signal"
@@ -33,15 +34,16 @@ import (
 )
 
 const (
-	defaultNatsURL     = "nats://127.0.0.1:4222"
-	defaultBucket      = "nodes.inventory"
-	defaultStreamName  = "telemetry"
-	defaultSubject     = "agents.telemetry.>"
-	defaultConsumer    = "ingress-consumer"
-	defaultMaxDeliver  = 3
-	defaultAckWait     = 30 * time.Second
-	defaultFetchSize   = 256
-	defaultReconnectBuf= 32 * 1024 * 1024 // 32 MiB
+	defaultNatsURL      = "nats://127.0.0.1:4222"
+	defaultBucket       = "nodes.inventory"
+	defaultStreamName   = "telemetry"
+	defaultSubject      = "agents.telemetry.>"
+	defaultConsumer     = "ingress-consumer"
+	defaultMaxDeliver   = 3
+	defaultAckWait      = 30 * time.Second
+	defaultFetchSize    = 256
+	defaultReconnectBuf = 32 * 1024 * 1024 // 32 MiB
+	defaultCASAttempts  = 7
 )
 
 // NodeTelemetry describes the expected JSON payload published to
@@ -72,14 +74,14 @@ type InventoryRecord struct {
 
 // Config holds runtime configuration for the daemon.
 type Config struct {
-	NatsURL     string
-	BucketName  string
-	StreamName  string
-	Subject     string
+	NatsURL      string
+	BucketName   string
+	StreamName   string
+	Subject      string
 	ConsumerName string
-	MaxDeliver  int
-	AckWait     time.Duration
-	FetchSize   int
+	MaxDeliver   int
+	AckWait      time.Duration
+	FetchSize    int
 }
 
 func main() {
@@ -214,15 +216,15 @@ func connectWithBackoff(ctx context.Context, logger *slog.Logger, natsURL string
 // ensureTelemetryStream creates or updates the telemetry JetStream stream.
 func ensureTelemetryStream(ctx context.Context, js jetstream.JetStream, cfg Config) (jetstream.Stream, error) {
 	cfgStream := jetstream.StreamConfig{
-		Name:        cfg.StreamName,
-		Subjects:    []string{cfg.Subject},
-		Retention:   jetstream.WorkQueuePolicy,
-		MaxMsgs:     -1,
-		MaxBytes:    -1,
-		MaxAge:      24 * time.Hour,
-		Storage:     jetstream.MemoryStorage,
-		Replicas:    1,
-		Discard:     jetstream.DiscardOld,
+		Name:       cfg.StreamName,
+		Subjects:   []string{cfg.Subject},
+		Retention:  jetstream.WorkQueuePolicy,
+		MaxMsgs:    -1,
+		MaxBytes:   -1,
+		MaxAge:     24 * time.Hour,
+		Storage:    jetstream.MemoryStorage,
+		Replicas:   1,
+		Discard:    jetstream.DiscardOld,
 		Duplicates: 2 * time.Minute,
 	}
 	stream, err := js.CreateOrUpdateStream(ctx, cfgStream)
@@ -235,14 +237,14 @@ func ensureTelemetryStream(ctx context.Context, js jetstream.JetStream, cfg Conf
 // ensureInventoryBucket creates the KV bucket if it does not already exist.
 func ensureInventoryBucket(ctx context.Context, js jetstream.JetStream, bucket string) (jetstream.KeyValue, error) {
 	kv, err := js.CreateKeyValue(ctx, jetstream.KeyValueConfig{
-		Bucket:      bucket,
-		Description: "Agent mesh node inventory with CAS revision tracking",
+		Bucket:       bucket,
+		Description:  "Agent mesh node inventory with CAS revision tracking",
 		MaxValueSize: 128 * 1024,
-		History:     5,
-		TTL:         0,
-		MaxBytes:    -1,
-		Storage:     jetstream.FileStorage,
-		Replicas:    1,
+		History:      5,
+		TTL:          0,
+		MaxBytes:     -1,
+		Storage:      jetstream.FileStorage,
+		Replicas:     1,
 	})
 	if err != nil {
 		// Bucket may already exist; try to bind.
@@ -257,14 +259,14 @@ func ensureInventoryBucket(ctx context.Context, js jetstream.JetStream, bucket s
 // ensureConsumer creates a durable pull consumer over the telemetry stream.
 func ensureConsumer(ctx context.Context, stream jetstream.Stream, cfg Config) (jetstream.Consumer, error) {
 	return stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-		Durable:        cfg.ConsumerName,
-		AckPolicy:      jetstream.AckExplicitPolicy,
-		DeliverPolicy:  jetstream.DeliverAllPolicy,
-		MaxDeliver:     cfg.MaxDeliver,
-		AckWait:        cfg.AckWait,
-		FilterSubject:  cfg.Subject,
-		MaxAckPending:  cfg.FetchSize,
-		ReplayPolicy:   jetstream.ReplayInstantPolicy,
+		Durable:       cfg.ConsumerName,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		DeliverPolicy: jetstream.DeliverAllPolicy,
+		MaxDeliver:    cfg.MaxDeliver,
+		AckWait:       cfg.AckWait,
+		FilterSubject: cfg.Subject,
+		MaxAckPending: cfg.FetchSize,
+		ReplayPolicy:  jetstream.ReplayInstantPolicy,
 	})
 }
 
@@ -321,7 +323,8 @@ func consumeLoop(ctx context.Context, logger *slog.Logger, cfg Config, cons jets
 	}
 }
 
-// processMessage decodes a telemetry frame and commits it to the inventory bucket.
+// processMessage decodes a telemetry frame and commits it to the inventory bucket
+// using a CAS loop over the KV revision.
 func processMessage(ctx context.Context, logger *slog.Logger, msg jetstream.Msg, kv jetstream.KeyValue) error {
 	var tel NodeTelemetry
 	if err := json.Unmarshal(msg.Data(), &tel); err != nil {
@@ -337,8 +340,7 @@ func processMessage(ctx context.Context, logger *slog.Logger, msg jetstream.Msg,
 
 	key := inventoryKey(tel)
 
-	// CAS loop: read current revision, build merged record, attempt Update.
-	for attempt := 1; attempt <= 5; attempt++ {
+	for attempt := 1; attempt <= defaultCASAttempts; attempt++ {
 		entry, err := kv.Get(ctx, key)
 		var last uint64
 		var existing InventoryRecord
@@ -386,15 +388,59 @@ func processMessage(ctx context.Context, logger *slog.Logger, msg jetstream.Msg,
 			)
 			return nil
 		}
-		if errors.Is(err, jetstream.ErrKeyExists) {
-			// Revision collision; retry after short jitter.
-			time.Sleep(time.Duration(attempt) * 25 * time.Millisecond)
-			continue
+
+		if !isCASConflict(err) {
+			return fmt.Errorf("kv commit %s: %w", key, err)
 		}
-		return fmt.Errorf("kv commit %s: %w", key, err)
+		if attempt == defaultCASAttempts {
+			break
+		}
+
+		logger.Warn("kv cas conflict, retrying",
+			slog.String("key", key),
+			slog.Int("attempt", attempt),
+			slog.String("error", err.Error()),
+		)
+		if err := sleepCtx(ctx, casBackoff(attempt)); err != nil {
+			return err
+		}
 	}
 
 	return fmt.Errorf("cas retries exhausted for key %s", key)
+}
+
+// isCASConflict reports whether err is a retriable revision/key collision.
+func isCASConflict(err error) bool {
+	return errors.Is(err, jetstream.ErrKeyExists) || errors.Is(err, jetstream.ErrBadRequest)
+}
+
+// casBackoff returns an exponential retry delay with small jitter.
+func casBackoff(attempt int) time.Duration {
+	base := []time.Duration{
+		10 * time.Millisecond,
+		25 * time.Millisecond,
+		50 * time.Millisecond,
+		100 * time.Millisecond,
+		200 * time.Millisecond,
+		400 * time.Millisecond,
+		800 * time.Millisecond,
+	}
+	i := attempt - 1
+	if i >= len(base) {
+		i = len(base) - 1
+	}
+	jitter := time.Duration(rand.Intn(20)) * time.Millisecond
+	return base[i] + jitter
+}
+
+// sleepCtx sleeps for d or until ctx is canceled.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 // inventoryKey returns the KV key for a telemetry record. The key is stable
