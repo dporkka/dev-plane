@@ -82,6 +82,27 @@ services:
   #   networks:
   #     - aicp-network
 
+  # --- Bifrost AI Gateway (external, bring-your-own) -------------------------
+  # Bifrost is an external AI gateway that provides a unified OpenAI-compatible
+  # interface across multiple model providers. There is no pre-built Docker
+  # image in this repo -- deploy your own gateway following the config templates
+  # in gateway/bifrost/ and set BIFROST_URL + BIFROST_API_KEY in .env.
+  #
+  # Example placeholder (adjust image and ports to your gateway):
+  # bifrost:
+  #   image: your-org/bifrost-gateway:latest
+  #   container_name: aicp-bifrost
+  #   ports:
+  #     - "8083:8083"
+  #   environment:
+  #     - BIFROST_API_KEY=${BIFROST_API_KEY}
+  #   volumes:
+  #     - ./gateway/bifrost/bifrost.yaml:/etc/bifrost/bifrost.yaml
+  #     - bifrost-data:/var/lib/bifrost
+  #   restart: unless-stopped
+  #   networks:
+  #     - aicp-network
+
 # --- Networks ----------------------------------------------------------------
 networks:
   aicp-network:
@@ -95,4 +116,6 @@ volumes:
   temporal-data:
     driver: local
   # postgres-data:
+  #   driver: local
+  # bifrost-data:
   #   driver: local

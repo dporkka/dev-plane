@@ -141,7 +141,7 @@ make db-reset
 | `WORKER_HEALTH_PORT` | `8081` | Worker HTTP health endpoint port (container health checks) |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8080` | Frontend API URL |
 | `NEXT_PUBLIC_GITHUB_CLIENT_ID` | `` | Public GitHub OAuth client ID |
-| `BIFROST_URL` | `http://localhost:8081` | Bifrost AI gateway URL |
+| `BIFROST_URL` | `http://localhost:8083` | Bifrost AI gateway URL |
 | `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `GROQ_API_KEY` / `FIREWORKS_API_KEY` | `` | Direct model provider keys |
 | `DEFAULT_MODEL` / `DEFAULT_PROVIDER` | `gpt-4o` / `openai` | Default model for agent runs |
 
@@ -152,10 +152,10 @@ localhost:3000  ->  Next.js dev server (hot reload)
 localhost:8080  ->  Go API server (auto-restart on change)
 localhost:8081  ->  Go Worker health endpoint
 localhost:8082  ->  Go Runner service (workspace runtime)
+localhost:8083  ->  Bifrost AI Gateway (external; optional)
 localhost:4222  ->  NATS JetStream
 localhost:8222  ->  NATS monitoring UI
 localhost:8233  ->  Temporal Web UI (optional)
-```
 
 ## Debugging
 

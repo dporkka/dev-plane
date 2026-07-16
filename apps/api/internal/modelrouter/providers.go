@@ -475,7 +475,7 @@ type BifrostProvider struct {
 // NewBifrostProvider creates a new Bifrost provider.
 func NewBifrostProvider() *BifrostProvider {
 	return &BifrostProvider{
-		baseURL: envOrDefault("BIFROST_URL", "http://localhost:8081"),
+		baseURL: envOrDefault("BIFROST_URL", "http://localhost:8083"),
 	}
 }
 

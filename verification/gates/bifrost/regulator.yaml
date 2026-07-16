@@ -1,6 +1,6 @@
 # verification/gates/bifrost/regulator.yaml
 #
-# Token-bucket regulator queue for the Bifrost AI Gateway.  Bucket state is
+# Token-bucket rate regulator for the Bifrost AI Gateway.  Bucket state is
 # shared across the cluster through Redis so that all gateway nodes enforce a
 # global rate limit.
 
@@ -21,31 +21,34 @@ spec:
     refill_rate_per_second: 10
     burst: 20
 
-  queues:
+  tiers:
     - name: internal
       capacity: 10000
       refill_rate_per_second: 1000
       burst: 500
-      match_headers:
-        x-bifrost-tier: internal
-
+      match:
+        headers:
+          x-bifrost-tier: internal
     - name: premium
       capacity: 5000
       refill_rate_per_second: 200
       burst: 100
-      match_headers:
-        x-bifrost-tier: premium
+      match:
+        headers:
+          x-bifrost-tier: premium
 
     - name: standard
       capacity: 1000
       refill_rate_per_second: 50
       burst: 50
-      match_headers:
-        x-bifrost-tier: standard
+      match:
+        headers:
+          x-bifrost-tier: standard
 
     - name: batch
       capacity: 500
       refill_rate_per_second: 10
       burst: 20
-      match_headers:
-        x-bifrost-priority: batch
+      match:
+        headers:
+          x-bifrost-priority: batch

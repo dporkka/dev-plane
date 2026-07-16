@@ -32,7 +32,7 @@ export RUNNER_PORT     ?= 8082
 export JWT_SECRET      ?= dev-secret-change-me-min-32-chars-long
 export LOG_LEVEL       ?= info
 export TEMPORAL_HOST   ?= localhost:7233
-export BIFROST_URL     ?= http://localhost:8081
+export BIFROST_URL     ?= http://localhost:8083
 export WORKSPACE_BASE_DIR ?= ./data/workspaces
 
 # Directories

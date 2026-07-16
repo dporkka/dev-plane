@@ -28,7 +28,7 @@ func TestIntegrationBifrost(t *testing.T) {
 	apiKey := skipIfMissing(t, "BIFROST_API_KEY")
 	baseURL := os.Getenv("BIFROST_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:8081"
+		baseURL = "http://localhost:8083"
 	}
 
 	provider := NewBifrostProvider()
