@@ -10,13 +10,13 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/ai-dev-control-plane/api/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -36,11 +36,11 @@ func Setup(ctx context.Context, serviceName, serviceVersion string, logger *slog
 	res, err := resource.Merge(
 		resource.Default(),
 		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion(serviceVersion),
-			semconv.ServiceInstanceID(getEnvOrDefault("HOSTNAME", "unknown")),
-			attribute.String("deployment.environment", getEnvOrDefault("ENV", "development")),
+			semconvSchemaURL(),
+			attribute.String("service.name", serviceName),
+			attribute.String("service.version", serviceVersion),
+			attribute.String("service.instance.id", config.EnvOrDefault("HOSTNAME", "unknown")),
+			attribute.String("deployment.environment", config.EnvOrDefault("ENV", "development")),
 		),
 	)
 	if err != nil {
@@ -109,9 +109,9 @@ func initTracerProvider(res *resource.Resource, logger *slog.Logger) (*sdktrace.
 	return tp, nil
 }
 
-func getEnvOrDefault(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultValue
+// semconvSchemaURL returns the schema URL from the default resource
+// to avoid version conflicts with the semconv package.
+func semconvSchemaURL() string {
+	// Use the default resource's schema URL so it always matches.
+	return resource.Default().SchemaURL()
 }

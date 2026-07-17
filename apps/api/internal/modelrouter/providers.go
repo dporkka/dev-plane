@@ -6,12 +6,25 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
+
+	"github.com/ai-dev-control-plane/api/internal/config"
 )
 
 // ProviderNotConnectedError is returned when a provider is not configured.
 var ProviderNotConnectedError = errors.New("provider not connected: API key not configured")
+
+// envKeyProvider is a base type for providers that load API keys from environment variables.
+type envKeyProvider struct {
+	apiKey  string
+	envName string
+}
+
+func (p *envKeyProvider) loadAPIKey() {
+	if p.apiKey == "" {
+		p.apiKey = os.Getenv(p.envName)
+	}
+}
 
 // --------------------
 // OpenAI Provider
@@ -19,7 +32,7 @@ var ProviderNotConnectedError = errors.New("provider not connected: API key not 
 
 // OpenAIProvider implements the Provider interface for OpenAI.
 type OpenAIProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -29,7 +42,8 @@ type OpenAIProvider struct {
 // NewOpenAIProvider creates a new OpenAI provider.
 func NewOpenAIProvider() *OpenAIProvider {
 	return &OpenAIProvider{
-		baseURL: envOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+		envKeyProvider: envKeyProvider{envName: "OPENAI_API_KEY"},
+		baseURL:        config.EnvOrDefault("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 	}
 }
 
@@ -106,12 +120,8 @@ func (p *OpenAIProvider) Call(ctx context.Context, req CallRequest) (*CallResult
 	}
 	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
 }
-
-// IsAvailable returns true if the OpenAI provider is configured.
 func (p *OpenAIProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("OPENAI_API_KEY")
-	}
+	p.loadAPIKey()
 	return p.apiKey != ""
 }
 
@@ -121,7 +131,7 @@ func (p *OpenAIProvider) IsAvailable() bool {
 
 // AnthropicProvider implements the Provider interface for Anthropic.
 type AnthropicProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -131,7 +141,8 @@ type AnthropicProvider struct {
 // NewAnthropicProvider creates a new Anthropic provider.
 func NewAnthropicProvider() *AnthropicProvider {
 	return &AnthropicProvider{
-		baseURL: envOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
+		envKeyProvider: envKeyProvider{envName: "ANTHROPIC_API_KEY"},
+		baseURL:        config.EnvOrDefault("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1"),
 	}
 }
 
@@ -198,10 +209,8 @@ func (p *AnthropicProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Anthropic provider is configured.
 func (p *AnthropicProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("ANTHROPIC_API_KEY")
-	}
-	return p.apiKey != ""
+    p.loadAPIKey()
+    return p.apiKey != ""
 }
 
 // --------------------
@@ -210,7 +219,7 @@ func (p *AnthropicProvider) IsAvailable() bool {
 
 // GeminiProvider implements the Provider interface for Google Gemini.
 type GeminiProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -220,7 +229,8 @@ type GeminiProvider struct {
 // NewGeminiProvider creates a new Gemini provider.
 func NewGeminiProvider() *GeminiProvider {
 	return &GeminiProvider{
-		baseURL: envOrDefault("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+		envKeyProvider: envKeyProvider{envName: "GEMINI_API_KEY"},
+		baseURL:        config.EnvOrDefault("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
 	}
 }
 
@@ -274,10 +284,8 @@ func (p *GeminiProvider) Call(ctx context.Context, req CallRequest) (*CallResult
 
 // IsAvailable returns true if the Gemini provider is configured.
 func (p *GeminiProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("GEMINI_API_KEY")
-	}
-	return p.apiKey != ""
+    p.loadAPIKey()
+    return p.apiKey != ""
 }
 
 // --------------------
@@ -286,7 +294,7 @@ func (p *GeminiProvider) IsAvailable() bool {
 
 // GroqProvider implements the Provider interface for Groq (fast inference).
 type GroqProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -296,7 +304,8 @@ type GroqProvider struct {
 // NewGroqProvider creates a new Groq provider.
 func NewGroqProvider() *GroqProvider {
 	return &GroqProvider{
-		baseURL: envOrDefault("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
+		envKeyProvider: envKeyProvider{envName: "GROQ_API_KEY"},
+		baseURL:        config.EnvOrDefault("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
 	}
 }
 
@@ -363,10 +372,8 @@ func (p *GroqProvider) Call(ctx context.Context, req CallRequest) (*CallResult, 
 
 // IsAvailable returns true if the Groq provider is configured.
 func (p *GroqProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("GROQ_API_KEY")
-	}
-	return p.apiKey != ""
+    p.loadAPIKey()
+    return p.apiKey != ""
 }
 
 // --------------------
@@ -375,7 +382,7 @@ func (p *GroqProvider) IsAvailable() bool {
 
 // FireworksProvider implements the Provider interface for Fireworks AI.
 type FireworksProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -385,7 +392,8 @@ type FireworksProvider struct {
 // NewFireworksProvider creates a new Fireworks provider.
 func NewFireworksProvider() *FireworksProvider {
 	return &FireworksProvider{
-		baseURL: envOrDefault("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+		envKeyProvider: envKeyProvider{envName: "FIREWORKS_API_KEY"},
+		baseURL:        config.EnvOrDefault("FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"),
 	}
 }
 
@@ -452,10 +460,8 @@ func (p *FireworksProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Fireworks provider is configured.
 func (p *FireworksProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("FIREWORKS_API_KEY")
-	}
-	return p.apiKey != ""
+    p.loadAPIKey()
+    return p.apiKey != ""
 }
 
 // --------------------
@@ -465,7 +471,7 @@ func (p *FireworksProvider) IsAvailable() bool {
 // BifrostProvider implements the Provider interface for the Bifrost AI gateway.
 // Bifrost exposes an OpenAI-compatible chat-completions endpoint.
 type BifrostProvider struct {
-	apiKey  string
+	envKeyProvider
 	baseURL string
 	client  *http.Client
 	models  []ModelInfo
@@ -475,7 +481,8 @@ type BifrostProvider struct {
 // NewBifrostProvider creates a new Bifrost provider.
 func NewBifrostProvider() *BifrostProvider {
 	return &BifrostProvider{
-		baseURL: envOrDefault("BIFROST_URL", "http://localhost:8083"),
+		envKeyProvider: envKeyProvider{envName: "BIFROST_API_KEY"},
+		baseURL:        config.EnvOrDefault("BIFROST_URL", "http://localhost:8083"),
 	}
 }
 
@@ -540,10 +547,8 @@ func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResul
 
 // IsAvailable returns true if the Bifrost provider is configured.
 func (p *BifrostProvider) IsAvailable() bool {
-	if p.apiKey == "" {
-		p.apiKey = os.Getenv("BIFROST_API_KEY")
-	}
-	return p.apiKey != ""
+    p.loadAPIKey()
+    return p.apiKey != ""
 }
 
 // AllProviders returns a list of all available provider instances.
@@ -558,9 +563,3 @@ func AllProviders() []Provider {
 	}
 }
 
-func envOrDefault(key, fallback string) string {
-	if value := strings.TrimSpace(os.Getenv(key)); value != "" {
-		return strings.TrimRight(value, "/")
-	}
-	return fallback
-}

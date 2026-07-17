@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,13 @@ import (
 )
 
 const defaultModelMaxTokens = 4096
+
+// Sentinel errors for provider HTTP communication.
+var (
+	ErrProviderTimeout     = errors.New("provider request timed out")
+	ErrProviderRateLimited = errors.New("provider rate limited")
+	ErrProviderAuth        = errors.New("provider authentication failed")
+)
 
 func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, apiKey, providerName string, req CallRequest, models []ModelInfo) (*CallResult, error) {
 	model := selectedModel(req, models)

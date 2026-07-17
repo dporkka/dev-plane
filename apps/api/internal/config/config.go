@@ -31,35 +31,37 @@ type Config struct {
 // Load reads configuration from environment variables with sensible defaults.
 // It returns an error if required security settings are missing or too weak.
 func Load() (*Config, error) {
-	jwtSecret := getEnv("JWT_SECRET", "")
+	jwtSecret := EnvOrDefault("JWT_SECRET", "")
 	if len(jwtSecret) < 32 {
 		return nil, errors.New("JWT_SECRET must be at least 32 characters")
 	}
 
 	return &Config{
-		Port:                getEnv("PORT", "8080"),
-		DatabaseURL:         getEnv("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
+		Port:                EnvOrDefault("PORT", "8080"),
+		DatabaseURL:         EnvOrDefault("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
 		JWTSecret:           jwtSecret,
-		GitHubClientID:       getEnv("GITHUB_CLIENT_ID", ""),
-		GitHubSecret:         getEnv("GITHUB_CLIENT_SECRET", ""),
-		GitHubWebhookSecret:  getEnv("GITHUB_APP_WEBHOOK_SECRET", ""),
-		LinearWebhookSecret:  getEnv("LINEAR_WEBHOOK_SECRET", ""),
-		SlackSigningSecret:   getEnv("SLACK_SIGNING_SECRET", ""),
-		DiscordWebhookSecret: getEnv("DISCORD_WEBHOOK_SECRET", ""),
-		NATSURL:              getEnv("NATS_URL", "nats://localhost:4222"),
+		GitHubClientID:       EnvOrDefault("GITHUB_CLIENT_ID", ""),
+		GitHubSecret:         EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
+		GitHubWebhookSecret:  EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
+		LinearWebhookSecret:  EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
+		SlackSigningSecret:   EnvOrDefault("SLACK_SIGNING_SECRET", ""),
+		DiscordWebhookSecret: EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),
+		NATSURL:              EnvOrDefault("NATS_URL", "nats://localhost:4222"),
 		AllowedOrigins:      getOrigins(),
-		OAuthCookieSecure:   getEnv("OAUTH_COOKIE_SECURE", "true") == "true",
-		LogLevel:            getEnv("LOG_LEVEL", "info"),
-		AgentVaultURL:       getEnv("AGENTVAULT_URL", ""),
-		AgentVaultToken:     getEnv("AGENTVAULT_TOKEN", ""),
-		AgentVaultProject:   getEnv("AGENTVAULT_PROJECT", "dev-plane"),
-		SecretKeys:          getEnv("SECRET_ENCRYPTION_KEYS", ""),
+		OAuthCookieSecure:   EnvOrDefault("OAUTH_COOKIE_SECURE", "true") == "true",
+		LogLevel:            EnvOrDefault("LOG_LEVEL", "info"),
+		AgentVaultURL:       EnvOrDefault("AGENTVAULT_URL", ""),
+		AgentVaultToken:     EnvOrDefault("AGENTVAULT_TOKEN", ""),
+		AgentVaultProject:   EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
+		SecretKeys:          EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 	}, nil
 }
 
-func getEnv(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+// EnvOrDefault reads an environment variable, returning the default if unset or empty.
+// Trailing slashes are trimmed to normalize URL values.
+func EnvOrDefault(key, defaultVal string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return strings.TrimRight(v, "/")
 	}
 	return defaultVal
 }

@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -9,6 +10,13 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/budget"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
+)
+
+// Sentinel errors for capability evaluation.
+var (
+	ErrCapabilityDenied  = errors.New("capability denied")
+	ErrCapabilityUnknown = errors.New("unknown capability")
+	ErrApprovalRequired  = errors.New("approval required")
 )
 
 // Kernel is the central authority for all dangerous operations.

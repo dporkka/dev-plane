@@ -506,7 +506,11 @@ func (h *Handler) StartWorkspaceService(w http.ResponseWriter, r *http.Request) 
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("open service log: %w", err))
 		return
 	}
-	defer logFile.Close()
+	defer func() {
+		if cerr := logFile.Close(); cerr != nil {
+			h.logger.Warn("failed to close service log", "path", logPath, "error", cerr)
+		}
+	}()
 
 	cmd := exec.Command("sh", "-c", req.Command)
 	cmd.Dir = workspacePath

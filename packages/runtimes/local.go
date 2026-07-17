@@ -343,7 +343,9 @@ func (p *LocalProvider) StreamLogs(ctx context.Context, sessionID string) (<-cha
 			// Log file may not exist; just return
 			return
 		}
-		defer f.Close()
+		defer func() {
+			_ = f.Close()
+		}()
 
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
