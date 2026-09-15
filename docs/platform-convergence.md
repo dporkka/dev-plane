@@ -95,6 +95,7 @@ The callback URL is **not** accepted from the task. The worker uses server-side 
 EXTERNAL_TASK_CALLBACK_URL=https://api-factory.example/internal/dev-plane/callback
 EXTERNAL_TASK_CALLBACK_SECRET=<shared-random-secret>
 EXTERNAL_TASK_CALLBACK_TIMEOUT_SECONDS=5
+EXTERNAL_TASK_CALLBACK_ATTEMPTS=3
 ```
 
 Each request carries:
@@ -104,7 +105,7 @@ X-Dev-Plane-Timestamp: <unix seconds>
 X-Dev-Plane-Signature: sha256=<HMAC-SHA256(secret, timestamp + "." + raw_body)>
 ```
 
-`event_id` values are deterministic so receivers can process retries exactly once. Callback delivery is best-effort after a terminal side effect: a callback outage must not roll back or duplicate an already-created pull request.
+`event_id` values are deterministic so receivers can process retries exactly once. The worker performs bounded retries for transport failures, HTTP 5xx, and HTTP 429. Callback delivery occurs after the terminal side effect: an unavailable receiver must not roll back or duplicate an already-created pull request. A durable callback outbox can be added later if crash-proof delivery is required.
 
 `build.pr_created` is the software-build completion boundary for API Factory because it means implementation, automated review, security checks, and human PR approval have completed and there is a concrete artifact to consume. `build.failed` is sent for execution failure or a rejected terminal approval.
 
