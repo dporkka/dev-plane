@@ -93,18 +93,6 @@ func notifyExternalTaskCallback(
 	if err != nil {
 		return fmt.Errorf("marshal external callback: %w", err)
 	}
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	signature := signExternalCallback(secret, timestamp, body)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("create external callback request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "dev-plane/external-callback")
-	req.Header.Set("X-Dev-Plane-Timestamp", timestamp)
-	req.Header.Set("X-Dev-Plane-Signature", signature)
 
 	timeout := 5 * time.Second
 	if raw := strings.TrimSpace(os.Getenv("EXTERNAL_TASK_CALLBACK_TIMEOUT_SECONDS")); raw != "" {
@@ -112,19 +100,57 @@ func notifyExternalTaskCallback(
 			timeout = time.Duration(seconds * float64(time.Second))
 		}
 	}
+	attempts := 3
+	if raw := strings.TrimSpace(os.Getenv("EXTERNAL_TASK_CALLBACK_ATTEMPTS")); raw != "" {
+		if parsed, parseErr := strconv.Atoi(raw); parseErr == nil && parsed > 0 && parsed <= 10 {
+			attempts = parsed
+		}
+	}
 	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("send external callback: %w", err)
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+		signature := signExternalCallback(secret, timestamp, body)
+		req, requestErr := http.NewRequestWithContext(ctx, http.MethodPost, callbackURL, bytes.NewReader(body))
+		if requestErr != nil {
+			return fmt.Errorf("create external callback request: %w", requestErr)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "dev-plane/external-callback")
+		req.Header.Set("X-Dev-Plane-Timestamp", timestamp)
+		req.Header.Set("X-Dev-Plane-Signature", signature)
+
+		resp, sendErr := client.Do(req)
+		if sendErr == nil {
+			status := resp.StatusCode
+			_ = resp.Body.Close()
+			if status >= 200 && status < 300 {
+				if logger != nil {
+					logger.Info("external task callback delivered", "task_id", taskID, "event_type", opts.EventType, "event_id", eventID, "attempt", attempt)
+				}
+				return nil
+			}
+			lastErr = fmt.Errorf("external callback returned HTTP %d", status)
+			// Authentication/validation/client errors will not improve on retry.
+			if status < 500 && status != http.StatusTooManyRequests {
+				return lastErr
+			}
+		} else {
+			lastErr = fmt.Errorf("send external callback: %w", sendErr)
+		}
+
+		if attempt < attempts {
+			backoff := time.Duration(attempt) * 250 * time.Millisecond
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("external callback returned HTTP %d", resp.StatusCode)
-	}
-	if logger != nil {
-		logger.Info("external task callback delivered", "task_id", taskID, "event_type", opts.EventType, "event_id", eventID)
-	}
-	return nil
+	return lastErr
 }
 
 type externalCallbackSpec struct {
