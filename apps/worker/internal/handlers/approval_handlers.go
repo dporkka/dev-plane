@@ -138,6 +138,27 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		"pr_number", pr.Number,
 	)
 
+	callbackRunID := strings.TrimSpace(payload.AgentRunID)
+	if pr.RunID != nil && strings.TrimSpace(*pr.RunID) != "" {
+		callbackRunID = strings.TrimSpace(*pr.RunID)
+	}
+	if err := notifyExternalTaskCallback(ctx, h.db, h.logger, payload.TaskID, externalCallbackOptions{
+		EventID:   fmt.Sprintf("dev-plane:task:%s:build.pr_created:%s", payload.TaskID, pr.ID),
+		EventType: "build.pr_created",
+		RunID:     callbackRunID,
+		Status:    "pr_created",
+		Artifact: map[string]any{
+			"pr_id":     pr.ID,
+			"pr_url":    pr.URL,
+			"pr_number": pr.Number,
+			"branch":    pr.Branch,
+		},
+	}); err != nil {
+		// The PR already exists. Callback delivery must not make PR creation retry
+		// and accidentally open a second pull request.
+		h.logger.Warn("failed to deliver external PR-created callback", "task_id", payload.TaskID, "error", err)
+	}
+
 	return ackMessage(msg)
 }
 
@@ -182,11 +203,12 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 			h.logger.Warn("failed to load approval run id for rejection", "approval_id", payload.ApprovalID, "error", err)
 		}
 	}
+	failureMessage := fmt.Sprintf("Approval rejected by %s: %s", payload.ResponderID, payload.Note)
 	runPredicate := "task_id = $3 AND status IN ('completed', 'reviewed', 'paused')"
-	args := []any{fmt.Sprintf("Approval rejected by %s: %s", payload.ResponderID, payload.Note), now, payload.TaskID}
+	args := []any{failureMessage, now, payload.TaskID}
 	if runID != "" {
 		runPredicate = "id = $3 AND status IN ('completed', 'reviewed', 'paused')"
-		args = []any{fmt.Sprintf("Approval rejected by %s: %s", payload.ResponderID, payload.Note), now, runID}
+		args = []any{failureMessage, now, runID}
 	}
 	_, err = h.db.Exec(`
 		UPDATE agent_runs SET status = 'failed', error_message = $1, updated_at = $2
@@ -199,6 +221,16 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 		"task_id", payload.TaskID,
 		"approval_id", payload.ApprovalID,
 	)
+
+	if err := notifyExternalTaskCallback(context.Background(), h.db, h.logger, payload.TaskID, externalCallbackOptions{
+		EventID:   fmt.Sprintf("dev-plane:task:%s:build.failed", payload.TaskID),
+		EventType: "build.failed",
+		RunID:     runID,
+		Status:    "failed",
+		Error:     failureMessage,
+	}); err != nil {
+		h.logger.Warn("failed to deliver external approval-rejected callback", "task_id", payload.TaskID, "error", err)
+	}
 
 	return ackMessage(msg)
 }
