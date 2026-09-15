@@ -91,6 +91,21 @@ func (h *NotificationHandler) HandleTaskFailed(msg *nats.Msg) error {
 		return fmt.Errorf("unmarshal task event: %w", err)
 	}
 
+	var callbackError any = "Dev Plane task failed"
+	if len(event.Data) > 0 {
+		callbackError = event.Data
+	}
+	if err := notifyExternalTaskCallback(context.Background(), h.db, h.logger, event.TaskID, externalCallbackOptions{
+		EventID:   fmt.Sprintf("dev-plane:task:%s:build.failed", event.TaskID),
+		EventType: "build.failed",
+		Status:    "failed",
+		Error:     callbackError,
+	}); err != nil {
+		// External callback delivery is independent from Slack/Discord delivery and
+		// must not prevent the NATS message from being acknowledged.
+		h.logger.Warn("failed to deliver external task-failed callback", "task_id", event.TaskID, "error", err)
+	}
+
 	orgID, err := h.lookupTaskOrganization(event.TaskID)
 	if err != nil {
 		return fmt.Errorf("lookup task organization: %w", err)
