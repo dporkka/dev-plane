@@ -30,10 +30,11 @@ func taskCreatedEvent(task Task, source string) agentvaultclient.Event {
 		text += "\n\n" + *task.Description
 	}
 	return agentvaultclient.Event{
-		Type:  "dev-plane.task.created",
-		Title: "Dev Plane task created: " + task.Title,
-		Text:  text,
-		Tags:  []string{"dev-plane", "task", source},
+		Type:       "dev-plane.task.created",
+		Title:      "Dev Plane task created: " + task.Title,
+		Text:       text,
+		Tags:       []string{"dev-plane", "task", source},
+		ExternalID: fmt.Sprintf("dev-plane:task:%s:created", task.ID),
 		Metadata: map[string]any{
 			"task_id":       task.ID,
 			"project_id":    task.ProjectID,
