@@ -93,11 +93,31 @@ func TestNotifyExternalTaskCallbackSkipsUnrequestedEvent(t *testing.T) {
 		WithArgs("task-1").
 		WillReturnRows(sqlmock.NewRows([]string{"spec"}).AddRow(spec))
 
+	// Configure the feature so the task-level event filter is actually evaluated.
+	// No request is sent because build.failed was not requested by the task.
+	t.Setenv(externalCallbackURLEnv, "http://127.0.0.1:1/unused")
+	t.Setenv(externalCallbackSecretEnv, "secret")
+
+	if err := notifyExternalTaskCallback(context.Background(), db, slog.Default(), "task-1", externalCallbackOptions{EventType: "build.failed"}); err != nil {
+		t.Fatalf("unexpected error for filtered event: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNotifyExternalTaskCallbackUnconfiguredAddsNoDatabaseWork(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
 	t.Setenv(externalCallbackURLEnv, "")
 	t.Setenv(externalCallbackSecretEnv, "")
 
 	if err := notifyExternalTaskCallback(context.Background(), db, slog.Default(), "task-1", externalCallbackOptions{EventType: "build.failed"}); err != nil {
-		t.Fatalf("unexpected error for filtered event: %v", err)
+		t.Fatalf("unexpected error for disabled callback integration: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
