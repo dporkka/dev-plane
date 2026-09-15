@@ -58,7 +58,7 @@ Persist high-value context and decisions, not every token or command log. AgentV
 
 ## API Factory
 
-API Factory should hand validated product specs to Dev Plane and retain ownership of the economic loop:
+API Factory hands validated product specs to Dev Plane and retains ownership of the economic loop:
 
 ```text
 public demand signals
@@ -69,13 +69,46 @@ public demand signals
      -> isolated implementation
      -> tests/security/review
      -> approval
-     -> PR/release artifact
-  -> API Factory distribution
+     -> PR artifact
+     -> signed terminal callback
+  -> API Factory distribution / monetization workflow
   -> usage/revenue/churn feedback
   -> next validation cycle
 ```
 
-The initial integration is deliberately asynchronous. Do not remove API Factory's local generator until completion callbacks/webhooks allow Dev Plane to return an artifact and resume distribution reliably.
+### Terminal callback contract
+
+External callbacks are opt-in per task spec:
+
+```json
+{
+  "callback": {
+    "enabled": true,
+    "events": ["build.pr_created", "build.failed"]
+  }
+}
+```
+
+The callback URL is **not** accepted from the task. The worker uses server-side configuration only, which prevents task input from becoming an SSRF primitive:
+
+```text
+EXTERNAL_TASK_CALLBACK_URL=https://api-factory.example/internal/dev-plane/callback
+EXTERNAL_TASK_CALLBACK_SECRET=<shared-random-secret>
+EXTERNAL_TASK_CALLBACK_TIMEOUT_SECONDS=5
+```
+
+Each request carries:
+
+```text
+X-Dev-Plane-Timestamp: <unix seconds>
+X-Dev-Plane-Signature: sha256=<HMAC-SHA256(secret, timestamp + "." + raw_body)>
+```
+
+`event_id` values are deterministic so receivers can process retries exactly once. Callback delivery is best-effort after a terminal side effect: a callback outage must not roll back or duplicate an already-created pull request.
+
+`build.pr_created` is the software-build completion boundary for API Factory because it means implementation, automated review, security checks, and human PR approval have completed and there is a concrete artifact to consume. `build.failed` is sent for execution failure or a rejected terminal approval.
+
+The existing API Factory local generator remains available as a fallback while the Dev Plane path proves production parity.
 
 ## Nulang Cloud runtime provider
 
