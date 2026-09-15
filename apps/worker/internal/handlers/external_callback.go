@@ -32,10 +32,9 @@ type externalCallbackOptions struct {
 	Error     any
 }
 
-// notifyExternalTaskCallback sends a signed callback when the task spec opts in.
-//
-// The destination and shared secret are server configuration, not task input.
-// This prevents a task from turning the worker into an arbitrary HTTP client.
+// notifyExternalTaskCallback sends a signed callback when both the worker and
+// task spec opt in. The destination and secret are server configuration, not
+// task input, preventing task data from becoming an arbitrary HTTP target.
 func notifyExternalTaskCallback(
 	ctx context.Context,
 	db *sql.DB,
@@ -47,18 +46,23 @@ func notifyExternalTaskCallback(
 		return nil
 	}
 
+	callbackURL := strings.TrimSpace(os.Getenv(externalCallbackURLEnv))
+	secret := strings.TrimSpace(os.Getenv(externalCallbackSecretEnv))
+	if callbackURL == "" && secret == "" {
+		// Feature is not configured on this worker. Avoid adding a database query
+		// to every task lifecycle event in installations that do not use callbacks.
+		return nil
+	}
+	if callbackURL == "" || secret == "" {
+		return fmt.Errorf("external callback configuration requires both %s and %s", externalCallbackURLEnv, externalCallbackSecretEnv)
+	}
+
 	spec, enabled, err := loadExternalCallbackSpec(ctx, db, taskID, opts.EventType)
 	if err != nil {
 		return err
 	}
 	if !enabled {
 		return nil
-	}
-
-	callbackURL := strings.TrimSpace(os.Getenv(externalCallbackURLEnv))
-	secret := strings.TrimSpace(os.Getenv(externalCallbackSecretEnv))
-	if callbackURL == "" || secret == "" {
-		return fmt.Errorf("task %s requested callback but %s/%s are not configured", taskID, externalCallbackURLEnv, externalCallbackSecretEnv)
 	}
 
 	eventID := strings.TrimSpace(opts.EventID)
