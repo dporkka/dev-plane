@@ -12,13 +12,14 @@ import (
 
 // Event is a durable activity record to capture in AgentVault.
 type Event struct {
-	Type      string         `json:"type"`
-	Title     string         `json:"title"`
-	Text      string         `json:"text"`
-	Project   string         `json:"project,omitempty"`
-	Tags      []string       `json:"tags,omitempty"`
-	Metadata  map[string]any `json:"metadata,omitempty"`
-	CreatedAt time.Time      `json:"created_at"`
+	Type       string         `json:"type"`
+	Title      string         `json:"title"`
+	Text       string         `json:"text"`
+	Project    string         `json:"project,omitempty"`
+	Tags       []string       `json:"tags,omitempty"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	ExternalID string         `json:"external_id,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
 }
 
 // Client writes Dev Plane lifecycle events to AgentVault's local HTTP API.
@@ -59,11 +60,12 @@ func (c *Client) LogEvent(ctx context.Context, event Event) error {
 		event.Tags = []string{"dev-plane"}
 	}
 	payload := map[string]any{
-		"type":    event.Type,
-		"title":   event.Title,
-		"text":    renderEventText(event),
-		"project": event.Project,
-		"tags":    event.Tags,
+		"type":        event.Type,
+		"title":       event.Title,
+		"text":        renderEventText(event),
+		"project":     event.Project,
+		"tags":        event.Tags,
+		"external_id": event.ExternalID,
 	}
 
 	body, err := json.Marshal(payload)
@@ -99,6 +101,9 @@ func renderEventText(event Event) string {
 	b.WriteString("## Event Metadata\n\n")
 	b.WriteString(fmt.Sprintf("- Type: %s\n", event.Type))
 	b.WriteString(fmt.Sprintf("- Created: %s\n", event.CreatedAt.UTC().Format(time.RFC3339)))
+	if event.ExternalID != "" {
+		b.WriteString(fmt.Sprintf("- External ID: %s\n", event.ExternalID))
+	}
 	for key, value := range event.Metadata {
 		b.WriteString(fmt.Sprintf("- %s: %v\n", key, value))
 	}

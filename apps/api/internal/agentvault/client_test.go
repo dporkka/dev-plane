@@ -30,11 +30,12 @@ func TestClientLogEventPostsCapture(t *testing.T) {
 	}
 
 	err := client.LogEvent(t.Context(), Event{
-		Type:    "dev-plane.task.created",
-		Title:   "Task created",
-		Text:    "Task details",
-		Project: "dev-plane",
-		Tags:    []string{"dev-plane", "task"},
+		Type:       "dev-plane.task.created",
+		Title:      "Task created",
+		Text:       "Task details",
+		Project:    "dev-plane",
+		Tags:       []string{"dev-plane", "task"},
+		ExternalID: "dev-plane:task:task-1:created",
 	})
 	if err != nil {
 		t.Fatalf("LogEvent: %v", err)
@@ -51,6 +52,9 @@ func TestClientLogEventPostsCapture(t *testing.T) {
 	}
 	if gotPayload["type"] != "dev-plane.task.created" {
 		t.Errorf("type = %v", gotPayload["type"])
+	}
+	if gotPayload["external_id"] != "dev-plane:task:task-1:created" {
+		t.Errorf("external_id = %v", gotPayload["external_id"])
 	}
 }
 
