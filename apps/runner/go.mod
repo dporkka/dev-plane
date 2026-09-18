@@ -10,6 +10,8 @@ go 1.25.11
 
 require github.com/ai-dev-control-plane/runtimes v0.0.0
 
-require github.com/go-chi/chi/v5 v5.3.0
+require github.com/go-chi/chi/v5 v5.3.2
+
+require golang.org/x/sys v0.46.0 // indirect
 
 replace github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
