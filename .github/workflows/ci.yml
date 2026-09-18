@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 env:
-  GO_VERSION: "1.25.11"
+  GO_VERSION: "1.26.8"
   NODE_VERSION: "24"
   DATABASE_URL: "file:./data/dev.db?_journal_mode=WAL"
   NATS_URL: "nats://localhost:4222"
