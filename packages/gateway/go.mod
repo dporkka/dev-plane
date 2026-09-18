@@ -2,6 +2,6 @@
 // GitHub OAuth, repository operations, webhook validation, and pull request management.
 module github.com/ai-dev-control-plane/gateway
 
-go 1.25.11
+go 1.26.0
 
-require golang.org/x/oauth2 v0.36.0
+require golang.org/x/oauth2 v0.37.0
