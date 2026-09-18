@@ -40,11 +40,20 @@ jobs:
       - name: Install web dependencies
         run: cd apps/web && npm ci
 
-      - name: Go vet
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          install-only: true
+
+      - name: Go lint and vet
         run: make lint-go
 
-      - name: Web ESLint
+      - name: Web lint
         run: make lint-web
+
+      - name: Web typecheck
+        run: cd apps/web && npm run typecheck
 
       - name: SDK typecheck
         run: make lint-sdk
@@ -66,13 +75,21 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: packages/sdk/typescript/package-lock.json
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            packages/sdk/typescript/package-lock.json
+
+      - name: Install web dependencies
+        run: cd apps/web && npm ci
 
       - name: Start NATS
         run: docker compose up -d --wait nats
 
-      - name: Run tests
+      - name: Run Go and SDK tests
         run: make test
+
+      - name: Run web tests
+        run: cd apps/web && npm test
 
   build:
     name: Build
@@ -97,9 +114,6 @@ jobs:
 
       - name: Install web dependencies
         run: cd apps/web && npm ci
-
-      - name: Build SDK
-        run: make build-sdk
 
       - name: Build all
         run: make build
