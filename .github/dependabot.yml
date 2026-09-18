@@ -1,0 +1,86 @@
+version: 2
+
+updates:
+  - package-ecosystem: "gomod"
+    directories:
+      - "/apps/api"
+      - "/apps/cli"
+      - "/apps/runner"
+      - "/apps/worker"
+      - "/infra/networking"
+      - "/packages/agents"
+      - "/packages/crypto"
+      - "/packages/db"
+      - "/packages/events"
+      - "/packages/gateway"
+      - "/packages/models"
+      - "/packages/policies"
+      - "/packages/prfactory"
+      - "/packages/repo-intel"
+      - "/packages/reviewer"
+      - "/packages/runtimes"
+      - "/packages/securityscan"
+      - "/packages/vcs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      go-version-updates:
+        applies-to: "version-updates"
+        group-by: "dependency-name"
+      go-security-updates:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: "npm"
+    directories:
+      - "/apps/web"
+      - "/packages/sdk/typescript"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    groups:
+      npm-version-updates:
+        applies-to: "version-updates"
+        group-by: "dependency-name"
+      npm-security-updates:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "build(deps)"
+
+  - package-ecosystem: "docker"
+    directory: "/infra/docker"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      docker-minor-patch:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "build(deps)"
