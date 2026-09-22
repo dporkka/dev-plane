@@ -76,8 +76,8 @@ func (s *Server) routes() {
 	s.router.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   s.config.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID"},
-		ExposedHeaders:   []string{"Link", "X-Trace-ID"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Request-ID", "X-Artifact-Lease-Token", "X-Artifact-Lease-Generation"},
+		ExposedHeaders:   []string{"Link", "X-Trace-ID", "ETag", "Content-Disposition"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))

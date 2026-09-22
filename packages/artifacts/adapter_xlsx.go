@@ -220,6 +220,7 @@ func parseSharedStrings(file *zip.File) ([]string, error) {
 		values  []string
 		current strings.Builder
 		inSI    bool
+		inText  bool
 	)
 	for {
 		token, err := decoder.Token()
@@ -231,18 +232,29 @@ func parseSharedStrings(file *zip.File) ([]string, error) {
 		}
 		switch value := token.(type) {
 		case xml.StartElement:
-			if value.Name.Local == "si" {
+			switch value.Name.Local {
+			case "si":
 				current.Reset()
 				inSI = true
+			case "t":
+				if inSI {
+					inText = true
+				}
 			}
 		case xml.CharData:
-			if inSI {
+			if inSI && inText {
 				current.Write([]byte(value))
 			}
 		case xml.EndElement:
-			if value.Name.Local == "si" && inSI {
-				values = append(values, current.String())
-				inSI = false
+			switch value.Name.Local {
+			case "t":
+				inText = false
+			case "si":
+				if inSI {
+					values = append(values, current.String())
+					inSI = false
+					inText = false
+				}
 			}
 		}
 	}

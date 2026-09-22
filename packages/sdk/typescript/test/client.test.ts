@@ -20,7 +20,7 @@ describe('DevPlaneClient', () => {
       init,
     };
 
-    if (state.input.endsWith('/artifacts/art-1')) {
+    if (state.input.endsWith('/artifacts/art-1/content')) {
       return new Response(new Blob(['artifact-body']), {
         status: 200,
         headers: { 'Content-Type': 'application/octet-stream' },
@@ -79,5 +79,23 @@ describe('DevPlaneClient', () => {
     assert.equal(state.input, 'http://api.test/api/v1/artifacts/art-1/content');
     assert.equal(blob.size, 'artifact-body'.length);
     assert.equal(await blob.text(), 'artifact-body');
+  });
+
+  test('lists current workspace artifacts', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
+    await client.listWorkspaceArtifacts('ws-1');
+
+    assert.equal(state.input, 'http://api.test/api/v1/workspaces/ws-1/artifacts');
+  });
+
+  test('restores a historical artifact snapshot', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
+    await client.restoreWorkspaceArtifacts('ws-1', 'snap-7');
+
+    assert.equal(
+      state.input,
+      'http://api.test/api/v1/workspaces/ws-1/snapshots/snap-7/restore-artifacts',
+    );
+    assert.equal(state.init?.method, 'POST');
   });
 });

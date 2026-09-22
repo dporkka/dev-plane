@@ -2316,6 +2316,22 @@ func buildPaths() map[string]PathItem {
 		},
 	}
 	paths["/api/v1/workspaces/{id}/artifacts"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "List current workspace artifacts",
+			Description: "Returns the current logical artifact tree after applying version history and tombstones.",
+			OperationID: "listWorkspaceArtifacts",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Current artifact tree", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Type: "object"}}},
+				}},
+				"404": {Description: "Workspace not found"},
+			},
+		},
 		Post: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},
 			Summary:     "Upload workspace artifact",
@@ -2342,6 +2358,25 @@ func buildPaths() map[string]PathItem {
 				"404": {Description: "Workspace not found"},
 				"423": {Description: "Valid write lease required"},
 				"503": {Description: "Artifact storage unavailable"},
+			},
+		},
+		Delete: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Delete workspace artifact",
+			Description: "Appends a tombstone for the logical artifact path. Non-mergeable artifacts require a valid write lease.",
+			OperationID: "deleteWorkspaceArtifact",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "path", In: "query", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Token", In: "header", Required: false, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Generation", In: "header", Required: false, Schema: &Schema{Type: "integer"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Artifact tombstone created"},
+				"404": {Description: "Workspace or artifact path not found"},
+				"409": {Description: "Lease token/generation mismatch"},
+				"423": {Description: "Valid write lease required"},
 			},
 		},
 	}
@@ -2439,6 +2474,27 @@ func buildPaths() map[string]PathItem {
 			},
 		},
 	}
+	paths["/api/v1/workspaces/{id}/snapshots/{snapshotID}/restore-artifacts"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Restore artifact snapshot",
+			Description: "Creates a new artifact version whose manifest matches the selected historical snapshot. Paths removed by the restore are recorded as tombstones. Active write leases block conflicting restores.",
+			OperationID: "restoreWorkspaceArtifacts",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "snapshotID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Restore version created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"404": {Description: "Workspace or artifact snapshot not found"},
+				"423": {Description: "Conflicting artifact path has an active write lease"},
+			},
+		},
+	}
+
 
 	// Secrets
 	paths["/api/v1/organizations/{orgID}/secrets"] = PathItem{

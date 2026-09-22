@@ -22,7 +22,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxArtifactUploadBytes int64 = 50 << 30
+const (
+	maxArtifactUploadBytes int64 = 50 << 30
+	artifactUploadTimeout        = 2 * time.Hour
+)
 
 type ArtifactMetadataResponse struct {
 	ID             string                  `json:"id"`
@@ -120,6 +123,10 @@ func (h *Handler) UploadWorkspaceArtifact(w http.ResponseWriter, r *http.Request
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
+	controller := http.NewResponseController(w)
+	_ = controller.SetReadDeadline(time.Now().Add(artifactUploadTimeout))
+	_ = controller.SetWriteDeadline(time.Now().Add(artifactUploadTimeout))
+
 	body := http.MaxBytesReader(w, r.Body, maxArtifactUploadBytes)
 	defer body.Close()
 
@@ -731,19 +738,62 @@ func (h *Handler) ListWorkspaceArtifacts(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
 		return
 	}
-	tree, err := h.currentWorkspaceArtifactTree(ctx, workspaceID)
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, organization_id, artifact_json, created_at, logical_path, is_tombstone
+		FROM artifacts
+		WHERE workspace_id = $1 AND logical_path IS NOT NULL
+		ORDER BY created_at ASC, id ASC
+	`, workspaceID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	result := make([]artifactstore.Artifact, 0, len(tree))
-	for _, artifact := range tree {
-		result = append(result, artifact)
+	defer rows.Close()
+
+	type currentItem struct {
+		id        string
+		orgID     string
+		artifact  artifactstore.Artifact
+		createdAt time.Time
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	latest := map[string]currentItem{}
+	for rows.Next() {
+		var (
+			id, orgID, logicalPath string
+			raw                    sql.NullString
+			createdAt              time.Time
+			tombstone              bool
+		)
+		if err := rows.Scan(&id, &orgID, &raw, &createdAt, &logicalPath, &tombstone); err != nil {
+			respond.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		if tombstone {
+			delete(latest, logicalPath)
+			continue
+		}
+		if !raw.Valid {
+			continue
+		}
+		var artifact artifactstore.Artifact
+		if err := json.Unmarshal([]byte(raw.String), &artifact); err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("decode workspace artifact %q: %w", logicalPath, err))
+			return
+		}
+		latest[logicalPath] = currentItem{id: id, orgID: orgID, artifact: artifact, createdAt: createdAt}
+	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	result := make([]ArtifactMetadataResponse, 0, len(latest))
+	for _, item := range latest {
+		workspace := workspaceID
+		result = append(result, artifactResponse(item.id, item.orgID, &workspace, item.artifact, item.createdAt))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].LogicalPath < result[j].LogicalPath })
 	respond.JSON(w, http.StatusOK, result)
 }
-
 func (h *Handler) DeleteWorkspaceArtifact(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)

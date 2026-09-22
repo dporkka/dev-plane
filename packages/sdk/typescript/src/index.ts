@@ -534,6 +534,12 @@ export class DevPlaneClient {
     return this.request<ArtifactMetadata>(`/api/v1/artifacts/${id}/metadata`);
   }
 
+  listWorkspaceArtifacts(workspaceId: string) {
+    return this.request<ArtifactMetadata[]>(
+      `/api/v1/workspaces/${workspaceId}/artifacts`,
+    );
+  }
+
   async uploadWorkspaceArtifact(
     workspaceId: string,
     path: string,
@@ -567,6 +573,30 @@ export class DevPlaneClient {
       throw new Error((await response.text()) || `HTTP ${response.status}`);
     }
     return response.json() as Promise<ArtifactMetadata>;
+  }
+
+  async deleteWorkspaceArtifact(
+    workspaceId: string,
+    path: string,
+    lease?: { token: string; generation: number },
+  ): Promise<{ status: 'deleted'; path: string }> {
+    const params = new URLSearchParams({ path });
+    const response = await this.fetchRaw(
+      `/api/v1/workspaces/${workspaceId}/artifacts?${params.toString()}`,
+      {
+        method: 'DELETE',
+        headers: {
+          ...(lease?.token ? { 'X-Artifact-Lease-Token': lease.token } : {}),
+          ...(lease?.generation
+            ? { 'X-Artifact-Lease-Generation': String(lease.generation) }
+            : {}),
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error((await response.text()) || `HTTP ${response.status}`);
+    }
+    return response.json() as Promise<{ status: 'deleted'; path: string }>;
   }
 
   diffArtifacts(beforeId: string, afterId: string) {
@@ -617,6 +647,13 @@ export class DevPlaneClient {
         method: 'POST',
         body: JSON.stringify({ description }),
       },
+    );
+  }
+
+  restoreWorkspaceArtifacts(workspaceId: string, snapshotId: string) {
+    return this.request<WorkspaceSnapshot>(
+      `/api/v1/workspaces/${workspaceId}/snapshots/${snapshotId}/restore-artifacts`,
+      { method: 'POST' },
     );
   }
 

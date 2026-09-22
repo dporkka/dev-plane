@@ -128,6 +128,10 @@ The default registry currently includes:
 
 - **DOCX** — detects OOXML content, extracts paragraph-structured semantic JSON,
   and stores it as a semantic derivative.
+- **XLSX** — resolves workbook relationships/shared strings and extracts ordered
+  sheets, cell references, values, types, and formulas.
+- **PPTX** — resolves presentation relationship order and extracts slide-by-slide
+  paragraph text.
 - **Images** — detects common image formats, records dimensions/format, stores
   semantic JSON, and creates a bounded PNG thumbnail.
 - **PDF** — uses a pluggable `PDFToolRunner`. The default Poppler-backed runner
@@ -168,6 +172,8 @@ safe to invalidate when an adapter changes.
 available rather than diffing binary bytes:
 
 - DOCX semantic JSON is compared paragraph-by-paragraph.
+- XLSX semantics are compared as stable `Sheet!Cell = value [formula]` sequences.
+- PPTX semantics are compared as ordered slide/paragraph sequences.
 - PDF extracted text is compared line-by-line.
 - Images compare dimensions, decoded format, and preview identity.
 - Artifacts without a common semantic derivative fall back to immutable payload
@@ -206,10 +212,25 @@ tokens are persisted; raw tokens remain with the lease holder.
 The maximum lease TTL is 24 hours. Normal agent workflows should use much
 shorter leases and renew them while work is active.
 
+## Exact artifact-tree restore
+
+Workspace artifact history is append-only. Deleting an artifact appends a
+logical-path tombstone instead of deleting CAS objects or rewriting history.
+Current-tree reconstruction applies the full ordered history, including those
+tombstones.
+
+Restoring an older workspace snapshot creates a **new** artifact version whose
+manifest equals the historical target and whose parent is the current artifact
+version. Paths that exist now but did not exist in the target manifest receive
+tombstones, so restore is exact rather than additive.
+
+Active write leases block a restore when it would change a leased non-mergeable
+path. This prevents a restore from overwriting an agent's in-flight media edit.
+
 ## Next integrations
 
-1. Persist workspace snapshot records automatically from the coordinator.
-2. Add artifact upload/materialization, diff, lease, and snapshot-history API endpoints.
-3. Add XLSX/PPTX semantic adapters and richer DOCX structure.
+1. Persist workspace snapshots automatically when agent candidates complete.
+2. Add direct multipart/presigned S3/R2 upload for very large media.
+3. Add richer DOCX structure (headings, tables, comments) and richer spreadsheet formatting semantics.
 4. Add visual pixel-diff/overlay derivatives for image review.
 5. Add structured merge engines that can relax lease requirements safely.
