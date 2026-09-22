@@ -86,7 +86,9 @@ The platform follows a control plane pattern: the web UI and API manage the life
    Review pass includes an automated security scan
 
 6. PR
-   On approval, Release Manager creates PR
+   On approval, control plane publishes the reviewed workspace through the
+   privileged runtime VCS publisher (not an agent shell command)
+   GitHub PR is created only after branch publication succeeds
    Changes merged to main via standard GitHub flow
    Workspace decommissioned, audit log persisted
 ```
@@ -125,7 +127,7 @@ The platform follows a control plane pattern: the web UI and API manage the life
 
 ### Runtime
 - **Local runtime** - Implemented workspace runtime for trusted development
-- **Docker runtime** - Implemented container provider with no runtime network, named workspace volumes, read-only rootfs, dropped capabilities, no-new-privileges, CPU/memory/PID limits, process reattachment, HTTP workspace operations, and agent-tool dispatch through the provider abstraction. Production use still requires live Docker isolation tests.
+- **Docker runtime** - Implemented container provider with no agent-runtime network, named workspace volumes, read-only rootfs, dropped capabilities, no-new-privileges, CPU/memory/PID limits, process reattachment, HTTP workspace operations, agent-tool dispatch, and privileged host-side VCS publication through the provider abstraction. Production use still requires fresh live verification for the current runtime/publish path.
 
 ## Database Schema
 

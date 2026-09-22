@@ -191,10 +191,7 @@ func (h *Handler) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var worktreePath sql.NullString
-	err := h.db.QueryRowContext(ctx, `
-		SELECT worktree_path FROM workspaces WHERE id = $1 AND deleted_at IS NULL
-	`, id).Scan(&worktreePath)
+	workspace, provider, err := h.getRuntimeWorkspace(ctx, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
@@ -202,6 +199,24 @@ func (h *Handler) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 		}
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	// Isolated runtimes own resources outside the API process (containers,
+	// volumes, remote sessions). Destroy those resources before tombstoning the
+	// database row so a failed cleanup remains retryable.
+	if provider != nil {
+		if workspace.RuntimeSessionID == nil || strings.TrimSpace(*workspace.RuntimeSessionID) == "" {
+			respond.Error(w, http.StatusConflict, errors.New("workspace runtime session id is missing"))
+			return
+		}
+		if err := provider.DestroyWorkspace(ctx, *workspace.RuntimeSessionID); err != nil {
+			respond.Error(w, http.StatusBadGateway, fmt.Errorf("destroy runtime workspace: %w", err))
+			return
+		}
+	} else if workspace.WorktreePath != nil && strings.TrimSpace(*workspace.WorktreePath) != "" {
+		// Trusted local mode has no cross-process runtime session attachment, so
+		// preserve the host-path cleanup fallback.
+		_ = os.RemoveAll(strings.TrimSpace(*workspace.WorktreePath))
 	}
 
 	now := time.Now().UTC()
@@ -219,11 +234,6 @@ func (h *Handler) DestroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	if rowsAffected == 0 {
 		respond.Error(w, http.StatusNotFound, errors.New("workspace not found or already destroyed"))
 		return
-	}
-
-	// Best-effort cleanup of the worktree directory
-	if worktreePath.Valid && worktreePath.String != "" {
-		_ = os.RemoveAll(worktreePath.String)
 	}
 
 	respond.JSON(w, http.StatusOK, map[string]string{

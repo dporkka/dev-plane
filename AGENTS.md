@@ -1,25 +1,25 @@
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **dev-plane** (5801 symbols, 16255 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **dev-plane** (5801 symbols, 16255 relationships, 300 execution flows). Prefer GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
 
 ## Always Do
 
-- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
-- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
-- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
-- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
-- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
-- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+- **MUST perform impact analysis before editing any symbol.** Prefer `impact({target: "symbolName", direction: "upstream"})`. If GitNexus is unavailable, use the best available fallback: language-server references/call hierarchy, repository-wide call-site search, dependency analysis, and focused tests. Report the blast radius and the analysis method used.
+- **MUST verify affected scope before committing.** Prefer `detect_changes({scope: "compare", base_ref: "main"})`. If GitNexus is unavailable, inspect the branch diff, re-run call-site/dependency searches for changed symbols, and run focused tests plus the repository's normal validation commands.
+- **MUST warn the user** if impact analysis identifies HIGH or CRITICAL risk before proceeding with edits.
+- When GitNexus is available, use `query({search_query: "concept"})` to find execution flows instead of grepping unfamiliar code.
+- When GitNexus is available and you need full context on a specific symbol, use `context({name: "symbolName"})`.
+- For security review, prefer `explain({target: "fileOrSymbol"})` when available (source→sink flows; needs `analyze --pdg`).
 
 ## Never Do
 
-- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER edit a function, class, or method without first performing impact analysis using GitNexus or the documented fallback.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
-- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
-- NEVER commit changes without running `detect_changes()` to check affected scope.
+- NEVER rename symbols with blind find-and-replace. Prefer GitNexus `rename`; otherwise use language-aware tooling and verify all references.
+- NEVER commit changes without checking affected scope using GitNexus or the documented fallback.
 
 ## Resources
 

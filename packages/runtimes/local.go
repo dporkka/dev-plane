@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 // LocalProvider implements the Provider interface for trusted local mode.
@@ -23,11 +25,14 @@ type LocalProvider struct {
 }
 
 type localSession struct {
-	id           string
-	workspaceID  string
-	worktreePath string
-	status       string
-	createdAt    time.Time
+	id             string
+	workspaceID    string
+	repositoryPath string
+	worktreePath   string
+	branch         string
+	base           string
+	status         string
+	createdAt      time.Time
 }
 
 // NewLocalProvider creates a new local runtime provider.
@@ -45,31 +50,52 @@ func NewLocalProvider(baseDir string) *LocalProvider {
 // and setting up a git worktree for the specified branch.
 func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
 	sessionID := generateSessionID()
-	worktreePath := filepath.Join(p.baseDir, sessionID, req.WorktreeName)
+	sessionDir := filepath.Join(p.baseDir, sessionID)
+	repoDir := filepath.Join(sessionDir, "repo")
 
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		return nil, fmt.Errorf("create worktree directory: %w", err)
+	worktreeName := req.WorktreeName
+	if worktreeName == "" {
+		worktreeName = "workspace"
+	}
+	worktreePath := filepath.Join(sessionDir, worktreeName)
+
+	branch := req.Branch
+	if branch == "" {
+		branch = "agent/" + sessionID
+	}
+	base := req.BaseBranch
+	if base == "" {
+		base = "HEAD"
 	}
 
-	// Clone the repository if not already cloned
-	repoDir := filepath.Join(p.baseDir, sessionID, "repo")
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", req.CloneURL, repoDir)
-	if out, err := cloneCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git clone: %w (output: %s)", err, string(out))
+	backend := vcs.NewGitBackend(nil)
+	if err := backend.CloneOrFetch(ctx, vcs.CloneRequest{
+		URL:  req.CloneURL,
+		Path: repoDir,
+		Env:  req.Env,
+	}); err != nil {
+		_ = os.RemoveAll(sessionDir)
+		return nil, fmt.Errorf("prepare repository: %w", err)
 	}
-
-	// Create worktree
-	wtCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "worktree", "add", "-B", req.Branch, worktreePath, req.BaseBranch)
-	if out, err := wtCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git worktree add: %w (output: %s)", err, string(out))
+	if err := backend.CreateWorkspace(ctx, vcs.WorkspaceRequest{
+		RepositoryPath: repoDir,
+		WorkspacePath:  worktreePath,
+		Name:           branch,
+		Base:           base,
+	}); err != nil {
+		_ = os.RemoveAll(sessionDir)
+		return nil, fmt.Errorf("create VCS workspace: %w", err)
 	}
 
 	sess := &localSession{
-		id:           sessionID,
-		workspaceID:  req.RepositoryID,
-		worktreePath: worktreePath,
-		status:       "ready",
-		createdAt:    time.Now(),
+		id:             sessionID,
+		workspaceID:    req.RepositoryID,
+		repositoryPath: repoDir,
+		worktreePath:   worktreePath,
+		branch:         branch,
+		base:           base,
+		status:         "ready",
+		createdAt:      time.Now(),
 	}
 
 	p.mu.Lock()
@@ -88,22 +114,34 @@ func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) 
 
 // DestroyWorkspace removes the workspace directory and session state.
 func (p *LocalProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
-	p.mu.Lock()
+	p.mu.RLock()
 	sess, ok := p.sessions[sessionID]
-	if ok {
-		sess.status = "destroyed"
-		delete(p.sessions, sessionID)
-	}
-	p.mu.Unlock()
-
+	p.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+
+	backend := vcs.NewGitBackend(nil)
+	if err := backend.RemoveWorkspace(ctx, vcs.WorkspaceRequest{
+		RepositoryPath: sess.repositoryPath,
+		WorkspacePath:  sess.worktreePath,
+		Name:           sess.branch,
+		Base:           sess.base,
+	}); err != nil {
+		return fmt.Errorf("remove VCS workspace: %w", err)
 	}
 
 	sessionDir := filepath.Join(p.baseDir, sessionID)
 	if err := os.RemoveAll(sessionDir); err != nil {
 		return fmt.Errorf("remove session directory: %w", err)
 	}
+
+	p.mu.Lock()
+	if current, exists := p.sessions[sessionID]; exists {
+		current.status = "destroyed"
+		delete(p.sessions, sessionID)
+	}
+	p.mu.Unlock()
 	return nil
 }
 

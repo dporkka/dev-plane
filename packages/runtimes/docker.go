@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 const (
@@ -232,8 +234,13 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 		}
 	}()
 
-	if out, err := p.runner.Run(ctx, "git", []string{"clone", req.CloneURL, stagingRepo}, commandOptions{}); err != nil {
-		return nil, fmt.Errorf("git clone: %w (stderr: %s)", err, out.Stderr)
+	backend := vcs.NewGitBackend(newHostVCSCommandRunner(p.runner))
+	if err := backend.CloneOrFetch(ctx, vcs.CloneRequest{
+		URL:  req.CloneURL,
+		Path: stagingRepo,
+		Env:  req.Env,
+	}); err != nil {
+		return nil, fmt.Errorf("prepare repository: %w", err)
 	}
 	if err := p.checkoutBranch(ctx, stagingRepo, req); err != nil {
 		return nil, err

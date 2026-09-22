@@ -1015,12 +1015,14 @@ func workspaceRequest(method, target, workspaceID string, body io.Reader) *http.
 }
 
 type fakeWorkspaceRuntimeProvider struct {
-	files         map[string][]byte
-	readSession   string
-	readPath      string
-	commands      []runtimes.Command
-	commandResult *runtimes.CommandResult
-	patch         string
+	files          map[string][]byte
+	readSession    string
+	readPath       string
+	commands       []runtimes.Command
+	commandResult  *runtimes.CommandResult
+	patch          string
+	destroySession string
+	destroyErr     error
 }
 
 func (p *fakeWorkspaceRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.CreateRequest) (*runtimes.Session, error) {
@@ -1028,7 +1030,8 @@ func (p *fakeWorkspaceRuntimeProvider) CreateWorkspace(ctx context.Context, req 
 }
 
 func (p *fakeWorkspaceRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
-	return nil
+	p.destroySession = sessionID
+	return p.destroyErr
 }
 
 func (p *fakeWorkspaceRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {

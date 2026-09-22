@@ -18,8 +18,10 @@ import (
 
 // fakeProvider is a minimal Provider implementation for testing the remote client.
 type fakeProvider struct {
-	sessions map[string]*Session
-	commands []Command
+	sessions       map[string]*Session
+	commands       []Command
+	publishSession string
+	publishReq     VCSPublishRequest
 }
 
 func newFakeProvider() *fakeProvider {
@@ -36,6 +38,18 @@ func (p *fakeProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (
 		CreatedAt:    time.Now(),
 	}
 	p.sessions[sess.ID] = sess
+	return sess, nil
+}
+
+func (p *fakeProvider) AttachSession(ctx context.Context, sessionID, workspaceID string) (*Session, error) {
+	sess := &Session{
+		ID:          sessionID,
+		WorkspaceID: workspaceID,
+		Status:      "ready",
+		Provider:    "fake",
+		CreatedAt:   time.Now(),
+	}
+	p.sessions[sessionID] = sess
 	return sess, nil
 }
 
@@ -108,6 +122,15 @@ func (p *fakeProvider) StreamLogs(ctx context.Context, sessionID string) (<-chan
 	return out, nil
 }
 
+func (p *fakeProvider) PublishVCS(ctx context.Context, sessionID string, req VCSPublishRequest) error {
+	if _, ok := p.sessions[sessionID]; !ok {
+		return ErrSessionNotFound
+	}
+	p.publishSession = sessionID
+	p.publishReq = req
+	return nil
+}
+
 func startTestRunnerServer(t *testing.T, provider Provider, authToken string) *httptest.Server {
 	t.Helper()
 	r := chi.NewRouter()
@@ -137,7 +160,9 @@ func (h *testHandler) registerRoutes(r chi.Router) {
 	}
 	r.Post("/v1/workspaces", h.createWorkspace)
 	r.Delete("/v1/workspaces/{sessionID}", h.destroyWorkspace)
+	r.Post("/v1/workspaces/{sessionID}/attach", h.attachWorkspace)
 	r.Post("/v1/workspaces/{sessionID}/commands", h.executeCommand)
+	r.Post("/v1/workspaces/{sessionID}/vcs/publish", h.publishVCS)
 	r.Get("/v1/workspaces/{sessionID}/files/*", h.readFile)
 	r.Put("/v1/workspaces/{sessionID}/files/*", h.writeFile)
 	r.Post("/v1/workspaces/{sessionID}/patches", h.applyPatch)
@@ -167,6 +192,28 @@ func (h *testHandler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.json(w, http.StatusCreated, sess)
 }
 
+func (h *testHandler) attachWorkspace(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionID")
+	attacher, ok := h.provider.(SessionAttacher)
+	if !ok {
+		h.json(w, http.StatusNotImplemented, map[string]string{"error": "attach unsupported"})
+		return
+	}
+	var req struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.json(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	sess, err := attacher.AttachSession(r.Context(), sid, req.WorkspaceID)
+	if err != nil {
+		h.json(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	h.json(w, http.StatusOK, sess)
+}
+
 func (h *testHandler) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	sid := chi.URLParam(r, "sessionID")
 	if err := h.provider.DestroyWorkspace(r.Context(), sid); err != nil {
@@ -178,6 +225,29 @@ func (h *testHandler) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.json(w, http.StatusOK, map[string]string{"status": "destroyed"})
+}
+
+func (h *testHandler) publishVCS(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionID")
+	publisher, ok := h.provider.(VCSWorkspacePublisher)
+	if !ok {
+		h.json(w, http.StatusNotImplemented, map[string]string{"error": "VCS publish unsupported"})
+		return
+	}
+	var req VCSPublishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.json(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if err := publisher.PublishVCS(r.Context(), sid, req); err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			h.json(w, http.StatusNotFound, map[string]string{"error": err.Error()})
+			return
+		}
+		h.json(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	h.json(w, http.StatusOK, map[string]string{"status": "published"})
 }
 
 func (h *testHandler) executeCommand(w http.ResponseWriter, r *http.Request) {
@@ -336,6 +406,52 @@ func TestRemoteProviderCreateAndDestroyWorkspace(t *testing.T) {
 
 	if err := client.DestroyWorkspace(ctx, sess.ID); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("expected ErrSessionNotFound, got: %v", err)
+	}
+}
+
+func TestRemoteProviderAttachSession(t *testing.T) {
+	provider := newFakeProvider()
+	server := startTestRunnerServer(t, provider, "")
+	defer server.Close()
+
+	client := NewRemoteProvider(server.URL, "")
+	sess, err := client.AttachSession(context.Background(), "sess-recovered", "workspace-1")
+	if err != nil {
+		t.Fatalf("AttachSession error: %v", err)
+	}
+	if sess.ID != "sess-recovered" || sess.WorkspaceID != "workspace-1" {
+		t.Fatalf("session = %+v", sess)
+	}
+	if _, ok := provider.sessions["sess-recovered"]; !ok {
+		t.Fatal("runner provider did not reconstruct session")
+	}
+}
+
+func TestRemoteProviderPublishVCS(t *testing.T) {
+	provider := newFakeProvider()
+	server := startTestRunnerServer(t, provider, "")
+	defer server.Close()
+
+	client := NewRemoteProvider(server.URL, "")
+	ctx := context.Background()
+	sess, err := client.CreateWorkspace(ctx, CreateRequest{RepositoryID: "repo-1", CloneURL: "https://example.invalid/repo.git", Branch: "feat", BaseBranch: "main"})
+	if err != nil {
+		t.Fatalf("CreateWorkspace error: %v", err)
+	}
+
+	req := VCSPublishRequest{
+		Ref:       "agent/task-1",
+		RemoteURL: "https://github.com/acme/app.git",
+		Env:       map[string]string{"GIT_TERMINAL_PROMPT": "0"},
+	}
+	if err := client.PublishVCS(ctx, sess.ID, req); err != nil {
+		t.Fatalf("PublishVCS error: %v", err)
+	}
+	if provider.publishSession != sess.ID {
+		t.Fatalf("publish session = %q, want %q", provider.publishSession, sess.ID)
+	}
+	if provider.publishReq.Ref != req.Ref || provider.publishReq.RemoteURL != req.RemoteURL {
+		t.Fatalf("publish request = %#v, want %#v", provider.publishReq, req)
 	}
 }
 

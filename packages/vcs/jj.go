@@ -108,6 +108,24 @@ func (b *JujutsuBackend) Publish(ctx context.Context, req PublishRequest) error 
 	}); err != nil {
 		return err
 	}
+	if strings.TrimSpace(req.RemoteURL) != "" {
+		if err := validatePublishRemoteURL(req.RemoteURL); err != nil {
+			return err
+		}
+		_, err := b.runner.Run(ctx, Command{
+			Name: "git",
+			Args: []string{
+				"-c", "core.hooksPath=/dev/null",
+				"-c", "credential.helper=",
+				"-c", "core.askPass=",
+				"-c", "http.sslVerify=true",
+				"push", "--", req.RemoteURL, req.Ref + ":refs/heads/" + req.Ref,
+			},
+			Dir: req.WorkspacePath,
+			Env: req.Env,
+		})
+		return err
+	}
 	_, err := b.runner.Run(ctx, Command{
 		Name: "jj", Args: []string{"git", "push", "--remote", "origin", "--bookmark", req.Ref}, Dir: req.WorkspacePath, Env: req.Env,
 	})

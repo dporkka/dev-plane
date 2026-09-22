@@ -13,6 +13,7 @@ export type TaskStatus =
   | "running"
   | "reviewing"
   | "pr_created"
+  | "deploying"
   | "done"
   | "failed"
   | "cancelled";
@@ -55,7 +56,7 @@ export type UserRole = "owner" | "admin" | "member";
 
 export type Plan = "free" | "pro" | "enterprise";
 
-export type ApprovalType = "spec" | "execution" | "deploy" | "risky_action";
+export type ApprovalType = "spec" | "execution" | "pr_create" | "deploy" | "risky_action";
 
 export type ApprovalResponse = "approved" | "rejected";
 
