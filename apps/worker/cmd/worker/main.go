@@ -137,11 +137,24 @@ func main() {
 		logger.Warn("SECRET_ENCRYPTION_KEYS not configured; encrypted integration tokens cannot be decrypted")
 	}
 
+	artifactManager, err := initArtifactManager()
+	if err != nil {
+		logger.Error("failed to initialize artifact storage", "error", err)
+		os.Exit(1)
+	}
+
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
-	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
+	reviewService := reviewer.NewReviewer(database.DB, logger).
+		WithArtifactManager(artifactManager).
+		WithRuntimeProvider(runtimeProvider)
+	snapshotter := handlers.NewArtifactSnapshotter(database.DB, artifactManager, runtimeProvider)
+	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+		WithRunExecutor(runExecutor).
+		WithReviewer(reviewService).
+		WithCandidateSnapshotter(snapshotter)
+	startArtifactBlockerReconciler(ctx, runHandler, logger)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -211,6 +224,20 @@ func main() {
 	}
 	shutdownCtx.addSubscription(subReviewCompleted)
 	logger.Info("subscribed to review.completed")
+
+	// artifact.lease.released -> accelerate scheduler blocker reconciliation
+	subArtifactLeaseReleased, err := eventBus.Subscribe(events.ArtifactLeaseReleased, func(msg *nats.Msg) {
+		logger.Debug("received artifact lease release event")
+		if err := runHandler.HandleArtifactLeaseReleased(msg); err != nil {
+			logger.Error("failed to handle artifact lease release", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to artifact.lease.released", "error", err)
+		os.Exit(1)
+	}
+	shutdownCtx.addSubscription(subArtifactLeaseReleased)
+	logger.Info("subscribed to artifact.lease.released")
 
 	// approval.approved -> create PR
 	subApprovalApproved, err := eventBus.Subscribe("approval.approved", func(msg *nats.Msg) {

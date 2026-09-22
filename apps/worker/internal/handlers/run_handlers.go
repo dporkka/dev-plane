@@ -30,7 +30,8 @@ type RunHandler struct {
 	logger   *slog.Logger
 	eventBus WorkerEventPublisher
 	executor RunExecutor
-	reviewer ReviewService
+	reviewer    ReviewService
+	snapshotter CandidateSnapshotter
 }
 
 // RunExecutor executes queued agent runs.
@@ -60,6 +61,13 @@ func (h *RunHandler) WithReviewer(reviewer ReviewService) *RunHandler {
 	return h
 }
 
+// WithCandidateSnapshotter captures immutable source + artifact state before
+// handoff scheduling or review. Snapshotting is idempotent by completed run ID.
+func (h *RunHandler) WithCandidateSnapshotter(snapshotter CandidateSnapshotter) *RunHandler {
+	h.snapshotter = snapshotter
+	return h
+}
+
 // WithEventPublisher replaces the event publisher, primarily for tests.
 func (h *RunHandler) WithEventPublisher(eventBus WorkerEventPublisher) *RunHandler {
 	h.eventBus = eventBus
@@ -76,6 +84,18 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 	}
 
 	h.logger.Info("handling run completed", "run_id", event.RunID, "task_id", event.TaskID)
+
+	if h.snapshotter != nil {
+		snapshot, err := h.snapshotter.Capture(context.Background(), event.RunID)
+		if err != nil {
+			return fmt.Errorf("capture completed-run candidate snapshot: %w", err)
+		}
+		h.logger.Info("captured completed-run candidate snapshot",
+			"run_id", event.RunID,
+			"snapshot_id", snapshot.ID,
+			"workspace_id", snapshot.WorkspaceID,
+		)
+	}
 
 	if scheduled, nextRunID, nextRole, err := h.scheduleFollowOnRun(context.Background(), event); err != nil {
 		return err
@@ -181,6 +201,12 @@ type pendingHandoff struct {
 	ToAgent string
 }
 
+type artifactLeaseBlocker struct {
+	Path      string    `json:"path"`
+	OwnerID   string    `json:"owner_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.AgentRunEvent) (bool, string, string, error) {
 	if h.db == nil || strings.TrimSpace(event.RunID) == "" {
 		return false, "", "", nil
@@ -209,12 +235,28 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 
 	nextRunID := uuid.New().String()
 	now := time.Now().UTC()
-	metadata, err := json.Marshal(map[string]any{
+	runStatus := models.AgentRunStatusQueued
+	var blockers []artifactLeaseBlocker
+	if run.WorkspaceID != nil {
+		blockers, err = h.activeArtifactLeaseBlockers(ctx, tx, *run.WorkspaceID)
+		if err != nil {
+			return false, "", "", err
+		}
+		if len(blockers) > 0 {
+			runStatus = models.AgentRunStatusPaused
+		}
+	}
+	metadataMap := map[string]any{
 		"trigger":             "mailbox_handoff",
 		"handoff_message_id":  handoff.ID,
 		"handoff_from_run_id": run.RunID,
 		"handoff_from_agent":  run.AgentRole,
-	})
+	}
+	if len(blockers) > 0 {
+		metadataMap["blocker_type"] = "artifact_lease"
+		metadataMap["artifact_lease_blockers"] = blockers
+	}
+	metadata, err := json.Marshal(metadataMap)
 	if err != nil {
 		return false, "", "", fmt.Errorf("marshal follow-on run metadata: %w", err)
 	}
@@ -227,8 +269,8 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
 			status, total_cost, metadata, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
-	`, nextRunID, run.TaskID, workspaceArg, handoff.ToAgent, run.Model, run.Provider, string(metadata), now)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, 0.0, $8, $9, $9)
+	`, nextRunID, run.TaskID, workspaceArg, handoff.ToAgent, run.Model, run.Provider, runStatus, string(metadata), now)
 	if err != nil {
 		return false, "", "", fmt.Errorf("create follow-on agent run: %w", err)
 	}
@@ -261,12 +303,12 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 		return false, "", "", fmt.Errorf("commit follow-on run: %w", err)
 	}
 
-	if h.eventBus != nil {
+	if runStatus == models.AgentRunStatusQueued && h.eventBus != nil {
 		payload := map[string]any{
 			"run_id":             nextRunID,
 			"task_id":            run.TaskID,
 			"agent_role":         handoff.ToAgent,
-			"status":             "queued",
+			"status":             runStatus,
 			"action":             "mailbox_handoff",
 			"handoff_message_id": handoff.ID,
 			"previous_run_id":    run.RunID,
@@ -275,9 +317,152 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 		if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
 			h.logger.Warn("failed to publish follow-on run triggered event", "error", err)
 		}
+	} else if len(blockers) > 0 {
+		h.logger.Info("follow-on run paused behind artifact leases",
+			"run_id", nextRunID,
+			"workspace_id", workspaceArg,
+			"blocker_count", len(blockers),
+		)
 	}
 
 	return true, nextRunID, handoff.ToAgent, nil
+}
+
+type artifactLeaseQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func (h *RunHandler) activeArtifactLeaseBlockers(ctx context.Context, queryer artifactLeaseQueryer, workspaceID string) ([]artifactLeaseBlocker, error) {
+	if strings.TrimSpace(workspaceID) == "" {
+		return nil, nil
+	}
+	if queryer == nil {
+		queryer = h.db
+	}
+	rows, err := queryer.QueryContext(ctx, `
+		SELECT artifact_path, owner_id, expires_at
+		FROM artifact_leases
+		WHERE scope_id = $1 AND expires_at > $2
+		ORDER BY artifact_path ASC
+	`, workspaceID, time.Now().UTC())
+	if err != nil {
+		return nil, fmt.Errorf("list active artifact lease blockers: %w", err)
+	}
+	defer rows.Close()
+	var blockers []artifactLeaseBlocker
+	for rows.Next() {
+		var blocker artifactLeaseBlocker
+		if err := rows.Scan(&blocker.Path, &blocker.OwnerID, &blocker.ExpiresAt); err != nil {
+			return nil, err
+		}
+		blockers = append(blockers, blocker)
+	}
+	return blockers, rows.Err()
+}
+
+// ResumeArtifactBlockedRuns rechecks paused handoff runs and queues those whose
+// artifact leases have been released or expired. It is safe to call periodically.
+func (h *RunHandler) ResumeArtifactBlockedRuns(ctx context.Context) error {
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, task_id, workspace_id, metadata
+		FROM agent_runs
+		WHERE status = 'paused' AND workspace_id IS NOT NULL
+		ORDER BY created_at ASC
+	`)
+	if err != nil {
+		return fmt.Errorf("list paused runs: %w", err)
+	}
+	defer rows.Close()
+
+	type pausedRun struct {
+		id, taskID, workspaceID string
+		metadata                json.RawMessage
+	}
+	var paused []pausedRun
+	for rows.Next() {
+		var item pausedRun
+		var raw sql.NullString
+		if err := rows.Scan(&item.id, &item.taskID, &item.workspaceID, &raw); err != nil {
+			return err
+		}
+		if raw.Valid {
+			item.metadata = json.RawMessage(raw.String)
+		}
+		paused = append(paused, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close paused-run cursor: %w", err)
+	}
+
+	for _, item := range paused {
+		var metadata map[string]any
+		if len(item.metadata) == 0 || json.Unmarshal(item.metadata, &metadata) != nil || metadata["blocker_type"] != "artifact_lease" {
+			continue
+		}
+		blockers, err := h.activeArtifactLeaseBlockers(ctx, h.db, item.workspaceID)
+		if err != nil {
+			return err
+		}
+		if len(blockers) > 0 {
+			continue
+		}
+		delete(metadata, "blocker_type")
+		delete(metadata, "artifact_lease_blockers")
+		metadata["artifact_lease_blockers_resolved_at"] = time.Now().UTC().Format(time.RFC3339)
+		metadataJSON, _ := json.Marshal(metadata)
+		result, err := h.db.ExecContext(ctx, `
+			UPDATE agent_runs
+			SET status = 'queued', metadata = $1, updated_at = $2
+			WHERE id = $3 AND status = 'paused'
+		`, string(metadataJSON), time.Now().UTC(), item.id)
+		if err != nil {
+			return fmt.Errorf("queue artifact-unblocked run %s: %w", item.id, err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed == 0 {
+			continue
+		}
+		if h.eventBus != nil {
+			payload := map[string]any{
+				"run_id":  item.id,
+				"task_id": item.taskID,
+				"status":  models.AgentRunStatusQueued,
+				"action":  "artifact_lease_unblocked",
+			}
+			data, _ := json.Marshal(payload)
+			if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
+				// Preserve retryability. A failed event publish must not strand the
+				// run in queued state with no dispatcher event.
+				_, rollbackErr := h.db.ExecContext(ctx, `
+					UPDATE agent_runs
+					SET status = 'paused', metadata = $1, updated_at = $2
+					WHERE id = $3 AND status = 'queued'
+				`, string(item.metadata), time.Now().UTC(), item.id)
+				if rollbackErr != nil {
+					return fmt.Errorf("publish artifact-unblocked run %s: %w; rollback paused state: %v", item.id, err, rollbackErr)
+				}
+				return fmt.Errorf("publish artifact-unblocked run %s: %w", item.id, err)
+			}
+		}
+		h.logger.Info("resumed artifact-blocked run", "run_id", item.id, "workspace_id", item.workspaceID)
+	}
+	return nil
+}
+
+// HandleArtifactLeaseReleased accelerates blocker reconciliation after an
+// explicit lease release; periodic reconciliation still handles natural expiry.
+func (h *RunHandler) HandleArtifactLeaseReleased(msg *nats.Msg) error {
+	var event events.ArtifactLeaseEvent
+	if err := json.Unmarshal(msg.Data, &event); err != nil {
+		return fmt.Errorf("unmarshal artifact lease event: %w", err)
+	}
+	if err := h.ResumeArtifactBlockedRuns(context.Background()); err != nil {
+		return err
+	}
+	return ackMessage(msg)
 }
 
 func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.AgentRunEvent) (*completedRunContext, error) {

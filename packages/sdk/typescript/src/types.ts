@@ -486,6 +486,7 @@ export interface ArtifactLeaseRequest {
 export interface WorkspaceSnapshot {
   id: string;
   workspace_id: string;
+  agent_run_id?: string;
   git_commit?: string;
   vcs_change_id?: string;
   artifact_manifest_digest?: string;
@@ -587,11 +588,27 @@ export interface FileChange {
   is_migration: boolean;
 }
 
+export interface ReviewArtifactChange {
+  path: string;
+  status: 'added' | 'modified' | 'deleted';
+  kind: string;
+  media_type?: string;
+  semantic: boolean;
+  change_count?: number;
+  changes?: ArtifactSequenceChange[];
+  warnings?: string[];
+}
+
 export interface DiffSummary {
   files_changed: number;
   insertions: number;
   deletions: number;
   files: FileChange[];
+  artifact_files_changed?: number;
+  artifact_additions?: number;
+  artifact_modifications?: number;
+  artifact_deletions?: number;
+  artifact_changes?: ReviewArtifactChange[];
 }
 
 export interface ReviewReport {

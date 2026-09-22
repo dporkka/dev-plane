@@ -17,6 +17,7 @@ import (
 	artifactstore "github.com/ai-dev-control-plane/artifacts"
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/runtimes"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -478,6 +479,18 @@ func (h *Handler) handleArtifactLease(w http.ResponseWriter, r *http.Request, op
 			Token: req.Token, Generation: req.Generation,
 		})
 		if err == nil {
+			if h.eventBus != nil {
+				payload, _ := json.Marshal(events.ArtifactLeaseEvent{
+					WorkspaceID: workspaceID,
+					Path:        req.Path,
+					OwnerID:     user.UserID,
+					Generation:  req.Generation,
+					Timestamp:   time.Now().UTC(),
+				})
+				if publishErr := h.eventBus.Publish(events.ArtifactLeaseReleased, payload); publishErr != nil {
+					h.logger.Warn("failed to publish artifact lease release", "workspace_id", workspaceID, "path", req.Path, "error", publishErr)
+				}
+			}
 			respond.JSON(w, http.StatusOK, map[string]string{"status": "released"})
 			return
 		}
@@ -532,6 +545,7 @@ type WorkspaceSnapshotRequest struct {
 type WorkspaceSnapshotResponse struct {
 	ID                     string    `json:"id"`
 	WorkspaceID            string    `json:"workspace_id"`
+	AgentRunID             string    `json:"agent_run_id,omitempty"`
 	GitCommit              string    `json:"git_commit,omitempty"`
 	VCSChangeID            string    `json:"vcs_change_id,omitempty"`
 	ArtifactManifestDigest string    `json:"artifact_manifest_digest,omitempty"`
@@ -1100,7 +1114,7 @@ func (h *Handler) ListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, git_commit, vcs_change_id, artifact_manifest_digest,
+		SELECT id, agent_run_id, git_commit, vcs_change_id, artifact_manifest_digest,
 		       artifact_version_digest, description, created_at
 		FROM workspace_snapshots
 		WHERE workspace_id = $1
@@ -1116,16 +1130,17 @@ func (h *Handler) ListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var (
 			item WorkspaceSnapshotResponse
-			gitCommit, changeID, manifestDigest, versionDigest, description sql.NullString
+			agentRunID, gitCommit, changeID, manifestDigest, versionDigest, description sql.NullString
 		)
 		item.WorkspaceID = workspaceID
 		if err := rows.Scan(
-			&item.ID, &gitCommit, &changeID, &manifestDigest,
+			&item.ID, &agentRunID, &gitCommit, &changeID, &manifestDigest,
 			&versionDigest, &description, &item.CreatedAt,
 		); err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
 		}
+		if agentRunID.Valid { item.AgentRunID = agentRunID.String }
 		if gitCommit.Valid { item.GitCommit = gitCommit.String }
 		if changeID.Valid { item.VCSChangeID = changeID.String }
 		if manifestDigest.Valid { item.ArtifactManifestDigest = manifestDigest.String }

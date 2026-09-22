@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -70,6 +71,65 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 	}
 	if !consumedAt.Valid || consumedAt.String == "" {
 		t.Fatalf("consumed_at = %v, want timestamp", consumedAt)
+	}
+}
+
+func TestScheduleFollowOnRunPausesBehindArtifactLeaseAndResumes(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	insertHandoffFixture(t, db, "message-1", "run-1", models.AgentRoleReviewer)
+	_, err := db.Exec(`
+		INSERT INTO artifact_leases (
+			scope_id, artifact_path, owner_id, token_hash, generation, expires_at
+		) VALUES (?, ?, ?, ?, ?, ?)
+	`, "workspace-1", "design/hero.psd", "agent-other", "hash", 3, time.Now().UTC().Add(time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	scheduled, nextRunID, _, err := handler.scheduleFollowOnRun(context.Background(), events.AgentRunEvent{
+		RunID: "run-1", TaskID: "task-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !scheduled {
+		t.Fatal("expected blocked follow-on run to be created")
+	}
+	var status, metadata string
+	if err := db.QueryRow(`SELECT status, metadata FROM agent_runs WHERE id = ?`, nextRunID).Scan(&status, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.AgentRunStatusPaused {
+		t.Fatalf("status = %q, want paused", status)
+	}
+	if !strings.Contains(metadata, "artifact_lease") || !strings.Contains(metadata, "design/hero.psd") {
+		t.Fatalf("metadata missing blocker details: %s", metadata)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("blocked run should not publish runs.triggered, got %q", publisher.subject)
+	}
+
+	if _, err := db.Exec(`DELETE FROM artifact_leases WHERE scope_id = ?`, "workspace-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := handler.ResumeArtifactBlockedRuns(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT status, metadata FROM agent_runs WHERE id = ?`, nextRunID).Scan(&status, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.AgentRunStatusQueued {
+		t.Fatalf("status = %q, want queued", status)
+	}
+	if strings.Contains(metadata, "\"blocker_type\"") {
+		t.Fatalf("resolved blocker still present in metadata: %s", metadata)
+	}
+	if publisher.subject != events.RunTriggered {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.RunTriggered)
 	}
 }
 
@@ -332,6 +392,17 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 			metadata TEXT DEFAULT '{}',
 			created_at DATETIME,
 			updated_at DATETIME
+		);
+		CREATE TABLE artifact_leases (
+			scope_id TEXT NOT NULL,
+			artifact_path TEXT NOT NULL,
+			owner_id TEXT NOT NULL,
+			token_hash TEXT NOT NULL,
+			generation INTEGER NOT NULL,
+			expires_at DATETIME NOT NULL,
+			created_at DATETIME,
+			updated_at DATETIME,
+			PRIMARY KEY (scope_id, artifact_path)
 		);
 		CREATE TABLE agent_messages (
 			id TEXT PRIMARY KEY,

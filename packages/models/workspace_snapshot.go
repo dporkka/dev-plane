@@ -11,6 +11,7 @@ import (
 type WorkspaceSnapshot struct {
 	ID                     string          `json:"id"`
 	WorkspaceID            string          `json:"workspace_id"`
+	AgentRunID             *string         `json:"agent_run_id,omitempty"`
 	GitCommit              *string         `json:"git_commit,omitempty"`
 	VCSChangeID            *string         `json:"vcs_change_id,omitempty"`
 	ArtifactManifestDigest *string         `json:"artifact_manifest_digest,omitempty"`

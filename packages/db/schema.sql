@@ -120,35 +120,6 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
 CREATE INDEX IF NOT EXISTS idx_workspaces_deleted_at ON workspaces(deleted_at);
 
 -- =====================================================
--- 5a. workspace_snapshots
--- =====================================================
-CREATE TABLE IF NOT EXISTS workspace_snapshots (
-    id                       UUID PRIMARY KEY,
-    workspace_id             UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-    git_commit               TEXT,
-    vcs_change_id            TEXT,
-    artifact_manifest_digest TEXT,
-    artifact_version_digest  TEXT,
-    description              TEXT,
-    metadata                 JSONB DEFAULT '{}',
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CHECK (
-        git_commit IS NOT NULL
-        OR artifact_version_digest IS NOT NULL
-        OR artifact_manifest_digest IS NOT NULL
-    )
-);
-
-CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_workspace_id
-    ON workspace_snapshots(workspace_id);
-CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_created_at
-    ON workspace_snapshots(created_at);
-CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_git_commit
-    ON workspace_snapshots(git_commit);
-CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_artifact_version
-    ON workspace_snapshots(artifact_version_digest);
-
--- =====================================================
 -- 5b. artifact_leases
 -- =====================================================
 CREATE TABLE IF NOT EXISTS artifact_leases (
@@ -234,6 +205,40 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_id ON agent_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
+
+-- =====================================================
+-- 7a. workspace_snapshots
+-- =====================================================
+CREATE TABLE IF NOT EXISTS workspace_snapshots (
+    id                       UUID PRIMARY KEY,
+    workspace_id             UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    agent_run_id             UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+    git_commit               TEXT,
+    vcs_change_id            TEXT,
+    artifact_manifest_digest TEXT,
+    artifact_version_digest  TEXT,
+    description              TEXT,
+    metadata                 JSONB DEFAULT '{}',
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        git_commit IS NOT NULL
+        OR artifact_version_digest IS NOT NULL
+        OR artifact_manifest_digest IS NOT NULL
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_workspace_id
+    ON workspace_snapshots(workspace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_snapshots_agent_run_id
+    ON workspace_snapshots(agent_run_id)
+    WHERE agent_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_created_at
+    ON workspace_snapshots(created_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_git_commit
+    ON workspace_snapshots(git_commit);
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_artifact_version
+    ON workspace_snapshots(artifact_version_digest);
+
 
 -- =====================================================
 -- 8. agent_steps

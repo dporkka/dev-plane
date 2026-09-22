@@ -1,6 +1,9 @@
 package events
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Task event subject constants.
 const (
@@ -61,6 +64,19 @@ const (
 	PRCreated = "pr.created"
 	PRMerged  = "pr.merged"
 )
+
+// Artifact coordination event subject constants.
+const (
+	ArtifactLeaseReleased = "artifact.lease.released"
+)
+
+type ArtifactLeaseEvent struct {
+	WorkspaceID string    `json:"workspace_id"`
+	Path        string    `json:"path"`
+	OwnerID     string    `json:"owner_id,omitempty"`
+	Generation  uint64    `json:"generation,omitempty"`
+	Timestamp   time.Time `json:"timestamp"`
+}
 
 // Deploy event subject constants.
 const (
