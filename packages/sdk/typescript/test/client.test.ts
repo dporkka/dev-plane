@@ -2,6 +2,7 @@ import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DevPlaneClient,
+  hashSourceCRC64NVME,
   hashSourceSHA256,
   uploadArtifactMultipart,
   type ArtifactUploadTransport,
@@ -147,6 +148,11 @@ describe('artifact multipart uploader', () => {
     );
   });
 
+  test('streams CRC64/NVME using the standard 123456789 vector', async () => {
+    const checksum = await hashSourceCRC64NVME(new Blob(['123456789']), 3);
+    assert.equal(checksum, 'rosUhgp5mIg=');
+  });
+
   test('uploads parts with retries, checkpoints, and ordered completion', async () => {
     const originalFetch = globalThis.fetch;
     const uploadedBodies = new Map<number, string>();
@@ -194,6 +200,7 @@ describe('artifact multipart uploader', () => {
           part_size_bytes: 4,
           part_count: 3,
           status: 'initiated',
+          verification_mode: 'stream_sha256',
           expires_at: new Date(Date.now() + 60_000).toISOString(),
           parts: [
             { part_number: 1, url: 'https://upload.test/part-1', expires_at: '' },
@@ -361,6 +368,7 @@ describe('artifact multipart uploader', () => {
           part_size_bytes: payload.size_bytes,
           part_count: 1,
           status: 'initiated',
+          verification_mode: 'stream_sha256',
           expires_at: '',
           parts: [{ part_number: 1, url: 'https://upload.test/part-1', expires_at: '' }],
         };

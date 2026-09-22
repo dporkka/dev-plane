@@ -31,22 +31,25 @@ type BeginArtifactUploadRequest struct {
 	Path          string `json:"path"`
 	SizeBytes     int64  `json:"size_bytes"`
 	SHA256        string `json:"sha256"`
+	CRC64NVME     string `json:"crc64nvme,omitempty"`
 	ContentType   string `json:"content_type,omitempty"`
 	PartSizeBytes int64  `json:"part_size_bytes,omitempty"`
 }
 
 type BeginArtifactUploadResponse struct {
-	ID          string                        `json:"id"`
-	WorkspaceID string                        `json:"workspace_id"`
-	Path        string                        `json:"path"`
-	Digest      artifactstore.Digest          `json:"digest"`
-	SizeBytes   int64                         `json:"size_bytes"`
-	ContentType string                        `json:"content_type"`
-	PartSize    int64                         `json:"part_size_bytes"`
-	PartCount   int                           `json:"part_count"`
-	Status      string                        `json:"status"`
-	ExpiresAt   time.Time                     `json:"expires_at"`
-	Parts       []artifactstore.PresignedPart `json:"parts,omitempty"`
+	ID                      string                        `json:"id"`
+	WorkspaceID             string                        `json:"workspace_id"`
+	Path                    string                        `json:"path"`
+	Digest                  artifactstore.Digest          `json:"digest"`
+	SizeBytes               int64                         `json:"size_bytes"`
+	ContentType             string                        `json:"content_type"`
+	PartSize                int64                         `json:"part_size_bytes"`
+	PartCount               int                           `json:"part_count"`
+	Status                  string                        `json:"status"`
+	ExpiresAt               time.Time                     `json:"expires_at"`
+	NativeChecksumAlgorithm string                        `json:"native_checksum_algorithm,omitempty"`
+	VerificationMode        string                        `json:"verification_mode"`
+	Parts                   []artifactstore.PresignedPart `json:"parts,omitempty"`
 }
 
 type PresignArtifactPartsRequest struct {
@@ -73,11 +76,15 @@ type directUploadRecord struct {
 	PartCount        int
 	Status           string
 	InitiatedBy      string
-	ArtifactID       sql.NullString
-	ErrorMessage     sql.NullString
-	ExpiresAt        time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ArtifactID              sql.NullString
+	ErrorMessage            sql.NullString
+	ExpiresAt               time.Time
+	NativeChecksumAlgorithm sql.NullString
+	NativeChecksumBase64    sql.NullString
+	NativeChecksumEnabled   bool
+	VerificationMode        string
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
 }
 
 func (u directUploadRecord) descriptor() artifactstore.Descriptor {
@@ -86,6 +93,13 @@ func (u directUploadRecord) descriptor() artifactstore.Descriptor {
 		Size:      u.ExpectedSize,
 		MediaType: u.MediaType,
 	}
+}
+
+func (u directUploadRecord) nativeChecksum() (*artifactstore.MultipartChecksum, error) {
+	if !u.NativeChecksumEnabled || !u.NativeChecksumAlgorithm.Valid || !u.NativeChecksumBase64.Valid {
+		return nil, nil
+	}
+	return artifactstore.ParseMultipartChecksum(u.NativeChecksumAlgorithm.String, u.NativeChecksumBase64.String)
 }
 
 func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +137,11 @@ func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
+	nativeChecksum, err := artifactstore.ParseMultipartChecksum(artifactstore.MultipartChecksumCRC64NVME, req.CRC64NVME)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
 	if err := h.validateArtifactWriteLease(ctx, r, user, workspaceID, logicalPath); err != nil {
 		respondArtifactLeaseError(w, err)
 		return
@@ -139,26 +158,38 @@ func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
 
 	id := uuid.NewString()
 	stagingKey := path.Join("uploads", user.OrgID, workspaceID, id)
-	providerUploadID, err := h.artifactManager.BeginMultipart(ctx, stagingKey, mediaType)
+	providerUploadID, nativeChecksumEnabled, err := h.artifactManager.BeginMultipartWithChecksum(ctx, stagingKey, mediaType, nativeChecksum)
 	if err != nil {
 		respond.Error(w, http.StatusBadGateway, fmt.Errorf("initiate multipart upload: %w", err))
 		return
 	}
+	verificationMode := "stream_sha256"
+	if nativeChecksumEnabled && nativeChecksum != nil {
+		verificationMode = "native_" + strings.ToLower(nativeChecksum.Algorithm)
+	}
 	now := time.Now().UTC()
 	expiresAt := now.Add(directUploadTTL)
+	var nativeAlgorithm, nativeBase64 any
+	if nativeChecksum != nil {
+		nativeAlgorithm = nativeChecksum.Algorithm
+		nativeBase64 = nativeChecksum.Base64
+	}
 	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO artifact_uploads (
 			id, organization_id, workspace_id, logical_path, media_type,
 			expected_digest_algorithm, expected_digest_hex, expected_size,
 			staging_key, provider_upload_id, part_size, part_count, status,
-			initiated_by, expires_at, created_at, updated_at
+			initiated_by, expires_at, native_checksum_algorithm, native_checksum_base64,
+			native_checksum_enabled, verification_mode, created_at, updated_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8,
-			$9, $10, $11, $12, 'initiated', $13, $14, $15, $15
+			$9, $10, $11, $12, 'initiated', $13, $14, $15, $16,
+			$17, $18, $19, $19
 		)
 	`, id, user.OrgID, workspaceID, logicalPath, mediaType,
 		digest.Algorithm, digest.Hex, req.SizeBytes, stagingKey, providerUploadID,
-		partSize, partCount, user.UserID, expiresAt, now)
+		partSize, partCount, user.UserID, expiresAt, nativeAlgorithm, nativeBase64,
+		nativeChecksumEnabled, verificationMode, now)
 	if err != nil {
 		_ = h.artifactManager.AbortMultipart(context.Background(), stagingKey, providerUploadID)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist artifact upload session: %w", err))
@@ -179,11 +210,16 @@ func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respond.JSON(w, http.StatusCreated, BeginArtifactUploadResponse{
+	response := BeginArtifactUploadResponse{
 		ID: id, WorkspaceID: workspaceID, Path: logicalPath, Digest: digest,
 		SizeBytes: req.SizeBytes, ContentType: mediaType, PartSize: partSize,
-		PartCount: partCount, Status: "initiated", ExpiresAt: expiresAt, Parts: parts,
-	})
+		PartCount: partCount, Status: "initiated", ExpiresAt: expiresAt,
+		VerificationMode: verificationMode, Parts: parts,
+	}
+	if nativeChecksumEnabled && nativeChecksum != nil {
+		response.NativeChecksumAlgorithm = nativeChecksum.Algorithm
+	}
+	respond.JSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) PresignArtifactUploadParts(w http.ResponseWriter, r *http.Request) {
@@ -314,12 +350,32 @@ func (h *Handler) CompleteArtifactUpload(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		completeErr := h.artifactManager.CompleteMultipart(ctx, upload.StagingKey, upload.ProviderUploadID, req.Parts)
+		nativeChecksum, checksumErr := upload.nativeChecksum()
+		if checksumErr != nil {
+			respond.Error(w, http.StatusInternalServerError, checksumErr)
+			return
+		}
+		completeErr := h.artifactManager.CompleteMultipartWithChecksum(
+			ctx,
+			upload.StagingKey,
+			upload.ProviderUploadID,
+			req.Parts,
+			upload.descriptor(),
+			nativeChecksum,
+			upload.NativeChecksumEnabled,
+		)
 		if completeErr != nil {
 			// A lost provider response is ambiguous: if the staged object now
 			// verifies, treat completion as successful; otherwise keep the
 			// finalizing state so the exact request can be retried.
-			if verifyErr := h.artifactManager.VerifyAndPromoteMultipart(ctx, upload.StagingKey, upload.descriptor()); verifyErr != nil {
+			verificationMode, verifyErr := h.artifactManager.VerifyAndPromoteMultipartWithChecksum(
+				ctx,
+				upload.StagingKey,
+				upload.descriptor(),
+				nativeChecksum,
+				upload.NativeChecksumEnabled,
+			)
+			if verifyErr != nil {
 				_, _ = h.db.ExecContext(context.Background(), `
 					UPDATE artifact_uploads
 					SET status = 'initiated', error_message = $1, updated_at = $2
@@ -328,6 +384,7 @@ func (h *Handler) CompleteArtifactUpload(w http.ResponseWriter, r *http.Request)
 				respond.Error(w, http.StatusBadGateway, fmt.Errorf("complete multipart upload: %w", completeErr))
 				return
 			}
+			upload.VerificationMode = verificationMode
 			upload.Status = "verified"
 		} else {
 			_, _ = h.db.ExecContext(ctx,
@@ -338,21 +395,34 @@ func (h *Handler) CompleteArtifactUpload(w http.ResponseWriter, r *http.Request)
 	}
 
 	if upload.Status == "uploaded" {
-		if err := h.artifactManager.VerifyAndPromoteMultipart(ctx, upload.StagingKey, upload.descriptor()); err != nil {
-			_, _ = h.db.ExecContext(context.Background(),
-				`UPDATE artifact_uploads SET error_message = $1, updated_at = $2 WHERE id = $3`,
-				err.Error(), time.Now().UTC(), upload.ID)
-			respond.Error(w, http.StatusBadRequest, fmt.Errorf("verify uploaded artifact: %w", err))
+		nativeChecksum, checksumErr := upload.nativeChecksum()
+		if checksumErr != nil {
+			respond.Error(w, http.StatusInternalServerError, checksumErr)
 			return
 		}
+		verificationMode, verifyErr := h.artifactManager.VerifyAndPromoteMultipartWithChecksum(
+			ctx,
+			upload.StagingKey,
+			upload.descriptor(),
+			nativeChecksum,
+			upload.NativeChecksumEnabled,
+		)
+		if verifyErr != nil {
+			_, _ = h.db.ExecContext(context.Background(),
+				`UPDATE artifact_uploads SET error_message = $1, updated_at = $2 WHERE id = $3`,
+				verifyErr.Error(), time.Now().UTC(), upload.ID)
+			respond.Error(w, http.StatusBadRequest, fmt.Errorf("verify uploaded artifact: %w", verifyErr))
+			return
+		}
+		upload.VerificationMode = verificationMode
 		upload.Status = "verified"
 	}
 	if upload.Status == "verified" {
 		_, err = h.db.ExecContext(ctx, `
 			UPDATE artifact_uploads
-			SET status = 'verified', error_message = NULL, updated_at = $1
-			WHERE id = $2
-		`, time.Now().UTC(), upload.ID)
+			SET status = 'verified', verification_mode = $1, error_message = NULL, updated_at = $2
+			WHERE id = $3
+		`, upload.VerificationMode, time.Now().UTC(), upload.ID)
 		if err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
@@ -434,9 +504,10 @@ func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Cl
 		Kind:       artifactstore.KindBinary,
 		Descriptor: upload.descriptor(),
 		Metadata: map[string]string{
-			"workspace_id":     upload.WorkspaceID,
-			"uploaded_by":      user.UserID,
-			"direct_upload_id": upload.ID,
+			"workspace_id":      upload.WorkspaceID,
+			"uploaded_by":       user.UserID,
+			"direct_upload_id":  upload.ID,
+			"verification_mode": upload.VerificationMode,
 		},
 	}
 	var analysis artifactstore.AdapterAnalysis
@@ -475,7 +546,9 @@ func (h *Handler) loadDirectUpload(ctx context.Context, uploadID, workspaceID st
 		SELECT id, organization_id, workspace_id, logical_path, media_type,
 		       expected_digest_algorithm, expected_digest_hex, expected_size,
 		       staging_key, provider_upload_id, part_size, part_count, status,
-		       initiated_by, artifact_id, error_message, expires_at, created_at, updated_at
+		       initiated_by, artifact_id, error_message, expires_at,
+		       native_checksum_algorithm, native_checksum_base64, native_checksum_enabled,
+		       verification_mode, created_at, updated_at
 		FROM artifact_uploads
 		WHERE id = $1 AND workspace_id = $2 AND organization_id = $3 AND initiated_by = $4
 	`, uploadID, workspaceID, user.OrgID, user.UserID).Scan(
@@ -485,7 +558,9 @@ func (h *Handler) loadDirectUpload(ctx context.Context, uploadID, workspaceID st
 		&upload.StagingKey, &upload.ProviderUploadID,
 		&upload.PartSize, &upload.PartCount, &upload.Status,
 		&upload.InitiatedBy, &upload.ArtifactID, &upload.ErrorMessage,
-		&upload.ExpiresAt, &upload.CreatedAt, &upload.UpdatedAt,
+		&upload.ExpiresAt, &upload.NativeChecksumAlgorithm, &upload.NativeChecksumBase64,
+		&upload.NativeChecksumEnabled, &upload.VerificationMode,
+		&upload.CreatedAt, &upload.UpdatedAt,
 	)
 	return upload, err
 }

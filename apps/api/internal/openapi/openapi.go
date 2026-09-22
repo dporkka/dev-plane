@@ -2401,7 +2401,7 @@ func buildPaths() map[string]PathItem {
 		Post: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},
 			Summary:     "Begin direct multipart artifact upload",
-			Description: "Creates a resumable S3/R2 multipart upload to a temporary staging object and returns an initial batch of presigned UploadPart URLs.",
+			Description: "Creates a resumable S3/R2 multipart upload to a temporary staging object, optionally enables provider-native CRC64/NVME full-object verification, and returns an initial batch of presigned UploadPart URLs.",
 			OperationID: "beginArtifactUpload",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
@@ -2414,6 +2414,7 @@ func buildPaths() map[string]PathItem {
 					"path":            {Type: "string"},
 					"size_bytes":      {Type: "integer"},
 					"sha256":          {Type: "string"},
+					"crc64nvme":       {Type: "string", Description: "Optional base64-encoded CRC64/NVME full-object checksum. Used for provider-native multipart validation when supported."},
 					"content_type":    {Type: "string"},
 					"part_size_bytes": {Type: "integer"},
 				}}},
@@ -2456,7 +2457,7 @@ func buildPaths() map[string]PathItem {
 		Post: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},
 			Summary:     "Complete and verify direct artifact upload",
-			Description: "Completes multipart upload, streams the staged object through SHA-256 verification, promotes verified bytes into CAS with server-side CopyObject, runs semantic analysis, and records the workspace artifact.",
+			Description: "Completes multipart upload, verifies integrity with provider-native CRC64/NVME metadata when available and otherwise streams SHA-256, promotes verified bytes into CAS with server-side CopyObject, runs semantic analysis, and records the workspace artifact.",
 			OperationID: "completeArtifactUpload",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{

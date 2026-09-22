@@ -236,3 +236,204 @@ func TestS3StoreVerifyObjectRejectsDigestMismatch(t *testing.T) {
 		t.Fatalf("expected integrity mismatch, got %v", err)
 	}
 }
+
+
+func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
+	payload := []byte("native-checksum-payload")
+	checksum := &MultipartChecksum{
+		Algorithm: MultipartChecksumCRC64NVME,
+		Base64:    CRC64NVMEBase64(payload),
+	}
+	desc := Descriptor{Digest: HashBytes(payload), Size: int64(len(payload)), MediaType: "application/octet-stream"}
+	var getCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
+			if got := r.Header.Get("X-Amz-Checksum-Algorithm"); got != MultipartChecksumCRC64NVME {
+				http.Error(w, "wrong checksum algorithm: "+got, http.StatusBadRequest)
+				return
+			}
+			if got := r.Header.Get("X-Amz-Checksum-Type"); got != "FULL_OBJECT" {
+				http.Error(w, "wrong checksum type: "+got, http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, "<InitiateMultipartUploadResult><UploadId>native-upload</UploadId></InitiateMultipartUploadResult>")
+		case r.Method == http.MethodPost && r.URL.Query().Get("uploadId") == "native-upload":
+			if got := r.Header.Get("X-Amz-Checksum-CRC64NVME"); got != checksum.Base64 {
+				http.Error(w, "wrong completion checksum: "+got, http.StatusBadRequest)
+				return
+			}
+			if got := r.Header.Get("X-Amz-Mp-Object-Size"); got != strconv.FormatInt(desc.Size, 10) {
+				http.Error(w, "wrong multipart object size: "+got, http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, "<CompleteMultipartUploadResult/>")
+		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/uploads/"):
+			if got := r.Header.Get("X-Amz-Checksum-Mode"); got != "ENABLED" {
+				http.Error(w, "wrong checksum mode: "+got, http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Length", strconv.FormatInt(desc.Size, 10))
+			w.Header().Set("X-Amz-Checksum-CRC64NVME", checksum.Base64)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodHead:
+			http.NotFound(w, r)
+		case r.Method == http.MethodPut:
+			if r.Header.Get("X-Amz-Copy-Source") == "" {
+				http.Error(w, "copy source required", http.StatusBadRequest)
+				return
+			}
+			_, _ = io.WriteString(w, "<CopyObjectResult/>")
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet:
+			getCalls++
+			http.Error(w, "native verification should not GET staging", http.StatusInternalServerError)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	store, err := NewS3Store(S3StoreConfig{
+		Endpoint: server.URL, Region: "auto", Bucket: "artifacts",
+		AccessKeyID: "key", SecretAccessKey: "secret",
+		AllowInsecure: true, HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadID, native, err := manager.BeginMultipartWithChecksum(
+		context.Background(), "uploads/org/ws/native", "application/octet-stream", checksum,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uploadID != "native-upload" || !native {
+		t.Fatalf("uploadID=%q native=%v", uploadID, native)
+	}
+	if err := manager.CompleteMultipartWithChecksum(
+		context.Background(),
+		"uploads/org/ws/native",
+		uploadID,
+		[]CompletedPart{{PartNumber: 1, ETag: ""etag-1""}},
+		desc,
+		checksum,
+		native,
+	); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := manager.VerifyAndPromoteMultipartWithChecksum(
+		context.Background(), "uploads/org/ws/native", desc, checksum, native,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "native_crc64nvme" {
+		t.Fatalf("verification mode = %q", mode)
+	}
+	if getCalls != 0 {
+		t.Fatalf("GET calls = %d, want 0", getCalls)
+	}
+}
+
+func TestS3StoreNativeChecksumFallsBackToStreamingWhenHEADDoesNotExposeChecksum(t *testing.T) {
+	payload := []byte("fallback-payload")
+	checksum := &MultipartChecksum{
+		Algorithm: MultipartChecksumCRC64NVME,
+		Base64:    CRC64NVMEBase64(payload),
+	}
+	desc := Descriptor{Digest: HashBytes(payload), Size: int64(len(payload))}
+	var getCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/uploads/"):
+			w.Header().Set("Content-Length", strconv.FormatInt(desc.Size, 10))
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/uploads/"):
+			getCalls++
+			_, _ = w.Write(payload)
+		case r.Method == http.MethodHead:
+			http.NotFound(w, r)
+		case r.Method == http.MethodPut:
+			_, _ = io.WriteString(w, "<CopyObjectResult/>")
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	store, err := NewS3Store(S3StoreConfig{
+		Endpoint: server.URL, Region: "auto", Bucket: "artifacts",
+		AccessKeyID: "key", SecretAccessKey: "secret",
+		AllowInsecure: true, HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode, err := manager.VerifyAndPromoteMultipartWithChecksum(
+		context.Background(), "uploads/org/ws/fallback", desc, checksum, true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mode != "stream_sha256" {
+		t.Fatalf("verification mode = %q", mode)
+	}
+	if getCalls != 1 {
+		t.Fatalf("GET calls = %d, want 1", getCalls)
+	}
+}
+
+func TestS3StoreBadDigestDoesNotFallbackToUncheckedCompletion(t *testing.T) {
+	var completeCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Query().Get("uploadId") != "" {
+			completeCalls++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, "<Error><Code>BadDigest</Code><Message>checksum mismatch</Message></Error>")
+			return
+		}
+		http.Error(w, "unexpected request", http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	store, err := NewS3Store(S3StoreConfig{
+		Endpoint: server.URL, Region: "auto", Bucket: "artifacts",
+		AccessKeyID: "key", SecretAccessKey: "secret",
+		AllowInsecure: true, HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checksum := &MultipartChecksum{
+		Algorithm: MultipartChecksumCRC64NVME,
+		Base64:    "rosUhgp5mIg=",
+	}
+	err = store.CompleteMultipartWithChecksum(
+		context.Background(),
+		"uploads/test",
+		"upload-1",
+		[]CompletedPart{{PartNumber: 1, ETag: ""etag""}},
+		Descriptor{Digest: HashBytes([]byte("123456789")), Size: 9},
+		checksum,
+	)
+	if err == nil || !strings.Contains(err.Error(), "BadDigest") {
+		t.Fatalf("expected BadDigest, got %v", err)
+	}
+	if completeCalls != 1 {
+		t.Fatalf("completion calls = %d, want 1", completeCalls)
+	}
+}

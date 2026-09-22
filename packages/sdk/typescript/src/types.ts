@@ -493,6 +493,7 @@ export interface BeginArtifactUploadRequest {
   path: string;
   size_bytes: number;
   sha256: string;
+  crc64nvme?: string;
   content_type?: string;
   part_size_bytes?: number;
 }
@@ -508,6 +509,8 @@ export interface BeginArtifactUploadResponse {
   part_count: number;
   status: string;
   expires_at: string;
+  native_checksum_algorithm?: string;
+  verification_mode: string;
   parts?: PresignedArtifactPart[];
 }
 

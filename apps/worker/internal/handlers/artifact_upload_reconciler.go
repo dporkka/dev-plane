@@ -71,8 +71,12 @@ type reconciledArtifactUpload struct {
 	ProviderUploadID string
 	Status           string
 	InitiatedBy      string
-	ExpiresAt        time.Time
-	UpdatedAt        time.Time
+	ExpiresAt               time.Time
+	NativeChecksumAlgorithm sql.NullString
+	NativeChecksumBase64    sql.NullString
+	NativeChecksumEnabled   bool
+	VerificationMode        string
+	UpdatedAt               time.Time
 }
 
 func NewArtifactUploadReconciler(db *sql.DB, manager *artifactstore.Manager, logger *slog.Logger) *ArtifactUploadReconciler {
@@ -178,7 +182,8 @@ func (r *ArtifactUploadReconciler) listCandidates(ctx context.Context, now time.
 		SELECT id, organization_id, workspace_id, logical_path, media_type,
 		       expected_digest_algorithm, expected_digest_hex, expected_size,
 		       staging_key, provider_upload_id, status, initiated_by,
-		       expires_at, updated_at
+		       expires_at, native_checksum_algorithm, native_checksum_base64,
+		       native_checksum_enabled, verification_mode, updated_at
 		FROM artifact_uploads
 		WHERE (
 			reconciliation_claim IS NULL
@@ -220,6 +225,10 @@ func (r *ArtifactUploadReconciler) listCandidates(ctx context.Context, now time.
 			&upload.Status,
 			&upload.InitiatedBy,
 			&upload.ExpiresAt,
+			&upload.NativeChecksumAlgorithm,
+			&upload.NativeChecksumBase64,
+			&upload.NativeChecksumEnabled,
+			&upload.VerificationMode,
 			&upload.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -324,7 +333,9 @@ func (r *ArtifactUploadReconciler) reconcileClaimed(ctx context.Context, upload 
 	case "cleanup_pending":
 		return r.cleanupExpired(ctx, upload, claim, "pending multipart cleanup completed", now)
 	case "finalizing":
-		if err := r.manager.VerifyAndPromoteMultipart(ctx, upload.StagingKey, upload.descriptor()); err == nil {
+		mode, err := r.verifyAndPromote(ctx, upload)
+		if err == nil {
+			upload.VerificationMode = mode
 			r.metrics.recovered.Add(1)
 			return r.finalizeVerified(ctx, upload, claim, now)
 		} else if !upload.ExpiresAt.After(now) {
@@ -333,7 +344,9 @@ func (r *ArtifactUploadReconciler) reconcileClaimed(ctx context.Context, upload 
 			return r.transition(ctx, upload.ID, claim, "initiated", "stale finalization reset: "+err.Error(), now, false)
 		}
 	case "uploaded":
-		if err := r.manager.VerifyAndPromoteMultipart(ctx, upload.StagingKey, upload.descriptor()); err == nil {
+		mode, err := r.verifyAndPromote(ctx, upload)
+		if err == nil {
+			upload.VerificationMode = mode
 			r.metrics.recovered.Add(1)
 			return r.finalizeVerified(ctx, upload, claim, now)
 		} else if !upload.ExpiresAt.After(now) {
@@ -359,6 +372,30 @@ func (u reconciledArtifactUpload) descriptor() artifactstore.Descriptor {
 	}
 }
 
+func (u reconciledArtifactUpload) nativeChecksum() (*artifactstore.MultipartChecksum, error) {
+	if !u.NativeChecksumEnabled || !u.NativeChecksumAlgorithm.Valid || !u.NativeChecksumBase64.Valid {
+		return nil, nil
+	}
+	return artifactstore.ParseMultipartChecksum(u.NativeChecksumAlgorithm.String, u.NativeChecksumBase64.String)
+}
+
+func (r *ArtifactUploadReconciler) verifyAndPromote(
+	ctx context.Context,
+	upload reconciledArtifactUpload,
+) (string, error) {
+	checksum, err := upload.nativeChecksum()
+	if err != nil {
+		return "", err
+	}
+	return r.manager.VerifyAndPromoteMultipartWithChecksum(
+		ctx,
+		upload.StagingKey,
+		upload.descriptor(),
+		checksum,
+		upload.NativeChecksumEnabled,
+	)
+}
+
 func (r *ArtifactUploadReconciler) cleanupExpired(ctx context.Context, upload reconciledArtifactUpload, claim, reason string, now time.Time) error {
 	var cleanupErrs []error
 	if strings.TrimSpace(upload.ProviderUploadID) != "" {
@@ -380,6 +417,12 @@ func (r *ArtifactUploadReconciler) cleanupExpired(ctx context.Context, upload re
 }
 
 func (r *ArtifactUploadReconciler) finalizeVerified(ctx context.Context, upload reconciledArtifactUpload, claim string, now time.Time) error {
+	if strings.TrimSpace(upload.VerificationMode) != "" {
+		_, _ = r.db.ExecContext(ctx,
+			`UPDATE artifact_uploads SET verification_mode = $1 WHERE id = $2 AND reconciliation_claim = $3`,
+			upload.VerificationMode, upload.ID, claim,
+		)
+	}
 	var existing string
 	err := r.db.QueryRowContext(ctx, `SELECT id FROM artifacts WHERE id = $1`, upload.ID).Scan(&existing)
 	if err == nil {
@@ -395,10 +438,11 @@ func (r *ArtifactUploadReconciler) finalizeVerified(ctx context.Context, upload 
 		Kind:       artifactstore.KindBinary,
 		Descriptor: upload.descriptor(),
 		Metadata: map[string]string{
-			"workspace_id":     upload.WorkspaceID,
-			"uploaded_by":      upload.InitiatedBy,
-			"direct_upload_id": upload.ID,
-			"reconciled":       "true",
+			"workspace_id":      upload.WorkspaceID,
+			"uploaded_by":       upload.InitiatedBy,
+			"direct_upload_id":  upload.ID,
+			"reconciled":        "true",
+			"verification_mode": upload.VerificationMode,
 		},
 	}
 	var analysis artifactstore.AdapterAnalysis
@@ -471,17 +515,26 @@ func (r *ArtifactUploadReconciler) finalizeVerified(ctx context.Context, upload 
 }
 
 func (r *ArtifactUploadReconciler) completeUpload(ctx context.Context, uploadID, claim, artifactID string, now time.Time) error {
+	verificationMode := "stream_sha256"
+	var storedMode string
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT verification_mode FROM artifact_uploads WHERE id = $1`,
+		uploadID,
+	).Scan(&storedMode); err == nil && strings.TrimSpace(storedMode) != "" {
+		verificationMode = storedMode
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE artifact_uploads
 		SET status = 'completed',
 		    artifact_id = $1,
+		    verification_mode = $2,
 		    error_message = NULL,
-		    reconciled_at = $2,
+		    reconciled_at = $3,
 		    reconciliation_claim = NULL,
 		    reconciliation_claim_expires_at = NULL,
-		    updated_at = $2
-		WHERE id = $3 AND reconciliation_claim = $4
-	`, artifactID, now, uploadID, claim)
+		    updated_at = $3
+		WHERE id = $4 AND reconciliation_claim = $5
+	`, artifactID, verificationMode, now, uploadID, claim)
 	if err != nil {
 		return fmt.Errorf("complete reconciled artifact upload %s: %w", uploadID, err)
 	}

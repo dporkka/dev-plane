@@ -20,6 +20,7 @@ export interface ArtifactUploadCheckpoint {
   workspace_id: string;
   path: string;
   sha256: string;
+  crc64nvme?: string;
   size_bytes: number;
   content_type: string;
   part_size_bytes: number;
@@ -51,6 +52,7 @@ export interface ArtifactUploadOptions {
   retryBaseDelayMs?: number;
   checksumChunkSizeBytes?: number;
   sha256?: string;
+  crc64nvme?: string;
   lease?: ArtifactUploadLease;
   signal?: AbortSignal;
   checkpoint?: ArtifactUploadCheckpoint;
@@ -123,7 +125,9 @@ export async function uploadArtifactMultipart(
   throwIfAborted(options.signal);
 
   let sha256 = normalizeSha256(options.sha256 ?? options.checkpoint?.sha256);
-  if (!sha256) {
+  let crc64nvme = normalizeCRC64NVME(options.crc64nvme ?? options.checkpoint?.crc64nvme);
+  const needsCRC64 = !options.checkpoint && !crc64nvme;
+  if (!sha256 || needsCRC64) {
     reportProgress(options, {
       phase: 'hashing',
       processed_bytes: 0,
@@ -131,22 +135,34 @@ export async function uploadArtifactMultipart(
       completed_parts: 0,
       part_count: 0,
     });
-    sha256 = await hashSourceSHA256(source, checksumChunkSize, options.signal, (processed) => {
-      reportProgress(options, {
-        phase: 'hashing',
-        processed_bytes: processed,
-        total_bytes: size,
-        completed_parts: 0,
-        part_count: 0,
-      });
-    });
+    const checksums = await hashSourceIntegrity(
+      source,
+      checksumChunkSize,
+      options.signal,
+      (processed) => {
+        reportProgress(options, {
+          phase: 'hashing',
+          processed_bytes: processed,
+          total_bytes: size,
+          completed_parts: 0,
+          part_count: 0,
+        });
+      },
+      !sha256,
+      needsCRC64,
+    );
+    sha256 ??= checksums.sha256;
+    crc64nvme ??= checksums.crc64nvme;
+  }
+  if (!sha256) {
+    throw new Error('SHA-256 calculation did not produce a digest');
   }
 
   let session: BeginArtifactUploadResponse;
   let checkpoint = options.checkpoint;
 
   if (checkpoint) {
-    validateCheckpoint(checkpoint, workspaceId, path, size, sha256);
+    validateCheckpoint(checkpoint, workspaceId, path, size, sha256, crc64nvme);
     session = {
       id: checkpoint.upload_id,
       workspace_id: checkpoint.workspace_id,
@@ -158,6 +174,7 @@ export async function uploadArtifactMultipart(
       part_count: checkpoint.part_count,
       status: 'initiated',
       expires_at: '',
+      verification_mode: 'stream_sha256',
       parts: [],
     };
   } else {
@@ -174,6 +191,7 @@ export async function uploadArtifactMultipart(
         path,
         size_bytes: size,
         sha256,
+        crc64nvme,
         content_type: contentType,
         part_size_bytes: options.partSizeBytes,
       },
@@ -184,6 +202,7 @@ export async function uploadArtifactMultipart(
       workspace_id: workspaceId,
       path,
       sha256,
+      crc64nvme,
       size_bytes: size,
       content_type: session.content_type || contentType,
       part_size_bytes: session.part_size_bytes,
@@ -487,18 +506,33 @@ function normalizeSha256(value: string | undefined): string | undefined {
   return normalized;
 }
 
+function normalizeCRC64NVME(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (!/^[A-Za-z0-9+/]{11}=$/.test(normalized)) {
+    throw new Error('crc64nvme must be a base64-encoded 8-byte checksum');
+  }
+  return normalized;
+}
+
 function validateCheckpoint(
   checkpoint: ArtifactUploadCheckpoint,
   workspaceId: string,
   path: string,
   size: number,
   sha256: string,
+  crc64nvme?: string,
 ): void {
   if (
     checkpoint.workspace_id !== workspaceId ||
     checkpoint.path !== path ||
     checkpoint.size_bytes !== size ||
-    checkpoint.sha256 !== sha256
+    checkpoint.sha256 !== sha256 ||
+    (checkpoint.crc64nvme !== undefined &&
+      crc64nvme !== undefined &&
+      checkpoint.crc64nvme !== crc64nvme)
   ) {
     throw new Error('artifact upload checkpoint does not match the requested upload');
   }
@@ -625,18 +659,126 @@ export async function hashSourceSHA256(
   signal?: AbortSignal,
   onProgress?: (processedBytes: number) => void,
 ): Promise<string> {
+  const result = await hashSourceIntegrity(
+    source,
+    chunkSize,
+    signal,
+    onProgress,
+    true,
+    false,
+  );
+  if (!result.sha256) {
+    throw new Error('SHA-256 calculation did not produce a digest');
+  }
+  return result.sha256;
+}
+
+export async function hashSourceCRC64NVME(
+  source: ArtifactUploadSource,
+  chunkSize = DEFAULT_CHECKSUM_CHUNK_SIZE,
+  signal?: AbortSignal,
+  onProgress?: (processedBytes: number) => void,
+): Promise<string> {
+  const result = await hashSourceIntegrity(
+    source,
+    chunkSize,
+    signal,
+    onProgress,
+    false,
+    true,
+  );
+  if (!result.crc64nvme) {
+    throw new Error('CRC64/NVME calculation did not produce a checksum');
+  }
+  return result.crc64nvme;
+}
+
+async function hashSourceIntegrity(
+  source: ArtifactUploadSource,
+  chunkSize: number,
+  signal: AbortSignal | undefined,
+  onProgress: ((processedBytes: number) => void) | undefined,
+  includeSHA256: boolean,
+  includeCRC64NVME: boolean,
+): Promise<{ sha256?: string; crc64nvme?: string }> {
   if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
-    throw new Error('SHA-256 chunk size must be a positive integer');
+    throw new Error('checksum chunk size must be a positive integer');
   }
   const size = sourceSize(source);
-  const hash = new IncrementalSHA256();
+  const sha256 = includeSHA256 ? new IncrementalSHA256() : undefined;
+  const crc64nvme = includeCRC64NVME ? new IncrementalCRC64NVME() : undefined;
   for (let offset = 0; offset < size; offset += chunkSize) {
     throwIfAborted(signal);
     const end = Math.min(offset + chunkSize, size);
-    hash.update(await sourceSliceBytes(source, offset, end));
+    const bytes = await sourceSliceBytes(source, offset, end);
+    sha256?.update(bytes);
+    crc64nvme?.update(bytes);
     onProgress?.(end);
   }
-  return hash.hex();
+  return {
+    sha256: sha256?.hex(),
+    crc64nvme: crc64nvme?.base64(),
+  };
+}
+
+const CRC64_NVME_MASK = 0xffffffffffffffffn;
+const CRC64_NVME_REVERSED_POLYNOMIAL = 0x9a6c9329ac4bc9b5n;
+const CRC64_NVME_TABLE = buildCRC64NVMETable();
+
+function buildCRC64NVMETable(): readonly bigint[] {
+  const table: bigint[] = [];
+  for (let i = 0; i < 256; i++) {
+    let crc = BigInt(i);
+    for (let bit = 0; bit < 8; bit++) {
+      crc =
+        (crc & 1n) === 1n
+          ? (crc >> 1n) ^ CRC64_NVME_REVERSED_POLYNOMIAL
+          : crc >> 1n;
+    }
+    table.push(crc & CRC64_NVME_MASK);
+  }
+  return table;
+}
+
+class IncrementalCRC64NVME {
+  private value = 0n;
+
+  update(data: Uint8Array): void {
+    let crc = (~this.value) & CRC64_NVME_MASK;
+    for (const byte of data) {
+      const index = Number((crc ^ BigInt(byte)) & 0xffn);
+      crc = CRC64_NVME_TABLE[index] ^ (crc >> 8n);
+    }
+    this.value = (~crc) & CRC64_NVME_MASK;
+  }
+
+  base64(): string {
+    const bytes = new Uint8Array(8);
+    let value = this.value;
+    for (let i = 7; i >= 0; i--) {
+      bytes[i] = Number(value & 0xffn);
+      value >>= 8n;
+    }
+    return base64Encode(bytes);
+  }
+}
+
+function base64Encode(bytes: Uint8Array): string {
+  const alphabet =
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  let output = '';
+  for (let offset = 0; offset < bytes.length; offset += 3) {
+    const remaining = bytes.length - offset;
+    const a = bytes[offset];
+    const b = remaining > 1 ? bytes[offset + 1] : 0;
+    const d = remaining > 2 ? bytes[offset + 2] : 0;
+    const word = (a << 16) | (b << 8) | d;
+    output += alphabet[(word >>> 18) & 63];
+    output += alphabet[(word >>> 12) & 63];
+    output += remaining > 1 ? alphabet[(word >>> 6) & 63] : '=';
+    output += remaining > 2 ? alphabet[word & 63] : '=';
+  }
+  return output;
 }
 
 class IncrementalSHA256 {

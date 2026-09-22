@@ -2,12 +2,40 @@ package artifacts
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
 var ErrDirectUploadUnsupported = errors.New("direct multipart upload is not supported by this artifact store")
+
+const MultipartChecksumCRC64NVME = "CRC64NVME"
+
+type MultipartChecksum struct {
+	Algorithm string `json:"algorithm"`
+	Base64    string `json:"base64"`
+}
+
+func ParseMultipartChecksum(algorithm, value string) (*MultipartChecksum, error) {
+	algorithm = strings.ToUpper(strings.TrimSpace(algorithm))
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, nil
+	}
+	if algorithm != MultipartChecksumCRC64NVME {
+		return nil, fmt.Errorf("unsupported multipart checksum algorithm %q", algorithm)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s checksum: %w", algorithm, err)
+	}
+	if len(decoded) != 8 {
+		return nil, fmt.Errorf("%s checksum must decode to 8 bytes", algorithm)
+	}
+	return &MultipartChecksum{Algorithm: algorithm, Base64: value}, nil
+}
 
 const (
 	MinMultipartPartSize     int64 = 5 << 20
@@ -36,6 +64,27 @@ type DirectMultipartStore interface {
 	VerifyObject(ctx context.Context, key string, expected Descriptor) error
 	PromoteToCAS(ctx context.Context, stagingKey string, expected Descriptor) error
 	DeleteObject(ctx context.Context, key string) error
+}
+
+type DirectMultipartChecksumStore interface {
+	BeginMultipartWithChecksum(
+		ctx context.Context,
+		stagingKey, mediaType string,
+		checksum *MultipartChecksum,
+	) (uploadID string, nativeChecksumEnabled bool, err error)
+	CompleteMultipartWithChecksum(
+		ctx context.Context,
+		stagingKey, uploadID string,
+		parts []CompletedPart,
+		expected Descriptor,
+		checksum *MultipartChecksum,
+	) error
+	VerifyObjectChecksum(
+		ctx context.Context,
+		key string,
+		expected Descriptor,
+		checksum *MultipartChecksum,
+	) (verified bool, err error)
 }
 
 func MultipartPartSize(size, requested int64) (int64, int, error) {
@@ -93,6 +142,22 @@ func (m *Manager) BeginMultipart(ctx context.Context, stagingKey, mediaType stri
 	return store.BeginMultipart(ctx, stagingKey, mediaType)
 }
 
+func (m *Manager) BeginMultipartWithChecksum(
+	ctx context.Context,
+	stagingKey, mediaType string,
+	checksum *MultipartChecksum,
+) (string, bool, error) {
+	store, err := m.directMultipartStore()
+	if err != nil {
+		return "", false, err
+	}
+	if enhanced, ok := store.(DirectMultipartChecksumStore); ok && checksum != nil {
+		return enhanced.BeginMultipartWithChecksum(ctx, stagingKey, mediaType, checksum)
+	}
+	uploadID, err := store.BeginMultipart(ctx, stagingKey, mediaType)
+	return uploadID, false, err
+}
+
 func (m *Manager) PresignUploadParts(ctx context.Context, stagingKey, uploadID string, start, count int, ttl time.Duration) ([]PresignedPart, error) {
 	store, err := m.directMultipartStore()
 	if err != nil {
@@ -123,6 +188,26 @@ func (m *Manager) CompleteMultipart(ctx context.Context, stagingKey, uploadID st
 	return store.CompleteMultipart(ctx, stagingKey, uploadID, parts)
 }
 
+func (m *Manager) CompleteMultipartWithChecksum(
+	ctx context.Context,
+	stagingKey, uploadID string,
+	parts []CompletedPart,
+	expected Descriptor,
+	checksum *MultipartChecksum,
+	nativeChecksumEnabled bool,
+) error {
+	store, err := m.directMultipartStore()
+	if err != nil {
+		return err
+	}
+	if nativeChecksumEnabled && checksum != nil {
+		if enhanced, ok := store.(DirectMultipartChecksumStore); ok {
+			return enhanced.CompleteMultipartWithChecksum(ctx, stagingKey, uploadID, parts, expected, checksum)
+		}
+	}
+	return store.CompleteMultipart(ctx, stagingKey, uploadID, parts)
+}
+
 func (m *Manager) AbortMultipart(ctx context.Context, stagingKey, uploadID string) error {
 	store, err := m.directMultipartStore()
 	if err != nil {
@@ -140,15 +225,67 @@ func (m *Manager) DeleteDirectStaging(ctx context.Context, stagingKey string) er
 }
 
 func (m *Manager) VerifyAndPromoteMultipart(ctx context.Context, stagingKey string, expected Descriptor) error {
+	_, err := m.VerifyAndPromoteMultipartWithChecksum(ctx, stagingKey, expected, nil, false)
+	return err
+}
+
+func (m *Manager) VerifyAndPromoteMultipartWithChecksum(
+	ctx context.Context,
+	stagingKey string,
+	expected Descriptor,
+	checksum *MultipartChecksum,
+	nativeChecksumEnabled bool,
+) (string, error) {
 	store, err := m.directMultipartStore()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
-		return err
+	mode := "stream_sha256"
+	if nativeChecksumEnabled && checksum != nil {
+		if enhanced, ok := store.(DirectMultipartChecksumStore); ok {
+			verified, err := enhanced.VerifyObjectChecksum(ctx, stagingKey, expected, checksum)
+			if err != nil {
+				if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
+					return "cas_existing", recoverErr
+				}
+				return "", err
+			}
+			if verified {
+				mode = "native_" + strings.ToLower(checksum.Algorithm)
+			} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
+				if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
+					return "cas_existing", recoverErr
+				}
+				return "", err
+			}
+		} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
+			if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
+				return "cas_existing", recoverErr
+			}
+			return "", err
+		}
+	} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
+		if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
+			return "cas_existing", recoverErr
+		}
+		return "", err
 	}
 	if err := store.PromoteToCAS(ctx, stagingKey, expected); err != nil {
-		return err
+		return "", err
 	}
-	return store.DeleteObject(ctx, stagingKey)
+	if err := store.DeleteObject(ctx, stagingKey); err != nil {
+		return "", err
+	}
+	return mode, nil
+}
+
+func (m *Manager) recoverPromotedCAS(ctx context.Context, expected Descriptor, verificationErr error) (bool, error) {
+	if !errors.Is(verificationErr, ErrNotFound) {
+		return false, nil
+	}
+	exists, err := m.store.Has(ctx, expected.Digest)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
 }

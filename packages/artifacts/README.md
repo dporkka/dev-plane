@@ -79,14 +79,17 @@ de-duplicated with a HEAD check.
 Very large media can bypass API-worker bandwidth through the direct multipart
 data plane. The API creates a random staging key and S3/R2 multipart upload,
 returns short-lived presigned `UploadPart` URLs in bounded batches, and persists
-the upload session in SQL. After the client completes all parts, Dev Plane
-streams the staged object through exact SHA-256 and size verification, promotes
-the verified object to its canonical CAS key with server-side `CopyObject`, and
-then runs normal semantic analysis/versioning.
+the upload session in SQL. For new SDK uploads, the client computes SHA-256 and CRC64/NVME in the same
+streaming pass. Dev Plane asks the object store to validate the full-object
+CRC64/NVME checksum during multipart completion and then confirms it with a
+checksum-enabled HEAD request before promotion. SHA-256 remains the canonical
+CAS identity. If the backend does not support native checksum validation, or
+does not expose the stored checksum on HEAD, Dev Plane falls back to streaming
+the staging object through SHA-256 before promotion.
 
 The TypeScript SDK exposes `uploadWorkspaceArtifactMultipart`, which adds:
 
-- streaming/incremental SHA-256 without materializing a whole large Blob,
+- streaming/incremental SHA-256 and CRC64/NVME in one pass without materializing a whole large Blob,
 - bounded parallel part uploads,
 - exponential retry for transient part failures,
 - automatic presigned-URL refresh after a 403,
@@ -115,8 +118,9 @@ The reconciler handles these recovery states:
 - stale `finalizing` uploads: verify whether provider completion actually
   succeeded, recover verified bytes into CAS when possible, or reset the
   session to `initiated` for a safe client retry;
-- `uploaded` sessions: verify SHA-256 and size, promote staging to CAS, and
-  finalize the artifact record even if the API process crashed;
+- `uploaded` sessions: verify with provider-native CRC64/NVME when available
+  (otherwise stream SHA-256), promote staging to CAS, and finalize the artifact
+  record even if the API process crashed;
 - `verified` sessions: recreate/finalize the deterministic artifact row when
   promotion succeeded but database persistence did not;
 - `cleanup_pending` sessions: retry provider abort and staging deletion until
@@ -280,7 +284,7 @@ path. This prevents a restore from overwriting an agent's in-flight media edit.
 ## Next integrations
 
 1. Persist workspace snapshots automatically when agent candidates complete.
-2. Add object-store-native checksum verification to avoid full GET verification for providers that support trustworthy SHA-256 metadata.
+2. Add provider-specific accelerated checksum implementations and benchmark native CRC64/NVME versus streamed SHA-256 fallback at multi-GB sizes.
 3. Add richer DOCX structure (headings, tables, comments) and richer spreadsheet formatting semantics.
 4. Add visual pixel-diff/overlay derivatives for image review.
 5. Add structured merge engines that can relax lease requirements safely.

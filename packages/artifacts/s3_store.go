@@ -340,6 +340,41 @@ type initiateMultipartResult struct {
 }
 
 func (s *S3Store) BeginMultipart(ctx context.Context, stagingKey, mediaType string) (string, error) {
+	return s.beginMultipart(ctx, stagingKey, mediaType, nil)
+}
+
+func (s *S3Store) BeginMultipartWithChecksum(
+	ctx context.Context,
+	stagingKey, mediaType string,
+	checksum *MultipartChecksum,
+) (string, bool, error) {
+	if checksum == nil {
+		uploadID, err := s.BeginMultipart(ctx, stagingKey, mediaType)
+		return uploadID, false, err
+	}
+	if checksum.Algorithm != MultipartChecksumCRC64NVME {
+		return "", false, fmt.Errorf("unsupported native multipart checksum %q", checksum.Algorithm)
+	}
+
+	headers := make(http.Header)
+	if strings.TrimSpace(mediaType) != "" {
+		headers.Set("Content-Type", mediaType)
+	}
+	headers.Set("X-Amz-Checksum-Algorithm", MultipartChecksumCRC64NVME)
+	headers.Set("X-Amz-Checksum-Type", "FULL_OBJECT")
+
+	uploadID, status, body, err := s.beginMultipartRequest(ctx, stagingKey, headers)
+	if err == nil {
+		return uploadID, true, nil
+	}
+	if checksumFeatureUnsupported(status, body) {
+		uploadID, fallbackErr := s.BeginMultipart(ctx, stagingKey, mediaType)
+		return uploadID, false, fallbackErr
+	}
+	return "", false, err
+}
+
+func (s *S3Store) beginMultipart(ctx context.Context, stagingKey, mediaType string, extra http.Header) (string, error) {
 	if strings.TrimSpace(stagingKey) == "" {
 		return "", fmt.Errorf("multipart staging key is required")
 	}
@@ -347,22 +382,40 @@ func (s *S3Store) BeginMultipart(ctx context.Context, stagingKey, mediaType stri
 	if strings.TrimSpace(mediaType) != "" {
 		headers.Set("Content-Type", mediaType)
 	}
+	for name, values := range extra {
+		for _, value := range values {
+			headers.Add(name, value)
+		}
+	}
+	uploadID, _, _, err := s.beginMultipartRequest(ctx, stagingKey, headers)
+	return uploadID, err
+}
+
+func (s *S3Store) beginMultipartRequest(
+	ctx context.Context,
+	stagingKey string,
+	headers http.Header,
+) (string, int, string, error) {
+	if strings.TrimSpace(stagingKey) == "" {
+		return "", 0, "", fmt.Errorf("multipart staging key is required")
+	}
 	resp, err := s.doRequest(ctx, http.MethodPost, stagingKey, url.Values{"uploads": {""}}, headers, nil, 0, emptySHA256Hex)
 	if err != nil {
-		return "", err
+		return "", 0, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", s.responseError(resp, "initiate multipart upload")
+		body := readResponseBody(resp)
+		return "", resp.StatusCode, body, responseStatusError(resp.StatusCode, body, "initiate multipart upload")
 	}
 	var result initiateMultipartResult
 	if err := xml.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode multipart initiation response: %w", err)
+		return "", resp.StatusCode, "", fmt.Errorf("decode multipart initiation response: %w", err)
 	}
 	if strings.TrimSpace(result.UploadID) == "" {
-		return "", fmt.Errorf("multipart initiation response did not include upload id")
+		return "", resp.StatusCode, "", fmt.Errorf("multipart initiation response did not include upload id")
 	}
-	return result.UploadID, nil
+	return result.UploadID, resp.StatusCode, "", nil
 }
 
 func (s *S3Store) PresignUploadPart(ctx context.Context, stagingKey, uploadID string, partNumber int, ttl time.Duration) (PresignedPart, error) {
@@ -428,18 +481,92 @@ func (s *S3Store) PresignUploadPart(ctx context.Context, stagingKey, uploadID st
 }
 
 func (s *S3Store) CompleteMultipart(ctx context.Context, stagingKey, uploadID string, parts []CompletedPart) error {
+	return s.completeMultipart(ctx, stagingKey, uploadID, parts, nil)
+}
+
+func (s *S3Store) CompleteMultipartWithChecksum(
+	ctx context.Context,
+	stagingKey, uploadID string,
+	parts []CompletedPart,
+	expected Descriptor,
+	checksum *MultipartChecksum,
+) error {
+	if checksum == nil {
+		return s.CompleteMultipart(ctx, stagingKey, uploadID, parts)
+	}
+	if checksum.Algorithm != MultipartChecksumCRC64NVME {
+		return fmt.Errorf("unsupported native multipart checksum %q", checksum.Algorithm)
+	}
+	headers := make(http.Header)
+	headers.Set("X-Amz-Checksum-CRC64NVME", checksum.Base64)
+	headers.Set("X-Amz-Mp-Object-Size", strconv.FormatInt(expected.Size, 10))
+	status, body, err := s.completeMultipartRequest(ctx, stagingKey, uploadID, parts, headers)
+	if err == nil {
+		return nil
+	}
+	if checksumFeatureUnsupported(status, body) {
+		return s.CompleteMultipart(ctx, stagingKey, uploadID, parts)
+	}
+	return err
+}
+
+func (s *S3Store) completeMultipart(
+	ctx context.Context,
+	stagingKey, uploadID string,
+	parts []CompletedPart,
+	headers http.Header,
+) error {
+	_, _, err := s.completeMultipartRequest(ctx, stagingKey, uploadID, parts, headers)
+	return err
+}
+
+func (s *S3Store) completeMultipartRequest(
+	ctx context.Context,
+	stagingKey, uploadID string,
+	parts []CompletedPart,
+	extraHeaders http.Header,
+) (int, string, error) {
+	body, err := multipartCompletionPayload(parts)
+	if err != nil {
+		return 0, "", err
+	}
+	headers := make(http.Header)
+	headers.Set("Content-Type", "application/xml")
+	for name, values := range extraHeaders {
+		for _, value := range values {
+			headers.Add(name, value)
+		}
+	}
+	resp, err := s.doRequest(
+		ctx, http.MethodPost, stagingKey,
+		url.Values{"uploadId": {uploadID}},
+		headers,
+		strings.NewReader(string(body)), int64(len(body)), sha256Hex(body),
+	)
+	if err != nil {
+		return 0, "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		responseBody := readResponseBody(resp)
+		return resp.StatusCode, responseBody, responseStatusError(resp.StatusCode, responseBody, "complete multipart upload")
+	}
+	return resp.StatusCode, "", nil
+}
+
+func multipartCompletionPayload(parts []CompletedPart) ([]byte, error) {
 	if len(parts) == 0 {
-		return fmt.Errorf("multipart completion requires at least one part")
+		return nil, fmt.Errorf("multipart completion requires at least one part")
 	}
 	var payload strings.Builder
 	payload.WriteString("<CompleteMultipartUpload>")
 	for i, part := range parts {
 		if part.PartNumber != i+1 {
-			return fmt.Errorf("multipart parts must be consecutive starting at 1")
+			return nil, fmt.Errorf("multipart parts must be consecutive starting at 1")
 		}
 		etag := strings.TrimSpace(part.ETag)
 		if etag == "" {
-			return fmt.Errorf("multipart part %d ETag is required", part.PartNumber)
+			return nil, fmt.Errorf("multipart part %d ETag is required", part.PartNumber)
 		}
 		payload.WriteString("<Part><PartNumber>")
 		payload.WriteString(strconv.Itoa(part.PartNumber))
@@ -448,21 +575,7 @@ func (s *S3Store) CompleteMultipart(ctx context.Context, stagingKey, uploadID st
 		payload.WriteString("</ETag></Part>")
 	}
 	payload.WriteString("</CompleteMultipartUpload>")
-	body := []byte(payload.String())
-	resp, err := s.doRequest(
-		ctx, http.MethodPost, stagingKey,
-		url.Values{"uploadId": {uploadID}},
-		http.Header{"Content-Type": {"application/xml"}},
-		strings.NewReader(string(body)), int64(len(body)), sha256Hex(body),
-	)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return s.responseError(resp, "complete multipart upload")
-	}
-	return nil
+	return []byte(payload.String()), nil
 }
 
 func (s *S3Store) AbortMultipart(ctx context.Context, stagingKey, uploadID string) error {
@@ -478,6 +591,45 @@ func (s *S3Store) AbortMultipart(ctx context.Context, stagingKey, uploadID strin
 		return s.responseError(resp, "abort multipart upload")
 	}
 	return nil
+}
+
+func (s *S3Store) VerifyObjectChecksum(
+	ctx context.Context,
+	key string,
+	expected Descriptor,
+	checksum *MultipartChecksum,
+) (bool, error) {
+	if checksum == nil || checksum.Algorithm != MultipartChecksumCRC64NVME {
+		return false, nil
+	}
+	headers := make(http.Header)
+	headers.Set("X-Amz-Checksum-Mode", "ENABLED")
+	resp, err := s.doRequest(ctx, http.MethodHead, key, nil, headers, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return false, ErrNotFound
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body := readResponseBody(resp)
+		if checksumFeatureUnsupported(resp.StatusCode, body) {
+			return false, nil
+		}
+		return false, responseStatusError(resp.StatusCode, body, "verify multipart checksum")
+	}
+	if resp.ContentLength >= 0 && resp.ContentLength != expected.Size {
+		return false, fmt.Errorf("artifact size mismatch: got %d, want %d", resp.ContentLength, expected.Size)
+	}
+	actual := strings.TrimSpace(resp.Header.Get("X-Amz-Checksum-CRC64NVME"))
+	if actual == "" {
+		return false, nil
+	}
+	if actual != checksum.Base64 {
+		return false, fmt.Errorf("%s checksum mismatch: got %s, want %s", checksum.Algorithm, actual, checksum.Base64)
+	}
+	return true, nil
 }
 
 func (s *S3Store) VerifyObject(ctx context.Context, key string, expected Descriptor) error {
@@ -555,12 +707,39 @@ func (s *S3Store) DeleteObject(ctx context.Context, key string) error {
 }
 
 func (s *S3Store) responseError(resp *http.Response, operation string) error {
+	return responseStatusError(resp.StatusCode, readResponseBody(resp), operation)
+}
+
+func readResponseBody(resp *http.Response) string {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
-	message := strings.TrimSpace(string(body))
+	return strings.TrimSpace(string(body))
+}
+
+func responseStatusError(status int, message, operation string) error {
 	if message == "" {
-		message = http.StatusText(resp.StatusCode)
+		message = http.StatusText(status)
 	}
-	return fmt.Errorf("S3 artifact %s failed with HTTP %d: %s", operation, resp.StatusCode, message)
+	return fmt.Errorf("S3 artifact %s failed with HTTP %d: %s", operation, status, message)
+}
+
+func checksumFeatureUnsupported(status int, body string) bool {
+	if status == http.StatusNotImplemented || status == http.StatusMethodNotAllowed {
+		return true
+	}
+	if status != http.StatusBadRequest {
+		return false
+	}
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "baddigest") ||
+		strings.Contains(lower, "invaliddigest") ||
+		strings.Contains(lower, "mismatch") ||
+		strings.Contains(lower, "does not match") {
+		return false
+	}
+	// The checksum feature is additive. If a backend rejects the checksum-aware
+	// request with a generic 400, retrying the same operation without checksum
+	// headers is safe because Dev Plane will require streamed SHA-256 verification.
+	return true
 }
 
 func sha256Hex(data []byte) string {

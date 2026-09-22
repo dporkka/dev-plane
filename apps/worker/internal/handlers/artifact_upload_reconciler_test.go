@@ -130,6 +130,49 @@ func TestArtifactUploadReconcilerRecoversUploadedArtifact(t *testing.T) {
 	}
 }
 
+func TestArtifactUploadReconcilerRecoversAlreadyPromotedCAS(t *testing.T) {
+	db := setupArtifactUploadReconcilerDB(t)
+	defer db.Close()
+
+	store := newReconcilerStore()
+	payload := []byte("already-promoted")
+	digest := artifactstore.HashBytes(payload)
+	store.cas[digest.String()] = append([]byte(nil), payload...)
+
+	manager, err := artifactstore.NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 22, 18, 0, 0, 0, time.UTC)
+	insertReconcileUpload(t, db, reconcileUploadFixture{
+		ID: "upload-cas-existing", Status: "uploaded",
+		StagingKey: "uploads/ws/missing-after-promotion", ProviderUploadID: "provider-cas",
+		DigestHex: digest.Hex, ExpectedSize: int64(len(payload)),
+		ExpiresAt: now.Add(time.Hour), UpdatedAt: now.Add(-2 * time.Minute),
+	})
+
+	reconciler := NewArtifactUploadReconciler(db, manager, slog.Default())
+	reconciler.now = func() time.Time { return now }
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	var status, verificationMode string
+	if err := db.QueryRow(`
+		SELECT status, verification_mode
+		FROM artifact_uploads
+		WHERE id = ?
+	`, "upload-cas-existing").Scan(&status, &verificationMode); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" {
+		t.Fatalf("status = %q, want completed", status)
+	}
+	if verificationMode != "cas_existing" {
+		t.Fatalf("verification mode = %q, want cas_existing", verificationMode)
+	}
+}
+
 func TestArtifactUploadReconcilerResetsStaleFinalizingSession(t *testing.T) {
 	db := setupArtifactUploadReconcilerDB(t)
 	defer db.Close()
@@ -245,6 +288,10 @@ func setupArtifactUploadReconcilerDB(t *testing.T) *sql.DB {
 			reconciliation_claim_expires_at DATETIME,
 			reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
 			reconciled_at DATETIME,
+			native_checksum_algorithm TEXT,
+			native_checksum_base64 TEXT,
+			native_checksum_enabled BOOLEAN NOT NULL DEFAULT false,
+			verification_mode TEXT NOT NULL DEFAULT 'stream_sha256',
 			created_at DATETIME NOT NULL,
 			updated_at DATETIME NOT NULL
 		);

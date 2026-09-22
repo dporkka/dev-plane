@@ -38,7 +38,7 @@ const artifact = await client.uploadWorkspaceArtifactMultipart(
 
 The uploader:
 
-- computes SHA-256 incrementally in bounded chunks unless `sha256` is supplied,
+- computes SHA-256 and CRC64/NVME incrementally in the same bounded-chunk pass for new uploads,
 - uploads parts directly to S3/R2 with bounded concurrency,
 - retries transient part failures with exponential backoff,
 - refreshes presigned URLs after a 403,
@@ -52,8 +52,12 @@ Set `abortOnError: false` when an application wants to preserve a failed
 session for an explicit later retry. Process/browser crashes naturally leave
 the SQL-backed session resumable until its server-side expiry.
 
-If the caller already knows the file SHA-256, pass `sha256` to avoid rehashing
-large files before upload.
+SHA-256 remains the canonical artifact identity. CRC64/NVME is an independent
+transport checksum that S3/R2 can validate without Dev Plane downloading the
+whole staging object again. If the caller already knows checksums, pass
+`sha256` and/or `crc64nvme` to avoid recomputing them. If a provider does not
+support native CRC64/NVME multipart validation, the server transparently falls
+back to streamed SHA-256 verification.
 
 ## Browser CORS requirement
 
