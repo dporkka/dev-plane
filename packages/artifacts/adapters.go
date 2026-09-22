@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -177,6 +178,7 @@ func (m *Manager) AnalyzeArtifact(ctx context.Context, registry *AdapterRegistry
 	}
 
 	updated := artifact
+	updated.Metadata = cloneStringMap(artifact.Metadata)
 	if updated.Descriptor.MediaType == "" || updated.Descriptor.MediaType == "application/octet-stream" {
 		updated.Descriptor.MediaType = format.MediaType
 	}
