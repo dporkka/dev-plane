@@ -68,3 +68,6 @@ packages/db/gen/
 # Runtime artifacts
 .pts-reports/
 __pycache__/
+
+# GitNexus local index
+.gitnexus/
