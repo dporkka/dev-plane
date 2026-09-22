@@ -40,6 +40,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"pull_requests",
 		"repositories",
 		"review_reports",
+		"reviewed_candidates",
 		"secret_references",
 		"secret_values",
 		"task_dependencies",

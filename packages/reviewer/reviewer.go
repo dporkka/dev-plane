@@ -111,27 +111,17 @@ func (r *Reviewer) WithSecurityScanner(scanner securityScanner) *Reviewer {
 func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, error) {
 	r.logger.Info("starting review", "run_id", runID)
 
-	// 1. Get agent run details
-	var run models.AgentRun
-	err := r.db.QueryRowContext(ctx, `
-		SELECT id, task_id, workspace_id, agent_role, model, provider, status,
-		       prompt_tokens, completion_tokens, total_cost, summary, metadata, created_at, updated_at
-		FROM agent_runs WHERE id = $1
-	`, runID).Scan(
-		&run.ID, &run.TaskID, &run.WorkspaceID, &run.AgentRole, &run.Model, &run.Provider,
-		&run.Status, &run.PromptTokens, &run.CompletionTokens, &run.TotalCost,
-		&run.Summary, &run.Metadata, &run.CreatedAt, &run.UpdatedAt,
-	)
-	if err != nil {
+	var workspaceID sql.NullString
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT workspace_id FROM agent_runs WHERE id = $1
+	`, runID).Scan(&workspaceID); err != nil {
 		return nil, fmt.Errorf("get agent run %s: %w", runID, err)
 	}
-
-	if run.WorkspaceID == nil {
+	if !workspaceID.Valid || workspaceID.String == "" {
 		return nil, fmt.Errorf("agent run %s has no workspace", runID)
 	}
 
-	// 2. Get workspace path and git diff
-	worktreePath, err := r.getWorkspacePath(ctx, *run.WorkspaceID)
+	worktreePath, err := r.getWorkspacePath(ctx, workspaceID.String)
 	if err != nil {
 		r.logger.Warn("failed to get workspace path, proceeding without diff or security scan", "error", err)
 		worktreePath = ""
@@ -140,15 +130,21 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 	diff := ""
 	if worktreePath != "" {
 		diff, err = r.getGitDiff(ctx, worktreePath)
-	} else {
-		err = nil
 	}
 	if err != nil {
 		r.logger.Warn("failed to get git diff, proceeding with empty diff", "error", err)
 		diff = ""
 	}
 
-	// 3. Get agent run steps
+	return r.ReviewDiff(ctx, runID, diff, worktreePath)
+}
+
+// ReviewDiff reviews an explicit source patch. Control-plane callers use this
+// to bind review evidence to a staged snapshot instead of re-reading a mutable
+// working tree during the review.
+func (r *Reviewer) ReviewDiff(ctx context.Context, runID, diff, securityWorkspacePath string) (*ReviewReport, error) {
+	r.logger.Info("starting explicit diff review", "run_id", runID)
+
 	steps, err := r.getAgentSteps(ctx, runID)
 	if err != nil {
 		r.logger.Warn("failed to get agent steps, proceeding without", "error", err)
@@ -157,9 +153,8 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 
 	report := r.generateReview(diff, nil, steps)
 	report.RunID = runID
-	r.applySecurityScan(ctx, report, worktreePath)
+	r.applySecurityScan(ctx, report, securityWorkspacePath)
 
-	// 5. Save review report
 	if err := r.Save(ctx, report); err != nil {
 		return nil, fmt.Errorf("save review report: %w", err)
 	}
@@ -170,7 +165,6 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 		"approvable", report.Approvable,
 		"findings", len(report.Findings),
 	)
-
 	return report, nil
 }
 

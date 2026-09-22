@@ -253,22 +253,21 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check for pending approvals if not explicitly approved via request
-	if !req.Approved {
-		var pendingCount int
-		err := h.db.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM approvals
-			WHERE task_id = $1 AND response IS NULL
-			AND (expires_at IS NULL OR expires_at > $2)
-		`, taskID, time.Now().UTC()).Scan(&pendingCount)
-		if err != nil {
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-		if pendingCount > 0 {
-			respond.Error(w, http.StatusConflict, errors.New("pending approval exists for this task"))
-			return
-		}
+	// Pending approvals are authoritative. A request-body flag must never bypass
+	// persisted human approval state.
+	var pendingCount int
+	err = h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM approvals
+		WHERE task_id = $1 AND response IS NULL
+		AND (expires_at IS NULL OR expires_at > $2)
+	`, taskID, time.Now().UTC()).Scan(&pendingCount)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if pendingCount > 0 {
+		respond.Error(w, http.StatusConflict, errors.New("pending approval exists for this task"))
+		return
 	}
 
 	// Create the pull request using the factory. Register a persisted runtime
@@ -295,11 +294,11 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	// Publish pr.created event
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      pr.ID,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"branch":     pr.Branch,
-			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"pr_id":     pr.ID,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"branch":    pr.Branch,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("pr.created", data); pubErr != nil {
