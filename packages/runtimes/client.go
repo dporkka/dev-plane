@@ -99,6 +99,36 @@ func (p *RemoteProvider) DestroyWorkspace(ctx context.Context, sessionID string)
 	return nil
 }
 
+// PublishVCS asks the remote runner control plane to publish a reviewed
+// workspace revision. The runner owns the privileged network boundary.
+func (p *RemoteProvider) PublishVCS(ctx context.Context, sessionID string, req VCSPublishRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal VCS publish request: %w", err)
+	}
+
+	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/vcs/publish"
+	httpReq, err := p.newRequest(ctx, http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("publish VCS request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrSessionNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return p.readError(resp)
+	}
+	return nil
+}
+
 // ExecuteCommand runs a command in a workspace session on the runner.
 func (p *RemoteProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd Command) (*CommandResult, error) {
 	body, err := json.Marshal(cmd)
