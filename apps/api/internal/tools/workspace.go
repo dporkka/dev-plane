@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 // WorkspaceTools provides real implementations of agent tools.
@@ -457,37 +459,19 @@ func (t *WorkspaceTools) CreateCommit(ctx context.Context, workspacePath string,
 		return nil, fmt.Errorf("commit message is required")
 	}
 
-	// Stage all changes
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "add", "-A")
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return json.Marshal(map[string]any{
-			"success": false,
-			"error":   fmt.Sprintf("git add failed: %s", string(output)),
-		})
-	}
-
-	// Create commit
-	cmd = exec.CommandContext(ctx, "git", "-C", workspacePath, "commit", "-m", req.Message)
-	output, err := cmd.CombinedOutput()
+	backend := vcs.NewGitBackend(nil)
+	revision, err := backend.Snapshot(ctx, workspacePath, req.Message)
 	if err != nil {
 		return json.Marshal(map[string]any{
 			"success": false,
-			"error":   fmt.Sprintf("git commit failed: %s", string(output)),
+			"error":   err.Error(),
 		})
-	}
-
-	// Extract commit hash
-	commitHash := ""
-	cmd = exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse", "HEAD")
-	hashOutput, err := cmd.Output()
-	if err == nil {
-		commitHash = strings.TrimSpace(string(hashOutput))
 	}
 
 	return json.Marshal(map[string]any{
 		"success":     true,
-		"commit_hash": commitHash,
-		"output":      strings.TrimSpace(string(output)),
+		"commit_hash": revision.CommitID,
+		"change_id":   revision.ChangeID,
 	})
 }
 
