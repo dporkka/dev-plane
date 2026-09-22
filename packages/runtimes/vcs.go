@@ -9,6 +9,36 @@ import (
 	"github.com/ai-dev-control-plane/vcs"
 )
 
+
+// newHostVCSCommandRunner adapts the runtime package's host command runner to
+// the shared VCS interface. Docker uses this for staging repository operations
+// before the workspace is copied into the isolated volume.
+func newHostVCSCommandRunner(runner commandRunner) vcs.CommandRunner {
+	return hostVCSRunner{runner: runner}
+}
+
+type hostVCSRunner struct {
+	runner commandRunner
+}
+
+func (r hostVCSRunner) Run(ctx context.Context, command vcs.Command) (vcs.CommandResult, error) {
+	if r.runner == nil {
+		return vcs.CommandResult{}, fmt.Errorf("host command runner is required")
+	}
+	out, err := r.runner.Run(ctx, command.Name, command.Args, commandOptions{
+		Dir: command.Dir,
+		Env: command.Env,
+	})
+	result := vcs.CommandResult{Stdout: out.Stdout, Stderr: out.Stderr}
+	if err != nil {
+		return result, err
+	}
+	if out.ExitCode != 0 {
+		return result, fmt.Errorf("%s failed with exit code %d: %s", command.Name, out.ExitCode, strings.TrimSpace(out.Stderr))
+	}
+	return result, nil
+}
+
 // NewVCSCommandRunner adapts the runtime Provider boundary to the shared VCS
 // command interface. Source-control semantics stay in packages/vcs while the
 // runtime remains responsible for process isolation and transport.
