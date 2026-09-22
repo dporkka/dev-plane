@@ -102,8 +102,16 @@ func (f *Factory) WithRuntimeProvider(name string, provider runtimes.Provider) *
 //  7. Save PR record in DB
 //  8. Update task status to "pr_created"
 //  9. Publish pr.created event
-func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
-	f.logger.Info("creating pull request", "task_id", taskID)
+func (f *Factory) CreatePullRequest(ctx context.Context, taskID, runID string) (*models.PullRequest, error) {
+	taskID = strings.TrimSpace(taskID)
+	runID = strings.TrimSpace(runID)
+	if taskID == "" {
+		return nil, fmt.Errorf("task id is required")
+	}
+	if runID == "" {
+		return nil, fmt.Errorf("agent run id is required")
+	}
+	f.logger.Info("creating pull request", "task_id", taskID, "run_id", runID)
 
 	// 1. Load task
 	task, err := f.loadTask(ctx, taskID)
@@ -111,13 +119,14 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("load task: %w", err)
 	}
 
-	// 2. Load the latest completed agent run for this task
-	run, err := f.loadLatestRun(ctx, taskID)
+	// 2. Load the exact run selected by the approval/API request. Publication
+	// authority must never drift to a newer run for the same task.
+	run, err := f.loadRun(ctx, taskID, runID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent run: %w", err)
 	}
 	if run == nil {
-		return nil, fmt.Errorf("no completed agent run found for task %s", taskID)
+		return nil, fmt.Errorf("agent run %s is not a completed/reviewed run for task %s", runID, taskID)
 	}
 
 	// Verify run status
@@ -529,8 +538,8 @@ func (f *Factory) loadTask(ctx context.Context, taskID string) (*models.Task, er
 	return &task, nil
 }
 
-// loadLatestRun loads the latest completed agent run for a task.
-func (f *Factory) loadLatestRun(ctx context.Context, taskID string) (*models.AgentRun, error) {
+// loadRun loads exactly one completed/reviewed run belonging to the task.
+func (f *Factory) loadRun(ctx context.Context, taskID, runID string) (*models.AgentRun, error) {
 	var run models.AgentRun
 	var wsID, model, provider, errMsg, summary sql.NullString
 	var startedAt, completedAt sql.NullTime
@@ -540,10 +549,8 @@ func (f *Factory) loadLatestRun(ctx context.Context, taskID string) (*models.Age
 		       prompt_tokens, completion_tokens, total_cost, error_message, summary,
 		       metadata, created_at, updated_at
 		FROM agent_runs
-		WHERE task_id = $1 AND status IN ('completed', 'reviewed')
-		ORDER BY completed_at IS NULL, completed_at DESC, created_at DESC
-		LIMIT 1
-	`, taskID).Scan(
+		WHERE id = $1 AND task_id = $2 AND status IN ('completed', 'reviewed')
+	`, runID, taskID).Scan(
 		&run.ID, &run.TaskID, &wsID, &run.AgentRole, &model, &provider, &run.Status,
 		&run.PromptTokens, &run.CompletionTokens, &run.TotalCost, &errMsg, &summary,
 		&run.Metadata, &run.CreatedAt, &run.UpdatedAt,
