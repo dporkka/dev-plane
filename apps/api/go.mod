@@ -13,6 +13,7 @@ require (
 	github.com/ai-dev-control-plane/repo-intel v0.0.0
 	github.com/ai-dev-control-plane/reviewer v0.0.0
 	github.com/ai-dev-control-plane/runtimes v0.0.0
+	github.com/ai-dev-control-plane/vcs v0.0.0
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-chi/cors v1.2.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -58,5 +59,6 @@ replace (
 	github.com/ai-dev-control-plane/repo-intel => ../../packages/repo-intel
 	github.com/ai-dev-control-plane/reviewer => ../../packages/reviewer
 	github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
+	github.com/ai-dev-control-plane/vcs => ../../packages/vcs
 	github.com/ai-dev-control-plane/securityscan => ../../packages/securityscan
 )
