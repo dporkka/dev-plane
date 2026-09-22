@@ -1960,7 +1960,7 @@ func buildPaths() map[string]PathItem {
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
 				}},
 				"400": {Description: "Invalid request or task status"},
-				"409": {Description: "Pending approval exists"},
+				"409": {Description: "The selected run does not have an approved PR-create approval"},
 			},
 		},
 	}
