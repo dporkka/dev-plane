@@ -120,6 +120,26 @@ CREATE INDEX IF NOT EXISTS idx_workspaces_status ON workspaces(status);
 CREATE INDEX IF NOT EXISTS idx_workspaces_deleted_at ON workspaces(deleted_at);
 
 -- =====================================================
+-- 5b. artifact_leases
+-- =====================================================
+CREATE TABLE IF NOT EXISTS artifact_leases (
+    scope_id       TEXT NOT NULL,
+    artifact_path  TEXT NOT NULL,
+    owner_id       TEXT NOT NULL,
+    token_hash     TEXT NOT NULL,
+    generation     BIGINT NOT NULL DEFAULT 1,
+    expires_at     TIMESTAMPTZ NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (scope_id, artifact_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_leases_owner
+    ON artifact_leases(owner_id);
+CREATE INDEX IF NOT EXISTS idx_artifact_leases_expires_at
+    ON artifact_leases(expires_at);
+
+-- =====================================================
 -- 6. tasks
 -- =====================================================
 CREATE TABLE IF NOT EXISTS tasks (
@@ -187,6 +207,40 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 
 -- =====================================================
+-- 7a. workspace_snapshots
+-- =====================================================
+CREATE TABLE IF NOT EXISTS workspace_snapshots (
+    id                       UUID PRIMARY KEY,
+    workspace_id             UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    agent_run_id             UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+    git_commit               TEXT,
+    vcs_change_id            TEXT,
+    artifact_manifest_digest TEXT,
+    artifact_version_digest  TEXT,
+    description              TEXT,
+    metadata                 JSONB DEFAULT '{}',
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (
+        git_commit IS NOT NULL
+        OR artifact_version_digest IS NOT NULL
+        OR artifact_manifest_digest IS NOT NULL
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_workspace_id
+    ON workspace_snapshots(workspace_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_snapshots_agent_run_id
+    ON workspace_snapshots(agent_run_id)
+    WHERE agent_run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_created_at
+    ON workspace_snapshots(created_at);
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_git_commit
+    ON workspace_snapshots(git_commit);
+CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_artifact_version
+    ON workspace_snapshots(artifact_version_digest);
+
+
+-- =====================================================
 -- 8. agent_steps
 -- =====================================================
 CREATE TABLE IF NOT EXISTS agent_steps (
@@ -215,7 +269,93 @@ CREATE INDEX IF NOT EXISTS idx_agent_steps_status ON agent_steps(status);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_created_at ON agent_steps(created_at);
 
 -- =====================================================
--- 8a. review_reports
+-- 8a. artifacts
+-- =====================================================
+CREATE TABLE IF NOT EXISTS artifacts (
+    id                         UUID PRIMARY KEY,
+    organization_id            UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    workspace_id               UUID REFERENCES workspaces(id) ON DELETE CASCADE,
+    agent_run_id               UUID REFERENCES agent_runs(id) ON DELETE SET NULL,
+    step_id                    UUID REFERENCES agent_steps(id) ON DELETE SET NULL,
+    artifact_type              TEXT NOT NULL DEFAULT 'file',
+    file_name                  TEXT NOT NULL,
+    file_path                  TEXT NOT NULL,
+    logical_path               TEXT,
+    kind                       TEXT,
+    mime_type                  TEXT,
+    size_bytes                 BIGINT,
+    digest_algorithm           TEXT,
+    digest_hex                 TEXT,
+    semantic_digest_algorithm  TEXT,
+    semantic_digest_hex        TEXT,
+    artifact_json              JSONB,
+    is_tombstone               BOOLEAN NOT NULL DEFAULT false,
+    metadata                   JSONB DEFAULT '{}',
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifacts_organization_id
+    ON artifacts(organization_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_workspace_id
+    ON artifacts(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_agent_run_id
+    ON artifacts(agent_run_id);
+CREATE INDEX IF NOT EXISTS idx_artifacts_logical_path
+    ON artifacts(workspace_id, logical_path);
+CREATE INDEX IF NOT EXISTS idx_artifacts_digest
+    ON artifacts(digest_algorithm, digest_hex);
+CREATE INDEX IF NOT EXISTS idx_artifacts_created_at
+    ON artifacts(created_at);
+
+-- =====================================================
+-- 8b. artifact_uploads
+-- =====================================================
+CREATE TABLE IF NOT EXISTS artifact_uploads (
+    id                         UUID PRIMARY KEY,
+    organization_id            UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    workspace_id               UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    logical_path               TEXT NOT NULL,
+    media_type                 TEXT NOT NULL DEFAULT 'application/octet-stream',
+    expected_digest_algorithm  TEXT NOT NULL,
+    expected_digest_hex        TEXT NOT NULL,
+    expected_size              BIGINT NOT NULL,
+    staging_key                TEXT NOT NULL,
+    provider_upload_id         TEXT NOT NULL,
+    part_size                  BIGINT NOT NULL,
+    part_count                 INTEGER NOT NULL,
+    status                     TEXT NOT NULL DEFAULT 'initiated',
+    initiated_by               UUID NOT NULL REFERENCES users(id),
+    artifact_id                UUID REFERENCES artifacts(id) ON DELETE SET NULL,
+    error_message              TEXT,
+    expires_at                 TIMESTAMPTZ NOT NULL,
+    reconciliation_claim       TEXT,
+    reconciliation_claim_expires_at TIMESTAMPTZ,
+    reconciliation_attempts    INTEGER NOT NULL DEFAULT 0,
+    reconciled_at              TIMESTAMPTZ,
+    native_checksum_algorithm  TEXT,
+    native_checksum_base64     TEXT,
+    native_checksum_enabled    BOOLEAN NOT NULL DEFAULT false,
+    verification_mode          TEXT NOT NULL DEFAULT 'stream_sha256',
+    created_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CHECK (expected_size >= 0),
+    CHECK (part_size > 0),
+    CHECK (part_count > 0 AND part_count <= 10000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_workspace
+    ON artifact_uploads(workspace_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_status
+    ON artifact_uploads(status, expires_at);
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_initiated_by
+    ON artifact_uploads(initiated_by);
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_reconciliation
+    ON artifact_uploads(status, reconciliation_claim_expires_at, updated_at);
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_native_checksum
+    ON artifact_uploads(native_checksum_enabled, status, updated_at);
+
+-- =====================================================
+-- 8b. review_reports
 -- =====================================================
 CREATE TABLE IF NOT EXISTS review_reports (
     id              UUID PRIMARY KEY,

@@ -411,6 +411,135 @@ export interface Artifact {
   created_at: string;
 }
 
+export interface ArtifactDigest {
+  algorithm: string;
+  hex: string;
+}
+
+export interface ArtifactDerivative {
+  role: string;
+  descriptor: {
+    digest: ArtifactDigest;
+    size: number;
+    media_type?: string;
+  };
+  generator?: {
+    name: string;
+    version?: string;
+    parameters?: Record<string, string>;
+  };
+}
+
+export interface ArtifactMetadata {
+  id: string;
+  organization_id: string;
+  workspace_id?: string;
+  artifact_type: string;
+  file_name: string;
+  logical_path: string;
+  kind: string;
+  mime_type?: string;
+  size_bytes: number;
+  digest: ArtifactDigest;
+  semantic_digest?: ArtifactDigest;
+  metadata?: Record<string, string>;
+  derivatives?: ArtifactDerivative[];
+  created_at: string;
+}
+
+export interface ArtifactSequenceChange {
+  operation: 'added' | 'removed' | 'modified';
+  before_index?: number;
+  after_index?: number;
+  before?: string;
+  after?: string;
+}
+
+export interface ArtifactDiff {
+  kind: string;
+  media_type?: string;
+  changed: boolean;
+  semantic: boolean;
+  changes?: ArtifactSequenceChange[];
+  metadata_changes?: Record<string, { before?: string; after?: string }>;
+  before_digest: ArtifactDigest;
+  after_digest: ArtifactDigest;
+  warnings?: string[];
+}
+
+export interface ArtifactLease {
+  scope_id: string;
+  path: string;
+  owner_id: string;
+  token?: string;
+  generation: number;
+  expires_at: string;
+}
+
+export interface ArtifactLeaseRequest {
+  path: string;
+  token?: string;
+  generation?: number;
+  ttl_seconds?: number;
+}
+
+export interface PresignedArtifactPart {
+  part_number: number;
+  url: string;
+  expires_at: string;
+}
+
+export interface BeginArtifactUploadRequest {
+  path: string;
+  size_bytes: number;
+  sha256: string;
+  crc64nvme?: string;
+  content_type?: string;
+  part_size_bytes?: number;
+}
+
+export interface BeginArtifactUploadResponse {
+  id: string;
+  workspace_id: string;
+  path: string;
+  digest: ArtifactDigest;
+  size_bytes: number;
+  content_type: string;
+  part_size_bytes: number;
+  part_count: number;
+  status: string;
+  expires_at: string;
+  native_checksum_algorithm?: string;
+  verification_mode: string;
+  parts?: PresignedArtifactPart[];
+}
+
+export interface PresignArtifactPartsRequest {
+  start_part: number;
+  count: number;
+}
+
+export interface CompletedArtifactPart {
+  part_number: number;
+  etag: string;
+}
+
+export interface CompleteArtifactUploadRequest {
+  parts: CompletedArtifactPart[];
+}
+
+export interface WorkspaceSnapshot {
+  id: string;
+  workspace_id: string;
+  agent_run_id?: string;
+  git_commit?: string;
+  vcs_change_id?: string;
+  artifact_manifest_digest?: string;
+  artifact_version_digest?: string;
+  description?: string;
+  created_at: string;
+}
+
 export interface AuditLog {
   id: string;
   organization_id: string;
@@ -504,11 +633,27 @@ export interface FileChange {
   is_migration: boolean;
 }
 
+export interface ReviewArtifactChange {
+  path: string;
+  status: 'added' | 'modified' | 'deleted';
+  kind: string;
+  media_type?: string;
+  semantic: boolean;
+  change_count?: number;
+  changes?: ArtifactSequenceChange[];
+  warnings?: string[];
+}
+
 export interface DiffSummary {
   files_changed: number;
   insertions: number;
   deletions: number;
   files: FileChange[];
+  artifact_files_changed?: number;
+  artifact_additions?: number;
+  artifact_modifications?: number;
+  artifact_deletions?: number;
+  artifact_changes?: ReviewArtifactChange[];
 }
 
 export interface ReviewReport {

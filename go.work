@@ -9,6 +9,7 @@ use (
 	./apps/worker
 	./infra/networking
 	./packages/agents
+	./packages/artifacts
 	./packages/crypto
 	./packages/db
 	./packages/events

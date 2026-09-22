@@ -80,7 +80,14 @@ func (p *fakeProvider) Snapshot(ctx context.Context, sessionID string) (*Snapsho
 	if _, ok := p.sessions[sessionID]; !ok {
 		return nil, ErrSessionNotFound
 	}
-	return &Snapshot{ID: "snap-1", SessionID: sessionID, CreatedAt: time.Now()}, nil
+	return &Snapshot{
+		ID:                     "snap-1",
+		SessionID:              sessionID,
+		GitCommit:              "abc123",
+		ArtifactManifestDigest: "sha256:manifest",
+		ArtifactVersionDigest:  "sha256:version",
+		CreatedAt:              time.Now(),
+	}, nil
 }
 
 func (p *fakeProvider) Restore(ctx context.Context, sessionID string, snap *Snapshot) error {
@@ -375,6 +382,30 @@ func TestRemoteProviderReadWriteFile(t *testing.T) {
 	}
 	if string(data) == "" {
 		t.Fatal("expected file contents")
+	}
+}
+
+func TestRemoteProviderSnapshotCarriesArtifactRefs(t *testing.T) {
+	provider := newFakeProvider()
+	server := startTestRunnerServer(t, provider, "")
+	defer server.Close()
+
+	client := NewRemoteProvider(server.URL, "")
+	ctx := context.Background()
+	sess, _ := client.CreateWorkspace(ctx, CreateRequest{
+		RepositoryID: "repo-1",
+		CloneURL:     "https://example.invalid/repo.git",
+		Branch:       "feat",
+		BaseBranch:   "main",
+	})
+	snapshot, err := client.Snapshot(ctx, sess.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.GitCommit != "abc123" ||
+		snapshot.ArtifactManifestDigest != "sha256:manifest" ||
+		snapshot.ArtifactVersionDigest != "sha256:version" {
+		t.Fatalf("snapshot refs lost over runner transport: %+v", snapshot)
 	}
 }
 

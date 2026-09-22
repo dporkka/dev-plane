@@ -50,7 +50,7 @@ GO_APPS          := $(filter apps/%,$(GO_MODULES))
 
 # Fallback explicit lists (used when workspace introspection is unavailable).
 ifeq ($(GO_PACKAGES),)
-GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+GO_PACKAGES      := packages/agents packages/artifacts packages/crypto packages/db packages/events packages/gateway packages/models packages/policies packages/prfactory packages/repo-intel packages/reviewer packages/runtimes packages/securityscan packages/vcs
 endif
 ifeq ($(GO_APPS),)
 GO_APPS          := apps/api apps/worker apps/runner

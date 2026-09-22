@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log/slog"
@@ -137,11 +138,26 @@ func main() {
 		logger.Warn("SECRET_ENCRYPTION_KEYS not configured; encrypted integration tokens cannot be decrypted")
 	}
 
+	artifactManager, err := initArtifactManager()
+	if err != nil {
+		logger.Error("failed to initialize artifact storage", "error", err)
+		os.Exit(1)
+	}
+	artifactUploadReconciler := handlers.NewArtifactUploadReconciler(database.DB, artifactManager, logger)
+	startArtifactUploadReconciler(ctx, artifactUploadReconciler, logger)
+
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
-	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
+	reviewService := reviewer.NewReviewer(database.DB, logger).
+		WithArtifactManager(artifactManager).
+		WithRuntimeProvider(runtimeProvider)
+	snapshotter := handlers.NewArtifactSnapshotter(database.DB, artifactManager, runtimeProvider)
+	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+		WithRunExecutor(runExecutor).
+		WithReviewer(reviewService).
+		WithCandidateSnapshotter(snapshotter)
+	startArtifactBlockerReconciler(ctx, runHandler, logger)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -211,6 +227,20 @@ func main() {
 	}
 	shutdownCtx.addSubscription(subReviewCompleted)
 	logger.Info("subscribed to review.completed")
+
+	// artifact.lease.released -> accelerate scheduler blocker reconciliation
+	subArtifactLeaseReleased, err := eventBus.Subscribe(events.ArtifactLeaseReleased, func(msg *nats.Msg) {
+		logger.Debug("received artifact lease release event")
+		if err := runHandler.HandleArtifactLeaseReleased(msg); err != nil {
+			logger.Error("failed to handle artifact lease release", "error", err)
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to artifact.lease.released", "error", err)
+		os.Exit(1)
+	}
+	shutdownCtx.addSubscription(subArtifactLeaseReleased)
+	logger.Info("subscribed to artifact.lease.released")
 
 	// approval.approved -> create PR
 	subApprovalApproved, err := eventBus.Subscribe("approval.approved", func(msg *nats.Msg) {
@@ -311,7 +341,7 @@ func main() {
 
 	// Start the minimal health HTTP server used by container health checks.
 	healthPort := envOrDefault("WORKER_HEALTH_PORT", "8081")
-	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger)
+	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger, artifactUploadReconciler)
 	if healthAddr == "" {
 		logger.Error("failed to start worker health server", "port", healthPort)
 		os.Exit(1)
@@ -387,12 +417,28 @@ func envOrDefault(key, defaultValue string) string {
 // status payload. The server is shut down when the provided context is cancelled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
-func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
+func startHealthServer(
+	ctx context.Context,
+	port string,
+	logger *slog.Logger,
+	artifactMetrics ...*handlers.ArtifactUploadReconciler,
+) (string, func()) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	})
+	mux.HandleFunc("/metrics/artifact-uploads", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if len(artifactMetrics) == 0 || artifactMetrics[0] == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"artifact upload reconciler unavailable"}`))
+			return
+		}
+		if err := json.NewEncoder(w).Encode(artifactMetrics[0].MetricsSnapshot()); err != nil && logger != nil {
+			logger.Warn("failed to encode artifact upload metrics", "error", err)
+		}
 	})
 
 	listener, err := net.Listen("tcp", net.JoinHostPort("", port))

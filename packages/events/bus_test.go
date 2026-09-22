@@ -47,7 +47,7 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	expected := map[string][]string{
 		StreamTasks:    {"tasks.*"},
 		StreamAgents:   {"agents.>"},
-		StreamRuns:     {"runs.*", "review.*", "approval.*", "pr.*"},
+		StreamRuns:     {"runs.*", "review.*", "approval.*", "pr.*", "artifact.>"},
 		StreamWebhooks: {"webhooks.*"},
 		StreamAudit:    {"audit.>"},
 	}
@@ -91,6 +91,7 @@ func TestEventSubjectsAreCoveredByConfiguredStreams(t *testing.T) {
 		ApprovalApproved,
 		ApprovalRejected,
 		PRCreated,
+		ArtifactLeaseReleased,
 	}
 
 	for _, subject := range subjects {

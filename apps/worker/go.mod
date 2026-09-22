@@ -8,6 +8,7 @@ go 1.25.11
 
 require (
 	github.com/ai-dev-control-plane/api v0.0.0
+	github.com/ai-dev-control-plane/artifacts v0.0.0
 	github.com/ai-dev-control-plane/crypto v0.0.0
 	github.com/ai-dev-control-plane/db v0.0.0
 	github.com/ai-dev-control-plane/events v0.0.0
@@ -40,6 +41,7 @@ require (
 
 replace (
 	github.com/ai-dev-control-plane/api => ../../apps/api
+	github.com/ai-dev-control-plane/artifacts => ../../packages/artifacts
 	github.com/ai-dev-control-plane/crypto => ../../packages/crypto
 	github.com/ai-dev-control-plane/db => ../../packages/db
 	github.com/ai-dev-control-plane/events => ../../packages/events

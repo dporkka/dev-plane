@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -270,19 +271,33 @@ func (p *LocalProvider) Snapshot(ctx context.Context, sessionID string) (*Snapsh
 		return nil, fmt.Errorf("git add: %w (output: %s)", err, string(out))
 	}
 
-	// Create snapshot commit
-	commitHash := fmt.Sprintf("snapshot-%d", time.Now().Unix())
-	commitCmd := exec.CommandContext(ctx, "git", "-C", sess.worktreePath, "commit", "-m", "snapshot: "+commitHash, "--allow-empty")
+	// Create a snapshot commit with an explicit system identity so headless
+	// workers do not depend on global Git user configuration.
+	snapshotLabel := fmt.Sprintf("snapshot-%d", time.Now().Unix())
+	commitCmd := exec.CommandContext(
+		ctx,
+		"git", "-C", sess.worktreePath,
+		"-c", "user.email=dev-plane@example.invalid",
+		"-c", "user.name=Dev Plane",
+		"commit", "-m", "snapshot: "+snapshotLabel, "--allow-empty",
+	)
 	if out, err := commitCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("git commit: %w (output: %s)", err, string(out))
 	}
 
+	revParseCmd := exec.CommandContext(ctx, "git", "-C", sess.worktreePath, "rev-parse", "HEAD")
+	out, err := revParseCmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-parse: %w (output: %s)", err, string(out))
+	}
+	commit := strings.TrimSpace(string(out))
+	now := time.Now()
 	return &Snapshot{
-		ID:          commitHash,
+		ID:          commit,
 		SessionID:   sessionID,
-		GitCommit:   commitHash,
-		Description: "Local snapshot at " + time.Now().Format(time.RFC3339),
-		CreatedAt:   time.Now(),
+		GitCommit:   commit,
+		Description: "Local snapshot at " + now.Format(time.RFC3339),
+		CreatedAt:   now,
 	}, nil
 }
 

@@ -86,10 +86,14 @@ func (b *Bus) CreateStreams() error {
 	for _, cfg := range DefaultStreamConfigs() {
 		_, err := b.js.AddStream(&cfg)
 		if err != nil {
-			// Stream may already exist; check for nats-specific error
+			// Existing streams must be reconciled when subject lists or other
+			// mutable settings change; merely caching the desired config leaves
+			// deployed JetStream streams permanently stale.
 			if strings.Contains(err.Error(), "already in use") ||
 				strings.Contains(err.Error(), "stream name already in use") {
-				// Stream exists, update our local map
+				if _, updateErr := b.js.UpdateStream(&cfg); updateErr != nil {
+					return fmt.Errorf("update existing stream %q: %w", cfg.Name, updateErr)
+				}
 				b.mu.Lock()
 				b.streams[cfg.Name] = cfg
 				b.mu.Unlock()

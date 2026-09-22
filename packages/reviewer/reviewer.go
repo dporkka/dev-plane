@@ -19,7 +19,9 @@ import (
 
 	"github.com/google/uuid"
 
+	artifactstore "github.com/ai-dev-control-plane/artifacts"
 	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/runtimes"
 	"github.com/ai-dev-control-plane/securityscan"
 )
 
@@ -32,6 +34,8 @@ type Reviewer struct {
 	db              *sql.DB
 	logger          *slog.Logger
 	securityScanner securityScanner
+	artifactManager  *artifactstore.Manager
+	runtimeProvider runtimes.Provider
 }
 
 // ReviewReport contains the complete review.
@@ -60,10 +64,15 @@ type Finding struct {
 
 // DiffSummary contains statistics about the changes.
 type DiffSummary struct {
-	FilesChanged int          `json:"files_changed"`
-	Insertions   int          `json:"insertions"`
-	Deletions    int          `json:"deletions"`
-	Files        []FileChange `json:"files"`
+	FilesChanged          int              `json:"files_changed"`
+	Insertions            int              `json:"insertions"`
+	Deletions             int              `json:"deletions"`
+	Files                 []FileChange     `json:"files"`
+	ArtifactFilesChanged  int              `json:"artifact_files_changed,omitempty"`
+	ArtifactAdditions     int              `json:"artifact_additions,omitempty"`
+	ArtifactModifications int              `json:"artifact_modifications,omitempty"`
+	ArtifactDeletions     int              `json:"artifact_deletions,omitempty"`
+	ArtifactChanges       []ArtifactChange `json:"artifact_changes,omitempty"`
 }
 
 // FileChange represents a single file's changes.
@@ -107,6 +116,19 @@ func (r *Reviewer) WithSecurityScanner(scanner securityScanner) *Reviewer {
 	return r
 }
 
+// WithArtifactManager enables semantic non-code artifact diffs in review reports.
+func (r *Reviewer) WithArtifactManager(manager *artifactstore.Manager) *Reviewer {
+	r.artifactManager = manager
+	return r
+}
+
+// WithRuntimeProvider enables immutable source review for isolated runtime
+// workspaces that do not expose a host worktree path.
+func (r *Reviewer) WithRuntimeProvider(provider runtimes.Provider) *Reviewer {
+	r.runtimeProvider = provider
+	return r
+}
+
 // Review analyzes changes in a workspace and produces a review report.
 func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, error) {
 	r.logger.Info("starting review", "run_id", runID)
@@ -130,17 +152,43 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 		return nil, fmt.Errorf("agent run %s has no workspace", runID)
 	}
 
-	// 2. Get workspace path and git diff
-	worktreePath, err := r.getWorkspacePath(ctx, *run.WorkspaceID)
-	if err != nil {
-		r.logger.Warn("failed to get workspace path, proceeding without diff or security scan", "error", err)
+	// 2. Review the immutable candidate source revision. Prefer a host worktree
+	// when available; otherwise execute the same git diff inside the runtime.
+	worktreePath, runtimeSessionID, baseBranch, targetErr := r.getWorkspaceReviewTarget(ctx, *run.WorkspaceID)
+	if targetErr != nil {
+		r.logger.Warn("failed to load workspace review target", "error", targetErr)
 		worktreePath = ""
+		runtimeSessionID = ""
+		baseBranch = ""
+	}
+
+	if runtimeSessionID != "" && r.runtimeProvider != nil {
+		if attacher, ok := r.runtimeProvider.(interface {
+			AttachSession(context.Context, string, string) (*runtimes.Session, error)
+		}); ok {
+			if _, attachErr := attacher.AttachSession(ctx, runtimeSessionID, *run.WorkspaceID); attachErr != nil {
+				r.logger.Warn("failed to reattach runtime session for review", "workspace_id", *run.WorkspaceID, "session_id", runtimeSessionID, "error", attachErr)
+			}
+		}
 	}
 
 	diff := ""
-	if worktreePath != "" {
+	candidateRevision, revisionErr := r.getCandidateRevision(ctx, runID, *run.WorkspaceID)
+	if revisionErr != nil && !errors.Is(revisionErr, sql.ErrNoRows) {
+		r.logger.Warn("failed to get candidate snapshot revision, falling back to workspace diff", "error", revisionErr)
+	}
+	switch {
+	case worktreePath != "" && candidateRevision != "" && baseBranch != "":
+		diff, err = r.getGitDiffForRange(ctx, worktreePath, baseBranch, candidateRevision)
+	case worktreePath != "" && candidateRevision != "":
+		diff, err = r.getGitDiffForRevision(ctx, worktreePath, candidateRevision)
+	case worktreePath != "":
 		diff, err = r.getGitDiff(ctx, worktreePath)
-	} else {
+	case runtimeSessionID != "" && candidateRevision != "" && baseBranch != "" && r.runtimeProvider != nil:
+		diff, err = r.getRuntimeGitDiffForRange(ctx, runtimeSessionID, baseBranch, candidateRevision)
+	case runtimeSessionID != "" && candidateRevision != "" && r.runtimeProvider != nil:
+		diff, err = r.getRuntimeGitDiffForRevision(ctx, runtimeSessionID, candidateRevision)
+	default:
 		err = nil
 	}
 	if err != nil {
@@ -157,6 +205,18 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 
 	report := r.generateReview(diff, nil, steps)
 	report.RunID = runID
+	if artifactSummary, artifactErr := r.getArtifactDiffSummary(ctx, runID, *run.WorkspaceID); artifactErr != nil {
+		r.logger.Warn("failed to compute artifact diff summary", "run_id", runID, "error", artifactErr)
+	} else {
+		report.DiffSummary.ArtifactFilesChanged = artifactSummary.FilesChanged
+		report.DiffSummary.ArtifactAdditions = artifactSummary.Additions
+		report.DiffSummary.ArtifactModifications = artifactSummary.Modifications
+		report.DiffSummary.ArtifactDeletions = artifactSummary.Deletions
+		report.DiffSummary.ArtifactChanges = artifactSummary.Changes
+		if artifactSummary.FilesChanged > 0 {
+			report.Summary = fmt.Sprintf("%s %d non-code artifact(s) changed.", report.Summary, artifactSummary.FilesChanged)
+		}
+	}
 	r.applySecurityScan(ctx, report, worktreePath)
 
 	// 5. Save review report
@@ -174,22 +234,49 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 	return report, nil
 }
 
-func (r *Reviewer) getWorkspacePath(ctx context.Context, workspaceID string) (string, error) {
-	var worktreePath string
+func (r *Reviewer) getWorkspaceReviewTarget(ctx context.Context, workspaceID string) (string, string, string, error) {
+	var worktreePath, runtimeSessionID, baseBranch sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT worktree_path FROM workspaces WHERE id = $1
-	`, workspaceID).Scan(&worktreePath)
+		SELECT worktree_path, runtime_session_id, base_branch
+		FROM workspaces
+		WHERE id = $1
+	`, workspaceID).Scan(&worktreePath, &runtimeSessionID, &baseBranch)
 	if err != nil {
-		return "", fmt.Errorf("get workspace path: %w", err)
+		return "", "", "", fmt.Errorf("get workspace review target: %w", err)
+	}
+	return strings.TrimSpace(worktreePath.String), strings.TrimSpace(runtimeSessionID.String), strings.TrimSpace(baseBranch.String), nil
+}
+
+func (r *Reviewer) getWorkspacePath(ctx context.Context, workspaceID string) (string, error) {
+	worktreePath, _, _, err := r.getWorkspaceReviewTarget(ctx, workspaceID)
+	if err != nil {
+		return "", err
 	}
 	if worktreePath == "" {
 		return "", fmt.Errorf("workspace %s has no worktree path", workspaceID)
 	}
-
 	return worktreePath, nil
 }
 
-// getGitDiff retrieves the git diff from a workspace path.
+func (r *Reviewer) getCandidateRevision(ctx context.Context, runID, workspaceID string) (string, error) {
+	var revision sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT git_commit
+		FROM workspace_snapshots
+		WHERE agent_run_id = $1 AND workspace_id = $2
+		LIMIT 1
+	`, runID, workspaceID).Scan(&revision)
+	if err != nil {
+		return "", err
+	}
+	if !revision.Valid {
+		return "", nil
+	}
+	return strings.TrimSpace(revision.String), nil
+}
+
+// getGitDiff retrieves the current uncommitted git diff from a workspace path.
+// This remains a fallback for runs created before candidate snapshots existed.
 func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "diff", "--no-ext-diff", "--binary", "HEAD", "--")
 	out, err := cmd.CombinedOutput()
@@ -197,6 +284,86 @@ func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath string) (string,
 		return "", fmt.Errorf("git diff workspace path %s: %w: %s", worktreePath, err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+// getGitDiffForRevision reviews exactly the immutable candidate commit, including
+// root commits. This keeps review stable even if the workspace changes later.
+func (r *Reviewer) getGitDiffForRange(ctx context.Context, worktreePath, baseRevision, candidateRevision string) (string, error) {
+	if strings.TrimSpace(baseRevision) == "" || strings.TrimSpace(candidateRevision) == "" {
+		return "", fmt.Errorf("base and candidate revisions are required")
+	}
+	cmd := exec.CommandContext(
+		ctx,
+		"git", "-C", worktreePath,
+		"diff", "--no-ext-diff", "--binary", baseRevision+"..."+candidateRevision, "--",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff candidate range %s...%s: %w: %s",
+			baseRevision, candidateRevision, err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func (r *Reviewer) getGitDiffForRevision(ctx context.Context, worktreePath, revision string) (string, error) {
+	if strings.TrimSpace(revision) == "" {
+		return "", fmt.Errorf("candidate revision is required")
+	}
+	cmd := exec.CommandContext(
+		ctx,
+		"git", "-C", worktreePath,
+		"diff-tree", "--root", "--no-commit-id", "-p", "--binary", revision, "--",
+	)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("git diff candidate revision %s: %w: %s", revision, err, strings.TrimSpace(string(out)))
+	}
+	return string(out), nil
+}
+
+func (r *Reviewer) getRuntimeGitDiffForRange(ctx context.Context, sessionID, baseRevision, candidateRevision string) (string, error) {
+	if r.runtimeProvider == nil {
+		return "", fmt.Errorf("runtime provider is not configured")
+	}
+	if strings.TrimSpace(baseRevision) == "" || strings.TrimSpace(candidateRevision) == "" {
+		return "", fmt.Errorf("base and candidate revisions are required")
+	}
+	result, err := r.runtimeProvider.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Args: []string{
+			"git", "diff", "--no-ext-diff", "--binary", baseRevision + "..." + candidateRevision, "--",
+		},
+		Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return "", fmt.Errorf("runtime git diff candidate range %s...%s: %w", baseRevision, candidateRevision, err)
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("runtime git diff candidate range %s...%s exited %d: %s",
+			baseRevision, candidateRevision, result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return result.Stdout, nil
+}
+
+func (r *Reviewer) getRuntimeGitDiffForRevision(ctx context.Context, sessionID, revision string) (string, error) {
+	if r.runtimeProvider == nil {
+		return "", fmt.Errorf("runtime provider is not configured")
+	}
+	if strings.TrimSpace(revision) == "" {
+		return "", fmt.Errorf("candidate revision is required")
+	}
+	result, err := r.runtimeProvider.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Args: []string{
+			"git", "diff-tree", "--root", "--no-commit-id", "-p", "--binary", revision, "--",
+		},
+		Timeout: 2 * time.Minute,
+	})
+	if err != nil {
+		return "", fmt.Errorf("runtime git diff candidate revision %s: %w", revision, err)
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("runtime git diff candidate revision %s exited %d: %s", revision, result.ExitCode, strings.TrimSpace(result.Stderr))
+	}
+	return result.Stdout, nil
 }
 
 // getAgentSteps retrieves the steps for an agent run.
