@@ -73,9 +73,7 @@ func startArtifactUploadReconciler(
 	}
 	go func() {
 		run := func() {
-			reconcileCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-			defer cancel()
-			if err := reconciler.Reconcile(reconcileCtx); err != nil {
+			if err := reconciler.Reconcile(ctx); err != nil {
 				logger.Warn("artifact upload reconciliation failed", "error", err)
 			}
 		}

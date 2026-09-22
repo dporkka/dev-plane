@@ -100,6 +100,35 @@ URLs and must expose the `ETag` response header through CORS. The uploader
 rejects a successful part response with no visible ETag because multipart
 completion cannot be made reliable without it.
 
+## Multipart reconciliation and garbage collection
+
+Direct multipart sessions are durable SQL records and are reconciled by the
+worker once per minute. Reconciliation uses short SQL claims with periodic
+heartbeats, so multiple worker replicas can scan the same queue without
+double-promoting or double-cleaning an upload, including verification jobs that
+run for longer than a single claim TTL.
+
+The reconciler handles these recovery states:
+
+- expired `initiated` uploads: abort the provider multipart session, remove any
+  staging object, and mark the session aborted;
+- stale `finalizing` uploads: verify whether provider completion actually
+  succeeded, recover verified bytes into CAS when possible, or reset the
+  session to `initiated` for a safe client retry;
+- `uploaded` sessions: verify SHA-256 and size, promote staging to CAS, and
+  finalize the artifact record even if the API process crashed;
+- `verified` sessions: recreate/finalize the deterministic artifact row when
+  promotion succeeded but database persistence did not;
+- `cleanup_pending` sessions: retry provider abort and staging deletion until
+  cleanup actually succeeds.
+
+Explicit API aborts no longer claim success when provider cleanup fails; they
+enter `cleanup_pending` and are handed to the worker reconciler.
+
+Operational counters are exposed by the worker at
+`/metrics/artifact-uploads`, including reconciliation runs, claims, recovered
+uploads, completed uploads, aborted uploads, failures, and last-run timestamps.
+
 ## Content-defined chunking
 
 Large payloads can be stored through `ContentDefinedChunker`. It uses a
@@ -251,7 +280,7 @@ path. This prevents a restore from overwriting an agent's in-flight media edit.
 ## Next integrations
 
 1. Persist workspace snapshots automatically when agent candidates complete.
-2. Add background cleanup/reconciliation for expired or abandoned multipart staging sessions.
+2. Add object-store-native checksum verification to avoid full GET verification for providers that support trustworthy SHA-256 metadata.
 3. Add richer DOCX structure (headings, tables, comments) and richer spreadsheet formatting semantics.
 4. Add visual pixel-diff/overlay derivatives for image review.
 5. Add structured merge engines that can relax lease requirements safely.

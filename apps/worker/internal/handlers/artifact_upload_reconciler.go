@@ -24,15 +24,15 @@ const (
 )
 
 type ArtifactUploadReconcileMetrics struct {
-	Runs            int64
-	Claimed         int64
-	Recovered       int64
-	Completed       int64
-	Aborted         int64
-	Failures        int64
-	LastRunUnix     int64
-	LastSuccessUnix int64
-	LastFailureUnix int64
+	Runs            int64 `json:"runs"`
+	Claimed         int64 `json:"claimed"`
+	Recovered       int64 `json:"recovered"`
+	Completed       int64 `json:"completed"`
+	Aborted         int64 `json:"aborted"`
+	Failures        int64 `json:"failures"`
+	LastRunUnix     int64 `json:"last_run_unix,omitempty"`
+	LastSuccessUnix int64 `json:"last_success_unix,omitempty"`
+	LastFailureUnix int64 `json:"last_failure_unix,omitempty"`
 }
 
 type artifactUploadMetricState struct {
