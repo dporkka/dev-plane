@@ -90,7 +90,7 @@ func (f *Factory) WithRuntimeProvider(name string, provider runtimes.Provider) *
 	return f
 }
 
-// CreatePullRequest opens a GitHub PR for completed task changes.
+// CreatePullRequest opens a GitHub PR for one explicitly selected reviewed run.
 //
 // Steps:
 //  1. Load task, workspace, agent run from DB
@@ -542,8 +542,6 @@ func (f *Factory) loadTask(ctx context.Context, taskID string) (*models.Task, er
 func (f *Factory) loadRun(ctx context.Context, taskID, runID string) (*models.AgentRun, error) {
 	var run models.AgentRun
 	var wsID, model, provider, errMsg, summary sql.NullString
-	var startedAt, completedAt sql.NullTime
-
 	err := f.db.QueryRowContext(ctx, `
 		SELECT id, task_id, workspace_id, agent_role, model, provider, status,
 		       prompt_tokens, completion_tokens, total_cost, error_message, summary,
@@ -581,13 +579,6 @@ func (f *Factory) loadRun(ctx context.Context, taskID, runID string) (*models.Ag
 		s := summary.String
 		run.Summary = &s
 	}
-	if startedAt.Valid {
-		run.StartedAt = &startedAt.Time
-	}
-	if completedAt.Valid {
-		run.CompletedAt = &completedAt.Time
-	}
-
 	return &run, nil
 }
 
