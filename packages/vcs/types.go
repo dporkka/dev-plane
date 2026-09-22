@@ -35,7 +35,11 @@ type WorkspaceRequest struct {
 type PublishRequest struct {
 	WorkspacePath string
 	Ref           string
-	Env           map[string]string
+	// RemoteURL, when set, is used instead of the repository's configured
+	// origin. Privileged publishers should set it from trusted repository
+	// metadata so agent-controlled Git config cannot redirect credentials.
+	RemoteURL string
+	Env       map[string]string
 }
 
 // Revision identifies the immutable Git commit and, when available, the
