@@ -29,14 +29,15 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
 		"approval_id":"approval-1",
 		"task_id":"task-1",
+		"agent_run_id":"run-1",
 		"response":"approved",
 		"approval_type":"pr_create"
 	}`)})
 	if err != nil {
 		t.Fatalf("HandleApprovalApproved() error: %v", err)
 	}
-	if creator.taskID != "task-1" {
-		t.Fatalf("creator taskID = %q, want task-1", creator.taskID)
+	if creator.taskID != "task-1" || creator.runID != "run-1" {
+		t.Fatalf("creator authority = %q/%q, want task-1/run-1", creator.taskID, creator.runID)
 	}
 }
 
@@ -146,6 +147,7 @@ func TestHandleApprovalApprovedSkipsNonReviewableTask(t *testing.T) {
 	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
 		"approval_id":"approval-1",
 		"task_id":"task-1",
+		"agent_run_id":"run-1",
 		"response":"approved",
 		"approval_type":"pr_create"
 	}`)})
@@ -272,19 +274,21 @@ func (p *fakeWorkerEventPublisher) Publish(subject string, data []byte) error {
 
 type fakePullRequestCreator struct {
 	taskID string
+	runID  string
 	pr     *models.PullRequest
 	err    error
 }
 
-func (f *fakePullRequestCreator) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
+func (f *fakePullRequestCreator) CreatePullRequest(ctx context.Context, taskID, runID string) (*models.PullRequest, error) {
 	f.taskID = taskID
+	f.runID = runID
 	if f.err != nil {
 		return nil, f.err
 	}
 	if f.pr != nil {
 		return f.pr, nil
 	}
-	return &models.PullRequest{ID: "pr-1", TaskID: taskID, Number: 1}, nil
+	return &models.PullRequest{ID: "pr-1", TaskID: taskID, RunID: &runID, Number: 1}, nil
 }
 
 func setupApprovalHandlerDB(t *testing.T) *sql.DB {
@@ -340,5 +344,48 @@ func insertApprovalFixture(t *testing.T, db *sql.DB, id, taskID, runID, approval
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO approvals (id, task_id, agent_run_id, approval_type) VALUES (?, ?, ?, ?)`, id, taskID, runID, approvalType); err != nil {
 		t.Fatalf("insert approval fixture: %v", err)
+	}
+}
+
+
+func TestHandleApprovalApprovedLoadsRunFromApprovalRecordForPRCreate(t *testing.T) {
+	db := setupApprovalHandlerDB(t)
+	defer db.Close()
+	insertApprovalTaskFixture(t, db, "task-1", "reviewing")
+	insertApprovalFixture(t, db, "approval-1", "task-1", "run-bound", models.ApprovalTypePRCreate)
+
+	creator := &fakePullRequestCreator{
+		pr: &models.PullRequest{ID: "pr-1", TaskID: "task-1", Number: 42},
+	}
+	handler := NewApprovalHandler(db, slog.Default(), nil).WithPullRequestCreator(creator)
+
+	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
+		"approval_id":"approval-1",
+		"task_id":"task-1",
+		"response":"approved",
+		"approval_type":"pr_create"
+	}`)})
+	if err != nil {
+		t.Fatalf("HandleApprovalApproved() error: %v", err)
+	}
+	if creator.taskID != "task-1" || creator.runID != "run-bound" {
+		t.Fatalf("creator authority = %q/%q, want task-1/run-bound", creator.taskID, creator.runID)
+	}
+}
+
+func TestHandleApprovalApprovedRejectsPRCreateWithoutBoundRun(t *testing.T) {
+	db := setupApprovalHandlerDB(t)
+	defer db.Close()
+	insertApprovalTaskFixture(t, db, "task-1", "reviewing")
+
+	handler := NewApprovalHandler(db, slog.Default(), nil).WithPullRequestCreator(&fakePullRequestCreator{})
+	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
+		"approval_id":"approval-missing",
+		"task_id":"task-1",
+		"response":"approved",
+		"approval_type":"pr_create"
+	}`)})
+	if err == nil || !strings.Contains(err.Error(), "no agent run bound") {
+		t.Fatalf("error = %v, want missing bound run rejection", err)
 	}
 }
