@@ -390,3 +390,85 @@ func TestMergeRefineryConcurrentCandidatesSerializeWithoutLostUpdates(t *testing
 		t.Fatalf("b.txt = %q", got)
 	}
 }
+
+
+func TestReviewSnapshotIncludesUntrackedFilesAndMatchesCandidate(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "review-snapshot")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/review-snapshot", workspace, "main")
+
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "new.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := CaptureReviewSnapshot(context.Background(), nil, workspace)
+	if err != nil {
+		t.Fatalf("CaptureReviewSnapshot() error = %v", err)
+	}
+	if !strings.Contains(snapshot.Diff, "new.txt") {
+		t.Fatalf("review patch omitted untracked file: %s", snapshot.Diff)
+	}
+
+	candidate, err := MaterializeReviewSnapshot(
+		context.Background(),
+		nil,
+		workspace,
+		"reviewed candidate",
+		CandidateMetadata{TaskID: "task-review", AgentID: "run-review", WorkspaceID: "ws-review"},
+		snapshot,
+	)
+	if err != nil {
+		t.Fatalf("MaterializeReviewSnapshot() error = %v", err)
+	}
+	if !candidate.Changed {
+		t.Fatal("candidate Changed = false, want true")
+	}
+	if got := runRefineryGit(t, workspace, "status", "--porcelain"); got != "" {
+		t.Fatalf("workspace remains dirty after exact materialization: %q", got)
+	}
+}
+
+func TestReviewSnapshotRejectsMutationAfterCaptureAndRestoresBase(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "review-race")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/review-race", workspace, "main")
+
+	path := filepath.Join(workspace, "README.md")
+	if err := os.WriteFile(path, []byte("reviewed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := CaptureReviewSnapshot(context.Background(), nil, workspace)
+	if err != nil {
+		t.Fatalf("CaptureReviewSnapshot() error = %v", err)
+	}
+
+	// Simulate a concurrent writer after the review snapshot was captured.
+	if err := os.WriteFile(path, []byte("unreviewed mutation\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = MaterializeReviewSnapshot(
+		context.Background(),
+		nil,
+		workspace,
+		"raced candidate",
+		CandidateMetadata{TaskID: "task-race", AgentID: "run-race", WorkspaceID: "ws-race"},
+		snapshot,
+	)
+	if err == nil || !strings.Contains(err.Error(), "workspace changed") {
+		t.Fatalf("error = %v, want workspace mutation rejection", err)
+	}
+	if got := runRefineryGit(t, workspace, "rev-parse", "HEAD"); got != snapshot.BaseCommit {
+		t.Fatalf("HEAD = %q, want restored base %q", got, snapshot.BaseCommit)
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(data) != "unreviewed mutation\n" {
+		t.Fatalf("working tree mutation was lost: %q", data)
+	}
+}
