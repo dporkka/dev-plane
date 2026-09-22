@@ -360,7 +360,7 @@ func runtimeCreateCommit(ctx context.Context, provider runtimes.Provider, sessio
 		return nil, fmt.Errorf("commit message is required")
 	}
 
-	backend := vcs.NewGitBackend(runtimeVCSRunner{provider: provider, sessionID: sessionID})
+	backend := vcs.NewGitBackend(runtimes.NewVCSCommandRunner(provider, sessionID))
 	revision, err := backend.Snapshot(ctx, ".", req.Message)
 	if err != nil {
 		return json.Marshal(map[string]any{"success": false, "error": err.Error()})
