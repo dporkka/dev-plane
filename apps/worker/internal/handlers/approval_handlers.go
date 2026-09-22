@@ -29,7 +29,7 @@ type WorkerEventPublisher interface {
 
 // PullRequestCreator creates pull requests for approved tasks.
 type PullRequestCreator interface {
-	CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error)
+	CreatePullRequest(ctx context.Context, taskID, runID string) (*models.PullRequest, error)
 }
 
 // ApprovalHandler handles approval response events.
@@ -120,12 +120,25 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
-	// Create the pull request
+	// Bind publication to the run selected by the approval record/event. Never
+	// substitute a newer run for an already-authorized approval.
 	ctx := context.Background()
-	pr, err := h.factory.CreatePullRequest(ctx, payload.TaskID)
+	runID := strings.TrimSpace(payload.AgentRunID)
+	if runID == "" {
+		var lookupErr error
+		runID, lookupErr = h.loadApprovalRunID(ctx, payload.ApprovalID)
+		if lookupErr != nil {
+			return fmt.Errorf("load approval run for PR creation: %w", lookupErr)
+		}
+	}
+	if runID == "" {
+		return fmt.Errorf("approval %s has no agent run bound for PR creation", payload.ApprovalID)
+	}
+	pr, err := h.factory.CreatePullRequest(ctx, payload.TaskID, runID)
 	if err != nil {
 		h.logger.Error("failed to create pull request",
 			"task_id", payload.TaskID,
+			"run_id", runID,
 			"error", err,
 		)
 		// Don't ack - allow retry
@@ -134,6 +147,7 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 
 	h.logger.Info("pull request created after approval",
 		"task_id", payload.TaskID,
+		"run_id", runID,
 		"pr_id", pr.ID,
 		"pr_number", pr.Number,
 	)
