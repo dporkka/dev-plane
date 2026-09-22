@@ -7,13 +7,12 @@ package prfactory
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,6 +22,8 @@ import (
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 type githubPRCreator interface {
@@ -39,10 +40,11 @@ func shortID(id string, n int) string {
 
 // Factory creates pull requests for completed tasks.
 type Factory struct {
-	db          *sql.DB
-	logger      *slog.Logger
-	github      githubPRCreator
-	githubToken string
+	db               *sql.DB
+	logger           *slog.Logger
+	github           githubPRCreator
+	githubToken      string
+	runtimeProviders map[string]runtimes.Provider
 }
 
 // NewFactory creates a PR factory.
@@ -70,6 +72,21 @@ func (f *Factory) WithGitHubGateway(gh *gateway.GitHubGateway) *Factory {
 // WithGitHubToken configures the token used for branch pushes and GitHub PR creation.
 func (f *Factory) WithGitHubToken(token string) *Factory {
 	f.githubToken = strings.TrimSpace(token)
+	return f
+}
+
+// WithRuntimeProvider registers a runtime that may own persisted workspaces.
+// It enables branch publication for Docker/remote sessions that do not expose
+// a host worktree path.
+func (f *Factory) WithRuntimeProvider(name string, provider runtimes.Provider) *Factory {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" || provider == nil {
+		return f
+	}
+	if f.runtimeProviders == nil {
+		f.runtimeProviders = map[string]runtimes.Provider{}
+	}
+	f.runtimeProviders[name] = provider
 	return f
 }
 
@@ -134,14 +151,14 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	workspaceBranch := branch
-	workspacePath := ""
+	var workspace *models.Workspace
 	if run.WorkspaceID != nil {
-		ws, err := f.loadWorkspace(ctx, *run.WorkspaceID)
-		if err == nil && ws != nil && ws.Branch != "" {
-			workspaceBranch = ws.Branch
+		workspace, err = f.loadWorkspace(ctx, *run.WorkspaceID)
+		if err != nil {
+			return nil, fmt.Errorf("load workspace: %w", err)
 		}
-		if err == nil && ws != nil && ws.WorktreePath != nil {
-			workspacePath = strings.TrimSpace(*ws.WorktreePath)
+		if workspace != nil && workspace.Branch != "" {
+			workspaceBranch = workspace.Branch
 		}
 	}
 
@@ -162,10 +179,11 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
-	if workspacePath != "" {
-		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
-			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
-		}
+	if workspace == nil {
+		return nil, fmt.Errorf("workspace is required to publish branch %s", workspaceBranch)
+	}
+	if err := f.publishWorkspaceBranch(ctx, workspace, workspaceBranch); err != nil {
+		return nil, fmt.Errorf("publish branch %s: %w", workspaceBranch, err)
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
@@ -362,28 +380,64 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 	return nil
 }
 
-// pushBranch pushes the workspace branch to origin.
-func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) error {
-	if strings.TrimSpace(workspacePath) == "" {
-		return fmt.Errorf("workspace path is required")
+// publishWorkspaceBranch publishes a workspace branch through the shared VCS
+// backend. Local worktrees use direct execution; isolated runtimes use the
+// runtime VCS transport so Docker/remote branches are published too.
+func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.Workspace, branch string) error {
+	if workspace == nil {
+		return fmt.Errorf("workspace is required")
 	}
 	if strings.TrimSpace(branch) == "" {
 		return fmt.Errorf("branch is required")
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "push", "origin", branch)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cleanup, err := configureGitAskPass(cmd, f.githubToken)
-	if err != nil {
-		return err
+	authEnv := gitHubPushEnv(f.githubToken)
+	if workspace.WorktreePath != nil && strings.TrimSpace(*workspace.WorktreePath) != "" {
+		backend := vcs.NewGitBackend(nil)
+		return backend.Publish(ctx, vcs.PublishRequest{
+			WorkspacePath: strings.TrimSpace(*workspace.WorktreePath),
+			Ref:           branch,
+			Env:           authEnv,
+		})
 	}
-	defer cleanup()
 
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git push failed: %w: %s", err, strings.TrimSpace(string(out)))
+	if workspace.RuntimeSessionID == nil || strings.TrimSpace(*workspace.RuntimeSessionID) == "" {
+		return fmt.Errorf("workspace has neither a host worktree nor a runtime session")
 	}
-	return nil
+	providerName := strings.ToLower(strings.TrimSpace(workspace.RuntimeProvider))
+	provider := f.runtimeProviders[providerName]
+	if provider == nil {
+		return fmt.Errorf("runtime provider %q is not registered for workspace publication", providerName)
+	}
+
+	if attacher, ok := provider.(interface {
+		AttachSession(context.Context, string, string) (*runtimes.Session, error)
+	}); ok {
+		if _, err := attacher.AttachSession(ctx, *workspace.RuntimeSessionID, workspace.ID); err != nil {
+			return fmt.Errorf("attach runtime session: %w", err)
+		}
+	}
+
+	backend := vcs.NewGitBackend(runtimes.NewVCSCommandRunner(provider, *workspace.RuntimeSessionID))
+	return backend.Publish(ctx, vcs.PublishRequest{
+		WorkspacePath: ".",
+		Ref:           branch,
+		Env:           authEnv,
+	})
+}
+
+func gitHubPushEnv(token string) map[string]string {
+	env := map[string]string{"GIT_TERMINAL_PROMPT": "0"}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return env
+	}
+
+	credential := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+	env["GIT_CONFIG_COUNT"] = "1"
+	env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+	env["GIT_CONFIG_VALUE_0"] = "Authorization: Basic " + credential
+	return env
 }
 
 // createGitHubPR creates a PR via the GitHub API.
@@ -403,23 +457,6 @@ func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, 
 	})
 }
 
-func configureGitAskPass(cmd *exec.Cmd, token string) (func(), error) {
-	if strings.TrimSpace(token) == "" {
-		return func() {}, nil
-	}
-	dir, err := os.MkdirTemp("", "dev-plane-git-askpass-*")
-	if err != nil {
-		return nil, fmt.Errorf("create git askpass dir: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	script := filepath.Join(dir, "askpass.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s\\n' x-access-token ;;\n*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;\nesac\n"), 0o700); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("write git askpass helper: %w", err)
-	}
-	cmd.Env = append(cmd.Env, "GIT_ASKPASS="+script, "GITHUB_TOKEN="+token)
-	return cleanup, nil
-}
 
 // loadTask loads a task from the database.
 func (f *Factory) loadTask(ctx context.Context, taskID string) (*models.Task, error) {
