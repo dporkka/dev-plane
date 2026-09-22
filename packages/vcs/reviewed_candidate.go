@@ -10,7 +10,7 @@ import (
 )
 
 var (
-	ErrReviewedCandidateNotFound = errors.New("reviewed candidate not found")
+	ErrReviewedCandidateNotFound  = errors.New("reviewed candidate not found")
 	ErrReviewedCandidateImmutable = errors.New("reviewed candidate is immutable")
 )
 
