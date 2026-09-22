@@ -152,8 +152,12 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 
 	workspaceBranch := branch
 	var workspace *models.Workspace
-	if run.WorkspaceID != nil {
-		workspace, err = f.loadWorkspace(ctx, *run.WorkspaceID)
+	workspaceID := run.WorkspaceID
+	if workspaceID == nil {
+		workspaceID = task.WorkspaceID
+	}
+	if workspaceID != nil && strings.TrimSpace(*workspaceID) != "" {
+		workspace, err = f.loadWorkspace(ctx, *workspaceID)
 		if err != nil {
 			return nil, fmt.Errorf("load workspace: %w", err)
 		}
