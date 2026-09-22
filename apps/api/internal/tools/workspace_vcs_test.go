@@ -3,12 +3,12 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"log/slog"
 )
 
 func TestWorkspaceToolsCreateCommitUsesSharedVCSBackend(t *testing.T) {
@@ -64,16 +64,6 @@ func runGitForVCSConsolidationTest(t *testing.T, dir string, args ...string) str
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, string(out))
 	}
-	return string(bytesTrimSpaceForVCSConsolidationTest(out))
+	return strings.TrimSpace(string(out))
 }
 
-func bytesTrimSpaceForVCSConsolidationTest(value []byte) []byte {
-	start, end := 0, len(value)
-	for start < end && (value[start] == ' ' || value[start] == '\n' || value[start] == '\r' || value[start] == '\t') {
-		start++
-	}
-	for end > start && (value[end-1] == ' ' || value[end-1] == '\n' || value[end-1] == '\r' || value[end-1] == '\t') {
-		end--
-	}
-	return value[start:end]
-}
