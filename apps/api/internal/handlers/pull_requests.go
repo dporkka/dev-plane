@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/prfactory"
+	"github.com/ai-dev-control-plane/taskgraph"
 )
 
 // PullRequestResponse is the API representation of a pull request.
@@ -227,14 +228,15 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Verify task exists and is in a valid state for PR creation
 	var task struct {
-		Status   string
-		RepoID   string
-		Branch   string
+		Status      string
+		RepoID      string
+		Branch      string
+		WorkspaceID sql.NullString
 	}
 	err := h.db.QueryRowContext(ctx, `
-		SELECT status, repository_id, target_branch
+		SELECT status, repository_id, target_branch, workspace_id
 		FROM tasks WHERE id = $1 AND deleted_at IS NULL
-	`, taskID).Scan(&task.Status, &task.RepoID, &task.Branch)
+	`, taskID).Scan(&task.Status, &task.RepoID, &task.Branch, &task.WorkspaceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("task not found"))
@@ -269,9 +271,41 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the pull request using the factory
+	// Create the pull request using the factory. Register a persisted runtime
+	// provider when the workspace is isolated so branch publication works for
+	// Docker/remote sessions as well as host worktrees.
 	factory := prfactory.NewFactory(h.db, h.logger)
-	pr, err := factory.CreatePullRequest(ctx, taskID)
+	if task.WorkspaceID.Valid && strings.TrimSpace(task.WorkspaceID.String) != "" {
+		workspace, provider, runtimeErr := h.getRuntimeWorkspace(ctx, task.WorkspaceID.String)
+		if runtimeErr != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load workspace runtime: %w", runtimeErr))
+			return
+		}
+		if workspace != nil && provider != nil {
+			factory = factory.WithRuntimeProvider(workspace.RuntimeProvider, provider)
+		}
+	}
+	var approvedRunID string
+	err = h.db.QueryRowContext(ctx, `
+		SELECT vc.run_id
+		FROM verified_candidates vc
+		JOIN agent_runs ar ON ar.id = vc.run_id
+		WHERE vc.task_id = $1
+		  AND vc.status = 'integrated'
+		  AND ar.status IN ('completed', 'reviewed')
+		ORDER BY ar.completed_at IS NULL, ar.completed_at DESC, ar.created_at DESC
+		LIMIT 1
+	`, taskID).Scan(&approvedRunID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusConflict, errors.New("no integrated verified candidate exists for this task"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load integrated candidate: %w", err))
+		return
+	}
+
+	pr, err := factory.CreatePullRequestForRun(ctx, taskID, approvedRunID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
@@ -447,7 +481,14 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	if _, err := h.db.ExecContext(ctx, `
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("begin merge state transaction: %w", err))
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE pull_requests SET state = 'merged', merged_at = $1, updated_at = $1
 		WHERE id = $2
 	`, now, id); err != nil {
@@ -455,7 +496,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1
 		WHERE id = $2
 	`, now, taskID); err != nil {
@@ -463,15 +504,45 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eligibleDependents, err := taskgraph.EligibleDependents(ctx, tx, taskID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("resolve newly eligible dependent tasks: %w", err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("commit merge state transaction: %w", err))
+		return
+	}
+
 	if h.eventBus != nil {
-		event := map[string]interface{}{
-			"pr_id":      id,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
-			"timestamp":  now.Format(time.RFC3339),
+		completedData, _ := json.Marshal(events.TaskEvent{
+			TaskID: taskID,
+			Status: string(models.TaskStatusDone),
+		})
+		if pubErr := h.eventBus.Publish(events.TaskCompleted, completedData); pubErr != nil {
+			h.logger.Warn("failed to publish tasks.completed event", "error", pubErr)
 		}
-		data, _ := json.Marshal(event)
+		for _, dependentTaskID := range eligibleDependents {
+			unlockedData, _ := json.Marshal(map[string]interface{}{
+				"task_id":             dependentTaskID,
+				"unlocked_by_task_id": taskID,
+				"status":              "ready",
+				"timestamp":           now.Format(time.RFC3339),
+			})
+			if pubErr := h.eventBus.Publish(events.TaskDependenciesSatisfied, unlockedData); pubErr != nil {
+				h.logger.Warn("failed to publish task dependency unlock event",
+					"task_id", dependentTaskID, "error", pubErr)
+			}
+		}
+
+		mergeEvent := map[string]interface{}{
+			"pr_id":     id,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"sha":       mergeResult.SHA,
+			"timestamp": now.Format(time.RFC3339),
+		}
+		data, _ := json.Marshal(mergeEvent)
 		if pubErr := h.eventBus.Publish(events.PRMerged, data); pubErr != nil {
 			h.logger.Warn("failed to publish pr.merged event", "error", pubErr)
 		}

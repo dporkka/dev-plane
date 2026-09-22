@@ -100,7 +100,22 @@ func (b *GitBackend) Publish(ctx context.Context, req PublishRequest) error {
 	if strings.TrimSpace(req.Ref) == "" {
 		return fmt.Errorf("publish ref is required")
 	}
-	_, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"push", "-u", "origin", req.Ref}, Dir: req.WorkspacePath, Env: req.Env})
+	args := []string{
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "credential.helper=",
+		"-c", "core.askPass=",
+		"-c", "http.sslVerify=true",
+		"push",
+	}
+	if strings.TrimSpace(req.RemoteURL) != "" {
+		if err := validatePublishRemoteURL(req.RemoteURL); err != nil {
+			return err
+		}
+		args = append(args, "--", req.RemoteURL, req.Ref+":refs/heads/"+req.Ref)
+	} else {
+		args = append(args, "-u", "origin", req.Ref)
+	}
+	_, err := b.runner.Run(ctx, Command{Name: "git", Args: args, Dir: req.WorkspacePath, Env: req.Env})
 	return err
 }
 

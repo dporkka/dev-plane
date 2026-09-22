@@ -22,6 +22,7 @@ import (
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/repogate"
 )
 
 // RunHandler handles agent run lifecycle events.
@@ -30,7 +31,8 @@ type RunHandler struct {
 	logger   *slog.Logger
 	eventBus WorkerEventPublisher
 	executor RunExecutor
-	reviewer ReviewService
+	reviewer       ReviewService
+	repositoryGate repogate.ReviewCandidateGate
 }
 
 // RunExecutor executes queued agent runs.
@@ -57,6 +59,12 @@ func (h *RunHandler) WithRunExecutor(executor RunExecutor) *RunHandler {
 // WithReviewer enables completed-run review generation before approval flow.
 func (h *RunHandler) WithReviewer(reviewer ReviewService) *RunHandler {
 	h.reviewer = reviewer
+	return h
+}
+
+// WithRepositoryGate freezes and verifies reviewed source before PR approval.
+func (h *RunHandler) WithRepositoryGate(gate repogate.ReviewCandidateGate) *RunHandler {
+	h.repositoryGate = gate
 	return h
 }
 
@@ -356,13 +364,29 @@ func (h *RunHandler) HandleReviewCompleted(msg *nats.Msg) error {
 		RunID     string `json:"run_id"`
 		TaskID    string `json:"task_id"`
 		Status    string `json:"status"`
-		RiskLevel string `json:"risk_level"`
+		RiskLevel  string `json:"risk_level"`
+		Approvable bool   `json:"approvable"`
 	}
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		return fmt.Errorf("unmarshal review completed event: %w", err)
 	}
 
 	h.logger.Info("handling review completed", "run_id", payload.RunID, "task_id", payload.TaskID)
+
+	var candidate repogate.Record
+	if h.repositoryGate != nil {
+		var err error
+		candidate, err = h.repositoryGate.PrepareReviewedCandidate(context.Background(), payload.RunID, payload.TaskID)
+		if err != nil {
+			if errors.Is(err, repogate.ErrReviewNotApprovable) || errors.Is(err, repogate.ErrCandidateRejected) {
+				h.logger.Info("reviewed candidate blocked before approval",
+					"run_id", payload.RunID, "task_id", payload.TaskID, "error", err)
+				return ackMessage(msg)
+			}
+			return fmt.Errorf("prepare reviewed candidate: %w", err)
+		}
+		payload.TaskID = candidate.TaskID
+	}
 
 	// Check if there's already a pending approval for this task
 	var pendingCount int
@@ -386,6 +410,11 @@ func (h *RunHandler) HandleReviewCompleted(msg *nats.Msg) error {
 		"auto_created": true,
 		"reason":       "review_completed",
 		"run_id":       payload.RunID,
+	}
+	if candidate.CommitID != "" {
+		metadata["candidate_commit_id"] = candidate.CommitID
+		metadata["candidate_change_id"] = candidate.ChangeID
+		metadata["candidate_status"] = candidate.Status
 	}
 	metadataJSON, _ := json.Marshal(metadata)
 

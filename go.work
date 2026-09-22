@@ -17,8 +17,10 @@ use (
 	./packages/policies
 	./packages/prfactory
 	./packages/repo-intel
+	./packages/repogate
 	./packages/reviewer
 	./packages/runtimes
 	./packages/securityscan
+	./packages/taskgraph
 	./packages/vcs
 )

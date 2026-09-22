@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +54,93 @@ func (stubProvider) StreamLogs(ctx context.Context, sessionID string) (<-chan ru
 	out <- runtimes.LogLine{Stream: "stdout", Message: "log"}
 	close(out)
 	return out, nil
+}
+
+type publishingStubProvider struct {
+	stubProvider
+	sessionID   string
+	workspaceID string
+	req         runtimes.VCSPublishRequest
+}
+
+func (p *publishingStubProvider) PublishVCS(_ context.Context, sessionID string, req runtimes.VCSPublishRequest) error {
+	p.sessionID = sessionID
+	p.req = req
+	return nil
+}
+
+func (p *publishingStubProvider) AttachSession(_ context.Context, sessionID, workspaceID string) (*runtimes.Session, error) {
+	p.sessionID = sessionID
+	p.workspaceID = workspaceID
+	return &runtimes.Session{ID: sessionID, WorkspaceID: workspaceID, Status: "ready", Provider: "stub"}, nil
+}
+
+func TestAttachWorkspaceHandler(t *testing.T) {
+	provider := &publishingStubProvider{}
+	h := NewHandler(provider, testLogger(t))
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/v1/workspaces/sess-recovered/attach", "application/json", strings.NewReader(`{"workspace_id":"workspace-1"}`))
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if provider.sessionID != "sess-recovered" || provider.workspaceID != "workspace-1" {
+		t.Fatalf("attach = %q/%q", provider.sessionID, provider.workspaceID)
+	}
+}
+
+func TestPublishVCSHandler(t *testing.T) {
+	provider := &publishingStubProvider{}
+	h := NewHandler(provider, testLogger(t))
+
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	reqBody, _ := json.Marshal(runtimes.VCSPublishRequest{
+		Ref:       "agent/task-1",
+		RemoteURL: "https://github.com/acme/app.git",
+		Env:       map[string]string{"GIT_TERMINAL_PROMPT": "0"},
+	})
+	resp, err := http.Post(ts.URL+"/v1/workspaces/sess-1/vcs/publish", "application/json", bytes.NewReader(reqBody))
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if provider.sessionID != "sess-1" {
+		t.Fatalf("sessionID = %q, want sess-1", provider.sessionID)
+	}
+	if provider.req.Ref != "agent/task-1" || provider.req.RemoteURL != "https://github.com/acme/app.git" {
+		t.Fatalf("publish request = %#v", provider.req)
+	}
+}
+
+func TestPublishVCSHandlerRejectsUnsupportedProvider(t *testing.T) {
+	h := NewHandler(stubProvider{}, testLogger(t))
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/v1/workspaces/sess-1/vcs/publish", "application/json", strings.NewReader(`{"ref":"agent/task-1"}`))
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
 }
 
 func TestHealthAndReady(t *testing.T) {

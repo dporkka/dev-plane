@@ -11,6 +11,8 @@ import (
 type recordedCommand struct {
 	name  string
 	args  []string
+	dir   string
+	env   map[string]string
 	stdin string
 }
 
@@ -19,7 +21,13 @@ type fakeRunner struct {
 }
 
 func (r *fakeRunner) Run(ctx context.Context, name string, args []string, opts commandOptions) (commandOutput, error) {
-	rec := recordedCommand{name: name, args: append([]string(nil), args...)}
+	rec := recordedCommand{name: name, args: append([]string(nil), args...), dir: opts.Dir}
+	if len(opts.Env) > 0 {
+		rec.env = make(map[string]string, len(opts.Env))
+		for key, value := range opts.Env {
+			rec.env[key] = value
+		}
+	}
 	if opts.Stdin != nil {
 		data, _ := io.ReadAll(opts.Stdin)
 		rec.stdin = string(data)
@@ -121,6 +129,55 @@ func TestDockerProviderCreateWorkspaceUsesIsolatedContainer(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(cp.args, " "), ":"+workspaceDir+"/") {
 		t.Fatalf("docker cp did not target workspace dir: %v", cp.args)
+	}
+}
+
+func TestDockerProviderPublishVCSUsesHostControlPlane(t *testing.T) {
+	runner := &fakeRunner{}
+	provider := dockerProviderWithSession(t, runner)
+
+	err := provider.PublishVCS(context.Background(), "sess-1", VCSPublishRequest{
+		Ref:       "agent/task-1",
+		RemoteURL: "https://github.com/acme/app.git",
+		Env: map[string]string{
+			"GIT_TERMINAL_PROMPT": "0",
+			"GIT_CONFIG_COUNT":    "1",
+			"GIT_CONFIG_KEY_0":    "http.https://github.com/.extraHeader",
+			"GIT_CONFIG_VALUE_0":  "Authorization: Basic secret-value",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVCS() error: %v", err)
+	}
+
+	if execCall := findCall(runner.calls, "docker", "exec"); execCall != nil {
+		t.Fatalf("privileged publish used sandbox docker exec: %#v", execCall)
+	}
+	cp := findCall(runner.calls, "docker", "cp")
+	if cp == nil {
+		t.Fatal("expected docker cp to stage reviewed workspace")
+	}
+	push := findCallWithArg(runner.calls, "git", "push")
+	if push == nil {
+		t.Fatal("expected host git push")
+	}
+	if push.dir == "" {
+		t.Fatal("host git push missing staging working directory")
+	}
+	if !containsArg(push.args, "https://github.com/acme/app.git") ||
+		!containsArg(push.args, "agent/task-1:refs/heads/agent/task-1") {
+		t.Fatalf("git push args = %v", push.args)
+	}
+	for _, arg := range push.args {
+		if strings.Contains(arg, "secret-value") {
+			t.Fatalf("credential leaked into process arguments: %v", push.args)
+		}
+	}
+	if push.env["GIT_CONFIG_VALUE_0"] != "Authorization: Basic secret-value" {
+		t.Fatalf("host git env missing scoped auth: %#v", push.env)
+	}
+	if !containsArg(push.args, "core.hooksPath=/dev/null") {
+		t.Fatalf("git push did not disable repository hooks: %v", push.args)
 	}
 }
 

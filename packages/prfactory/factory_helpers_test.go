@@ -2,8 +2,6 @@ package prfactory
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -117,44 +115,29 @@ func TestBuildPRBody_HighRisk(t *testing.T) {
 	}
 }
 
-func TestConfigureGitAskPass(t *testing.T) {
-	cmd := &exec.Cmd{}
-	cleanup, err := configureGitAskPass(cmd, "secret-token")
-	if err != nil {
-		t.Fatalf("configureGitAskPass: %v", err)
+func TestGitHubPushEnvUsesEnvironmentAuth(t *testing.T) {
+	env := gitHubPushEnv("secret-token")
+	if env["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Fatalf("GIT_TERMINAL_PROMPT = %q, want 0", env["GIT_TERMINAL_PROMPT"])
 	}
-	defer cleanup()
-
-	script := getEnv(cmd, "GIT_ASKPASS")
-	if script == "" {
-		t.Fatal("GIT_ASKPASS not set")
+	if env["GIT_CONFIG_COUNT"] != "1" {
+		t.Fatalf("GIT_CONFIG_COUNT = %q, want 1", env["GIT_CONFIG_COUNT"])
 	}
-	if _, err := os.Stat(script); err != nil {
-		t.Fatalf("askpass script missing: %v", err)
+	if env["GIT_CONFIG_KEY_0"] != "http.https://github.com/.extraHeader" {
+		t.Fatalf("GIT_CONFIG_KEY_0 = %q", env["GIT_CONFIG_KEY_0"])
 	}
-	if getEnv(cmd, "GITHUB_TOKEN") != "secret-token" {
-		t.Errorf("GITHUB_TOKEN = %q, want secret-token", getEnv(cmd, "GITHUB_TOKEN"))
+	if !strings.HasPrefix(env["GIT_CONFIG_VALUE_0"], "Authorization: Basic ") {
+		t.Fatalf("GIT_CONFIG_VALUE_0 = %q", env["GIT_CONFIG_VALUE_0"])
 	}
-
-	content, err := os.ReadFile(script)
-	if err != nil {
-		t.Fatalf("read script: %v", err)
-	}
-	if !strings.Contains(string(content), "x-access-token") {
-		t.Errorf("script missing username helper: %s", content)
+	if strings.Contains(env["GIT_CONFIG_VALUE_0"], "secret-token") {
+		t.Fatal("raw token leaked into Git configuration value")
 	}
 }
 
-func TestConfigureGitAskPass_NoToken(t *testing.T) {
-	cmd := &exec.Cmd{}
-	cleanup, err := configureGitAskPass(cmd, "")
-	if err != nil {
-		t.Fatalf("configureGitAskPass: %v", err)
-	}
-	defer cleanup()
-
-	if getEnv(cmd, "GIT_ASKPASS") != "" {
-		t.Error("expected no GIT_ASKPASS when token is empty")
+func TestGitHubPushEnvWithoutTokenIsNonInteractive(t *testing.T) {
+	env := gitHubPushEnv("")
+	if len(env) != 1 || env["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Fatalf("env = %#v, want only noninteractive Git setting", env)
 	}
 }
 
@@ -263,12 +246,3 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 	}
 }
 
-func getEnv(cmd *exec.Cmd, key string) string {
-	prefix := key + "="
-	for _, e := range cmd.Env {
-		if strings.HasPrefix(e, prefix) {
-			return strings.TrimPrefix(e, prefix)
-		}
-	}
-	return ""
-}

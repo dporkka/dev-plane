@@ -53,6 +53,12 @@ type Provider interface {
 	StreamLogs(ctx context.Context, sessionID string) (<-chan LogLine, error)
 }
 
+// SessionAttacher is implemented by runtime providers that can reconstruct a
+// persisted session after a control-plane or runner restart.
+type SessionAttacher interface {
+	AttachSession(ctx context.Context, sessionID, workspaceID string) (*Session, error)
+}
+
 // CreateRequest contains parameters for creating a new workspace session.
 type CreateRequest struct {
 	RepositoryID string            `json:"repository_id"`

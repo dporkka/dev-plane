@@ -38,6 +38,16 @@ type Provider interface {
 }
 ```
 
+Source-control mutation semantics are centralized in `packages/vcs`. Runtime-backed branch publication is intentionally **not** an agent command. Providers that can publish reviewed revisions implement the separate privileged capability:
+
+```go
+type VCSWorkspacePublisher interface {
+    PublishVCS(ctx context.Context, sessionID string, req VCSPublishRequest) error
+}
+```
+
+This separation preserves the sandbox boundary: an agent workspace may remain fully network-isolated while the trusted runtime control plane publishes an approved revision to an explicit remote URL. `RemoteProvider` forwards this operation to the runner's authenticated `POST /v1/workspaces/{sessionID}/vcs/publish` endpoint.
+
 ### Session Lifecycle
 
 ```
@@ -137,6 +147,7 @@ Located in `packages/runtimes/docker.go`. The provider is dependency-light and s
 | `Restore` | Resets the workspace git repository to a snapshot commit |
 | `GetStatus` | Queries container state via Docker inspect |
 | `StreamLogs` | Streams `docker logs -f` into runtime log events |
+| `PublishVCS` | Copies the reviewed workspace to host staging and publishes through the shared VCS backend; the agent container keeps `--network none` and never receives GitHub credentials |
 
 Remaining work:
 
@@ -184,7 +195,7 @@ The `runner` service (`apps/runner`) exposes any in-process provider over HTTP. 
 | `RUNNER_AUTH_TOKEN` | Shared bearer token for runner requests |
 | `RUNNER_PORT` | Runner listen port (default `8082`) |
 
-`packages/runtimes/client.go` provides `RemoteProvider`, which implements the same `Provider` interface via the runner API.
+`packages/runtimes/client.go` provides `RemoteProvider`, which implements the same `Provider` interface via the runner API and forwards privileged VCS publication through the runner control plane. Publication credentials travel only on the authenticated control-plane request and are not exposed to agent commands.
 
 ## Future Providers
 

@@ -215,6 +215,9 @@ func TestStartRun(t *testing.T) {
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch"}).
 			AddRow("approved", "proj-1", "repo-1", workspaceID, "main"))
+	mock.ExpectQuery("SELECT dependency.id").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}))
 
 	// Insert agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
@@ -251,6 +254,36 @@ func TestStartRun(t *testing.T) {
 		t.Error("expected run_id in response")
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestStartRun_BlockedByDependency(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch"}).
+			AddRow("approved", "proj-1", "repo-1", nil, "main"))
+	mock.ExpectQuery("SELECT dependency.id").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "status"}).AddRow("task-blocker", "running"))
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.StartRun(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d; body=%s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}

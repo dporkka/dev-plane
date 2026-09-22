@@ -158,6 +158,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
 
+
+-- =====================================================
+-- 6a. task_dependencies
+-- =====================================================
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    task_id             UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    depends_on_task_id  UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (task_id, depends_on_task_id),
+    CHECK (task_id <> depends_on_task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_task_id
+    ON task_dependencies(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on_task_id
+    ON task_dependencies(depends_on_task_id);
+
 -- =====================================================
 -- 7. agent_runs
 -- =====================================================
@@ -235,8 +252,35 @@ CREATE INDEX IF NOT EXISTS idx_review_reports_run_id ON review_reports(run_id);
 CREATE INDEX IF NOT EXISTS idx_review_reports_risk_level ON review_reports(risk_level);
 CREATE INDEX IF NOT EXISTS idx_review_reports_created_at ON review_reports(created_at);
 
+
 -- =====================================================
--- 8b. pull_requests
+-- 8b. verified_candidates
+-- =====================================================
+CREATE TABLE IF NOT EXISTS verified_candidates (
+    run_id                UUID PRIMARY KEY REFERENCES agent_runs(id) ON DELETE CASCADE,
+    task_id               UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    workspace_id          UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    commit_id             TEXT NOT NULL,
+    change_id             TEXT,
+    source_branch         TEXT NOT NULL,
+    target_branch         TEXT NOT NULL,
+    integration_branch    TEXT,
+    integrated_commit     TEXT,
+    status                TEXT NOT NULL,
+    initial_verification  JSONB NOT NULL DEFAULT '{}',
+    final_verification    JSONB NOT NULL DEFAULT '{}',
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_verified_candidates_task_id
+    ON verified_candidates(task_id);
+CREATE INDEX IF NOT EXISTS idx_verified_candidates_status
+    ON verified_candidates(status);
+
+
+-- =====================================================
+-- 8c. pull_requests
 -- =====================================================
 CREATE TABLE IF NOT EXISTS pull_requests (
     id              UUID PRIMARY KEY,
@@ -264,7 +308,7 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created_at);
 
 -- =====================================================
--- 8c. deployments
+-- 8d. deployments
 -- =====================================================
 CREATE TABLE IF NOT EXISTS deployments (
     id              UUID PRIMARY KEY,

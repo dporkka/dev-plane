@@ -79,6 +79,38 @@ func (p *RemoteProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	return &sess, nil
 }
 
+// AttachSession asks a remote runner to reconstruct a persisted session.
+func (p *RemoteProvider) AttachSession(ctx context.Context, sessionID, workspaceID string) (*Session, error) {
+	body, err := json.Marshal(map[string]string{"workspace_id": workspaceID})
+	if err != nil {
+		return nil, fmt.Errorf("marshal attach request: %w", err)
+	}
+	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/attach"
+	httpReq, err := p.newRequest(ctx, http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("attach workspace request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, ErrSessionNotFound
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, p.readError(resp)
+	}
+
+	var sess Session
+	if err := json.NewDecoder(resp.Body).Decode(&sess); err != nil {
+		return nil, fmt.Errorf("decode attach workspace response: %w", err)
+	}
+	return &sess, nil
+}
+
 // DestroyWorkspace tears down a workspace session on the runner.
 func (p *RemoteProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
 	path := "/v1/workspaces/" + url.PathEscape(sessionID)
@@ -93,6 +125,36 @@ func (p *RemoteProvider) DestroyWorkspace(ctx context.Context, sessionID string)
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return p.readError(resp)
+	}
+	return nil
+}
+
+// PublishVCS asks the remote runner control plane to publish a reviewed
+// workspace revision. The runner owns the privileged network boundary.
+func (p *RemoteProvider) PublishVCS(ctx context.Context, sessionID string, req VCSPublishRequest) error {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return fmt.Errorf("marshal VCS publish request: %w", err)
+	}
+
+	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/vcs/publish"
+	httpReq, err := p.newRequest(ctx, http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return fmt.Errorf("publish VCS request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrSessionNotFound
+	}
 	if resp.StatusCode != http.StatusOK {
 		return p.readError(resp)
 	}

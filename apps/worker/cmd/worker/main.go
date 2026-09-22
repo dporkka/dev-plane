@@ -34,7 +34,9 @@ import (
 	"github.com/ai-dev-control-plane/crypto"
 	"github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/prfactory"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/repogate"
 	"github.com/ai-dev-control-plane/runtimes"
 
 	"github.com/ai-dev-control-plane/worker/internal/handlers"
@@ -141,8 +143,15 @@ func main() {
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
 	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
-	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
+	repositoryGate := repogate.New(database.DB, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
+	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+		WithRunExecutor(runExecutor).
+		WithReviewer(reviewService).
+		WithRepositoryGate(repositoryGate)
+	prFactory := prfactory.NewFactory(database.DB, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
+	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus).
+		WithPullRequestCreator(prFactory).
+		WithRepositoryGate(repositoryGate)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
 

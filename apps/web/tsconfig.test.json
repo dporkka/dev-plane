@@ -7,6 +7,6 @@
     "moduleResolution": "node",
     "jsx": "react-jsx"
   },
-  "include": ["lib/auth-token.ts", "lib/auth-token.test.ts"],
+  "include": ["lib/auth-token.ts", "lib/auth-token.test.ts", "lib/openapi-types.ts", "lib/openapi-types.test.ts"],
   "exclude": ["node_modules", ".next"]
 }

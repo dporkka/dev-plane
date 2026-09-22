@@ -83,12 +83,17 @@ func TestMergePullRequest(t *testing.T) {
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
 			now, now, "owner", "repo", "pr_created",
 		))
+	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE pull_requests SET state").
 		WithArgs(sqlmock.AnyArg(), prID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE tasks SET status").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectQuery("SELECT DISTINCT edge.task_id").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"task_id"}))
+	mock.ExpectCommit()
 
 	rec := httptest.NewRecorder()
 	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"squash"}`))
