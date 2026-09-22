@@ -38,11 +38,21 @@ type PublishRequest struct {
 	Env           map[string]string
 }
 
+// ArtifactRevision identifies the immutable artifact state associated with a
+// source-control snapshot. Digests use the artifact store's algorithm:hex form.
+type ArtifactRevision struct {
+	ManifestDigest string `json:"manifest_digest,omitempty"`
+	VersionDigest  string `json:"version_digest,omitempty"`
+}
+
 // Revision identifies the immutable Git commit and, when available, the
-// evolution-stable VCS change identifier.
+// evolution-stable VCS change identifier plus the non-code artifact state that
+// was captured at the same logical snapshot.
 type Revision struct {
-	CommitID string `json:"commit_id"`
-	ChangeID string `json:"change_id,omitempty"`
+	CommitID               string `json:"commit_id"`
+	ChangeID               string `json:"change_id,omitempty"`
+	ArtifactManifestDigest string `json:"artifact_manifest_digest,omitempty"`
+	ArtifactVersionDigest  string `json:"artifact_version_digest,omitempty"`
 }
 
 // Workspace binds an agent task to one isolated source-control workspace.

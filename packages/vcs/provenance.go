@@ -24,17 +24,19 @@ const (
 // ProvenanceEvent is intentionally VCS-neutral so it can later be written to
 // AgentVault, NATS, Dolt, Postgres, or an append-only event DAG.
 type ProvenanceEvent struct {
-	ID         string            `json:"id"`
-	Timestamp  time.Time         `json:"timestamp"`
-	Kind       EventKind         `json:"kind"`
-	Backend    string            `json:"backend"`
-	TaskID     string            `json:"task_id"`
-	AgentID    string            `json:"agent_id"`
-	Workspace  string            `json:"workspace"`
-	PublishRef string            `json:"publish_ref,omitempty"`
-	CommitID   string            `json:"commit_id,omitempty"`
-	ChangeID   string            `json:"change_id,omitempty"`
-	Attributes map[string]string `json:"attributes,omitempty"`
+	ID                     string            `json:"id"`
+	Timestamp              time.Time         `json:"timestamp"`
+	Kind                   EventKind         `json:"kind"`
+	Backend                string            `json:"backend"`
+	TaskID                 string            `json:"task_id"`
+	AgentID                string            `json:"agent_id"`
+	Workspace              string            `json:"workspace"`
+	PublishRef             string            `json:"publish_ref,omitempty"`
+	CommitID               string            `json:"commit_id,omitempty"`
+	ChangeID               string            `json:"change_id,omitempty"`
+	ArtifactManifestDigest string            `json:"artifact_manifest_digest,omitempty"`
+	ArtifactVersionDigest  string            `json:"artifact_version_digest,omitempty"`
+	Attributes             map[string]string `json:"attributes,omitempty"`
 }
 
 type Recorder interface {

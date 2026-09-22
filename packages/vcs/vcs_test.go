@@ -192,6 +192,57 @@ func (r *memoryRecorder) Record(_ context.Context, event ProvenanceEvent) error 
 	return nil
 }
 
+func TestManagerSnapshotWithArtifactsCarriesProvenance(t *testing.T) {
+	recorder := &memoryRecorder{}
+	manager, err := NewManager(fakeBackend{snapshot: Revision{CommitID: "c-art", ChangeID: "change-art"}}, recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.now = func() time.Time { return time.Unix(789, 0).UTC() }
+	workspace := Workspace{
+		TaskID: "task-art", AgentID: "media-agent", WorkspacePath: "/work/task-art",
+		Name: "task-art", PublishRef: "agent/task-art",
+	}
+	revision, err := manager.SnapshotWithArtifacts(context.Background(), workspace, "update media", ArtifactRevision{
+		ManifestDigest: "sha256:manifest",
+		VersionDigest:  "sha256:version",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if revision.ArtifactManifestDigest != "sha256:manifest" || revision.ArtifactVersionDigest != "sha256:version" {
+		t.Fatalf("artifact revision missing: %+v", revision)
+	}
+	if len(recorder.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(recorder.events))
+	}
+	event := recorder.events[0]
+	if event.ArtifactManifestDigest != "sha256:manifest" || event.ArtifactVersionDigest != "sha256:version" {
+		t.Fatalf("artifact provenance missing: %+v", event)
+	}
+	if err := manager.Publish(context.Background(), workspace, revision); err != nil {
+		t.Fatal(err)
+	}
+	published := recorder.events[1]
+	if published.ArtifactManifestDigest != revision.ArtifactManifestDigest ||
+		published.ArtifactVersionDigest != revision.ArtifactVersionDigest {
+		t.Fatalf("published artifact provenance missing: %+v", published)
+	}
+}
+
+func TestManagerRejectsArtifactVersionWithoutManifest(t *testing.T) {
+	manager, err := NewManager(fakeBackend{snapshot: Revision{CommitID: "c1"}}, &memoryRecorder{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.SnapshotWithArtifacts(context.Background(), Workspace{WorkspacePath: "/work"}, "snapshot", ArtifactRevision{
+		VersionDigest: "sha256:version-only",
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires manifest digest") {
+		t.Fatalf("expected artifact pairing validation, got %v", err)
+	}
+}
+
 func TestManagerCarriesTaskAndAgentProvenance(t *testing.T) {
 	recorder := &memoryRecorder{}
 	manager, err := NewManager(fakeBackend{snapshot: Revision{CommitID: "c1", ChangeID: "change1"}}, recorder)

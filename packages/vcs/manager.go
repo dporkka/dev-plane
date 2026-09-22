@@ -68,13 +68,30 @@ func (m *Manager) Prepare(ctx context.Context, req PrepareRequest) (Workspace, e
 }
 
 func (m *Manager) Snapshot(ctx context.Context, workspace Workspace, message string) (Revision, error) {
+	return m.SnapshotWithArtifacts(ctx, workspace, message, ArtifactRevision{})
+}
+
+// SnapshotWithArtifacts captures the source-control revision and binds it to
+// immutable artifact manifest/version digests from the artifact CAS. This keeps
+// Git/Jujutsu and non-code payload history aligned without putting binary
+// payloads in Git.
+func (m *Manager) SnapshotWithArtifacts(ctx context.Context, workspace Workspace, message string, artifacts ArtifactRevision) (Revision, error) {
+	if artifacts.VersionDigest != "" && artifacts.ManifestDigest == "" {
+		return Revision{}, fmt.Errorf("artifact version digest requires manifest digest")
+	}
 	revision, err := m.backend.Snapshot(ctx, workspace.WorkspacePath, message)
 	if err != nil {
 		return Revision{}, err
 	}
+	revision.ArtifactManifestDigest = artifacts.ManifestDigest
+	revision.ArtifactVersionDigest = artifacts.VersionDigest
 	if err := m.record(ctx, workspace, ProvenanceEvent{
-		Kind: EventSnapshotCreated, CommitID: revision.CommitID, ChangeID: revision.ChangeID,
-		Attributes: map[string]string{"message": message},
+		Kind:                   EventSnapshotCreated,
+		CommitID:               revision.CommitID,
+		ChangeID:               revision.ChangeID,
+		ArtifactManifestDigest: revision.ArtifactManifestDigest,
+		ArtifactVersionDigest:  revision.ArtifactVersionDigest,
+		Attributes:             map[string]string{"message": message},
 	}); err != nil {
 		return Revision{}, err
 	}
@@ -86,7 +103,11 @@ func (m *Manager) Publish(ctx context.Context, workspace Workspace, revision Rev
 		return err
 	}
 	return m.record(ctx, workspace, ProvenanceEvent{
-		Kind: EventPublished, CommitID: revision.CommitID, ChangeID: revision.ChangeID,
+		Kind:                   EventPublished,
+		CommitID:               revision.CommitID,
+		ChangeID:               revision.ChangeID,
+		ArtifactManifestDigest: revision.ArtifactManifestDigest,
+		ArtifactVersionDigest:  revision.ArtifactVersionDigest,
 	})
 }
 

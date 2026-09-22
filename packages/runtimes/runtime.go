@@ -116,9 +116,12 @@ type LogLine struct {
 
 // Snapshot captures a point-in-time state of a workspace.
 type Snapshot struct {
-	ID          string    `json:"id"`
-	SessionID   string    `json:"session_id"`
-	GitCommit   string    `json:"git_commit,omitempty"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID                     string    `json:"id"`
+	SessionID              string    `json:"session_id"`
+	GitCommit              string    `json:"git_commit,omitempty"`
+	VCSChangeID            string    `json:"vcs_change_id,omitempty"`
+	ArtifactManifestDigest string    `json:"artifact_manifest_digest,omitempty"`
+	ArtifactVersionDigest  string    `json:"artifact_version_digest,omitempty"`
+	Description            string    `json:"description"`
+	CreatedAt              time.Time `json:"created_at"`
 }
