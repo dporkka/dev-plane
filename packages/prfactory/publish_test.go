@@ -127,7 +127,6 @@ func TestPublishWorkspaceBranchRejectsUnregisteredRuntime(t *testing.T) {
 	}
 }
 
-
 func TestPublishWorkspaceRevisionCarriesReviewedCommitToRuntime(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	provider := &publishRuntimeProvider{}
