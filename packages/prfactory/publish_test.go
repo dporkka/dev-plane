@@ -13,6 +13,8 @@ type publishRuntimeProvider struct {
 	attachedSession string
 	attachedWS      string
 	commands        []runtimes.Command
+	publishSession  string
+	publishReq      runtimes.VCSPublishRequest
 }
 
 func (p *publishRuntimeProvider) CreateWorkspace(context.Context, runtimes.CreateRequest) (*runtimes.Session, error) {
@@ -62,6 +64,12 @@ func (p *publishRuntimeProvider) AttachSession(_ context.Context, sessionID, wor
 	return &runtimes.Session{ID: sessionID, WorkspaceID: workspaceID, Status: "ready", Provider: "docker"}, nil
 }
 
+func (p *publishRuntimeProvider) PublishVCS(_ context.Context, sessionID string, req runtimes.VCSPublishRequest) error {
+	p.publishSession = sessionID
+	p.publishReq = req
+	return nil
+}
+
 func TestPublishWorkspaceBranchUsesRuntimeVCSBackend(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	provider := &publishRuntimeProvider{}
@@ -76,34 +84,32 @@ func TestPublishWorkspaceBranchUsesRuntimeVCSBackend(t *testing.T) {
 		RuntimeSessionID: &sessionID,
 	}
 
-	if err := factory.publishWorkspaceBranch(context.Background(), workspace, "agent/task-1"); err != nil {
+	if err := factory.publishWorkspaceBranch(context.Background(), workspace, "agent/task-1", "https://github.com/acme/app.git"); err != nil {
 		t.Fatalf("publishWorkspaceBranch() error = %v", err)
 	}
 	if provider.attachedSession != sessionID || provider.attachedWS != workspace.ID {
 		t.Fatalf("attached = %q/%q, want %q/%q", provider.attachedSession, provider.attachedWS, sessionID, workspace.ID)
 	}
-	if len(provider.commands) != 1 {
-		t.Fatalf("commands = %d, want 1: %#v", len(provider.commands), provider.commands)
+	if len(provider.commands) != 0 {
+		t.Fatalf("agent command path used for privileged publication: %#v", provider.commands)
 	}
-
-	cmd := provider.commands[0]
-	if cmd.Dir != "." {
-		t.Fatalf("command dir = %q, want .", cmd.Dir)
+	if provider.publishSession != sessionID {
+		t.Fatalf("publish session = %q, want %q", provider.publishSession, sessionID)
 	}
-	if !strings.Contains(cmd.Command, "'git' 'push' '-u' 'origin' 'agent/task-1'") {
-		t.Fatalf("command = %q, want shared git publish", cmd.Command)
+	if provider.publishReq.Ref != "agent/task-1" {
+		t.Fatalf("publish ref = %q", provider.publishReq.Ref)
 	}
-	if strings.Contains(cmd.Command, "ghp_runtime_secret") {
-		t.Fatalf("token leaked into command: %q", cmd.Command)
+	if provider.publishReq.RemoteURL != "https://github.com/acme/app.git" {
+		t.Fatalf("publish remote = %q", provider.publishReq.RemoteURL)
 	}
-	if cmd.Env["GIT_TERMINAL_PROMPT"] != "0" {
-		t.Fatalf("GIT_TERMINAL_PROMPT = %q, want 0", cmd.Env["GIT_TERMINAL_PROMPT"])
+	if provider.publishReq.Env["GIT_TERMINAL_PROMPT"] != "0" {
+		t.Fatalf("GIT_TERMINAL_PROMPT = %q", provider.publishReq.Env["GIT_TERMINAL_PROMPT"])
 	}
-	if cmd.Env["GIT_CONFIG_KEY_0"] != "http.extraHeader" {
-		t.Fatalf("GIT_CONFIG_KEY_0 = %q", cmd.Env["GIT_CONFIG_KEY_0"])
+	if provider.publishReq.Env["GIT_CONFIG_KEY_0"] != "http.https://github.com/.extraHeader" {
+		t.Fatalf("GIT_CONFIG_KEY_0 = %q", provider.publishReq.Env["GIT_CONFIG_KEY_0"])
 	}
-	if !strings.HasPrefix(cmd.Env["GIT_CONFIG_VALUE_0"], "Authorization: Basic ") {
-		t.Fatalf("GIT_CONFIG_VALUE_0 = %q", cmd.Env["GIT_CONFIG_VALUE_0"])
+	if !strings.HasPrefix(provider.publishReq.Env["GIT_CONFIG_VALUE_0"], "Authorization: Basic ") {
+		t.Fatalf("GIT_CONFIG_VALUE_0 = %q", provider.publishReq.Env["GIT_CONFIG_VALUE_0"])
 	}
 }
 
@@ -114,7 +120,7 @@ func TestPublishWorkspaceBranchRejectsUnregisteredRuntime(t *testing.T) {
 		ID:               "workspace-1",
 		RuntimeProvider:  "docker",
 		RuntimeSessionID: &sessionID,
-	}, "agent/task-1")
+	}, "agent/task-1", "https://github.com/acme/app.git")
 	if err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("error = %v, want unregistered runtime error", err)
 	}
