@@ -27,6 +27,7 @@ import (
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/prfactory"
+	"github.com/ai-dev-control-plane/taskgraph"
 )
 
 // PullRequestResponse is the API representation of a pull request.
@@ -460,7 +461,14 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	if _, err := h.db.ExecContext(ctx, `
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("begin merge state transaction: %w", err))
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE pull_requests SET state = 'merged', merged_at = $1, updated_at = $1
 		WHERE id = $2
 	`, now, id); err != nil {
@@ -468,7 +476,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err := h.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1
 		WHERE id = $2
 	`, now, taskID); err != nil {
@@ -476,15 +484,45 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	eligibleDependents, err := taskgraph.EligibleDependents(ctx, tx, taskID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("resolve newly eligible dependent tasks: %w", err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("commit merge state transaction: %w", err))
+		return
+	}
+
 	if h.eventBus != nil {
-		event := map[string]interface{}{
-			"pr_id":      id,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
-			"timestamp":  now.Format(time.RFC3339),
+		completedData, _ := json.Marshal(events.TaskEvent{
+			TaskID: taskID,
+			Status: string(models.TaskStatusDone),
+		})
+		if pubErr := h.eventBus.Publish(events.TaskCompleted, completedData); pubErr != nil {
+			h.logger.Warn("failed to publish tasks.completed event", "error", pubErr)
 		}
-		data, _ := json.Marshal(event)
+		for _, dependentTaskID := range eligibleDependents {
+			unlockedData, _ := json.Marshal(map[string]interface{}{
+				"task_id":             dependentTaskID,
+				"unlocked_by_task_id": taskID,
+				"status":              "ready",
+				"timestamp":           now.Format(time.RFC3339),
+			})
+			if pubErr := h.eventBus.Publish(events.TaskDependenciesSatisfied, unlockedData); pubErr != nil {
+				h.logger.Warn("failed to publish task dependency unlock event",
+					"task_id", dependentTaskID, "error", pubErr)
+			}
+		}
+
+		mergeEvent := map[string]interface{}{
+			"pr_id":     id,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"sha":       mergeResult.SHA,
+			"timestamp": now.Format(time.RFC3339),
+		}
+		data, _ := json.Marshal(mergeEvent)
 		if pubErr := h.eventBus.Publish(events.PRMerged, data); pubErr != nil {
 			h.logger.Warn("failed to publish pr.merged event", "error", pubErr)
 		}
