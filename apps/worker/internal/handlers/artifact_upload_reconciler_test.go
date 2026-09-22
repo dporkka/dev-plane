@@ -29,9 +29,9 @@ func TestArtifactUploadReconcilerExpiresIncompleteMultipart(t *testing.T) {
 	insertReconcileUpload(t, db, reconcileUploadFixture{
 		ID: "upload-expired", Status: "initiated",
 		StagingKey: "uploads/ws/upload-expired", ProviderUploadID: "provider-1",
-		DigestHex: artifactstore.HashBytes([]byte("payload")).Hex,
+		DigestHex:    artifactstore.HashBytes([]byte("payload")).Hex,
 		ExpectedSize: int64(len("payload")),
-		ExpiresAt: now.Add(-time.Minute), UpdatedAt: now.Add(-time.Hour),
+		ExpiresAt:    now.Add(-time.Minute), UpdatedAt: now.Add(-time.Hour),
 	})
 
 	reconciler := NewArtifactUploadReconciler(db, manager, slog.Default())
@@ -143,9 +143,9 @@ func TestArtifactUploadReconcilerResetsStaleFinalizingSession(t *testing.T) {
 	insertReconcileUpload(t, db, reconcileUploadFixture{
 		ID: "upload-finalizing", Status: "finalizing",
 		StagingKey: "uploads/ws/missing", ProviderUploadID: "provider-3",
-		DigestHex: artifactstore.HashBytes([]byte("payload")).Hex,
+		DigestHex:    artifactstore.HashBytes([]byte("payload")).Hex,
 		ExpectedSize: int64(len("payload")),
-		ExpiresAt: now.Add(time.Hour), UpdatedAt: now.Add(-10 * time.Minute),
+		ExpiresAt:    now.Add(time.Hour), UpdatedAt: now.Add(-10 * time.Minute),
 	})
 
 	reconciler := NewArtifactUploadReconciler(db, manager, slog.Default())
@@ -182,9 +182,9 @@ func TestArtifactUploadReconcilerSkipsActiveClaim(t *testing.T) {
 	insertReconcileUpload(t, db, reconcileUploadFixture{
 		ID: "upload-claimed", Status: "initiated",
 		StagingKey: "uploads/ws/claimed", ProviderUploadID: "provider-4",
-		DigestHex: artifactstore.HashBytes([]byte("payload")).Hex,
+		DigestHex:    artifactstore.HashBytes([]byte("payload")).Hex,
 		ExpectedSize: int64(len("payload")),
-		ExpiresAt: now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
+		ExpiresAt:    now.Add(-time.Hour), UpdatedAt: now.Add(-time.Hour),
 	})
 	if _, err := db.Exec(`
 		UPDATE artifact_uploads
