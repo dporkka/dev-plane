@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"log/slog"
@@ -142,6 +143,8 @@ func main() {
 		logger.Error("failed to initialize artifact storage", "error", err)
 		os.Exit(1)
 	}
+	artifactUploadReconciler := handlers.NewArtifactUploadReconciler(database.DB, artifactManager, logger)
+	startArtifactUploadReconciler(ctx, artifactUploadReconciler, logger)
 
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
@@ -338,7 +341,7 @@ func main() {
 
 	// Start the minimal health HTTP server used by container health checks.
 	healthPort := envOrDefault("WORKER_HEALTH_PORT", "8081")
-	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger)
+	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger, artifactUploadReconciler)
 	if healthAddr == "" {
 		logger.Error("failed to start worker health server", "port", healthPort)
 		os.Exit(1)
@@ -414,12 +417,28 @@ func envOrDefault(key, defaultValue string) string {
 // status payload. The server is shut down when the provided context is cancelled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
-func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
+func startHealthServer(
+	ctx context.Context,
+	port string,
+	logger *slog.Logger,
+	artifactMetrics ...*handlers.ArtifactUploadReconciler,
+) (string, func()) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"healthy"}`))
+	})
+	mux.HandleFunc("/metrics/artifact-uploads", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if len(artifactMetrics) == 0 || artifactMetrics[0] == nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"error":"artifact upload reconciler unavailable"}`))
+			return
+		}
+		if err := json.NewEncoder(w).Encode(artifactMetrics[0].MetricsSnapshot()); err != nil && logger != nil {
+			logger.Warn("failed to encode artifact upload metrics", "error", err)
+		}
 	})
 
 	listener, err := net.Listen("tcp", net.JoinHostPort("", port))

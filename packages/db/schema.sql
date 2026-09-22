@@ -328,6 +328,10 @@ CREATE TABLE IF NOT EXISTS artifact_uploads (
     artifact_id                UUID REFERENCES artifacts(id) ON DELETE SET NULL,
     error_message              TEXT,
     expires_at                 TIMESTAMPTZ NOT NULL,
+    reconciliation_claim       TEXT,
+    reconciliation_claim_expires_at TIMESTAMPTZ,
+    reconciliation_attempts    INTEGER NOT NULL DEFAULT 0,
+    reconciled_at              TIMESTAMPTZ,
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CHECK (expected_size >= 0),
@@ -341,6 +345,8 @@ CREATE INDEX IF NOT EXISTS idx_artifact_uploads_status
     ON artifact_uploads(status, expires_at);
 CREATE INDEX IF NOT EXISTS idx_artifact_uploads_initiated_by
     ON artifact_uploads(initiated_by);
+CREATE INDEX IF NOT EXISTS idx_artifact_uploads_reconciliation
+    ON artifact_uploads(status, reconciliation_claim_expires_at, updated_at);
 
 -- =====================================================
 -- 8b. review_reports

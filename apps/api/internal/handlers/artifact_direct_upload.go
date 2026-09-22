@@ -255,6 +255,10 @@ func (h *Handler) CompleteArtifactUpload(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusConflict, errors.New("artifact upload was aborted"))
 		return
 	}
+	if upload.Status == "cleanup_pending" {
+		respond.Error(w, http.StatusConflict, errors.New("artifact upload cleanup is pending"))
+		return
+	}
 	if time.Now().UTC().After(upload.ExpiresAt) && upload.Status == "initiated" {
 		respond.Error(w, http.StatusGone, errors.New("artifact upload session expired"))
 		return

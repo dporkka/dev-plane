@@ -62,3 +62,34 @@ func startArtifactBlockerReconciler(ctx context.Context, handler *handlers.RunHa
 		}
 	}()
 }
+
+func startArtifactUploadReconciler(
+	ctx context.Context,
+	reconciler *handlers.ArtifactUploadReconciler,
+	logger *slog.Logger,
+) {
+	if reconciler == nil {
+		return
+	}
+	go func() {
+		run := func() {
+			reconcileCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			if err := reconciler.Reconcile(reconcileCtx); err != nil {
+				logger.Warn("artifact upload reconciliation failed", "error", err)
+			}
+		}
+
+		run()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				run()
+			}
+		}
+	}()
+}
