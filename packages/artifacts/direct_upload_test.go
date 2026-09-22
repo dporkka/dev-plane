@@ -43,7 +43,6 @@ func TestMultipartPartSizeRaisesPartSizeForTenThousandLimit(t *testing.T) {
 	}
 }
 
-
 func TestMultipartPartSizeRejectsZero(t *testing.T) {
 	if _, _, err := MultipartPartSize(0, 0); err == nil {
 		t.Fatal("expected zero-byte multipart upload to be rejected")

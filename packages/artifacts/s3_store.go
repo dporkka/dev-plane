@@ -554,7 +554,6 @@ func (s *S3Store) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-
 func (s *S3Store) responseError(resp *http.Response, operation string) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))
 	message := strings.TrimSpace(string(body))
