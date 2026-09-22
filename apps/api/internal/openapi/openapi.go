@@ -2401,7 +2401,7 @@ func buildPaths() map[string]PathItem {
 		Post: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},
 			Summary:     "Begin direct multipart artifact upload",
-			Description: "Creates a resumable S3/R2 multipart upload to a temporary staging object, optionally enables provider-side CRC64/NVME transport validation, and returns an initial batch of presigned UploadPart URLs."
+			Description: "Creates a resumable S3/R2 multipart upload to a temporary staging object, optionally enables provider-side CRC64/NVME transport validation, and returns an initial batch of presigned UploadPart URLs.",
 			OperationID: "beginArtifactUpload",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
@@ -2457,7 +2457,7 @@ func buildPaths() map[string]PathItem {
 		Post: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},
 			Summary:     "Complete and verify direct artifact upload",
-			Description: "Completes multipart upload and proves the SHA-256 CAS identity. AWS S3-compatible backends may compute a full-object SHA-256 with server-side CopyObject for eligible objects; unsupported backends and larger objects fall back to streaming SHA-256. CRC64/NVME, when enabled, is an additional transport-integrity check."
+			Description: "Completes multipart upload and proves the SHA-256 CAS identity. AWS S3-compatible backends may compute a full-object SHA-256 with server-side CopyObject for eligible objects; unsupported backends and larger objects fall back to streaming SHA-256. CRC64/NVME, when enabled, is an additional transport-integrity check.",
 			OperationID: "completeArtifactUpload",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
