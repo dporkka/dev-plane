@@ -2239,9 +2239,9 @@ func buildPaths() map[string]PathItem {
 	paths["/api/v1/artifacts/{id}"] = PathItem{
 		Get: &Operation{
 			Tags:        []string{"Artifacts"},
-			Summary:     "Get artifact",
-			Description: "Returns artifact metadata or streams the artifact file.",
-			OperationID: "getArtifact",
+			Summary:     "Get legacy artifact",
+			Description: "Returns legacy artifact metadata or a locally stored file. CAS-backed clients should use /content and /metadata.",
+			OperationID: "getArtifactLegacy",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
 				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
@@ -2249,6 +2249,193 @@ func buildPaths() map[string]PathItem {
 			Responses: map[string]Response{
 				"200": {Description: "Artifact metadata or binary content"},
 				"404": {Description: "Artifact not found"},
+			},
+		},
+	}
+	paths["/api/v1/artifacts/{id}/metadata"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts"},
+			Summary:     "Get CAS artifact metadata",
+			OperationID: "getArtifactMetadata",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "CAS artifact metadata", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"404": {Description: "Artifact not found"},
+			},
+		},
+	}
+	paths["/api/v1/artifacts/{id}/content"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts"},
+			Summary:     "Materialize artifact content",
+			Description: "Streams the byte-exact artifact reconstructed from CAS chunks.",
+			OperationID: "materializeArtifact",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Artifact binary content"},
+				"404": {Description: "Artifact not found"},
+				"503": {Description: "Artifact storage unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/artifacts/diff"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts"},
+			Summary:     "Diff two artifact versions",
+			Description: "Uses the richest common semantic representation available, falling back to payload digests.",
+			OperationID: "diffArtifacts",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{
+						Type:     "object",
+						Required: []string{"before_id", "after_id"},
+						Properties: map[string]*Schema{
+							"before_id": {Type: "string"},
+							"after_id":  {Type: "string"},
+						},
+					}},
+				},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Semantic artifact diff", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"400": {Description: "Invalid artifact pair"},
+				"404": {Description: "Artifact not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/artifacts"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Upload workspace artifact",
+			Description: "Streams a raw file into content-defined CAS chunks, runs supported semantic adapters, and records a new logical artifact version.",
+			OperationID: "uploadWorkspaceArtifact",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "path", In: "query", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Token", In: "header", Required: false, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Generation", In: "header", Required: false, Schema: &Schema{Type: "integer"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/octet-stream": {Schema: &Schema{Type: "string", Format: "binary"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Artifact stored", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"400": {Description: "Invalid artifact"},
+				"404": {Description: "Workspace not found"},
+				"423": {Description: "Valid write lease required"},
+				"503": {Description: "Artifact storage unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/artifact-leases"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Get artifact write lease",
+			OperationID: "getArtifactLease",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "path", In: "query", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Active lease", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"404": {Description: "Lease or workspace not found"},
+			},
+		},
+	}
+	for _, leasePath := range []struct {
+		path, operationID, summary string
+	}{
+		{"/api/v1/workspaces/{id}/artifact-leases/acquire", "acquireArtifactLease", "Acquire artifact write lease"},
+		{"/api/v1/workspaces/{id}/artifact-leases/renew", "renewArtifactLease", "Renew artifact write lease"},
+		{"/api/v1/workspaces/{id}/artifact-leases/release", "releaseArtifactLease", "Release artifact write lease"},
+	} {
+		paths[leasePath.path] = PathItem{
+			Post: &Operation{
+				Tags:        []string{"Artifacts", "Workspaces"},
+				Summary:     leasePath.summary,
+				OperationID: leasePath.operationID,
+				Security:    []SecurityRequirement{{"bearerAuth": {}}},
+				Parameters: []Parameter{
+					{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				},
+				RequestBody: &RequestBody{
+					Required: true,
+					Content: map[string]MediaType{
+						"application/json": {Schema: &Schema{Type: "object"}},
+					},
+				},
+				Responses: map[string]Response{
+					"200": {Description: "Lease operation completed", Content: map[string]MediaType{
+						"application/json": {Schema: &Schema{Type: "object"}},
+					}},
+					"404": {Description: "Lease or workspace not found"},
+					"409": {Description: "Lease expired or token/generation mismatch"},
+					"423": {Description: "Lease held by another actor"},
+				},
+			},
+		}
+	}
+	paths["/api/v1/workspaces/{id}/snapshots"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "List unified workspace snapshots",
+			OperationID: "listWorkspaceSnapshots",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Source + artifact snapshot history", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Type: "object"}}},
+				}},
+				"404": {Description: "Workspace not found"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/snapshot"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Create unified workspace snapshot",
+			Description: "Captures the source revision, synthesizes the latest workspace artifact manifest/version, and persists their binding.",
+			OperationID: "createWorkspaceSnapshot",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: false,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"description": {Type: "string"},
+					}}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Unified snapshot created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object"}},
+				}},
+				"404": {Description: "Workspace not found"},
 			},
 		},
 	}
