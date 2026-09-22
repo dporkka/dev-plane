@@ -35,9 +35,31 @@ func (r runtimeVCSRunner) Run(ctx context.Context, command vcs.Command) (vcs.Com
 		parts = append(parts, shellQuote(arg))
 	}
 
+	env := make(map[string]string, len(command.Env)+5)
+	for key, value := range command.Env {
+		env[key] = value
+	}
+	if _, ok := env["GIT_TERMINAL_PROMPT"]; !ok {
+		env["GIT_TERMINAL_PROMPT"] = "0"
+	}
+	if command.Name == "git" {
+		if _, ok := env["GIT_AUTHOR_NAME"]; !ok {
+			env["GIT_AUTHOR_NAME"] = "Dev Plane"
+		}
+		if _, ok := env["GIT_AUTHOR_EMAIL"]; !ok {
+			env["GIT_AUTHOR_EMAIL"] = "dev-plane@example.invalid"
+		}
+		if _, ok := env["GIT_COMMITTER_NAME"]; !ok {
+			env["GIT_COMMITTER_NAME"] = "Dev Plane"
+		}
+		if _, ok := env["GIT_COMMITTER_EMAIL"]; !ok {
+			env["GIT_COMMITTER_EMAIL"] = "dev-plane@example.invalid"
+		}
+	}
+
 	result, err := r.provider.ExecuteCommand(ctx, r.sessionID, runtimes.Command{
 		Command:     strings.Join(parts, " "),
-		Env:         command.Env,
+		Env:         env,
 		Timeout:     60 * time.Second,
 		UnsafeShell: true,
 	})
