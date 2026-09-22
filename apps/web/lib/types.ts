@@ -1,15 +1,7 @@
-// Task types
-export type TaskStatus =
-  | "backlog"
-  | "spec_review"
-  | "approved"
-  | "running"
-  | "reviewing"
-  | "pr_created"
-  | "done"
-  | "failed"
-  | "cancelled";
+import type { ApprovalResponse, ApprovalType, TaskStatus } from "./openapi-types";
+export type { ApprovalResponse, ApprovalType, TaskStatus } from "./openapi-types";
 
+// Task types
 export type Priority = "low" | "medium" | "high" | "urgent";
 export type RiskLevel = "low" | "medium" | "high" | "critical";
 
@@ -176,14 +168,6 @@ export interface Organization {
 }
 
 // Approval types
-export type ApprovalType =
-  | "spec"
-  | "execution"
-  | "deploy"
-  | "risky_action"
-  | "pr_create";
-export type ApprovalResponse = "approved" | "rejected";
-
 export interface Approval {
   id: string;
   task_id: string;
