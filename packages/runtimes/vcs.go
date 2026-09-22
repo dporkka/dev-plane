@@ -62,6 +62,7 @@ func (r runtimeVCSRunner) Run(ctx context.Context, command vcs.Command) (vcs.Com
 
 	result, err := r.provider.ExecuteCommand(ctx, r.sessionID, Command{
 		Command:     strings.Join(parts, " "),
+		Dir:         command.Dir,
 		Env:         env,
 		Timeout:     60 * time.Second,
 		UnsafeShell: true,
