@@ -24,6 +24,23 @@ func validateCloneRequest(req CloneRequest) error {
 	return nil
 }
 
+func validatePublishRemoteURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("parse publish remote URL: %w", err)
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("publish remote URL must not contain credentials")
+	}
+	if parsed.Scheme != "https" {
+		return fmt.Errorf("publish remote URL must use https")
+	}
+	if strings.TrimSpace(parsed.Host) == "" {
+		return fmt.Errorf("publish remote URL host is required")
+	}
+	return nil
+}
+
 func validateWorkspaceRequest(req WorkspaceRequest) error {
 	if strings.TrimSpace(req.RepositoryPath) == "" {
 		return fmt.Errorf("repository path is required")
