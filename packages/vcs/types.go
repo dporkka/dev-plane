@@ -35,6 +35,9 @@ type WorkspaceRequest struct {
 type PublishRequest struct {
 	WorkspacePath string `json:"workspace_path,omitempty"`
 	Ref           string `json:"ref"`
+	// SourceRevision pins publication to an immutable reviewed revision. When
+	// empty, backends preserve the legacy behavior of publishing Ref/working-copy state.
+	SourceRevision Revision `json:"source_revision,omitempty"`
 	// RemoteURL, when set, is used instead of the repository's configured
 	// origin. Privileged publishers should set it from trusted repository
 	// metadata so agent-controlled Git config cannot redirect credentials.
