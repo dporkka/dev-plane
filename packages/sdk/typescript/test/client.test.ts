@@ -103,6 +103,38 @@ describe('DevPlaneClient', () => {
     );
     assert.equal(state.init?.method, 'POST');
   });
+
+  test('begins direct artifact uploads with lease headers', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test', token: 'token-123' });
+    await client.beginArtifactUpload(
+      'ws-1',
+      {
+        path: 'movie.mp4',
+        size_bytes: 128,
+        sha256: 'ab'.repeat(32),
+        content_type: 'video/mp4',
+      },
+      {
+        lease: { token: 'lease-token', generation: 7 },
+      },
+    );
+
+    assert.equal(
+      state.input,
+      'http://api.test/api/v1/workspaces/ws-1/artifact-uploads',
+    );
+    assert.equal(state.init?.method, 'POST');
+    const headers = state.init?.headers as Record<string, string>;
+    assert.equal(headers.Authorization, 'Bearer token-123');
+    assert.equal(headers['X-Artifact-Lease-Token'], 'lease-token');
+    assert.equal(headers['X-Artifact-Lease-Generation'], '7');
+    assert.deepEqual(JSON.parse(state.init?.body as string), {
+      path: 'movie.mp4',
+      size_bytes: 128,
+      sha256: 'ab'.repeat(32),
+      content_type: 'video/mp4',
+    });
+  });
 });
 
 

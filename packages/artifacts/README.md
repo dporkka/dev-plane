@@ -71,13 +71,34 @@ store, err := NewS3Store(S3StoreConfig{
 })
 ```
 
-Uploads are staged to a temporary file while SHA-256 is computed, so large
-payloads are never buffered fully in memory. The resulting object key is derived
-only from its digest and uploads are de-duplicated with a HEAD check.
+Uploads through the server-side `BlobStore` path are staged to a temporary
+file while SHA-256 is computed, so payloads are never buffered fully in memory.
+The resulting object key is derived only from its digest and uploads are
+de-duplicated with a HEAD check.
 
-The first implementation uses single-object PUTs. Very large media should be
-split through the artifact chunk model; multipart/chunk orchestration is the
-next storage optimization rather than making Git carry large binaries.
+Very large media can bypass API-worker bandwidth through the direct multipart
+data plane. The API creates a random staging key and S3/R2 multipart upload,
+returns short-lived presigned `UploadPart` URLs in bounded batches, and persists
+the upload session in SQL. After the client completes all parts, Dev Plane
+streams the staged object through exact SHA-256 and size verification, promotes
+the verified object to its canonical CAS key with server-side `CopyObject`, and
+then runs normal semantic analysis/versioning.
+
+The TypeScript SDK exposes `uploadWorkspaceArtifactMultipart`, which adds:
+
+- streaming/incremental SHA-256 without materializing a whole large Blob,
+- bounded parallel part uploads,
+- exponential retry for transient part failures,
+- automatic presigned-URL refresh after a 403,
+- durable caller-owned checkpoints for resumable uploads,
+- progress callbacks and `AbortSignal` cancellation,
+- ordered ETag collection and automatic completion,
+- optional automatic abort/cleanup on terminal errors.
+
+Browser buckets must allow the application origin to `PUT` to presigned object
+URLs and must expose the `ETag` response header through CORS. The uploader
+rejects a successful part response with no visible ETag because multipart
+completion cannot be made reliable without it.
 
 ## Content-defined chunking
 
@@ -230,7 +251,7 @@ path. This prevents a restore from overwriting an agent's in-flight media edit.
 ## Next integrations
 
 1. Persist workspace snapshots automatically when agent candidates complete.
-2. Add direct multipart/presigned S3/R2 upload for very large media.
+2. Add background cleanup/reconciliation for expired or abandoned multipart staging sessions.
 3. Add richer DOCX structure (headings, tables, comments) and richer spreadsheet formatting semantics.
 4. Add visual pixel-diff/overlay derivatives for image review.
 5. Add structured merge engines that can relax lease requirements safely.
