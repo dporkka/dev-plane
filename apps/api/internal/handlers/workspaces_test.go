@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,70 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 )
+
+
+func TestDestroyWorkspaceDestroysRuntimeBeforeTombstone(t *testing.T) {
+	h, mock, cleanupDB := setupTest(t)
+	defer cleanupDB()
+
+	workspaceID := "ws-runtime-destroy"
+	provider := &fakeWorkspaceRuntimeProvider{}
+	h.WithRuntimeProvider("docker", provider)
+
+	expectAuthorizeWorkspace(mock, workspaceID)
+	mock.ExpectQuery("SELECT id, repository_id, task_id, worktree_path, runtime_provider, runtime_session_id, status").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "repository_id", "task_id", "worktree_path", "runtime_provider", "runtime_session_id", "status",
+		}).AddRow(workspaceID, "repo-1", nil, nil, "docker", "runtime-1", "ready"))
+	mock.ExpectExec("UPDATE workspaces").
+		WithArgs(sqlmock.AnyArg(), workspaceID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/destroy", workspaceID, nil)
+	rec := httptest.NewRecorder()
+	h.DestroyWorkspace(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	if provider.destroySession != "runtime-1" {
+		t.Fatalf("destroy session = %q, want runtime-1", provider.destroySession)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestDestroyWorkspaceRuntimeFailureDoesNotTombstone(t *testing.T) {
+	h, mock, cleanupDB := setupTest(t)
+	defer cleanupDB()
+
+	workspaceID := "ws-runtime-fail"
+	provider := &fakeWorkspaceRuntimeProvider{destroyErr: errors.New("docker unavailable")}
+	h.WithRuntimeProvider("docker", provider)
+
+	expectAuthorizeWorkspace(mock, workspaceID)
+	mock.ExpectQuery("SELECT id, repository_id, task_id, worktree_path, runtime_provider, runtime_session_id, status").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "repository_id", "task_id", "worktree_path", "runtime_provider", "runtime_session_id", "status",
+		}).AddRow(workspaceID, "repo-1", nil, nil, "docker", "runtime-2", "ready"))
+
+	req := workspaceRequest(http.MethodPost, "/workspaces/"+workspaceID+"/destroy", workspaceID, nil)
+	rec := httptest.NewRecorder()
+	h.DestroyWorkspace(rec, req)
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusBadGateway, rec.Code, rec.Body.String())
+	}
+	if provider.destroySession != "runtime-2" {
+		t.Fatalf("destroy session = %q, want runtime-2", provider.destroySession)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
 
 func TestGetWorkspaceDiff(t *testing.T) {
 	h, mock, cleanupDB := setupTest(t)
