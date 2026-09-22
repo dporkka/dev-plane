@@ -41,6 +41,18 @@ func (p *fakeProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (
 	return sess, nil
 }
 
+func (p *fakeProvider) AttachSession(ctx context.Context, sessionID, workspaceID string) (*Session, error) {
+	sess := &Session{
+		ID:          sessionID,
+		WorkspaceID: workspaceID,
+		Status:      "ready",
+		Provider:    "fake",
+		CreatedAt:   time.Now(),
+	}
+	p.sessions[sessionID] = sess
+	return sess, nil
+}
+
 func (p *fakeProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
 	if _, ok := p.sessions[sessionID]; !ok {
 		return ErrSessionNotFound
@@ -148,6 +160,7 @@ func (h *testHandler) registerRoutes(r chi.Router) {
 	}
 	r.Post("/v1/workspaces", h.createWorkspace)
 	r.Delete("/v1/workspaces/{sessionID}", h.destroyWorkspace)
+	r.Post("/v1/workspaces/{sessionID}/attach", h.attachWorkspace)
 	r.Post("/v1/workspaces/{sessionID}/commands", h.executeCommand)
 	r.Post("/v1/workspaces/{sessionID}/vcs/publish", h.publishVCS)
 	r.Get("/v1/workspaces/{sessionID}/files/*", h.readFile)
@@ -177,6 +190,28 @@ func (h *testHandler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.json(w, http.StatusCreated, sess)
+}
+
+func (h *testHandler) attachWorkspace(w http.ResponseWriter, r *http.Request) {
+	sid := chi.URLParam(r, "sessionID")
+	attacher, ok := h.provider.(SessionAttacher)
+	if !ok {
+		h.json(w, http.StatusNotImplemented, map[string]string{"error": "attach unsupported"})
+		return
+	}
+	var req struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.json(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	sess, err := attacher.AttachSession(r.Context(), sid, req.WorkspaceID)
+	if err != nil {
+		h.json(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	h.json(w, http.StatusOK, sess)
 }
 
 func (h *testHandler) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -371,6 +406,24 @@ func TestRemoteProviderCreateAndDestroyWorkspace(t *testing.T) {
 
 	if err := client.DestroyWorkspace(ctx, sess.ID); !errors.Is(err, ErrSessionNotFound) {
 		t.Fatalf("expected ErrSessionNotFound, got: %v", err)
+	}
+}
+
+func TestRemoteProviderAttachSession(t *testing.T) {
+	provider := newFakeProvider()
+	server := startTestRunnerServer(t, provider, "")
+	defer server.Close()
+
+	client := NewRemoteProvider(server.URL, "")
+	sess, err := client.AttachSession(context.Background(), "sess-recovered", "workspace-1")
+	if err != nil {
+		t.Fatalf("AttachSession error: %v", err)
+	}
+	if sess.ID != "sess-recovered" || sess.WorkspaceID != "workspace-1" {
+		t.Fatalf("session = %+v", sess)
+	}
+	if _, ok := provider.sessions["sess-recovered"]; !ok {
+		t.Fatal("runner provider did not reconstruct session")
 	}
 }
 
