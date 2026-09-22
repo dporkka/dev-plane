@@ -51,7 +51,7 @@ func TestS3StoreDirectMultipartUploadVerifyAndPromote(t *testing.T) {
 			}
 			payload, _ := io.ReadAll(r.Body)
 			state.parts[part] = payload
-			w.Header().Set("ETag", ""etag-"+strconv.Itoa(part)+""")
+			w.Header().Set("ETag", "\"etag-"+strconv.Itoa(part)+"\"")
 			w.WriteHeader(http.StatusOK)
 			return
 		}
