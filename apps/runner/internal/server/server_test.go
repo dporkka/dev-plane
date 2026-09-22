@@ -58,14 +58,42 @@ func (stubProvider) StreamLogs(ctx context.Context, sessionID string) (<-chan ru
 
 type publishingStubProvider struct {
 	stubProvider
-	sessionID string
-	req       runtimes.VCSPublishRequest
+	sessionID   string
+	workspaceID string
+	req         runtimes.VCSPublishRequest
 }
 
 func (p *publishingStubProvider) PublishVCS(_ context.Context, sessionID string, req runtimes.VCSPublishRequest) error {
 	p.sessionID = sessionID
 	p.req = req
 	return nil
+}
+
+func (p *publishingStubProvider) AttachSession(_ context.Context, sessionID, workspaceID string) (*runtimes.Session, error) {
+	p.sessionID = sessionID
+	p.workspaceID = workspaceID
+	return &runtimes.Session{ID: sessionID, WorkspaceID: workspaceID, Status: "ready", Provider: "stub"}, nil
+}
+
+func TestAttachWorkspaceHandler(t *testing.T) {
+	provider := &publishingStubProvider{}
+	h := NewHandler(provider, testLogger(t))
+	r := chi.NewRouter()
+	h.RegisterRoutes(r)
+	ts := httptest.NewServer(r)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/v1/workspaces/sess-recovered/attach", "application/json", strings.NewReader(`{"workspace_id":"workspace-1"}`))
+	if err != nil {
+		t.Fatalf("request error: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if provider.sessionID != "sess-recovered" || provider.workspaceID != "workspace-1" {
+		t.Fatalf("attach = %q/%q", provider.sessionID, provider.workspaceID)
+	}
 }
 
 func TestPublishVCSHandler(t *testing.T) {
