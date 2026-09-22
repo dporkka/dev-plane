@@ -133,7 +133,7 @@ func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, rep
 		return errors.New("reviewed agent run has no workspace")
 	}
 
-	workspace, provider, err := h.getRuntimeWorkspace(ctx, workspaceID.String)
+	workspace, err := h.loadWorkspaceRuntimeMetadata(ctx, workspaceID.String)
 	if err != nil {
 		return err
 	}
@@ -142,6 +142,10 @@ func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, rep
 	if workspace.WorktreePath != nil && *workspace.WorktreePath != "" {
 		workspacePath = *workspace.WorktreePath
 	} else {
+		workspace, provider, err := h.getRuntimeWorkspace(ctx, workspaceID.String)
+		if err != nil {
+			return err
+		}
 		if provider == nil || workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID == "" {
 			return errors.New("reviewed workspace has neither a local worktree nor an attached runtime")
 		}
