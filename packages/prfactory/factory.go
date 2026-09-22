@@ -470,7 +470,6 @@ func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, 
 	})
 }
 
-
 // loadTask loads a task from the database.
 func (f *Factory) loadTask(ctx context.Context, taskID string) (*models.Task, error) {
 	var task models.Task
