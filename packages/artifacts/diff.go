@@ -93,6 +93,30 @@ func (m *Manager) DiffArtifacts(ctx context.Context, before, after Artifact) (Ar
 		result.Changes = diffSequence(splitSemanticLines(string(left)), splitSemanticLines(string(right)))
 		return result, nil
 
+	case hasDerivative(before, "semantic-spreadsheet") && hasDerivative(after, "semantic-spreadsheet"):
+		var left, right SpreadsheetSemantic
+		if err := m.decodeDerivativeJSON(ctx, before, "semantic-spreadsheet", &left); err != nil {
+			return ArtifactDiff{}, err
+		}
+		if err := m.decodeDerivativeJSON(ctx, after, "semantic-spreadsheet", &right); err != nil {
+			return ArtifactDiff{}, err
+		}
+		result.Semantic = true
+		result.Changes = diffSequence(flattenSpreadsheet(left), flattenSpreadsheet(right))
+		return result, nil
+
+	case hasDerivative(before, "semantic-presentation") && hasDerivative(after, "semantic-presentation"):
+		var left, right PresentationSemantic
+		if err := m.decodeDerivativeJSON(ctx, before, "semantic-presentation", &left); err != nil {
+			return ArtifactDiff{}, err
+		}
+		if err := m.decodeDerivativeJSON(ctx, after, "semantic-presentation", &right); err != nil {
+			return ArtifactDiff{}, err
+		}
+		result.Semantic = true
+		result.Changes = diffSequence(flattenPresentation(left), flattenPresentation(right))
+		return result, nil
+
 	case hasDerivative(before, "semantic-image") && hasDerivative(after, "semantic-image"):
 		var left, right ImageSemantic
 		if err := m.decodeDerivativeJSON(ctx, before, "semantic-image", &left); err != nil {
@@ -226,16 +250,32 @@ func diffSequence(before, after []string) []SequenceChange {
 		}
 		down := table[(i+1)*width+j]
 		right := table[i*width+j+1]
-		if down == right && i+1 < len(before) && j+1 < len(after) &&
-			before[i+1] == after[j+1] {
-			beforeIndex, afterIndex := i, j
-			changes = append(changes, SequenceChange{
-				Operation: DiffModified, BeforeIndex: &beforeIndex, AfterIndex: &afterIndex,
-				Before: before[i], After: after[j],
-			})
-			i++
-			j++
-			continue
+		if down == right {
+			switch {
+			case i+1 < len(before) && before[i+1] == after[j]:
+				beforeIndex := i
+				changes = append(changes, SequenceChange{
+					Operation: DiffRemoved, BeforeIndex: &beforeIndex, Before: before[i],
+				})
+				i++
+				continue
+			case j+1 < len(after) && before[i] == after[j+1]:
+				afterIndex := j
+				changes = append(changes, SequenceChange{
+					Operation: DiffAdded, AfterIndex: &afterIndex, After: after[j],
+				})
+				j++
+				continue
+			default:
+				beforeIndex, afterIndex := i, j
+				changes = append(changes, SequenceChange{
+					Operation: DiffModified, BeforeIndex: &beforeIndex, AfterIndex: &afterIndex,
+					Before: before[i], After: after[j],
+				})
+				i++
+				j++
+				continue
+			}
 		}
 		if down >= right {
 			beforeIndex := i
@@ -302,4 +342,33 @@ func diffSequenceBounded(before, after []string) []SequenceChange {
 		changes = append(changes, SequenceChange{Operation: DiffAdded, AfterIndex: &afterIndex, After: after[j]})
 	}
 	return changes
+}
+
+
+func flattenSpreadsheet(value SpreadsheetSemantic) []string {
+	var result []string
+	for _, sheet := range value.Sheets {
+		for _, cell := range sheet.Cells {
+			location := sheet.Name + "!" + cell.Ref
+			switch {
+			case cell.Formula != "":
+				result = append(result, location+" = "+cell.Value+" [formula: "+cell.Formula+"]")
+			case cell.Value != "":
+				result = append(result, location+" = "+cell.Value)
+			default:
+				result = append(result, location+" =")
+			}
+		}
+	}
+	return result
+}
+
+func flattenPresentation(value PresentationSemantic) []string {
+	var result []string
+	for _, slide := range value.Slides {
+		for index, paragraph := range slide.Paragraphs {
+			result = append(result, fmt.Sprintf("slide:%d/paragraph:%d %s", slide.Index, index+1, paragraph))
+		}
+	}
+	return result
 }

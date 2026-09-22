@@ -217,8 +217,191 @@ func TestPDFAdapterDegradesWhenToolsUnavailable(t *testing.T) {
 func TestDefaultAdapterRegistry(t *testing.T) {
 	names := NewDefaultAdapterRegistry().Names()
 	got := strings.Join(names, ",")
-	if got != "docx,image,pdf" {
+	if got != "docx,image,pdf,pptx,xlsx" {
 		t.Fatalf("registry names = %q", got)
+	}
+}
+
+func TestXLSXAdapterExtractsCellsAndFormulas(t *testing.T) {
+	file := tempArtifactFile(t, makeXLSX(t))
+	adapter := NewXLSXAdapter()
+	analysis, err := adapter.Analyze(context.Background(), AnalysisInput{
+		Path: "budget.xlsx",
+		Format: DetectedFormat{Kind: KindSpreadsheet, MediaType: MediaTypeXLSX},
+		File: file,
+		Size: fileSize(t, file),
+		MaxBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if analysis.Semantic == nil || analysis.Semantic.Role != "semantic-spreadsheet" {
+		t.Fatalf("unexpected XLSX analysis: %+v", analysis)
+	}
+	var semantic SpreadsheetSemantic
+	if err := json.Unmarshal(analysis.Semantic.Data, &semantic); err != nil {
+		t.Fatal(err)
+	}
+	if len(semantic.Sheets) != 1 || semantic.Sheets[0].Name != "Budget" {
+		t.Fatalf("unexpected sheets: %+v", semantic.Sheets)
+	}
+	cells := semantic.Sheets[0].Cells
+	if len(cells) != 3 {
+		t.Fatalf("cells = %+v, want 3 cells", cells)
+	}
+	if cells[0].Ref != "A1" || cells[0].Value != "Revenue" {
+		t.Fatalf("A1 = %+v", cells[0])
+	}
+	if cells[2].Ref != "A3" || cells[2].Formula != "A2*2" || cells[2].Value != "200" {
+		t.Fatalf("A3 = %+v", cells[2])
+	}
+}
+
+func TestPPTXAdapterPreservesPresentationOrder(t *testing.T) {
+	file := tempArtifactFile(t, makePPTX(t))
+	adapter := NewPPTXAdapter()
+	analysis, err := adapter.Analyze(context.Background(), AnalysisInput{
+		Path: "deck.pptx",
+		Format: DetectedFormat{Kind: KindPresentation, MediaType: MediaTypePPTX},
+		File: file,
+		Size: fileSize(t, file),
+		MaxBytes: 1 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var semantic PresentationSemantic
+	if analysis.Semantic == nil {
+		t.Fatal("PPTX semantic payload missing")
+	}
+	if err := json.Unmarshal(analysis.Semantic.Data, &semantic); err != nil {
+		t.Fatal(err)
+	}
+	if len(semantic.Slides) != 2 {
+		t.Fatalf("slides = %+v, want 2", semantic.Slides)
+	}
+	if got := strings.Join(semantic.Slides[0].Paragraphs, "|"); got != "Second slide|Details" {
+		t.Fatalf("slide 1 text = %q", got)
+	}
+	if got := strings.Join(semantic.Slides[1].Paragraphs, "|"); got != "First slide" {
+		t.Fatalf("slide 2 text = %q", got)
+	}
+}
+
+func TestDiffSpreadsheetSemantics(t *testing.T) {
+	store, err := NewLocalStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := semanticPayloadArtifact(t, store, "book-before", KindSpreadsheet, MediaTypeXLSX, "semantic-spreadsheet", SpreadsheetSemantic{
+		Sheets: []SpreadsheetSheet{{Name: "Budget", Cells: []SpreadsheetCell{{Ref: "A1", Value: "100"}}}},
+	})
+	after := semanticPayloadArtifact(t, store, "book-after", KindSpreadsheet, MediaTypeXLSX, "semantic-spreadsheet", SpreadsheetSemantic{
+		Sheets: []SpreadsheetSheet{{Name: "Budget", Cells: []SpreadsheetCell{{Ref: "A1", Value: "125"}}}},
+	})
+	diff, err := manager.DiffArtifacts(context.Background(), before, after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !diff.Semantic || len(diff.Changes) != 1 || diff.Changes[0].Operation != DiffModified {
+		t.Fatalf("spreadsheet diff = %+v", diff)
+	}
+	if !strings.Contains(diff.Changes[0].Before, "Budget!A1 = 100") ||
+		!strings.Contains(diff.Changes[0].After, "Budget!A1 = 125") {
+		t.Fatalf("unexpected spreadsheet change: %+v", diff.Changes[0])
+	}
+}
+
+func semanticPayloadArtifact(t *testing.T, store BlobStore, identity string, kind Kind, mediaType, role string, value any) Artifact {
+	t.Helper()
+	payload, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := store.Put(context.Background(), bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor.MediaType = "application/json"
+	digest := descriptor.Digest
+	return Artifact{
+		Path: identity,
+		Kind: kind,
+		Descriptor: Descriptor{Digest: HashBytes([]byte(identity)), Size: int64(len(identity)), MediaType: mediaType},
+		SemanticDigest: &digest,
+		Derivatives: []DerivativeRef{{Role: role, Descriptor: descriptor}},
+	}
+}
+
+func fileSize(t *testing.T, file *os.File) int64 {
+	t.Helper()
+	info, err := file.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return info.Size()
+}
+
+func makeXLSX(t *testing.T) []byte {
+	t.Helper()
+	var payload bytes.Buffer
+	archive := zip.NewWriter(&payload)
+	writeZipFile(t, archive, "xl/workbook.xml", `<?xml version="1.0"?>
+<workbook xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets><sheet name="Budget" sheetId="1" r:id="rId1"/></sheets>
+</workbook>`)
+	writeZipFile(t, archive, "xl/_rels/workbook.xml.rels", `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Target="worksheets/sheet1.xml"/>
+</Relationships>`)
+	writeZipFile(t, archive, "xl/sharedStrings.xml", `<?xml version="1.0"?>
+<sst><si><t>Revenue</t></si></sst>`)
+	writeZipFile(t, archive, "xl/worksheets/sheet1.xml", `<?xml version="1.0"?>
+<worksheet><sheetData><row>
+  <c r="A1" t="s"><v>0</v></c>
+  <c r="A2"><v>100</v></c>
+  <c r="A3"><f>A2*2</f><v>200</v></c>
+</row></sheetData></worksheet>`)
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Bytes()
+}
+
+func makePPTX(t *testing.T) []byte {
+	t.Helper()
+	var payload bytes.Buffer
+	archive := zip.NewWriter(&payload)
+	writeZipFile(t, archive, "ppt/presentation.xml", `<?xml version="1.0"?>
+<p:presentation xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"
+ xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+ <p:sldIdLst><p:sldId id="256" r:id="rId2"/><p:sldId id="257" r:id="rId1"/></p:sldIdLst>
+</p:presentation>`)
+	writeZipFile(t, archive, "ppt/_rels/presentation.xml.rels", `<?xml version="1.0"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+ <Relationship Id="rId1" Target="slides/slide1.xml"/>
+ <Relationship Id="rId2" Target="slides/slide2.xml"/>
+</Relationships>`)
+	writeZipFile(t, archive, "ppt/slides/slide1.xml", `<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><a:p><a:r><a:t>First slide</a:t></a:r></a:p></p:cSld></p:sld>`)
+	writeZipFile(t, archive, "ppt/slides/slide2.xml", `<p:sld xmlns:p="p" xmlns:a="a"><p:cSld><a:p><a:r><a:t>Second slide</a:t></a:r></a:p><a:p><a:r><a:t>Details</a:t></a:r></a:p></p:cSld></p:sld>`)
+	if err := archive.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Bytes()
+}
+
+func writeZipFile(t *testing.T, archive *zip.Writer, name, content string) {
+	t.Helper()
+	writer, err := archive.Create(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write([]byte(content)); err != nil {
+		t.Fatal(err)
 	}
 }
 

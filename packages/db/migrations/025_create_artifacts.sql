@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
     semantic_digest_algorithm  TEXT,
     semantic_digest_hex        TEXT,
     artifact_json              JSONB,
+    is_tombstone               BOOLEAN NOT NULL DEFAULT false,
     metadata                   JSONB DEFAULT '{}',
     created_at                 TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

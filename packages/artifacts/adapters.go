@@ -68,6 +68,8 @@ func NewAdapterRegistry(adapters ...ArtifactAdapter) *AdapterRegistry {
 func NewDefaultAdapterRegistry() *AdapterRegistry {
 	return NewAdapterRegistry(
 		NewDOCXAdapter(),
+		NewXLSXAdapter(),
+		NewPPTXAdapter(),
 		NewImageAdapter(1024),
 		NewPDFAdapter(PopplerRunner{}),
 	)

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -162,10 +163,12 @@ func (h *Handler) UploadWorkspaceArtifact(w http.ResponseWriter, r *http.Request
 func shouldAnalyzeArtifact(logicalPath, mediaType string) bool {
 	ext := strings.ToLower(path.Ext(logicalPath))
 	switch ext {
-	case ".docx", ".pdf", ".png", ".jpg", ".jpeg", ".gif":
+	case ".docx", ".xlsx", ".pptx", ".pdf", ".png", ".jpg", ".jpeg", ".gif":
 		return true
 	}
 	return mediaType == artifactstore.MediaTypeDOCX ||
+		mediaType == artifactstore.MediaTypeXLSX ||
+		mediaType == artifactstore.MediaTypePPTX ||
 		mediaType == "application/pdf" ||
 		strings.HasPrefix(mediaType, "image/")
 }
@@ -305,19 +308,25 @@ func (h *Handler) MaterializeArtifact(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) latestWorkspaceArtifact(ctx context.Context, workspaceID, logicalPath string) (artifactstore.Artifact, error) {
-	var raw string
+	var (
+		raw       sql.NullString
+		tombstone bool
+	)
 	err := h.db.QueryRowContext(ctx, `
-		SELECT artifact_json
+		SELECT artifact_json, is_tombstone
 		FROM artifacts
-		WHERE workspace_id = $1 AND logical_path = $2 AND artifact_json IS NOT NULL
-		ORDER BY created_at DESC
+		WHERE workspace_id = $1 AND logical_path = $2
+		ORDER BY created_at DESC, id DESC
 		LIMIT 1
-	`, workspaceID, logicalPath).Scan(&raw)
+	`, workspaceID, logicalPath).Scan(&raw, &tombstone)
 	if err != nil {
 		return artifactstore.Artifact{}, err
 	}
+	if tombstone || !raw.Valid {
+		return artifactstore.Artifact{}, sql.ErrNoRows
+	}
 	var artifact artifactstore.Artifact
-	if err := json.Unmarshal([]byte(raw), &artifact); err != nil {
+	if err := json.Unmarshal([]byte(raw.String), &artifact); err != nil {
 		return artifactstore.Artifact{}, fmt.Errorf("decode latest workspace artifact: %w", err)
 	}
 	return artifact, nil
@@ -612,34 +621,53 @@ func (h *Handler) captureWorkspaceSourceSnapshot(ctx context.Context, workspaceI
 	return &runtimes.Snapshot{ID: commit, SessionID: workspaceID, GitCommit: commit, CreatedAt: time.Now().UTC()}, nil
 }
 
-func (h *Handler) buildWorkspaceArtifactVersion(ctx context.Context, workspaceID, authorID string) (string, string, error) {
-	if h.artifactManager == nil {
-		return "", "", nil
-	}
+func (h *Handler) currentWorkspaceArtifactTree(ctx context.Context, workspaceID string) (map[string]artifactstore.Artifact, error) {
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT artifact_json
+		SELECT logical_path, is_tombstone, artifact_json
 		FROM artifacts
-		WHERE workspace_id = $1 AND artifact_json IS NOT NULL
-		ORDER BY created_at ASC
+		WHERE workspace_id = $1 AND logical_path IS NOT NULL
+		ORDER BY created_at ASC, id ASC
 	`, workspaceID)
 	if err != nil {
-		return "", "", fmt.Errorf("list workspace artifacts: %w", err)
+		return nil, fmt.Errorf("list workspace artifact history: %w", err)
 	}
 	defer rows.Close()
 
 	latest := map[string]artifactstore.Artifact{}
 	for rows.Next() {
-		var raw string
-		if err := rows.Scan(&raw); err != nil {
-			return "", "", err
+		var (
+			logicalPath string
+			tombstone   bool
+			raw         sql.NullString
+		)
+		if err := rows.Scan(&logicalPath, &tombstone, &raw); err != nil {
+			return nil, err
+		}
+		if tombstone {
+			delete(latest, logicalPath)
+			continue
+		}
+		if !raw.Valid {
+			continue
 		}
 		var artifact artifactstore.Artifact
-		if err := json.Unmarshal([]byte(raw), &artifact); err != nil {
-			return "", "", fmt.Errorf("decode workspace artifact: %w", err)
+		if err := json.Unmarshal([]byte(raw.String), &artifact); err != nil {
+			return nil, fmt.Errorf("decode workspace artifact %q: %w", logicalPath, err)
 		}
-		latest[artifact.Path] = artifact
+		latest[logicalPath] = artifact
 	}
 	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return latest, nil
+}
+
+func (h *Handler) buildWorkspaceArtifactVersion(ctx context.Context, workspaceID, authorID string) (string, string, error) {
+	if h.artifactManager == nil {
+		return "", "", nil
+	}
+	latest, err := h.currentWorkspaceArtifactTree(ctx, workspaceID)
+	if err != nil {
 		return "", "", err
 	}
 	if len(latest) == 0 {
@@ -690,6 +718,324 @@ func (h *Handler) buildWorkspaceArtifactVersion(ctx context.Context, workspaceID
 		return "", "", err
 	}
 	return manifestDescriptor.Digest.String(), versionDescriptor.Digest.String(), nil
+}
+
+func (h *Handler) ListWorkspaceArtifacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := chi.URLParam(r, "id")
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
+		return
+	}
+	tree, err := h.currentWorkspaceArtifactTree(ctx, workspaceID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	result := make([]artifactstore.Artifact, 0, len(tree))
+	for _, artifact := range tree {
+		result = append(result, artifact)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
+	respond.JSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) DeleteWorkspaceArtifact(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := chi.URLParam(r, "id")
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
+		return
+	}
+	logicalPath, err := artifactstore.NormalizeArtifactPath(r.URL.Query().Get("path"))
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	existing, err := h.latestWorkspaceArtifact(ctx, workspaceID, logicalPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		respond.Error(w, http.StatusNotFound, errors.New("artifact path not found"))
+		return
+	}
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if policy := artifactstore.DefaultCollaborationPolicy(existing); policy.LeaseRequired {
+		if err := h.validateArtifactLeaseHeaders(ctx, r, workspaceID, logicalPath, user.UserID); err != nil {
+			respondArtifactLeaseError(w, err)
+			return
+		}
+	}
+	now := time.Now().UTC()
+	metadata, _ := json.Marshal(map[string]any{
+		"deleted_by": user.UserID,
+		"previous_digest": existing.Descriptor.Digest.String(),
+	})
+	_, err = h.db.ExecContext(ctx, `
+		INSERT INTO artifacts (
+			id, organization_id, workspace_id, artifact_type, file_name, file_path,
+			logical_path, kind, mime_type, size_bytes, is_tombstone, metadata, created_at
+		) VALUES ($1, $2, $3, 'tombstone', $4, $5, $6, 'tombstone', $7, 0, true, $8, $9)
+	`, uuid.NewString(), user.OrgID, workspaceID, path.Base(logicalPath), logicalPath,
+		logicalPath, existing.Descriptor.MediaType, string(metadata), now)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist artifact tombstone: %w", err))
+		return
+	}
+	respond.JSON(w, http.StatusOK, map[string]string{"status": "deleted", "path": logicalPath})
+}
+
+func (h *Handler) validateArtifactLeaseHeaders(
+	ctx context.Context,
+	r *http.Request,
+	workspaceID, logicalPath, ownerID string,
+) error {
+	if h.artifactLeases == nil {
+		return artifactstore.ErrLeaseNotFound
+	}
+	token := strings.TrimSpace(r.Header.Get("X-Artifact-Lease-Token"))
+	generation, err := strconv.ParseUint(strings.TrimSpace(r.Header.Get("X-Artifact-Lease-Generation")), 10, 64)
+	if token == "" || err != nil || generation == 0 {
+		return fmt.Errorf("%w: write lease token and generation are required", artifactstore.ErrLeaseHeld)
+	}
+	return h.artifactLeases.Validate(ctx, artifactstore.Lease{
+		ScopeID: workspaceID,
+		Path: logicalPath,
+		OwnerID: ownerID,
+		Token: token,
+		Generation: generation,
+	})
+}
+
+func (h *Handler) ensureArtifactRestoreUnlocked(
+	ctx context.Context,
+	workspaceID string,
+	current, target map[string]artifactstore.Artifact,
+) error {
+	if h.artifactLeases == nil {
+		return nil
+	}
+	paths := map[string]artifactstore.Artifact{}
+	for path, artifact := range current {
+		paths[path] = artifact
+	}
+	for path, artifact := range target {
+		paths[path] = artifact
+	}
+	for artifactPath, artifact := range paths {
+		before, beforeOK := current[artifactPath]
+		after, afterOK := target[artifactPath]
+		if beforeOK && afterOK && before.Descriptor.Digest == after.Descriptor.Digest {
+			continue
+		}
+		policy := artifactstore.DefaultCollaborationPolicy(artifact)
+		if !policy.LeaseRequired {
+			continue
+		}
+		lease, err := h.artifactLeases.Get(ctx, workspaceID, artifactPath)
+		if err == nil {
+			return fmt.Errorf("%w: %s is leased by %s until %s",
+				artifactstore.ErrLeaseHeld, artifactPath, lease.OwnerID, lease.ExpiresAt.Format(time.RFC3339))
+		}
+		if errors.Is(err, artifactstore.ErrLeaseNotFound) || errors.Is(err, artifactstore.ErrLeaseExpired) {
+			continue
+		}
+		return err
+	}
+	return nil
+}
+
+func (h *Handler) RestoreWorkspaceArtifacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+	if h.artifactManager == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("artifact storage is not configured"))
+		return
+	}
+	workspaceID := chi.URLParam(r, "id")
+	snapshotID := chi.URLParam(r, "snapshotID")
+	if err := authz.AuthorizeWorkspace(ctx, h.db, user, workspaceID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("workspace not found"))
+		return
+	}
+
+	var targetVersionRaw string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT artifact_version_digest
+		FROM workspace_snapshots
+		WHERE id = $1 AND workspace_id = $2 AND artifact_version_digest IS NOT NULL
+	`, snapshotID, workspaceID).Scan(&targetVersionRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		respond.Error(w, http.StatusNotFound, errors.New("artifact snapshot not found"))
+		return
+	}
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	targetVersionDigest, err := artifactstore.ParseDigest(targetVersionRaw)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("parse artifact version digest: %w", err))
+		return
+	}
+	targetVersion, err := h.artifactManager.LoadVersion(ctx, targetVersionDigest)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load target artifact version: %w", err))
+		return
+	}
+	targetManifest, err := h.artifactManager.LoadManifest(ctx, targetVersion.Manifest)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load target artifact manifest: %w", err))
+		return
+	}
+
+	currentTree, err := h.currentWorkspaceArtifactTree(ctx, workspaceID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	targetTree := make(map[string]artifactstore.Artifact, len(targetManifest.Artifacts))
+	for _, artifact := range targetManifest.Artifacts {
+		targetTree[artifact.Path] = artifact
+	}
+
+	if err := h.ensureArtifactRestoreUnlocked(ctx, workspaceID, currentTree, targetTree); err != nil {
+		respondArtifactLeaseError(w, err)
+		return
+	}
+
+	var parents []artifactstore.Digest
+	var currentVersion sql.NullString
+	err = h.db.QueryRowContext(ctx, `
+		SELECT artifact_version_digest
+		FROM workspace_snapshots
+		WHERE workspace_id = $1 AND artifact_version_digest IS NOT NULL
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, workspaceID).Scan(&currentVersion)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if currentVersion.Valid {
+		if digest, parseErr := artifactstore.ParseDigest(currentVersion.String); parseErr == nil {
+			parents = append(parents, digest)
+		}
+	}
+	restoreVersion := artifactstore.Version{
+		Schema:    artifactstore.VersionSchemaV1,
+		Parents:   parents,
+		Manifest:  targetVersion.Manifest,
+		Author:    artifactstore.ActorIdentity{ID: user.UserID, Type: "human"},
+		Message:   "restore artifacts from snapshot " + snapshotID,
+		CreatedAt: time.Now().UTC(),
+		Provenance: artifactstore.Provenance{WorkspaceID: workspaceID},
+	}
+	restoreDescriptor, err := h.artifactManager.PutVersion(ctx, restoreVersion)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("store restore artifact version: %w", err))
+		return
+	}
+
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+
+	for currentPath, currentArtifact := range currentTree {
+		if _, keep := targetTree[currentPath]; keep {
+			continue
+		}
+		metadata, _ := json.Marshal(map[string]any{
+			"restored_from_snapshot": snapshotID,
+			"previous_digest": currentArtifact.Descriptor.Digest.String(),
+		})
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO artifacts (
+				id, organization_id, workspace_id, artifact_type, file_name, file_path,
+				logical_path, kind, mime_type, size_bytes, is_tombstone, metadata, created_at
+			) VALUES ($1, $2, $3, 'tombstone', $4, $5, $6, 'tombstone', $7, 0, true, $8, $9)
+		`, uuid.NewString(), user.OrgID, workspaceID, path.Base(currentPath), currentPath,
+			currentPath, currentArtifact.Descriptor.MediaType, string(metadata), now); err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist restore tombstone: %w", err))
+			return
+		}
+	}
+
+	for _, artifact := range targetManifest.Artifacts {
+		payload, err := json.Marshal(artifact)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, err)
+			return
+		}
+		metadata, _ := json.Marshal(map[string]any{
+			"restored_from_snapshot": snapshotID,
+			"artifact": artifact.Metadata,
+		})
+		var semanticAlgorithm, semanticHex any
+		if artifact.SemanticDigest != nil {
+			semanticAlgorithm = artifact.SemanticDigest.Algorithm
+			semanticHex = artifact.SemanticDigest.Hex
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO artifacts (
+				id, organization_id, workspace_id, artifact_type, file_name, file_path,
+				logical_path, kind, mime_type, size_bytes, digest_algorithm, digest_hex,
+				semantic_digest_algorithm, semantic_digest_hex, artifact_json,
+				is_tombstone, metadata, created_at
+			) VALUES (
+				$1, $2, $3, 'workspace_file', $4, $5, $6, $7, $8, $9, $10, $11,
+				$12, $13, $14, false, $15, $16
+			)
+		`, uuid.NewString(), user.OrgID, workspaceID, path.Base(artifact.Path), artifact.Path,
+			artifact.Path, string(artifact.Kind), artifact.Descriptor.MediaType,
+			artifact.Descriptor.Size, artifact.Descriptor.Digest.Algorithm, artifact.Descriptor.Digest.Hex,
+			semanticAlgorithm, semanticHex, string(payload), string(metadata), now); err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist restored artifact: %w", err))
+			return
+		}
+	}
+
+	snapshotRowID := uuid.NewString()
+	snapshotMetadata, _ := json.Marshal(map[string]string{"restored_from_snapshot": snapshotID})
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspace_snapshots (
+			id, workspace_id, artifact_manifest_digest, artifact_version_digest,
+			description, metadata, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, snapshotRowID, workspaceID, targetVersion.Manifest.String(), restoreDescriptor.Digest.String(),
+		"restore artifacts from snapshot "+snapshotID, string(snapshotMetadata), now); err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist restore snapshot: %w", err))
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("commit artifact restore: %w", err))
+		return
+	}
+
+	respond.JSON(w, http.StatusCreated, WorkspaceSnapshotResponse{
+		ID:                     snapshotRowID,
+		WorkspaceID:            workspaceID,
+		ArtifactManifestDigest: targetVersion.Manifest.String(),
+		ArtifactVersionDigest:  restoreDescriptor.Digest.String(),
+		Description:            "restore artifacts from snapshot " + snapshotID,
+		CreatedAt:              now,
+	})
 }
 
 func (h *Handler) ListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request) {

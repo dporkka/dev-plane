@@ -225,7 +225,9 @@ func (s *Server) routes() {
 			r.Get("/artifacts/{id}/metadata", h.GetArtifactMetadata)
 			r.Get("/artifacts/{id}/content", h.MaterializeArtifact)
 			r.Post("/artifacts/diff", h.DiffArtifacts)
+			r.Get("/workspaces/{id}/artifacts", h.ListWorkspaceArtifacts)
 			r.Post("/workspaces/{id}/artifacts", h.UploadWorkspaceArtifact)
+			r.Delete("/workspaces/{id}/artifacts", h.DeleteWorkspaceArtifact)
 
 			// Artifact collaboration leases
 			r.Get("/workspaces/{id}/artifact-leases", h.GetArtifactLease)
@@ -236,6 +238,7 @@ func (s *Server) routes() {
 			// Unified source + artifact snapshots
 			r.Get("/workspaces/{id}/snapshots", h.ListWorkspaceSnapshots)
 			r.Post("/workspaces/{id}/snapshot", h.CreateWorkspaceSnapshot)
+			r.Post("/workspaces/{id}/snapshots/{snapshotID}/restore-artifacts", h.RestoreWorkspaceArtifacts)
 
 			// Policies
 			r.Get("/organizations/{orgID}/policies", h.ListPolicies)
