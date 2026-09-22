@@ -102,6 +102,44 @@ func (f *Factory) WithRuntimeProvider(name string, provider runtimes.Provider) *
 //  7. Save PR record in DB
 //  8. Update task status to "pr_created"
 //  9. Publish pr.created event
+// CreatePullRequestForRun creates a PR only when the approved run is still the
+// latest completed run and its immutable candidate has integrated successfully.
+func (f *Factory) CreatePullRequestForRun(ctx context.Context, taskID, runID string) (*models.PullRequest, error) {
+	runID = strings.TrimSpace(runID)
+	if runID == "" {
+		return nil, fmt.Errorf("approved run ID is required")
+	}
+
+	var status string
+	var integratedCommit sql.NullString
+	err := f.db.QueryRowContext(ctx, `
+		SELECT status, integrated_commit
+		FROM verified_candidates
+		WHERE run_id = $1 AND task_id = $2
+	`, runID, taskID).Scan(&status, &integratedCommit)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("run %s has no verified candidate for task %s", runID, taskID)
+		}
+		return nil, fmt.Errorf("load verified candidate: %w", err)
+	}
+	if status != "integrated" || !integratedCommit.Valid || strings.TrimSpace(integratedCommit.String) == "" {
+		return nil, fmt.Errorf("run %s candidate is %q, expected integrated", runID, status)
+	}
+
+	latest, err := f.loadLatestRun(ctx, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("load latest agent run: %w", err)
+	}
+	if latest == nil {
+		return nil, fmt.Errorf("no completed agent run found for task %s", taskID)
+	}
+	if latest.ID != runID {
+		return nil, fmt.Errorf("approved run %s is stale; latest completed run is %s", runID, latest.ID)
+	}
+	return f.CreatePullRequest(ctx, taskID)
+}
+
 func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
 	f.logger.Info("creating pull request", "task_id", taskID)
 

@@ -16,6 +16,7 @@ require (
 	github.com/ai-dev-control-plane/policies v0.0.0
 	github.com/ai-dev-control-plane/prfactory v0.0.0
 	github.com/ai-dev-control-plane/reviewer v0.0.0
+	github.com/ai-dev-control-plane/repogate v0.0.0
 	github.com/ai-dev-control-plane/runtimes v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.47
@@ -48,6 +49,8 @@ replace (
 	github.com/ai-dev-control-plane/policies => ../../packages/policies
 	github.com/ai-dev-control-plane/prfactory => ../../packages/prfactory
 	github.com/ai-dev-control-plane/reviewer => ../../packages/reviewer
+	github.com/ai-dev-control-plane/repogate => ../../packages/repogate
 	github.com/ai-dev-control-plane/runtimes => ../../packages/runtimes
+	github.com/ai-dev-control-plane/vcs => ../../packages/vcs
 	github.com/ai-dev-control-plane/securityscan => ../../packages/securityscan
 )

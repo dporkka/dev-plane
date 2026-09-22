@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -77,7 +76,8 @@ type MergeRefinery struct {
 }
 
 func NewMergeRefinery(root string, runner CommandRunner, recorder Recorder) (*MergeRefinery, error) {
-	if strings.TrimSpace(root) == "" {
+	root = strings.TrimSpace(root)
+	if root == "" {
 		return nil, fmt.Errorf("merge refinery root is required")
 	}
 	if runner == nil {
@@ -86,15 +86,8 @@ func NewMergeRefinery(root string, runner CommandRunner, recorder Recorder) (*Me
 	if recorder == nil {
 		recorder = NopRecorder{}
 	}
-	if err := os.MkdirAll(root, 0o700); err != nil {
-		return nil, fmt.Errorf("create merge refinery root: %w", err)
-	}
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return nil, fmt.Errorf("resolve merge refinery root: %w", err)
-	}
 	return &MergeRefinery{
-		root:     root,
+		root:     filepath.Clean(root),
 		runner:   runner,
 		recorder: recorder,
 		locks:    make(map[string]*sync.Mutex),
@@ -102,12 +95,9 @@ func NewMergeRefinery(root string, runner CommandRunner, recorder Recorder) (*Me
 }
 
 func (r *MergeRefinery) Refine(ctx context.Context, req MergeRequest) (MergeOutcome, error) {
-	repository, err := filepath.Abs(strings.TrimSpace(req.RepositoryPath))
-	if err != nil || strings.TrimSpace(req.RepositoryPath) == "" {
-		if err == nil {
-			err = fmt.Errorf("repository path is required")
-		}
-		return MergeOutcome{}, err
+	repository := filepath.Clean(strings.TrimSpace(req.RepositoryPath))
+	if strings.TrimSpace(req.RepositoryPath) == "" {
+		return MergeOutcome{}, fmt.Errorf("repository path is required")
 	}
 	if req.Verifier == nil {
 		return MergeOutcome{}, fmt.Errorf("candidate verifier is required")
@@ -160,13 +150,13 @@ func (r *MergeRefinery) Refine(ctx context.Context, req MergeRequest) (MergeOutc
 		return MergeOutcome{}, fmt.Errorf("%w: %s", ErrTargetCheckedOut, targetRef)
 	}
 
-	tempRoot, err := os.MkdirTemp(r.root, "refinery-*")
-	if err != nil {
+	worktree := r.refineryWorkspaceRoot(repository, candidateCommit)
+	if _, err := r.runner.Run(ctx, Command{
+		Name: "mkdir", Args: []string{"-p", filepath.Dir(worktree)}, Dir: repository, Env: req.Env,
+	}); err != nil {
 		return MergeOutcome{}, fmt.Errorf("create refinery workspace root: %w", err)
 	}
-	defer os.RemoveAll(tempRoot)
-	worktree := filepath.Join(tempRoot, "worktree")
-	refineryBranch := "dev-plane/refinery/" + filepath.Base(tempRoot)
+	refineryBranch := "dev-plane/refinery/" + filepath.Base(worktree)
 
 	if _, err := r.runner.Run(ctx, Command{
 		Name: "git",
@@ -250,6 +240,18 @@ func (r *MergeRefinery) Refine(ctx context.Context, req MergeRequest) (MergeOutc
 		return MergeOutcome{}, err
 	}
 	return baseOutcome, nil
+}
+
+func (r *MergeRefinery) refineryWorkspaceRoot(repository, candidateCommit string) string {
+	root := r.root
+	if !filepath.IsAbs(root) {
+		root = filepath.Join(repository, root)
+	}
+	suffix := strings.TrimSpace(candidateCommit)
+	if len(suffix) > 16 {
+		suffix = suffix[:16]
+	}
+	return filepath.Join(root, "candidate-"+suffix)
 }
 
 func (r *MergeRefinery) targetLock(key string) *sync.Mutex {
