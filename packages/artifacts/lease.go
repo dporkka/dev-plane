@@ -41,6 +41,7 @@ type LeaseStore interface {
 	Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, error)
 	Release(ctx context.Context, lease Lease) error
 	Get(ctx context.Context, scopeID, path string) (Lease, error)
+	Validate(ctx context.Context, lease Lease) error
 }
 
 type leaseSlot struct {
@@ -174,7 +175,38 @@ func (s *MemoryLeaseStore) Get(ctx context.Context, scopeID, artifactPath string
 		slot.active = nil
 		return Lease{}, ErrLeaseExpired
 	}
-	return *slot.active, nil
+	visible := *slot.active
+	visible.Token = ""
+	return visible, nil
+}
+
+func (s *MemoryLeaseStore) Validate(ctx context.Context, lease Lease) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := NormalizeArtifactPath(lease.Path)
+	if err != nil {
+		return err
+	}
+	now := s.now()
+	key := leaseKey(lease.ScopeID, path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	slot := s.slots[key]
+	if slot == nil || slot.active == nil {
+		return ErrLeaseNotFound
+	}
+	if !slot.active.ExpiresAt.After(now) {
+		slot.active = nil
+		return ErrLeaseExpired
+	}
+	if slot.active.Token != lease.Token || slot.active.Generation != lease.Generation {
+		return ErrLeaseToken
+	}
+	if lease.OwnerID != "" && slot.active.OwnerID != lease.OwnerID {
+		return ErrLeaseToken
+	}
+	return nil
 }
 
 func validateLeaseRequest(scopeID, artifactPath, ownerID string, ttl time.Duration) (string, error) {

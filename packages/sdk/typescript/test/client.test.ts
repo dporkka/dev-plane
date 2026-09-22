@@ -76,7 +76,7 @@ describe('DevPlaneClient', () => {
     const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
     const blob = await client.getArtifact('art-1');
 
-    assert.equal(state.input, 'http://api.test/api/v1/artifacts/art-1');
+    assert.equal(state.input, 'http://api.test/api/v1/artifacts/art-1/content');
     assert.equal(blob.size, 'artifact-body'.length);
     assert.equal(await blob.text(), 'artifact-body');
   });

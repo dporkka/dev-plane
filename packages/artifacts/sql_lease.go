@@ -202,6 +202,37 @@ WHERE scope_id = %s
 	return s.classifyLeaseMiss(ctx, lease.ScopeID, path, lease.Generation, lease.Token, now)
 }
 
+func (s *SQLLeaseStore) Validate(ctx context.Context, lease Lease) error {
+	if lease.ScopeID == "" || lease.Path == "" || lease.Token == "" || lease.Generation == 0 {
+		return ErrLeaseToken
+	}
+	path, err := NormalizeArtifactPath(lease.Path)
+	if err != nil {
+		return err
+	}
+	now := s.now().UTC()
+	row, err := s.getRow(ctx, lease.ScopeID, path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrLeaseNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("validate artifact lease: %w", err)
+	}
+	if row.OwnerID == "" || row.TokenHash == "" {
+		return ErrLeaseNotFound
+	}
+	if !row.ExpiresAt.After(now) {
+		return ErrLeaseExpired
+	}
+	if row.Generation != lease.Generation || row.TokenHash != hashLeaseToken(lease.Token) {
+		return ErrLeaseToken
+	}
+	if lease.OwnerID != "" && row.OwnerID != lease.OwnerID {
+		return ErrLeaseToken
+	}
+	return nil
+}
+
 func (s *SQLLeaseStore) Get(ctx context.Context, scopeID, artifactPath string) (Lease, error) {
 	if scopeID == "" {
 		return Lease{}, fmt.Errorf("artifact lease scope ID is required")

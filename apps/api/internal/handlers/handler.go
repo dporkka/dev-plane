@@ -12,6 +12,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	artifactstore "github.com/ai-dev-control-plane/artifacts"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
@@ -39,6 +40,9 @@ type Handler struct {
 	githubToken       string
 	deployGateway     deployGateway
 	deployToken       string
+	artifactManager   *artifactstore.Manager
+	artifactRegistry  *artifactstore.AdapterRegistry
+	artifactLeases    artifactstore.LeaseStore
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
@@ -128,6 +132,17 @@ func (h *Handler) WithDeployToken(token string) *Handler {
 
 // WithIntegrationValidator overrides integration credential validation. Used
 // primarily by tests to avoid external API calls.
+// WithArtifactServices enables CAS-backed artifact, semantic analysis, and lease APIs.
+func (h *Handler) WithArtifactServices(manager *artifactstore.Manager, registry *artifactstore.AdapterRegistry, leases artifactstore.LeaseStore) *Handler {
+	h.artifactManager = manager
+	if registry == nil {
+		registry = artifactstore.NewDefaultAdapterRegistry()
+	}
+	h.artifactRegistry = registry
+	h.artifactLeases = leases
+	return h
+}
+
 func (h *Handler) WithIntegrationValidator(fn func(ctx context.Context, integrationType string, token, webhookURL *string) error) *Handler {
 	h.integrationValidator = fn
 	return h

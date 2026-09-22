@@ -26,6 +26,15 @@ type Config struct {
 	AgentVaultToken     string
 	AgentVaultProject   string
 	SecretKeys          string
+	ArtifactStore       string
+	ArtifactsDir        string
+	ArtifactS3Endpoint  string
+	ArtifactS3Region    string
+	ArtifactS3Bucket    string
+	ArtifactS3Prefix    string
+	ArtifactS3AccessKey string
+	ArtifactS3SecretKey string
+	ArtifactS3Token     string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -54,6 +63,15 @@ func Load() (*Config, error) {
 		AgentVaultToken:     EnvOrDefault("AGENTVAULT_TOKEN", ""),
 		AgentVaultProject:   EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:          EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
+		ArtifactStore:       strings.ToLower(EnvOrDefault("ARTIFACT_STORE", "local")),
+		ArtifactsDir:        EnvOrDefault("ARTIFACTS_DIR", "./artifacts/cas"),
+		ArtifactS3Endpoint:  EnvOrDefault("ARTIFACT_S3_ENDPOINT", ""),
+		ArtifactS3Region:    EnvOrDefault("ARTIFACT_S3_REGION", "auto"),
+		ArtifactS3Bucket:    EnvOrDefault("ARTIFACT_S3_BUCKET", ""),
+		ArtifactS3Prefix:    EnvOrDefault("ARTIFACT_S3_PREFIX", "cas"),
+		ArtifactS3AccessKey: EnvOrDefault("ARTIFACT_S3_ACCESS_KEY_ID", ""),
+		ArtifactS3SecretKey: EnvOrDefault("ARTIFACT_S3_SECRET_ACCESS_KEY", ""),
+		ArtifactS3Token:     EnvOrDefault("ARTIFACT_S3_SESSION_TOKEN", ""),
 	}, nil
 }
 

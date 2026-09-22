@@ -91,6 +91,11 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	if artifactManager, artifactLeases, err := newArtifactServices(s.config, s.db); err != nil {
+		s.logger.Error("artifact services disabled", "error", err)
+	} else {
+		h = h.WithArtifactServices(artifactManager, nil, artifactLeases)
+	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
@@ -217,6 +222,20 @@ func (s *Server) routes() {
 
 			// Artifacts
 			r.Get("/artifacts/{id}", h.GetArtifact)
+			r.Get("/artifacts/{id}/metadata", h.GetArtifactMetadata)
+			r.Get("/artifacts/{id}/content", h.MaterializeArtifact)
+			r.Post("/artifacts/diff", h.DiffArtifacts)
+			r.Post("/workspaces/{id}/artifacts", h.UploadWorkspaceArtifact)
+
+			// Artifact collaboration leases
+			r.Get("/workspaces/{id}/artifact-leases", h.GetArtifactLease)
+			r.Post("/workspaces/{id}/artifact-leases/acquire", h.AcquireArtifactLease)
+			r.Post("/workspaces/{id}/artifact-leases/renew", h.RenewArtifactLease)
+			r.Post("/workspaces/{id}/artifact-leases/release", h.ReleaseArtifactLease)
+
+			// Unified source + artifact snapshots
+			r.Get("/workspaces/{id}/snapshots", h.ListWorkspaceSnapshots)
+			r.Post("/workspaces/{id}/snapshot", h.CreateWorkspaceSnapshot)
 
 			// Policies
 			r.Get("/organizations/{orgID}/policies", h.ListPolicies)

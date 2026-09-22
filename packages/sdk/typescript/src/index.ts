@@ -3,6 +3,10 @@ import type {
   AgentStep,
   Approval,
   ApprovalResponse,
+  ArtifactDiff,
+  ArtifactLease,
+  ArtifactLeaseRequest,
+  ArtifactMetadata,
   AuditLog,
   ConnectRepositoryRequest,
   CreateBriefHandoffRequest,
@@ -52,6 +56,7 @@ import type {
   UpdateTaskRequest,
   VoiceTaskPayload,
   Workspace,
+  WorkspaceSnapshot,
   WorkspaceDiffResponse,
   WorkspaceFileContent,
   WorkspaceFileEntry,
@@ -518,11 +523,101 @@ export class DevPlaneClient {
   // ─── Artifacts ────────────────────────────────────────────────────
 
   async getArtifact(id: string): Promise<Blob> {
-    const response = await this.fetchRaw(`/api/v1/artifacts/${id}`);
+    const response = await this.fetchRaw(`/api/v1/artifacts/${id}/content`);
     if (!response.ok) {
       throw new Error((await response.text()) || `HTTP ${response.status}`);
     }
     return response.blob();
+  }
+
+  getArtifactMetadata(id: string) {
+    return this.request<ArtifactMetadata>(`/api/v1/artifacts/${id}/metadata`);
+  }
+
+  async uploadWorkspaceArtifact(
+    workspaceId: string,
+    path: string,
+    body: Blob | ArrayBuffer,
+    options?: {
+      contentType?: string;
+      leaseToken?: string;
+      leaseGeneration?: number;
+    },
+  ): Promise<ArtifactMetadata> {
+    const params = new URLSearchParams({ path });
+    const response = await this.fetchRaw(
+      `/api/v1/workspaces/${workspaceId}/artifacts?${params.toString()}`,
+      {
+        method: 'POST',
+        body,
+        headers: {
+          'Content-Type':
+            options?.contentType ??
+            (body instanceof Blob && body.type ? body.type : 'application/octet-stream'),
+          ...(options?.leaseToken
+            ? { 'X-Artifact-Lease-Token': options.leaseToken }
+            : {}),
+          ...(options?.leaseGeneration
+            ? { 'X-Artifact-Lease-Generation': String(options.leaseGeneration) }
+            : {}),
+        },
+      },
+    );
+    if (!response.ok) {
+      throw new Error((await response.text()) || `HTTP ${response.status}`);
+    }
+    return response.json() as Promise<ArtifactMetadata>;
+  }
+
+  diffArtifacts(beforeId: string, afterId: string) {
+    return this.request<ArtifactDiff>('/api/v1/artifacts/diff', {
+      method: 'POST',
+      body: JSON.stringify({ before_id: beforeId, after_id: afterId }),
+    });
+  }
+
+  getArtifactLease(workspaceId: string, path: string) {
+    const params = new URLSearchParams({ path });
+    return this.request<ArtifactLease>(
+      `/api/v1/workspaces/${workspaceId}/artifact-leases?${params.toString()}`,
+    );
+  }
+
+  acquireArtifactLease(workspaceId: string, payload: ArtifactLeaseRequest) {
+    return this.request<ArtifactLease>(
+      `/api/v1/workspaces/${workspaceId}/artifact-leases/acquire`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  renewArtifactLease(workspaceId: string, payload: ArtifactLeaseRequest) {
+    return this.request<ArtifactLease>(
+      `/api/v1/workspaces/${workspaceId}/artifact-leases/renew`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  releaseArtifactLease(workspaceId: string, payload: ArtifactLeaseRequest) {
+    return this.request<{ status: 'released' }>(
+      `/api/v1/workspaces/${workspaceId}/artifact-leases/release`,
+      { method: 'POST', body: JSON.stringify(payload) },
+    );
+  }
+
+  listWorkspaceSnapshots(workspaceId: string) {
+    return this.request<WorkspaceSnapshot[]>(
+      `/api/v1/workspaces/${workspaceId}/snapshots`,
+    );
+  }
+
+  createWorkspaceSnapshot(workspaceId: string, description?: string) {
+    return this.request<WorkspaceSnapshot>(
+      `/api/v1/workspaces/${workspaceId}/snapshot`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ description }),
+      },
+    );
   }
 
   // ─── Policies ─────────────────────────────────────────────────────

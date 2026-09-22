@@ -111,6 +111,22 @@ func TestMemoryLeaseStoreContentionRenewRelease(t *testing.T) {
 		t.Fatalf("lease = %+v", first)
 	}
 
+	if err := store.Validate(context.Background(), first); err != nil {
+		t.Fatalf("Validate() error: %v", err)
+	}
+	visible, err := store.Get(context.Background(), "repo-1", "media/hero.psd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if visible.Token != "" {
+		t.Fatalf("Get() leaked lease token %q", visible.Token)
+	}
+	stale := first
+	stale.Token = "wrong-token"
+	if err := store.Validate(context.Background(), stale); !errors.Is(err, ErrLeaseToken) {
+		t.Fatalf("Validate(stale) error = %v, want ErrLeaseToken", err)
+	}
+
 	_, err = store.Acquire(context.Background(), AcquireLeaseRequest{
 		ScopeID: "repo-1", Path: "media/hero.psd", OwnerID: "agent-2", TTL: 30 * time.Minute,
 	})
