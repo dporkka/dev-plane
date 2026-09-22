@@ -171,6 +171,7 @@ func TestHandleApprovalApprovedReturnsPRCreationError(t *testing.T) {
 	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
 		"approval_id":"approval-1",
 		"task_id":"task-1",
+		"agent_run_id":"run-1",
 		"response":"approved",
 		"approval_type":"pr_create"
 	}`)})
