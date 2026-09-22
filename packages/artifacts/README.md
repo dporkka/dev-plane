@@ -79,6 +79,27 @@ The first implementation uses single-object PUTs. Very large media should be
 split through the artifact chunk model; multipart/chunk orchestration is the
 next storage optimization rather than making Git carry large binaries.
 
+## Content-defined chunking
+
+Large payloads can be stored through `ContentDefinedChunker`. It uses a
+FastCDC-inspired gear hash with configurable minimum, average, and maximum
+chunk sizes. Chunk boundaries depend on content rather than absolute offsets,
+so small insertions or deletions only invalidate nearby chunks.
+
+The default policy is:
+
+```text
+minimum: 512 KiB
+average:   2 MiB
+maximum:   8 MiB
+```
+
+`Manager.PutChunkedArtifact` stores each chunk independently in the CAS while
+the artifact descriptor retains the SHA-256 identity and size of the complete
+byte stream. `Manager.Materialize` transparently reconstructs chunked
+artifacts. With an S3/R2 store, already-present chunks are skipped through the
+same CAS deduplication path.
+
 ## Source + artifact snapshots
 
 The VCS and runtime snapshot types can carry both source-control identity and

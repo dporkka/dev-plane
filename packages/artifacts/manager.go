@@ -57,6 +57,38 @@ func (m *Manager) PutArtifact(ctx context.Context, req PutArtifactRequest) (Arti
 	return artifact, nil
 }
 
+// PutChunkedArtifact stores large payloads as independently-addressed chunks.
+// The Artifact descriptor still identifies the exact full byte stream, while
+// Chunks describes how to reconstruct it without storing a duplicate full blob.
+func (m *Manager) PutChunkedArtifact(ctx context.Context, chunker *ContentDefinedChunker, req PutArtifactRequest) (Artifact, error) {
+	if chunker == nil {
+		return Artifact{}, fmt.Errorf("content-defined chunker is required")
+	}
+	normalizedPath, err := NormalizeArtifactPath(req.Path)
+	if err != nil {
+		return Artifact{}, err
+	}
+	if !req.Kind.Valid() {
+		return Artifact{}, fmt.Errorf("invalid artifact kind %q", req.Kind)
+	}
+	descriptor, chunks, err := chunker.Put(ctx, m.store, req.Reader)
+	if err != nil {
+		return Artifact{}, err
+	}
+	descriptor.MediaType = req.MediaType
+	artifact := Artifact{
+		Path:       normalizedPath,
+		Kind:       req.Kind,
+		Descriptor: descriptor,
+		Chunks:     chunks,
+		Metadata:   cloneStringMap(req.Metadata),
+	}
+	if err := artifact.Validate(); err != nil {
+		return Artifact{}, err
+	}
+	return artifact, nil
+}
+
 func (m *Manager) Materialize(ctx context.Context, artifact Artifact, dst io.Writer) error {
 	if dst == nil {
 		return fmt.Errorf("artifact destination is required")
@@ -64,6 +96,24 @@ func (m *Manager) Materialize(ctx context.Context, artifact Artifact, dst io.Wri
 	if err := artifact.Validate(); err != nil {
 		return err
 	}
+	if len(artifact.Chunks) > 0 {
+		for i, chunk := range artifact.Chunks {
+			src, err := m.store.Open(ctx, chunk.Descriptor.Digest)
+			if err != nil {
+				return fmt.Errorf("open artifact %q chunk %d: %w", artifact.Path, i, err)
+			}
+			_, copyErr := io.Copy(dst, contextReader{ctx: ctx, r: src})
+			closeErr := src.Close()
+			if copyErr != nil {
+				return fmt.Errorf("materialize artifact %q chunk %d: %w", artifact.Path, i, copyErr)
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close artifact %q chunk %d: %w", artifact.Path, i, closeErr)
+			}
+		}
+		return nil
+	}
+
 	src, err := m.store.Open(ctx, artifact.Descriptor.Digest)
 	if err != nil {
 		return err
