@@ -10,6 +10,7 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 type runtimeAttacher interface {
@@ -358,27 +359,17 @@ func runtimeCreateCommit(ctx context.Context, provider runtimes.Provider, sessio
 	if strings.TrimSpace(req.Message) == "" {
 		return nil, fmt.Errorf("commit message is required")
 	}
-	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Command: "git add -A && git -c user.email=dev-plane@example.invalid -c user.name='Dev Plane' commit -m " + shellQuote(req.Message) + " && git rev-parse HEAD",
-		Timeout: 60 * time.Second,
-		UnsafeShell: true,
+
+	backend := vcs.NewGitBackend(runtimeVCSRunner{provider: provider, sessionID: sessionID})
+	revision, err := backend.Snapshot(ctx, ".", req.Message)
+	if err != nil {
+		return json.Marshal(map[string]any{"success": false, "error": err.Error()})
+	}
+	return json.Marshal(map[string]any{
+		"success":     true,
+		"commit_hash": revision.CommitID,
+		"change_id":   revision.ChangeID,
 	})
-	if err != nil || result == nil || result.ExitCode != 0 {
-		errText := ""
-		if err != nil {
-			errText = err.Error()
-		}
-		if result == nil {
-			return json.Marshal(map[string]any{"success": false, "error": errText})
-		}
-		return json.Marshal(map[string]any{"success": false, "error": strings.TrimSpace(result.Stdout + result.Stderr + errText)})
-	}
-	lines := strings.Fields(result.Stdout)
-	commitHash := ""
-	if len(lines) > 0 {
-		commitHash = lines[len(lines)-1]
-	}
-	return json.Marshal(map[string]any{"success": true, "commit_hash": commitHash, "output": strings.TrimSpace(result.Stdout + result.Stderr)})
 }
 
 func runtimeRunTests(ctx context.Context, provider runtimes.Provider, sessionID string, input json.RawMessage) (json.RawMessage, error) {
