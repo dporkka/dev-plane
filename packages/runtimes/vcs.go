@@ -12,6 +12,10 @@ import (
 )
 
 
+// VCSPublishRequest is the runtime-facing alias of the canonical VCS publish
+// contract.
+type VCSPublishRequest = vcs.PublishRequest
+
 // VCSWorkspacePublisher is the privileged publication capability for runtime
 // workspaces. It is deliberately separate from Provider.ExecuteCommand: agent
 // sandboxes may have no network, while the runtime control plane can publish a
