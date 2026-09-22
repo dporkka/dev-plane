@@ -391,7 +391,6 @@ func TestMergeRefineryConcurrentCandidatesSerializeWithoutLostUpdates(t *testing
 	}
 }
 
-
 func TestReviewSnapshotIncludesUntrackedFilesAndMatchesCandidate(t *testing.T) {
 	repo := refineryRepository(t)
 	workspace := filepath.Join(t.TempDir(), "review-snapshot")
