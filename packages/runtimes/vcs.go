@@ -3,12 +3,59 @@ package runtimes
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ai-dev-control-plane/vcs"
 )
 
+
+// VCSWorkspacePublisher is the privileged publication capability for runtime
+// workspaces. It is deliberately separate from Provider.ExecuteCommand: agent
+// sandboxes may have no network, while the runtime control plane can publish a
+// reviewed revision using trusted repository metadata and credentials.
+type VCSWorkspacePublisher interface {
+	PublishVCS(ctx context.Context, sessionID string, req vcs.PublishRequest) error
+}
+
+func (p *LocalProvider) PublishVCS(ctx context.Context, sessionID string, req vcs.PublishRequest) error {
+	p.mu.RLock()
+	sess, ok := p.sessions[sessionID]
+	p.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
+	}
+	req.WorkspacePath = sess.worktreePath
+	return vcs.NewGitBackend(nil).Publish(ctx, req)
+}
+
+func (p *DockerProvider) PublishVCS(ctx context.Context, sessionID string, req vcs.PublishRequest) error {
+	sess, err := p.session(sessionID)
+	if err != nil {
+		return err
+	}
+
+	stagingRoot, err := os.MkdirTemp(p.baseDir, "publish-"+sessionID+"-*")
+	if err != nil {
+		return fmt.Errorf("create publish staging directory: %w", err)
+	}
+	defer os.RemoveAll(stagingRoot)
+
+	stagingWorkspace := filepath.Join(stagingRoot, "workspace")
+	if err := os.MkdirAll(stagingWorkspace, 0o700); err != nil {
+		return fmt.Errorf("create publish workspace: %w", err)
+	}
+	source := sess.container + ":" + workspaceDir + "/."
+	if out, err := p.runner.Run(ctx, "docker", []string{"cp", source, stagingWorkspace}, commandOptions{}); err != nil {
+		return fmt.Errorf("copy workspace for publish: %w (stderr: %s)", err, strings.TrimSpace(out.Stderr))
+	}
+
+	req.WorkspacePath = stagingWorkspace
+	backend := vcs.NewGitBackend(newHostVCSCommandRunner(p.runner))
+	return backend.Publish(ctx, req)
+}
 
 // newHostVCSCommandRunner adapts the runtime package's host command runner to
 // the shared VCS interface. Docker uses this for staging repository operations
