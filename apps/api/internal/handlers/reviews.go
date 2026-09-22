@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -120,7 +119,7 @@ func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusConflict, err)
 		return
 	}
-	report, err := rev.ReviewDiff(ctx, runID, snapshot.diff, snapshot.securityWorkspacePath)
+	report, err := rev.ReviewDiff(ctx, runID, snapshot.source.Diff, snapshot.securityWorkspacePath)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -153,8 +152,7 @@ type reviewSnapshot struct {
 	workspaceID           string
 	workspacePath         string
 	securityWorkspacePath string
-	preReviewHead         string
-	diff                  string
+	source                vcs.ReviewSnapshot
 	runner                vcs.CommandRunner
 }
 
@@ -197,44 +195,18 @@ func (h *Handler) prepareReviewSnapshot(ctx context.Context, runID string) (revi
 		snapshot.runner = runtimes.NewVCSCommandRunner(provider, *workspace.RuntimeSessionID)
 	}
 
-	head, err := snapshot.runner.Run(ctx, vcs.Command{
-		Name: "git",
-		Args: []string{"rev-parse", "--verify", "HEAD^{commit}"},
-		Dir:  snapshot.workspacePath,
-	})
+	source, err := vcs.CaptureReviewSnapshot(ctx, snapshot.runner, snapshot.workspacePath)
 	if err != nil {
 		return reviewSnapshot{}, err
 	}
-	snapshot.preReviewHead = strings.TrimSpace(head.Stdout)
-	if snapshot.preReviewHead == "" {
-		return reviewSnapshot{}, errors.New("reviewed workspace has no HEAD commit")
-	}
-
-	// Stage into the controlled workspace before computing the review patch so
-	// new/untracked files are included. CandidateMaterializer will commit this
-	// exact staged state after the patch is captured.
-	if _, err := snapshot.runner.Run(ctx, vcs.Command{
-		Name: "git",
-		Args: []string{"add", "-A", "--"},
-		Dir:  snapshot.workspacePath,
-	}); err != nil {
-		return reviewSnapshot{}, err
-	}
-	patch, err := snapshot.runner.Run(ctx, vcs.Command{
-		Name: "git",
-		Args: []string{"diff", "--cached", "--no-ext-diff", "--binary", "--full-index", "HEAD", "--"},
-		Dir:  snapshot.workspacePath,
-	})
-	if err != nil {
-		return reviewSnapshot{}, err
-	}
-	snapshot.diff = patch.Stdout
+	snapshot.source = source
 	return snapshot, nil
 }
 
 func (h *Handler) materializeReviewSnapshot(ctx context.Context, runID string, snapshot reviewSnapshot) (vcs.VerifiedCandidate, error) {
-	candidate, err := vcs.NewCandidateMaterializer(snapshot.runner, nil).Materialize(
+	return vcs.MaterializeReviewSnapshot(
 		ctx,
+		snapshot.runner,
 		snapshot.workspacePath,
 		"reviewed candidate for task "+snapshot.taskID+" run "+runID,
 		vcs.CandidateMetadata{
@@ -242,33 +214,8 @@ func (h *Handler) materializeReviewSnapshot(ctx context.Context, runID string, s
 			AgentID:     runID,
 			WorkspaceID: snapshot.workspaceID,
 		},
+		snapshot.source,
 	)
-	if err != nil {
-		return vcs.VerifiedCandidate{}, err
-	}
-
-	materialized, err := snapshot.runner.Run(ctx, vcs.Command{
-		Name: "git",
-		Args: []string{
-			"diff", "--no-ext-diff", "--binary", "--full-index",
-			snapshot.preReviewHead, candidate.Revision.CommitID, "--",
-		},
-		Dir: snapshot.workspacePath,
-	})
-	if err != nil {
-		return vcs.VerifiedCandidate{}, err
-	}
-	if sha256.Sum256([]byte(materialized.Stdout)) != sha256.Sum256([]byte(snapshot.diff)) {
-		if candidate.Revision.CommitID != snapshot.preReviewHead {
-			_, _ = snapshot.runner.Run(context.Background(), vcs.Command{
-				Name: "git",
-				Args: []string{"reset", "--mixed", snapshot.preReviewHead},
-				Dir:  snapshot.workspacePath,
-			})
-		}
-		return vcs.VerifiedCandidate{}, errors.New("workspace changed while freezing review snapshot; candidate rejected")
-	}
-	return candidate, nil
 }
 
 func (h *Handler) saveReviewedCandidate(
