@@ -2,8 +2,10 @@ package prfactory
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
@@ -246,3 +248,51 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 	}
 }
 
+func TestLoadRunUsesExactTaskAndRunAuthority(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create mock db: %v", err)
+	}
+	defer db.Close()
+
+	cols := []string{
+		"id", "task_id", "workspace_id", "agent_role", "model", "provider", "status",
+		"prompt_tokens", "completion_tokens", "total_cost", "error_message", "summary",
+		"metadata", "created_at", "updated_at",
+	}
+	now := time.Now().UTC()
+	mock.ExpectQuery("FROM agent_runs").
+		WithArgs("run-1", "task-1").
+		WillReturnRows(sqlmock.NewRows(cols).AddRow(
+			"run-1", "task-1", "ws-1", "implementer", "model", "provider", "reviewed",
+			10, 5, 0.1, nil, "done", []byte("{}"), now, now,
+		))
+
+	run, err := NewFactory(db, nil).loadRun(context.Background(), "task-1", "run-1")
+	if err != nil {
+		t.Fatalf("loadRun() error = %v", err)
+	}
+	if run == nil || run.ID != "run-1" || run.TaskID != "task-1" {
+		t.Fatalf("run = %+v, want exact task/run", run)
+	}
+}
+
+func TestLoadRunRejectsRunFromDifferentTask(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create mock db: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("FROM agent_runs").
+		WithArgs("run-other", "task-1").
+		WillReturnError(sql.ErrNoRows)
+
+	run, err := NewFactory(db, nil).loadRun(context.Background(), "task-1", "run-other")
+	if err != nil {
+		t.Fatalf("loadRun() error = %v", err)
+	}
+	if run != nil {
+		t.Fatalf("run = %+v, want nil for mismatched authority", run)
+	}
+}

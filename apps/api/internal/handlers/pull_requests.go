@@ -198,7 +198,7 @@ func (h *Handler) GetPullRequest(w http.ResponseWriter, r *http.Request) {
 
 // CreatePullRequestRequest is the request body for creating a PR.
 type CreatePullRequestRequest struct {
-	Approved bool `json:"approved,omitempty"`
+	RunID string `json:"run_id"`
 }
 
 // CreatePullRequest creates a PR for a task after human approval.
@@ -220,10 +220,20 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse optional request body
+	// The caller must select the exact reviewed run being published.
 	var req CreatePullRequestRequest
-	if r.ContentLength > 0 {
-		_ = json.NewDecoder(r.Body).Decode(&req)
+	if r.ContentLength <= 0 {
+		respond.Error(w, http.StatusBadRequest, errors.New("run_id is required"))
+		return
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+	req.RunID = strings.TrimSpace(req.RunID)
+	if req.RunID == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("run_id is required"))
+		return
 	}
 
 	// Verify task exists and is in a valid state for PR creation
@@ -253,20 +263,23 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pending approvals are authoritative. A request-body flag must never bypass
-	// persisted human approval state.
-	var pendingCount int
+	// Require a persisted PR-create approval for the exact run being published.
+	// Task-level approval state is insufficient because multiple reviewed runs
+	// can exist concurrently.
+	var approvedCount int
 	err = h.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM approvals
-		WHERE task_id = $1 AND response IS NULL
-		AND (expires_at IS NULL OR expires_at > $2)
-	`, taskID, time.Now().UTC()).Scan(&pendingCount)
+		WHERE task_id = $1
+		  AND agent_run_id = $2
+		  AND approval_type = $3
+		  AND response = 'approved'
+	`, taskID, req.RunID, models.ApprovalTypePRCreate).Scan(&approvedCount)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	if pendingCount > 0 {
-		respond.Error(w, http.StatusConflict, errors.New("pending approval exists for this task"))
+	if approvedCount == 0 {
+		respond.Error(w, http.StatusConflict, errors.New("approved pr_create approval is required for the selected run"))
 		return
 	}
 
@@ -284,9 +297,9 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 			factory = factory.WithRuntimeProvider(workspace.RuntimeProvider, provider)
 		}
 	}
-	pr, err := factory.CreatePullRequest(ctx, taskID)
+	pr, err := factory.CreatePullRequest(ctx, taskID, req.RunID)
 	if err != nil {
-		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
+		h.logger.Error("failed to create pull request", "task_id", taskID, "run_id", req.RunID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
 		return
 	}
@@ -296,6 +309,7 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		event := map[string]interface{}{
 			"pr_id":     pr.ID,
 			"task_id":   taskID,
+			"run_id":    req.RunID,
 			"pr_number": pr.Number,
 			"branch":    pr.Branch,
 			"timestamp": time.Now().UTC().Format(time.RFC3339),

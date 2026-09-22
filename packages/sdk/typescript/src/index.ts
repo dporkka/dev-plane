@@ -436,10 +436,10 @@ export class DevPlaneClient {
     return this.request<PullRequest>(`/api/v1/pull-requests/${id}`);
   }
 
-  createPullRequest(taskId: string, payload?: CreatePullRequestRequest) {
+  createPullRequest(taskId: string, payload: CreatePullRequestRequest) {
     return this.request<PullRequest>(`/api/v1/tasks/${taskId}/pull-request`, {
       method: 'POST',
-      body: payload ? JSON.stringify(payload) : undefined,
+      body: JSON.stringify(payload),
     });
   }
 

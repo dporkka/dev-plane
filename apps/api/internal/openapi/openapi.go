@@ -777,9 +777,10 @@ func buildComponents() Components {
 				},
 			},
 			"CreatePullRequestRequest": {
-				Type: "object",
+				Type:     "object",
+				Required: []string{"run_id"},
 				Properties: map[string]*Schema{
-					"approved": {Type: "boolean", Nullable: true},
+					"run_id": {Type: "string", Format: "uuid", Description: "Exact reviewed agent run to publish"},
 				},
 			},
 			"RepoAnalysis": {
@@ -1943,7 +1944,7 @@ func buildPaths() map[string]PathItem {
 		Post: &Operation{
 			Tags:        []string{"Pull Requests", "Tasks"},
 			Summary:     "Create pull request",
-			Description: "Creates a pull request for a task after approval.",
+			Description: "Creates a pull request for the exact reviewed agent run selected by the caller after approval.",
 			OperationID: "createPullRequest",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
@@ -1959,7 +1960,7 @@ func buildPaths() map[string]PathItem {
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
 				}},
 				"400": {Description: "Invalid request or task status"},
-				"409": {Description: "Pending approval exists"},
+				"409": {Description: "The selected run does not have an approved PR-create approval"},
 			},
 		},
 	}

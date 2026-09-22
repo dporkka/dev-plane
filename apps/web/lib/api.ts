@@ -89,8 +89,8 @@ export const api = {
   getReview: (runId: string): Promise<any> => getClient().getReview(runId),
 
   // ─── Pull Requests ──────────────────────────────────────────────
-  createPullRequest: (taskId: string): Promise<any> =>
-    getClient().createPullRequest(taskId),
+  createPullRequest: (taskId: string, runId: string): Promise<any> =>
+    getClient().createPullRequest(taskId, { run_id: runId }),
 
   listPullRequests: (projectId: string): Promise<any> =>
     getClient().listPullRequests(projectId),

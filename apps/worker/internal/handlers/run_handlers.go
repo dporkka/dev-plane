@@ -9,8 +9,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -364,18 +364,22 @@ func (h *RunHandler) HandleReviewCompleted(msg *nats.Msg) error {
 
 	h.logger.Info("handling review completed", "run_id", payload.RunID, "task_id", payload.TaskID)
 
-	// Check if there's already a pending approval for this task
+	// De-duplicate only the PR-create approval for this exact run. A pending
+	// approval for an older run must not suppress approval of a newer review.
 	var pendingCount int
 	err := h.db.QueryRow(`
 		SELECT COUNT(*) FROM approvals
-		WHERE task_id = $1 AND response IS NULL
-		AND (expires_at IS NULL OR expires_at > $2)
-	`, payload.TaskID, time.Now().UTC()).Scan(&pendingCount)
+		WHERE task_id = $1
+		  AND agent_run_id = $2
+		  AND approval_type = $3
+		  AND response IS NULL
+		  AND (expires_at IS NULL OR expires_at > $4)
+	`, payload.TaskID, payload.RunID, models.ApprovalTypePRCreate, time.Now().UTC()).Scan(&pendingCount)
 	if err != nil {
 		h.logger.Warn("failed to check pending approvals", "error", err)
 	}
 	if pendingCount > 0 {
-		h.logger.Info("approval request already pending for task", "task_id", payload.TaskID)
+		h.logger.Info("approval request already pending for reviewed run", "task_id", payload.TaskID, "run_id", payload.RunID)
 		return ackMessage(msg)
 	}
 

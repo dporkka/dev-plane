@@ -310,3 +310,59 @@ func TestMergePullRequest_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
+
+func TestCreatePullRequestRequiresRunID(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/pull-request", nil)
+	req = req.WithContext(withTestUser(req.Context()))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.CreatePullRequest(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "run_id is required") {
+		t.Fatalf("body = %s, want run_id requirement", rec.Body.String())
+	}
+}
+
+func TestCreatePullRequestRequiresApprovalForSelectedRun(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	runID := "run-2"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, repository_id, target_branch, workspace_id").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "repository_id", "target_branch", "workspace_id"}).
+			AddRow("reviewing", "repo-1", "main", nil))
+	mock.ExpectQuery("SELECT COUNT\\(\\*\\) FROM approvals").
+		WithArgs(taskID, runID, models.ApprovalTypePRCreate).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/pull-request", strings.NewReader(`{"run_id":"run-2"}`))
+	req = req.WithContext(withTestUser(req.Context()))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.CreatePullRequest(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "selected run") {
+		t.Fatalf("body = %s, want selected-run approval error", rec.Body.String())
+	}
+}
