@@ -7,6 +7,11 @@ import type {
   ArtifactLease,
   ArtifactLeaseRequest,
   ArtifactMetadata,
+  BeginArtifactUploadRequest,
+  BeginArtifactUploadResponse,
+  CompleteArtifactUploadRequest,
+  PresignArtifactPartsRequest,
+  PresignedArtifactPart,
   AuditLog,
   ConnectRepositoryRequest,
   CreateBriefHandoffRequest,
@@ -63,8 +68,15 @@ import type {
   WriteWorkspaceFileRequest,
   WriteWorkspaceFileResponse,
 } from './types.js';
+import {
+  uploadArtifactMultipart,
+  type ArtifactUploadLease,
+  type ArtifactUploadOptions,
+  type ArtifactUploadSource,
+} from './artifact-upload.js';
 
 export * from './types.js';
+export * from './artifact-upload.js';
 
 export interface DevPlaneClientOptions {
   baseUrl: string;
@@ -573,6 +585,119 @@ export class DevPlaneClient {
       throw new Error((await response.text()) || `HTTP ${response.status}`);
     }
     return response.json() as Promise<ArtifactMetadata>;
+  }
+
+  beginArtifactUpload(
+    workspaceId: string,
+    payload: BeginArtifactUploadRequest,
+    options?: { lease?: ArtifactUploadLease; signal?: AbortSignal },
+  ) {
+    return this.request<BeginArtifactUploadResponse>(
+      `/api/v1/workspaces/${workspaceId}/artifact-uploads`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: options?.signal,
+        headers: {
+          ...(options?.lease?.token
+            ? { 'X-Artifact-Lease-Token': options.lease.token }
+            : {}),
+          ...(options?.lease?.generation
+            ? { 'X-Artifact-Lease-Generation': String(options.lease.generation) }
+            : {}),
+        },
+      },
+    );
+  }
+
+  presignArtifactUploadParts(
+    workspaceId: string,
+    uploadId: string,
+    payload: PresignArtifactPartsRequest,
+    options?: { signal?: AbortSignal },
+  ) {
+    return this.request<{
+      upload_id: string;
+      start_part: number;
+      count: number;
+      parts: PresignedArtifactPart[];
+    }>(
+      `/api/v1/workspaces/${workspaceId}/artifact-uploads/${uploadId}/parts`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: options?.signal,
+      },
+    );
+  }
+
+  completeArtifactUpload(
+    workspaceId: string,
+    uploadId: string,
+    payload: CompleteArtifactUploadRequest,
+    options?: { lease?: ArtifactUploadLease; signal?: AbortSignal },
+  ) {
+    return this.request<ArtifactMetadata>(
+      `/api/v1/workspaces/${workspaceId}/artifact-uploads/${uploadId}/complete`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+        signal: options?.signal,
+        headers: {
+          ...(options?.lease?.token
+            ? { 'X-Artifact-Lease-Token': options.lease.token }
+            : {}),
+          ...(options?.lease?.generation
+            ? { 'X-Artifact-Lease-Generation': String(options.lease.generation) }
+            : {}),
+        },
+      },
+    );
+  }
+
+  async abortArtifactUpload(
+    workspaceId: string,
+    uploadId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<void> {
+    await this.request<{ status: 'aborted'; id: string }>(
+      `/api/v1/workspaces/${workspaceId}/artifact-uploads/${uploadId}`,
+      {
+        method: 'DELETE',
+        signal: options?.signal,
+      },
+    );
+  }
+
+  uploadWorkspaceArtifactMultipart(
+    workspaceId: string,
+    path: string,
+    source: ArtifactUploadSource,
+    options?: ArtifactUploadOptions,
+  ): Promise<ArtifactMetadata> {
+    return uploadArtifactMultipart(
+      {
+        begin: (id, payload, requestOptions) =>
+          this.beginArtifactUpload(id, payload, requestOptions),
+        presign: async (id, uploadId, payload, requestOptions) => {
+          const result = await this.presignArtifactUploadParts(
+            id,
+            uploadId,
+            payload,
+            requestOptions,
+          );
+          return { parts: result.parts };
+        },
+        complete: (id, uploadId, payload, requestOptions) =>
+          this.completeArtifactUpload(id, uploadId, payload, requestOptions),
+        abort: (id, uploadId, requestOptions) =>
+          this.abortArtifactUpload(id, uploadId, requestOptions),
+      },
+      workspaceId,
+      path,
+      source,
+      options,
+    );
   }
 
   async deleteWorkspaceArtifact(
