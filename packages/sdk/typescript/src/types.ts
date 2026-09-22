@@ -679,7 +679,7 @@ export interface RespondApprovalRequest {
 }
 
 export interface CreatePullRequestRequest {
-  approved?: boolean;
+  run_id: string;
 }
 
 export interface MergePullRequestRequest {
