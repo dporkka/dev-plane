@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	artifactstore "github.com/ai-dev-control-plane/artifacts"
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	artifactstore "github.com/ai-dev-control-plane/artifacts"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/runtimes"
 	"github.com/go-chi/chi/v5"
@@ -29,20 +29,20 @@ const (
 )
 
 type ArtifactMetadataResponse struct {
-	ID             string                  `json:"id"`
-	OrganizationID string                  `json:"organization_id"`
-	WorkspaceID    *string                 `json:"workspace_id,omitempty"`
-	ArtifactType   string                  `json:"artifact_type"`
-	FileName       string                  `json:"file_name"`
-	LogicalPath    string                  `json:"logical_path"`
-	Kind           artifactstore.Kind      `json:"kind"`
-	MimeType       string                  `json:"mime_type,omitempty"`
-	SizeBytes      int64                   `json:"size_bytes"`
-	Digest         artifactstore.Digest    `json:"digest"`
-	SemanticDigest *artifactstore.Digest   `json:"semantic_digest,omitempty"`
-	Metadata       map[string]string       `json:"metadata,omitempty"`
+	ID             string                        `json:"id"`
+	OrganizationID string                        `json:"organization_id"`
+	WorkspaceID    *string                       `json:"workspace_id,omitempty"`
+	ArtifactType   string                        `json:"artifact_type"`
+	FileName       string                        `json:"file_name"`
+	LogicalPath    string                        `json:"logical_path"`
+	Kind           artifactstore.Kind            `json:"kind"`
+	MimeType       string                        `json:"mime_type,omitempty"`
+	SizeBytes      int64                         `json:"size_bytes"`
+	Digest         artifactstore.Digest          `json:"digest"`
+	SemanticDigest *artifactstore.Digest         `json:"semantic_digest,omitempty"`
+	Metadata       map[string]string             `json:"metadata,omitempty"`
 	Derivatives    []artifactstore.DerivativeRef `json:"derivatives,omitempty"`
-	CreatedAt      time.Time               `json:"created_at"`
+	CreatedAt      time.Time                     `json:"created_at"`
 }
 
 type artifactRecord struct {
@@ -104,10 +104,10 @@ func (h *Handler) UploadWorkspaceArtifact(w http.ResponseWriter, r *http.Request
 				return
 			}
 			if err := h.artifactLeases.Validate(ctx, artifactstore.Lease{
-				ScopeID: workspaceID,
-				Path: logicalPath,
-				OwnerID: user.UserID,
-				Token: token,
+				ScopeID:    workspaceID,
+				Path:       logicalPath,
+				OwnerID:    user.UserID,
+				Token:      token,
 				Generation: generation,
 			}); err != nil {
 				respondArtifactLeaseError(w, err)
@@ -734,12 +734,12 @@ func (h *Handler) buildWorkspaceArtifactVersion(ctx context.Context, workspaceID
 		}
 	}
 	version := artifactstore.Version{
-		Schema:    artifactstore.VersionSchemaV1,
-		Parents:   parents,
-		Manifest:  manifestDescriptor.Digest,
-		Author:    artifactstore.ActorIdentity{ID: authorID, Type: "human"},
-		Message:   "workspace snapshot",
-		CreatedAt: time.Now().UTC(),
+		Schema:     artifactstore.VersionSchemaV1,
+		Parents:    parents,
+		Manifest:   manifestDescriptor.Digest,
+		Author:     artifactstore.ActorIdentity{ID: authorID, Type: "human"},
+		Message:    "workspace snapshot",
+		CreatedAt:  time.Now().UTC(),
 		Provenance: artifactstore.Provenance{WorkspaceID: workspaceID},
 	}
 	versionDescriptor, err := h.artifactManager.PutVersion(ctx, version)
@@ -849,7 +849,7 @@ func (h *Handler) DeleteWorkspaceArtifact(w http.ResponseWriter, r *http.Request
 	}
 	now := time.Now().UTC()
 	metadata, _ := json.Marshal(map[string]any{
-		"deleted_by": user.UserID,
+		"deleted_by":      user.UserID,
 		"previous_digest": existing.Descriptor.Digest.String(),
 	})
 	_, err = h.db.ExecContext(ctx, `
@@ -880,10 +880,10 @@ func (h *Handler) validateArtifactLeaseHeaders(
 		return fmt.Errorf("%w: write lease token and generation are required", artifactstore.ErrLeaseHeld)
 	}
 	return h.artifactLeases.Validate(ctx, artifactstore.Lease{
-		ScopeID: workspaceID,
-		Path: logicalPath,
-		OwnerID: ownerID,
-		Token: token,
+		ScopeID:    workspaceID,
+		Path:       logicalPath,
+		OwnerID:    ownerID,
+		Token:      token,
 		Generation: generation,
 	})
 }
@@ -1007,12 +1007,12 @@ func (h *Handler) RestoreWorkspaceArtifacts(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	restoreVersion := artifactstore.Version{
-		Schema:    artifactstore.VersionSchemaV1,
-		Parents:   parents,
-		Manifest:  targetVersion.Manifest,
-		Author:    artifactstore.ActorIdentity{ID: user.UserID, Type: "human"},
-		Message:   "restore artifacts from snapshot " + snapshotID,
-		CreatedAt: time.Now().UTC(),
+		Schema:     artifactstore.VersionSchemaV1,
+		Parents:    parents,
+		Manifest:   targetVersion.Manifest,
+		Author:     artifactstore.ActorIdentity{ID: user.UserID, Type: "human"},
+		Message:    "restore artifacts from snapshot " + snapshotID,
+		CreatedAt:  time.Now().UTC(),
 		Provenance: artifactstore.Provenance{WorkspaceID: workspaceID},
 	}
 	restoreDescriptor, err := h.artifactManager.PutVersion(ctx, restoreVersion)
@@ -1035,7 +1035,7 @@ func (h *Handler) RestoreWorkspaceArtifacts(w http.ResponseWriter, r *http.Reque
 		}
 		metadata, _ := json.Marshal(map[string]any{
 			"restored_from_snapshot": snapshotID,
-			"previous_digest": currentArtifact.Descriptor.Digest.String(),
+			"previous_digest":        currentArtifact.Descriptor.Digest.String(),
 		})
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO artifacts (
@@ -1057,7 +1057,7 @@ func (h *Handler) RestoreWorkspaceArtifacts(w http.ResponseWriter, r *http.Reque
 		}
 		metadata, _ := json.Marshal(map[string]any{
 			"restored_from_snapshot": snapshotID,
-			"artifact": artifact.Metadata,
+			"artifact":               artifact.Metadata,
 		})
 		var semanticAlgorithm, semanticHex any
 		if artifact.SemanticDigest != nil {
@@ -1137,7 +1137,7 @@ func (h *Handler) ListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request)
 	result := []WorkspaceSnapshotResponse{}
 	for rows.Next() {
 		var (
-			item WorkspaceSnapshotResponse
+			item                                                                        WorkspaceSnapshotResponse
 			agentRunID, gitCommit, changeID, manifestDigest, versionDigest, description sql.NullString
 		)
 		item.WorkspaceID = workspaceID
@@ -1148,12 +1148,24 @@ func (h *Handler) ListWorkspaceSnapshots(w http.ResponseWriter, r *http.Request)
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
 		}
-		if agentRunID.Valid { item.AgentRunID = agentRunID.String }
-		if gitCommit.Valid { item.GitCommit = gitCommit.String }
-		if changeID.Valid { item.VCSChangeID = changeID.String }
-		if manifestDigest.Valid { item.ArtifactManifestDigest = manifestDigest.String }
-		if versionDigest.Valid { item.ArtifactVersionDigest = versionDigest.String }
-		if description.Valid { item.Description = description.String }
+		if agentRunID.Valid {
+			item.AgentRunID = agentRunID.String
+		}
+		if gitCommit.Valid {
+			item.GitCommit = gitCommit.String
+		}
+		if changeID.Valid {
+			item.VCSChangeID = changeID.String
+		}
+		if manifestDigest.Valid {
+			item.ArtifactManifestDigest = manifestDigest.String
+		}
+		if versionDigest.Valid {
+			item.ArtifactVersionDigest = versionDigest.String
+		}
+		if description.Valid {
+			item.Description = description.String
+		}
 		result = append(result, item)
 	}
 	respond.JSON(w, http.StatusOK, result)
@@ -1165,4 +1177,3 @@ func nullIfEmpty(value string) any {
 	}
 	return value
 }
-

@@ -14,7 +14,7 @@ const (
 	DefaultMultipartPartSize int64 = 64 << 20
 	MaxMultipartPartSize     int64 = 5 << 30
 	MaxMultipartParts              = 10000
-	DefaultPresignTTL               = 15 * time.Minute
+	DefaultPresignTTL              = 15 * time.Minute
 )
 
 type PresignedPart struct {
@@ -39,8 +39,8 @@ type DirectMultipartStore interface {
 }
 
 func MultipartPartSize(size, requested int64) (int64, int, error) {
-	if size < 0 {
-		return 0, 0, fmt.Errorf("artifact size must not be negative")
+	if size <= 0 {
+		return 0, 0, fmt.Errorf("artifact size must be positive for multipart upload")
 	}
 	partSize := requested
 	if partSize == 0 {
@@ -65,10 +65,7 @@ func MultipartPartSize(size, requested int64) (int64, int, error) {
 	if partSize > MaxMultipartPartSize {
 		return 0, 0, fmt.Errorf("artifact is too large for S3 multipart limits")
 	}
-	partCount := 1
-	if size > 0 {
-		partCount = int((size + partSize - 1) / partSize)
-	}
+	partCount := int((size + partSize - 1) / partSize)
 	if partCount > MaxMultipartParts {
 		return 0, 0, fmt.Errorf("multipart upload requires %d parts; maximum is %d", partCount, MaxMultipartParts)
 	}

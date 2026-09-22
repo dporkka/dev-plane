@@ -82,8 +82,8 @@ type directUploadRecord struct {
 
 func (u directUploadRecord) descriptor() artifactstore.Descriptor {
 	return artifactstore.Descriptor{
-		Digest: artifactstore.Digest{Algorithm: u.DigestAlgorithm, Hex: u.DigestHex},
-		Size: u.ExpectedSize,
+		Digest:    artifactstore.Digest{Algorithm: u.DigestAlgorithm, Hex: u.DigestHex},
+		Size:      u.ExpectedSize,
 		MediaType: u.MediaType,
 	}
 }
@@ -114,8 +114,8 @@ func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
-	if req.SizeBytes < 0 || req.SizeBytes > maxDirectArtifactUploadBytes {
-		respond.Error(w, http.StatusBadRequest, fmt.Errorf("size_bytes must be between 0 and %d", maxDirectArtifactUploadBytes))
+	if req.SizeBytes <= 0 || req.SizeBytes > maxDirectArtifactUploadBytes {
+		respond.Error(w, http.StatusBadRequest, fmt.Errorf("size_bytes must be between 1 and %d", maxDirectArtifactUploadBytes))
 		return
 	}
 	digest, err := artifactstore.ParseDigest(artifactstore.AlgorithmSHA256 + ":" + strings.ToLower(strings.TrimSpace(req.SHA256)))
@@ -399,22 +399,27 @@ func (h *Handler) AbortArtifactUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Claims, upload directUploadRecord) (ArtifactMetadataResponse, error) {
-	if record, artifact, err := h.loadCASArtifact(ctx, upload.ID); err == nil {
+	record, existingArtifact, lookupErr := h.loadCASArtifact(ctx, upload.ID)
+	if lookupErr == nil {
 		_, _ = h.db.ExecContext(ctx, `
-			UPDATE artifact_uploads SET status = 'completed', artifact_id = $1, updated_at = $2
-			WHERE id = $1
-		`, upload.ID, time.Now().UTC())
+			UPDATE artifact_uploads
+			SET status = 'completed', artifact_id = $1, updated_at = $2
+			WHERE id = $3
+		`, record.ID, time.Now().UTC(), upload.ID)
 		workspaceID := upload.WorkspaceID
-		return artifactResponse(record.ID, record.OrganizationID, &workspaceID, artifact, record.CreatedAt), nil
+		return artifactResponse(record.ID, record.OrganizationID, &workspaceID, existingArtifact, record.CreatedAt), nil
+	}
+	if !errors.Is(lookupErr, sql.ErrNoRows) {
+		return ArtifactMetadataResponse{}, fmt.Errorf("load direct-upload artifact: %w", lookupErr)
 	}
 
 	artifact := artifactstore.Artifact{
-		Path: upload.LogicalPath,
-		Kind: artifactstore.KindBinary,
+		Path:       upload.LogicalPath,
+		Kind:       artifactstore.KindBinary,
 		Descriptor: upload.descriptor(),
 		Metadata: map[string]string{
-			"workspace_id": upload.WorkspaceID,
-			"uploaded_by": user.UserID,
+			"workspace_id":     upload.WorkspaceID,
+			"uploaded_by":      user.UserID,
 			"direct_upload_id": upload.ID,
 		},
 	}
@@ -440,8 +445,8 @@ func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Cl
 	_, err = h.db.ExecContext(ctx, `
 		UPDATE artifact_uploads
 		SET status = 'completed', artifact_id = $1, error_message = NULL, updated_at = $2
-		WHERE id = $1
-	`, upload.ID, time.Now().UTC())
+		WHERE id = $3
+	`, upload.ID, time.Now().UTC(), upload.ID)
 	if err != nil {
 		return ArtifactMetadataResponse{}, fmt.Errorf("mark direct upload completed: %w", err)
 	}

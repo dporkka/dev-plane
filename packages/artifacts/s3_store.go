@@ -4,17 +4,16 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
 	"os"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -240,13 +239,15 @@ func (s *S3Store) doRequest(
 	if err != nil {
 		return nil, fmt.Errorf("create S3 artifact request: %w", err)
 	}
-	if body != nil {
-		req.ContentLength = size
-		req.Header.Set("Content-Type", "application/octet-stream")
-	}
 	for name, values := range headers {
 		for _, value := range values {
 			req.Header.Add(name, value)
+		}
+	}
+	if body != nil {
+		req.ContentLength = size
+		if req.Header.Get("Content-Type") == "" {
+			req.Header.Set("Content-Type", "application/octet-stream")
 		}
 	}
 	s.sign(req, payloadHash, s.now())
@@ -383,14 +384,13 @@ func (s *S3Store) PresignUploadPart(ctx context.Context, stagingKey, uploadID st
 	now := s.now().UTC()
 	u := s.objectURL(stagingKey)
 	query := url.Values{
-		"partNumber":            {strconv.Itoa(partNumber)},
-		"uploadId":              {uploadID},
-		"X-Amz-Algorithm":       {"AWS4-HMAC-SHA256"},
-		"X-Amz-Credential":      {s.accessKeyID + "/" + now.Format("20060102") + "/" + s.region + "/s3/aws4_request"},
-		"X-Amz-Date":            {now.Format("20060102T150405Z")},
-		"X-Amz-Expires":         {strconv.FormatInt(int64(ttl/time.Second), 10)},
-		"X-Amz-SignedHeaders":   {"host"},
-		"X-Amz-Content-Sha256":  {"UNSIGNED-PAYLOAD"},
+		"partNumber":          {strconv.Itoa(partNumber)},
+		"uploadId":            {uploadID},
+		"X-Amz-Algorithm":     {"AWS4-HMAC-SHA256"},
+		"X-Amz-Credential":    {s.accessKeyID + "/" + now.Format("20060102") + "/" + s.region + "/s3/aws4_request"},
+		"X-Amz-Date":          {now.Format("20060102T150405Z")},
+		"X-Amz-Expires":       {strconv.FormatInt(int64(ttl/time.Second), 10)},
+		"X-Amz-SignedHeaders": {"host"},
 	}
 	if s.sessionToken != "" {
 		query.Set("X-Amz-Security-Token", s.sessionToken)
@@ -554,10 +554,6 @@ func (s *S3Store) DeleteObject(ctx context.Context, key string) error {
 	return nil
 }
 
-func sha256Base64(data []byte) string {
-	sum := sha256.Sum256(data)
-	return base64.StdEncoding.EncodeToString(sum[:])
-}
 
 func (s *S3Store) responseError(resp *http.Response, operation string) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<10))

@@ -11,7 +11,6 @@ func TestMultipartPartSize(t *testing.T) {
 	}{
 		{name: "small", size: 10 << 20, wantParts: 1},
 		{name: "large", size: 130 << 20, wantParts: 3},
-		{name: "zero", size: 0, wantParts: 1},
 		{name: "requested", size: 20 << 20, requested: 5 << 20, wantParts: 4},
 	}
 	for _, tt := range tests {
@@ -41,5 +40,12 @@ func TestMultipartPartSizeRaisesPartSizeForTenThousandLimit(t *testing.T) {
 	}
 	if partSize <= DefaultMultipartPartSize {
 		t.Fatalf("part size = %d, expected it to grow above default", partSize)
+	}
+}
+
+
+func TestMultipartPartSizeRejectsZero(t *testing.T) {
+	if _, _, err := MultipartPartSize(0, 0); err == nil {
+		t.Fatal("expected zero-byte multipart upload to be rejected")
 	}
 }
