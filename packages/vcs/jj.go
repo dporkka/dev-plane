@@ -103,8 +103,14 @@ func (b *JujutsuBackend) Publish(ctx context.Context, req PublishRequest) error 
 	if strings.TrimSpace(req.Ref) == "" {
 		return fmt.Errorf("publish ref is required")
 	}
+	source := "@-"
+	if strings.TrimSpace(req.SourceRevision.ChangeID) != "" {
+		source = strings.TrimSpace(req.SourceRevision.ChangeID)
+	} else if strings.TrimSpace(req.SourceRevision.CommitID) != "" {
+		source = strings.TrimSpace(req.SourceRevision.CommitID)
+	}
 	if _, err := b.runner.Run(ctx, Command{
-		Name: "jj", Args: []string{"bookmark", "set", "--allow-backwards", req.Ref, "-r", "@-"}, Dir: req.WorkspacePath, Env: req.Env,
+		Name: "jj", Args: []string{"bookmark", "set", "--allow-backwards", req.Ref, "-r", source}, Dir: req.WorkspacePath, Env: req.Env,
 	}); err != nil {
 		return err
 	}
