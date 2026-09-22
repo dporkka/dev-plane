@@ -705,7 +705,7 @@ func buildComponents() Components {
 			},
 			"RetryRunResponse": {
 				Type:     "object",
-				Required: []string{"run_id", "original_run_id", "status"},
+				Required: []string{"run_id", "original_run_id", "status"},
 				Properties: map[string]*Schema{
 					"run_id":          {Type: "string", Format: "uuid"},
 					"original_run_id": {Type: "string", Format: "uuid"},
@@ -1619,7 +1619,7 @@ func buildPaths() map[string]PathItem {
 			Summary:     "Create integration",
 			OperationID: "createIntegration",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
-			Parameters: []Parameter{
+			Parameters: []Parameter{
 				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
 			},
 			RequestBody: &RequestBody{
@@ -2437,7 +2437,7 @@ func buildPaths() map[string]PathItem {
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
 				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
-				{Name: "uploadID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "uploadID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
 			},
 			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
 				"application/json": {Schema: &Schema{Type: "object", Required: []string{"start_part"}, Properties: map[string]*Schema{
