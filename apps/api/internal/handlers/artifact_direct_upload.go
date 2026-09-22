@@ -399,15 +399,15 @@ func (h *Handler) AbortArtifactUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Claims, upload directUploadRecord) (ArtifactMetadataResponse, error) {
-	record, existingArtifact, lookupErr := h.loadCASArtifact(ctx, upload.ID)
+	existingRecord, existingArtifact, lookupErr := h.loadCASArtifact(ctx, upload.ID)
 	if lookupErr == nil {
 		_, _ = h.db.ExecContext(ctx, `
 			UPDATE artifact_uploads
 			SET status = 'completed', artifact_id = $1, updated_at = $2
 			WHERE id = $3
-		`, record.ID, time.Now().UTC(), upload.ID)
+		`, existingRecord.ID, time.Now().UTC(), upload.ID)
 		workspaceID := upload.WorkspaceID
-		return artifactResponse(record.ID, record.OrganizationID, &workspaceID, existingArtifact, record.CreatedAt), nil
+		return artifactResponse(existingRecord.ID, existingRecord.OrganizationID, &workspaceID, existingArtifact, existingRecord.CreatedAt), nil
 	}
 	if !errors.Is(lookupErr, sql.ErrNoRows) {
 		return ArtifactMetadataResponse{}, fmt.Errorf("load direct-upload artifact: %w", lookupErr)
@@ -433,11 +433,11 @@ func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Cl
 			analysis = result
 		}
 	}
-	record, err := h.persistArtifactWithID(ctx, upload.ID, user.OrgID, upload.WorkspaceID, artifact, analysis)
+	response, err := h.persistArtifactWithID(ctx, upload.ID, user.OrgID, upload.WorkspaceID, artifact, analysis)
 	if err != nil {
 		if existing, existingArtifact, loadErr := h.loadCASArtifact(ctx, upload.ID); loadErr == nil {
 			workspaceID := upload.WorkspaceID
-			record = artifactResponse(existing.ID, existing.OrganizationID, &workspaceID, existingArtifact, existing.CreatedAt)
+			response = artifactResponse(existing.ID, existing.OrganizationID, &workspaceID, existingArtifact, existing.CreatedAt)
 		} else {
 			return ArtifactMetadataResponse{}, err
 		}
@@ -450,7 +450,7 @@ func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Cl
 	if err != nil {
 		return ArtifactMetadataResponse{}, fmt.Errorf("mark direct upload completed: %w", err)
 	}
-	return record, nil
+	return response, nil
 }
 
 func (h *Handler) loadDirectUpload(ctx context.Context, uploadID, workspaceID string, user *auth.Claims) (directUploadRecord, error) {
