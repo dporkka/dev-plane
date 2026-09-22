@@ -311,7 +311,6 @@ func TestMergePullRequest_NotFound(t *testing.T) {
 	}
 }
 
-
 func TestCreatePullRequestRequiresRunID(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
