@@ -4,13 +4,7 @@
 # Uses docker-compose v1 syntax for maximum compatibility.
 
 # --- Phony targets -----------------------------------------------------------
-.PHONY: dev dev-web dev-api dev-worker dev-runner \
-        docker-up docker-down docker-logs docker-status \
-        migrate db-reset gen-db \
-        test test-api test-cli test-packages test-race test-sdk \
-        lint lint-go lint-web lint-fix-web lint-sdk \
-        build build-api build-cli build-worker build-runner build-web build-sdk \
-        clean help install-tools
+.PHONY: dev dev-web dev-api dev-worker dev-runner         docker-up docker-down docker-logs docker-status         migrate db-reset gen-db         test test-api test-cli test-packages test-race test-sdk         lint lint-go lint-web lint-fix-web lint-sdk         build build-api build-cli build-worker build-runner build-web build-sdk         clean help install-tools
 
 # --- Variables ---------------------------------------------------------------
 
@@ -50,7 +44,7 @@ GO_APPS          := $(filter apps/%,$(GO_MODULES))
 
 # Fallback explicit lists (used when workspace introspection is unavailable).
 ifeq ($(GO_PACKAGES),)
-GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+GO_PACKAGES      := packages/agents packages/artifacts packages/crypto packages/db packages/events packages/gateway packages/models packages/policies packages/prfactory packages/repo-intel packages/reviewer packages/runtimes packages/securityscan packages/vcs
 endif
 ifeq ($(GO_APPS),)
 GO_APPS          := apps/api apps/worker apps/runner
@@ -67,30 +61,13 @@ dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 	@echo "$(GREEN)Starting AI Dev Control Plane in dev mode...$(RESET)"
 	@$(MAKE) docker-up
 	@echo "$(BLUE)Waiting for NATS to be ready...$(RESET)"
-	@i=0; \
-	while [ $$i -lt 30 ]; do \
-		if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1 || \
-		   wget --spider -q http://localhost:8222/healthz >/dev/null 2>&1; then \
-			echo "$(GREEN)NATS is ready.$(RESET)"; \
-			break; \
-		fi; \
-		i=$$((i + 1)); \
-		if [ $$i -eq 30 ]; then \
-			echo "$(BLUE)NATS health check timed out after 30s; continuing anyway...$(RESET)"; \
-		fi; \
-		sleep 1; \
-	done
+	@i=0; 	while [ $$i -lt 30 ]; do 		if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1 || 		   wget --spider -q http://localhost:8222/healthz >/dev/null 2>&1; then 			echo "$(GREEN)NATS is ready.$(RESET)"; 			break; 		fi; 		i=$$((i + 1)); 		if [ $$i -eq 30 ]; then 			echo "$(BLUE)NATS health check timed out after 30s; continuing anyway...$(RESET)"; 		fi; 		sleep 1; 	done
 	@mkdir -p $(DATA_DIR)
 	@$(MAKE) migrate
 	@echo "$(GREEN)All dependencies ready. Starting applications...$(RESET)"
-	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 %4 2>/dev/null; wait' EXIT INT TERM; \
-		$(MAKE) dev-web & \
-		$(MAKE) dev-api & \
-		$(MAKE) dev-worker & \
-		$(MAKE) dev-runner & \
-		wait
+	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 %4 2>/dev/null; wait' EXIT INT TERM; 		$(MAKE) dev-web & 		$(MAKE) dev-api & 		$(MAKE) dev-worker & 		$(MAKE) dev-runner & 		wait
 
-dev-web: ## Start Next.js dev server
+dev-web: ## Start Next.js dev server on port $(WEB_PORT)
 	@echo "$(BLUE)[web]$(RESET) Starting Next.js dev server on port $(WEB_PORT)..."
 	cd apps/web && PORT=$(WEB_PORT) npm run dev
 
@@ -106,7 +83,7 @@ dev-worker: ## Start Go worker service
 	@echo "$(BLUE)[worker]$(RESET) Starting Go worker..."
 	cd apps/worker && go run cmd/worker/main.go
 
-dev-runner: ## Start Go runner (runtime) service
+dev-runner: ## Start Go runner (runtime) service on port $(RUNNER_PORT)
 	@echo "$(BLUE)[runner]$(RESET) Starting Go runner service on port $(RUNNER_PORT)..."
 	cd apps/runner && RUNNER_PORT=$(RUNNER_PORT) go run cmd/runner/main.go
 
@@ -120,10 +97,10 @@ docker-down: ## Stop Docker services
 	@echo "$(BLUE)[docker]$(RESET) Stopping Docker services..."
 	$(DOCKER_COMPOSE) down
 
-docker-logs: ## Follow Docker service logs
+docker-logs: ## Follow all service logs
 	$(DOCKER_COMPOSE) logs -f
 
-docker-status: ## Show Docker service status
+docker-status: ## Show service status
 	$(DOCKER_COMPOSE) ps
 
 docker-logs-nats: ## Follow NATS logs only
@@ -132,13 +109,13 @@ docker-logs-nats: ## Follow NATS logs only
 docker-logs-temporal: ## Follow Temporal logs only
 	$(DOCKER_COMPOSE) logs -f temporal
 
-docker-down-volumes: ## Stop Docker services and remove volumes (DESTRUCTIVE)
+docker-down-volumes: ## Stop services and remove volumes (DESTRUCTIVE)
 	@echo "$(BLUE)[docker]$(RESET) Stopping services and removing volumes..."
 	$(DOCKER_COMPOSE) down -v
 
 # --- Database targets --------------------------------------------------------
 
-migrate: ## Run database migrations (Goose)
+migrate: ## Run Goose migrations
 	@echo "$(BLUE)[db]$(RESET) Running migrations..."
 	@mkdir -p $(DATA_DIR)
 	goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" up
@@ -150,7 +127,7 @@ db-reset: ## Delete DB files and recreate (DESTRUCTIVE)
 	@$(MAKE) migrate
 	@echo "$(GREEN)Database reset complete.$(RESET)"
 
-db-status: ## Show current migration status
+db-status: ## Show migration status
 	@goose -dir $(MIGRATIONS_DIR) sqlite3 "$(DATABASE_URL)" status
 
 db-version: ## Show current migration version
@@ -158,7 +135,7 @@ db-version: ## Show current migration version
 
 # --- Code generation targets -------------------------------------------------
 
-gen-db: ## Generate SQLC typed database code
+gen-db: ## Generate SQLC typed code
 	@echo "$(BLUE)[gen]$(RESET) Generating SQLC code..."
 	cd packages/db && sqlc generate
 	@echo "$(GREEN)SQLC generation complete.$(RESET)"
@@ -169,221 +146,35 @@ gen-mock: ## Generate Go mocks (if mockgen is installed)
 
 # --- Testing targets ---------------------------------------------------------
 
-test: ## Run ALL Go tests across all packages and SDK
+test: ## Run all Go tests across packages/apps plus CLI and SDK
 	@echo "$(GREEN)Running all tests...$(RESET)"
-	@for pkg in $(GO_PACKAGES); do \
-		echo "$(BLUE)[test]$(RESET) $$pkg"; \
-		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "$(BLUE)[test]$(RESET) $$app"; \
-		cd $$app && go test ./... && cd - > /dev/null || exit 1; \
-	done
+	@for pkg in $(GO_PACKAGES); do 		echo "$(BLUE)[test]$(RESET) $$pkg"; 		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; 	done
+	@for app in $(GO_APPS); do 		echo "$(BLUE)[test]$(RESET) $$app"; 		cd $$app && go test ./... && cd - > /dev/null || exit 1; 	done
 	@$(MAKE) test-cli
 	@$(MAKE) test-sdk
 	@echo "$(GREEN)All tests passed.$(RESET)"
 
-test-api: ## Run API-specific tests with verbose output
+test-api: ## Run API tests (verbose)
 	@echo "$(BLUE)[test]$(RESET) Running API tests..."
 	cd apps/api && go test ./... -v
 
-test-cli: ## Run CLI-specific tests
+test-cli: ## Run CLI tests (verbose)
 	@echo "$(BLUE)[test]$(RESET) Running CLI tests..."
 	cd apps/cli && go test ./... -v
 
-test-worker: ## Run worker-specific tests
+test-worker: ## Run worker tests (verbose)
 	@echo "$(BLUE)[test]$(RESET) Running worker tests..."
 	cd apps/worker && go test ./... -v
 
-test-packages: ## Run package tests only (no apps)
+test-packages: ## Run package tests only
 	@echo "$(GREEN)Running package tests...$(RESET)"
-	@for pkg in $(GO_PACKAGES); do \
-		echo "$(BLUE)[test]$(RESET) $$pkg"; \
-		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; \
-	done
+	@for pkg in $(GO_PACKAGES); do 		echo "$(BLUE)[test]$(RESET) $$pkg"; 		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; 	done
 
-test-race: ## Run Go tests with race detector
-	@echo "$(GREEN)Running tests with race detector...$(RESET)"
-	@for pkg in $(GO_PACKAGES); do \
-		echo "$(BLUE)[test]$(RESET) $$pkg"; \
-		cd $$pkg && go test ./... -race && cd - > /dev/null || exit 1; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "$(BLUE)[test]$(RESET) $$app"; \
-		cd $$app && go test ./... -race && cd - > /dev/null || exit 1; \
-	done
+test-race: ## Run tests with race detector
+	@for pkg in $(GO_PACKAGES); do 		echo "$(BLUE)[test]$(RESET) $$pkg"; 		cd $$pkg && go test ./... -race && cd - > /dev/null || exit 1; 	done
+	@for app in $(GO_APPS); do 		echo "$(BLUE)[test]$(RESET) $$app"; 		cd $$app && go test ./... -race && cd - > /dev/null || exit 1; 	done
 
 test-sdk: ## Install deps and test TypeScript SDK (typecheck + tests)
 	@echo "$(BLUE)[test]$(RESET) Installing and testing TypeScript SDK..."
 	cd packages/sdk/typescript && npm ci && npm run typecheck && npm test
 	@echo "$(GREEN)SDK tests passed.$(RESET)"
-
-integration-test: ## Run credential-dependent integration tests (skip if no credentials)
-	@echo "$(GREEN)Running integration tests...$(RESET)"
-	cd packages/gateway && go test -tags=integration ./... -run Integration -timeout 60s
-	cd apps/api && go test -tags=integration ./internal/modelrouter/... -run Integration -timeout 60s
-
-live-e2e: ## Run live end-to-end gates (requires model provider key, GitHub token, NATS, Docker)
-	@echo "$(GREEN)Running live end-to-end integration gates...$(RESET)"
-	cd apps/worker && RUN_LIVE_E2E=1 go test ./internal/integration/... -v -timeout 20m
-
-test-coverage: ## Run tests with coverage report
-	@echo "$(GREEN)Running tests with coverage...$(RESET)"
-	@mkdir -p $(BIN_DIR)
-	@rm -f $(BIN_DIR)/coverage.*.out $(BIN_DIR)/coverage.out $(BIN_DIR)/coverage.html
-	@ABS_BIN=$$(cd $(BIN_DIR) && pwd); \
-	idx=0; \
-	for pkg in $(GO_PACKAGES) $(GO_APPS); do \
-		idx=$$((idx + 1)); \
-		outfile="$$ABS_BIN/coverage.$$idx.$$(basename $$pkg).out"; \
-		echo "$(BLUE)[coverage]$(RESET) $$pkg"; \
-		cd $$pkg && go test ./... -coverprofile=$$outfile >/dev/null 2>&1 || exit 1; \
-		cd - > /dev/null; \
-	done; \
-	mode=""; \
-	for f in $(BIN_DIR)/coverage.*.out; do \
-		if [ -z "$$mode" ]; then \
-			mode=$$(head -n1 "$$f"); \
-			echo "$$mode" > $(BIN_DIR)/coverage.out; \
-		fi; \
-		tail -n +2 "$$f" >> $(BIN_DIR)/coverage.out; \
-	done; \
-	go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
-	@echo "$(GREEN)Coverage report: $(BIN_DIR)/coverage.html$(RESET)"
-
-# --- Linting targets ---------------------------------------------------------
-
-lint: lint-go lint-web ## Run all linters (Go + frontend)
-
-lint-go: ## Run golangci-lint across all Go modules
-	@echo "$(BLUE)[lint]$(RESET) Running golangci-lint..."
-	@for pkg in $(GO_PACKAGES); do \
-		echo "  --> $$pkg"; \
-		cd $$pkg && golangci-lint run ./... && cd - > /dev/null || exit 1; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "  --> $$app"; \
-		cd $$app && golangci-lint run ./... && cd - > /dev/null || exit 1; \
-	done
-	@echo "$(BLUE)[lint]$(RESET) Running Go vet as secondary check..."
-	@for pkg in $(GO_PACKAGES); do \
-		echo "  --> $$pkg"; \
-		cd $$pkg && go vet ./... && cd - > /dev/null || exit 1; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "  --> $$app"; \
-		cd $$app && go vet ./... && cd - > /dev/null || exit 1; \
-	done
-	@echo "$(GREEN)Go linting complete.$(RESET)"
-
-lint-web: ## Run npm lint in frontend
-	@echo "$(BLUE)[lint]$(RESET) Running web lint..."
-	cd apps/web && npm run lint
-
-lint-fix-web: ## Run web linter with auto-fix
-	@echo "$(BLUE)[lint]$(RESET) Running web lint with auto-fix..."
-	cd apps/web && npm run lint:fix
-
-lint-sdk: ## Run TypeScript SDK typecheck
-	@echo "$(BLUE)[lint]$(RESET) Running SDK typecheck..."
-	cd packages/sdk/typescript && npm ci && npm run typecheck
-	@echo "$(GREEN)SDK lint complete.$(RESET)"
-
-lint-fix: ## Run linters with auto-fix
-	@echo "$(BLUE)[lint]$(RESET) Running auto-fix..."
-	cd apps/web && npm run lint -- --fix 2>/dev/null || true
-	@echo "$(GREEN)Auto-fix complete.$(RESET)"
-
-# --- Build targets -----------------------------------------------------------
-
-build: build-api build-cli build-worker build-runner build-sdk build-web ## Build all binaries, SDK, and frontend
-
-build-api: ## Build API binary --> bin/api
-	@echo "$(BLUE)[build]$(RESET) Building API..."
-	@mkdir -p $(BIN_DIR)
-	cd apps/api && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/api cmd/api/main.go
-	@echo "$(GREEN)API binary: $(BIN_DIR)/api$(RESET)"
-
-build-cli: ## Build CLI binary --> bin/dev-plane
-	@echo "$(BLUE)[build]$(RESET) Building CLI..."
-	@mkdir -p $(BIN_DIR)
-	cd apps/cli && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/dev-plane ./cmd/dev-plane
-	@echo "$(GREEN)CLI binary: $(BIN_DIR)/dev-plane$(RESET)"
-
-build-worker: ## Build worker binary --> bin/worker
-	@echo "$(BLUE)[build]$(RESET) Building worker..."
-	@mkdir -p $(BIN_DIR)
-	cd apps/worker && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/worker cmd/worker/main.go
-	@echo "$(GREEN)Worker binary: $(BIN_DIR)/worker$(RESET)"
-
-build-runner: ## Build runner binary --> bin/runner
-	@echo "$(BLUE)[build]$(RESET) Building runner..."
-	@mkdir -p $(BIN_DIR)
-	cd apps/runner && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/runner cmd/runner/main.go
-	@echo "$(GREEN)Runner binary: $(BIN_DIR)/runner$(RESET)"
-
-build-web: build-sdk ## Build Next.js for production
-	@echo "$(BLUE)[build]$(RESET) Building Next.js..."
-	cd apps/web && npm run build
-	@echo "$(GREEN)Next.js build complete.$(RESET)"
-
-build-sdk: ## Install deps and build TypeScript SDK
-	@echo "$(BLUE)[build]$(RESET) Building TypeScript SDK..."
-	cd packages/sdk/typescript && npm ci && npm run build
-	@echo "$(GREEN)SDK build complete.$(RESET)"
-
-# --- Clean targets -----------------------------------------------------------
-
-clean: ## Remove bin/ and .next/ build artifacts
-	@echo "$(BLUE)[clean]$(RESET) Removing build artifacts..."
-	@rm -rf $(BIN_DIR)/*
-	@cd apps/web && rm -rf .next/
-	@echo "$(GREEN)Clean complete.$(RESET)"
-
-clean-all: clean ## Remove all artifacts including Docker volumes (DESTRUCTIVE)
-	@echo "$(BLUE)[clean]$(RESET) Removing Docker volumes..."
-	$(DOCKER_COMPOSE) down -v 2>/dev/null || true
-	@rm -rf $(DATA_DIR)/*
-	@echo "$(GREEN)Full clean complete.$(RESET)"
-
-# --- Utility targets ---------------------------------------------------------
-
-install-tools: ## Install development tools (Air, Goose, SQLC, golangci-lint)
-	@echo "$(BLUE)[tools]$(RESET) Installing dev tools..."
-	go install github.com/air-verse/air@latest
-	go install github.com/pressly/goose/v3/cmd/goose@latest
-	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
-	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
-	@echo "$(GREEN)Dev tools installed.$(RESET)"
-
-deps: ## Download and verify Go module dependencies
-	@echo "$(BLUE)[deps]$(RESET) Downloading Go dependencies..."
-	@for pkg in $(GO_PACKAGES); do \
-		echo "  --> $$pkg"; \
-		cd $$pkg && go mod download && cd - > /dev/null; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "  --> $$app"; \
-		cd $$app && go mod download && cd - > /dev/null; \
-	done
-	@echo "$(GREEN)Dependencies downloaded.$(RESET)"
-
-fmt: ## Format all Go code
-	@echo "$(BLUE)[fmt]$(RESET) Formatting Go code..."
-	gofmt -w packages/ apps/
-	@echo "$(GREEN)Formatting complete.$(RESET)"
-
-# --- Help target -------------------------------------------------------------
-
-help: ## Show this self-documenting help
-	@echo ""
-	@echo "  $(GREEN)AI Dev Control Plane$(RESET) -- Available Commands"
-	@echo "  ============================================"
-	@echo ""
-	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-18s$(RESET) %s\n", $$1, $$2}' | \
-		sort
-	@echo ""
-
-# Default target
-.DEFAULT_GOAL := help

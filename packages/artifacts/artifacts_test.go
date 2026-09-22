@@ -120,7 +120,7 @@ func TestManagerArtifactManifestVersionRoundTrip(t *testing.T) {
 		Manifest:  manifestDescriptor.Digest,
 		Author:    ActorIdentity{ID: "agent-7", Type: "agent"},
 		Message:   "revise proposal",
-		CreatedAt: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC),
+		CreatedAt: time.Date(2026, 9, 22, 9, 0, 0, 0, time.FixedZone("BRT", -3*60*60)),
 		Provenance: Provenance{
 			TaskID:      "task-42",
 			AgentID:     "agent-7",
@@ -137,6 +137,56 @@ func TestManagerArtifactManifestVersionRoundTrip(t *testing.T) {
 	}
 	if loadedVersion.Manifest != version.Manifest || loadedVersion.Message != version.Message {
 		t.Fatalf("unexpected loaded version: %+v", loadedVersion)
+	}
+
+	utcVersion := version
+	utcVersion.CreatedAt = version.CreatedAt.UTC()
+	firstDigest, err := version.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := utcVersion.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDigest != secondDigest {
+		t.Fatalf("same instant produced different version digest: %s != %s", firstDigest, secondDigest)
+	}
+}
+
+func TestChunkCoverageValidation(t *testing.T) {
+	payload := []byte("abcdefgh")
+	artifact := testArtifact("video/clip.mp4", KindVideo, payload)
+	artifact.Chunks = []ChunkRef{
+		{Descriptor: Descriptor{Digest: HashBytes([]byte("abcd")), Size: 4}, Offset: 0},
+		{Descriptor: Descriptor{Digest: HashBytes([]byte("efgh")), Size: 4}, Offset: 4},
+	}
+	if err := artifact.Validate(); err != nil {
+		t.Fatalf("valid chunks rejected: %v", err)
+	}
+
+	artifact.Chunks[1].Offset = 5
+	if err := artifact.Validate(); err == nil {
+		t.Fatal("expected chunk gap to be rejected")
+	}
+}
+
+func TestGitLFSPointerRoundTrip(t *testing.T) {
+	descriptor := Descriptor{Digest: HashBytes([]byte("large media")), Size: int64(len("large media"))}
+	pointer, err := NewLFSPointer(descriptor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := pointer.MarshalText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseLFSPointer(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed != pointer {
+		t.Fatalf("pointer mismatch: %+v != %+v", parsed, pointer)
 	}
 }
 

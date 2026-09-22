@@ -12,6 +12,8 @@ It deliberately separates the **revision graph** from **payload storage**:
 - Cloud stores (R2/S3/MinIO), chunking, semantic adapters, previews, and leases
   can implement or build on these primitives without changing manifest/version
   identity.
+- Git LFS pointer parsing/encoding provides an interoperability bridge for
+  large objects while Dev Plane's CAS remains canonical.
 
 ## Object model
 
@@ -35,6 +37,20 @@ Git LFS, OCI-style descriptors, object stores, and existing security tooling.
 The `Digest` type carries its algorithm so additional algorithms can be added
 without changing higher-level APIs.
 
+## Git LFS compatibility
+
+`LFSPointer` emits and parses standard pointer bodies:
+
+```text
+version https://git-lfs.github.com/spec/v1
+oid sha256:<digest>
+size <bytes>
+```
+
+This does not make Git LFS the source of truth. It lets a repository expose a
+normal Git-compatible pointer while the payload is resolved from Dev Plane's
+artifact store.
+
 ## Next integrations
 
 1. Wire artifact manifests into VCS snapshots/workspace metadata.
@@ -42,4 +58,3 @@ without changing higher-level APIs.
 3. Add large-object chunk manifests and content-defined chunking.
 4. Add MIME-aware document/PDF/image adapters.
 5. Add short-lived write leases for non-mergeable formats.
-6. Add Git LFS pointer import/export compatibility.
