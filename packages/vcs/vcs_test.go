@@ -305,15 +305,14 @@ func TestManagerCarriesTaskAndAgentProvenance(t *testing.T) {
 	}
 }
 
-
 func TestGitPublishPinsImmutableSourceRevision(t *testing.T) {
 	runner := &fakeRunner{}
 	backend := NewGitBackend(runner)
 	commit := "0123456789abcdef0123456789abcdef01234567"
 	err := backend.Publish(context.Background(), PublishRequest{
-		WorkspacePath: t.TempDir(),
-		Ref:           "agent/task-42",
-		RemoteURL:     "https://github.com/acme/app.git",
+		WorkspacePath:  t.TempDir(),
+		Ref:            "agent/task-42",
+		RemoteURL:      "https://github.com/acme/app.git",
 		SourceRevision: Revision{CommitID: commit},
 	})
 	if err != nil {
@@ -330,8 +329,8 @@ func TestJujutsuPublishPinsStableChangeID(t *testing.T) {
 	runner := &fakeRunner{}
 	backend := NewJujutsuBackend(runner)
 	err := backend.Publish(context.Background(), PublishRequest{
-		WorkspacePath: t.TempDir(),
-		Ref:           "agent/task-42",
+		WorkspacePath:  t.TempDir(),
+		Ref:            "agent/task-42",
 		SourceRevision: Revision{CommitID: "commit-1", ChangeID: "change-1"},
 	})
 	if err != nil {
