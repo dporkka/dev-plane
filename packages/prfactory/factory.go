@@ -182,7 +182,8 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	if workspace == nil {
 		return nil, fmt.Errorf("workspace is required to publish branch %s", workspaceBranch)
 	}
-	if err := f.publishWorkspaceBranch(ctx, workspace, workspaceBranch); err != nil {
+	publishRemoteURL := fmt.Sprintf("https://github.com/%s/%s.git", repoOwner, repoName)
+	if err := f.publishWorkspaceBranch(ctx, workspace, workspaceBranch, publishRemoteURL); err != nil {
 		return nil, fmt.Errorf("publish branch %s: %w", workspaceBranch, err)
 	}
 
@@ -383,7 +384,7 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 // publishWorkspaceBranch publishes a workspace branch through the shared VCS
 // backend. Local worktrees use direct execution; isolated runtimes use the
 // runtime VCS transport so Docker/remote branches are published too.
-func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.Workspace, branch string) error {
+func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.Workspace, branch, remoteURL string) error {
 	if workspace == nil {
 		return fmt.Errorf("workspace is required")
 	}
@@ -391,12 +392,16 @@ func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.
 		return fmt.Errorf("branch is required")
 	}
 
+	if strings.TrimSpace(remoteURL) == "" {
+		return fmt.Errorf("trusted publish remote URL is required")
+	}
 	authEnv := gitHubPushEnv(f.githubToken)
 	if workspace.WorktreePath != nil && strings.TrimSpace(*workspace.WorktreePath) != "" {
 		backend := vcs.NewGitBackend(nil)
 		return backend.Publish(ctx, vcs.PublishRequest{
 			WorkspacePath: strings.TrimSpace(*workspace.WorktreePath),
 			Ref:           branch,
+			RemoteURL:     remoteURL,
 			Env:           authEnv,
 		})
 	}
@@ -418,11 +423,14 @@ func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.
 		}
 	}
 
-	backend := vcs.NewGitBackend(runtimes.NewVCSCommandRunner(provider, *workspace.RuntimeSessionID))
-	return backend.Publish(ctx, vcs.PublishRequest{
-		WorkspacePath: ".",
-		Ref:           branch,
-		Env:           authEnv,
+	publisher, ok := provider.(runtimes.VCSWorkspacePublisher)
+	if !ok {
+		return fmt.Errorf("runtime provider %q does not support privileged VCS publication", providerName)
+	}
+	return publisher.PublishVCS(ctx, *workspace.RuntimeSessionID, vcs.PublishRequest{
+		Ref:       branch,
+		RemoteURL: remoteURL,
+		Env:       authEnv,
 	})
 }
 
@@ -435,7 +443,7 @@ func gitHubPushEnv(token string) map[string]string {
 
 	credential := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	env["GIT_CONFIG_COUNT"] = "1"
-	env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+	env["GIT_CONFIG_KEY_0"] = "http.https://github.com/.extraHeader"
 	env["GIT_CONFIG_VALUE_0"] = "Authorization: Basic " + credential
 	return env
 }
