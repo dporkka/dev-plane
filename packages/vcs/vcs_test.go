@@ -304,3 +304,41 @@ func TestManagerCarriesTaskAndAgentProvenance(t *testing.T) {
 		t.Fatalf("unexpected published provenance: %+v", last)
 	}
 }
+
+
+func TestGitPublishPinsImmutableSourceRevision(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewGitBackend(runner)
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: t.TempDir(),
+		Ref:           "agent/task-42",
+		RemoteURL:     "https://github.com/acme/app.git",
+		SourceRevision: Revision{CommitID: commit},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := runner.commands[0].Args[len(runner.commands[0].Args)-1]
+	want := commit + ":refs/heads/agent/task-42"
+	if got != want {
+		t.Fatalf("push refspec = %q, want %q", got, want)
+	}
+}
+
+func TestJujutsuPublishPinsStableChangeID(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewJujutsuBackend(runner)
+	err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: t.TempDir(),
+		Ref:           "agent/task-42",
+		SourceRevision: Revision{CommitID: "commit-1", ChangeID: "change-1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"bookmark", "set", "--allow-backwards", "agent/task-42", "-r", "change-1"}
+	if !reflect.DeepEqual(runner.commands[0].Args, want) {
+		t.Fatalf("bookmark args = %#v, want %#v", runner.commands[0].Args, want)
+	}
+}
