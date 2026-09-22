@@ -20,6 +20,7 @@ import (
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/prfactory"
+	"github.com/ai-dev-control-plane/repogate"
 )
 
 // WorkerEventPublisher is the subset of the event bus used by approval handlers.
@@ -32,12 +33,17 @@ type PullRequestCreator interface {
 	CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error)
 }
 
+type RunBoundPullRequestCreator interface {
+	CreatePullRequestForRun(ctx context.Context, taskID, runID string) (*models.PullRequest, error)
+}
+
 // ApprovalHandler handles approval response events.
 type ApprovalHandler struct {
 	db       *sql.DB
 	logger   *slog.Logger
 	eventBus WorkerEventPublisher
-	factory  PullRequestCreator
+	factory        PullRequestCreator
+	repositoryGate repogate.ApprovedCandidateGate
 }
 
 // NewApprovalHandler creates a new approval handler.
@@ -60,6 +66,13 @@ func (h *ApprovalHandler) WithEventPublisher(eventBus WorkerEventPublisher) *App
 // WithPullRequestCreator replaces the PR creator, primarily for integration tests.
 func (h *ApprovalHandler) WithPullRequestCreator(factory PullRequestCreator) *ApprovalHandler {
 	h.factory = factory
+	return h
+}
+
+// WithRepositoryGate requires the approved immutable candidate to integrate
+// successfully before a pull request is created.
+func (h *ApprovalHandler) WithRepositoryGate(gate repogate.ApprovedCandidateGate) *ApprovalHandler {
+	h.repositoryGate = gate
 	return h
 }
 
@@ -120,9 +133,35 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
-	// Create the pull request
+	// Integrate the exact candidate that received human approval before creating
+	// a pull request. The approval row is the canonical fallback for run identity.
 	ctx := context.Background()
-	pr, err := h.factory.CreatePullRequest(ctx, payload.TaskID)
+	runID := strings.TrimSpace(payload.AgentRunID)
+	if h.repositoryGate != nil {
+		if runID == "" {
+			runID, err = h.loadApprovalRunID(ctx, payload.ApprovalID)
+			if err != nil {
+				return fmt.Errorf("load approved run: %w", err)
+			}
+		}
+		if runID == "" {
+			return fmt.Errorf("PR creation approval %s has no agent run", payload.ApprovalID)
+		}
+		if _, err := h.repositoryGate.IntegrateApproved(ctx, runID, payload.TaskID); err != nil {
+			return fmt.Errorf("integrate approved candidate: %w", err)
+		}
+	}
+
+	var pr *models.PullRequest
+	if h.repositoryGate != nil {
+		runBound, ok := h.factory.(RunBoundPullRequestCreator)
+		if !ok {
+			return fmt.Errorf("pull request creator does not support run-bound creation")
+		}
+		pr, err = runBound.CreatePullRequestForRun(ctx, payload.TaskID, runID)
+	} else {
+		pr, err = h.factory.CreatePullRequest(ctx, payload.TaskID)
+	}
 	if err != nil {
 		h.logger.Error("failed to create pull request",
 			"task_id", payload.TaskID,
@@ -138,7 +177,10 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		"pr_number", pr.Number,
 	)
 
-	callbackRunID := strings.TrimSpace(payload.AgentRunID)
+	callbackRunID := runID
+	if callbackRunID == "" {
+		callbackRunID = strings.TrimSpace(payload.AgentRunID)
+	}
 	if pr.RunID != nil && strings.TrimSpace(*pr.RunID) != "" {
 		callbackRunID = strings.TrimSpace(*pr.RunID)
 	}

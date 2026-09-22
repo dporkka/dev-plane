@@ -46,6 +46,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"task_specs",
 		"tasks",
 		"users",
+		"verified_candidates",
 		"workspaces",
 	} {
 		var name string

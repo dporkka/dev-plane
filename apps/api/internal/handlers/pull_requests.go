@@ -285,7 +285,27 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 			factory = factory.WithRuntimeProvider(workspace.RuntimeProvider, provider)
 		}
 	}
-	pr, err := factory.CreatePullRequest(ctx, taskID)
+	var approvedRunID string
+	err = h.db.QueryRowContext(ctx, `
+		SELECT vc.run_id
+		FROM verified_candidates vc
+		JOIN agent_runs ar ON ar.id = vc.run_id
+		WHERE vc.task_id = $1
+		  AND vc.status = 'integrated'
+		  AND ar.status IN ('completed', 'reviewed')
+		ORDER BY ar.completed_at IS NULL, ar.completed_at DESC, ar.created_at DESC
+		LIMIT 1
+	`, taskID).Scan(&approvedRunID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusConflict, errors.New("no integrated verified candidate exists for this task"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load integrated candidate: %w", err))
+		return
+	}
+
+	pr, err := factory.CreatePullRequestForRun(ctx, taskID, approvedRunID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
