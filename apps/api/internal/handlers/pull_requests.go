@@ -227,14 +227,15 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Verify task exists and is in a valid state for PR creation
 	var task struct {
-		Status   string
-		RepoID   string
-		Branch   string
+		Status      string
+		RepoID      string
+		Branch      string
+		WorkspaceID sql.NullString
 	}
 	err := h.db.QueryRowContext(ctx, `
-		SELECT status, repository_id, target_branch
+		SELECT status, repository_id, target_branch, workspace_id
 		FROM tasks WHERE id = $1 AND deleted_at IS NULL
-	`, taskID).Scan(&task.Status, &task.RepoID, &task.Branch)
+	`, taskID).Scan(&task.Status, &task.RepoID, &task.Branch, &task.WorkspaceID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("task not found"))
@@ -269,8 +270,20 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the pull request using the factory
+	// Create the pull request using the factory. Register a persisted runtime
+	// provider when the workspace is isolated so branch publication works for
+	// Docker/remote sessions as well as host worktrees.
 	factory := prfactory.NewFactory(h.db, h.logger)
+	if task.WorkspaceID.Valid && strings.TrimSpace(task.WorkspaceID.String) != "" {
+		workspace, provider, runtimeErr := h.getRuntimeWorkspace(ctx, task.WorkspaceID.String)
+		if runtimeErr != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load workspace runtime: %w", runtimeErr))
+			return
+		}
+		if workspace != nil && provider != nil {
+			factory = factory.WithRuntimeProvider(workspace.RuntimeProvider, provider)
+		}
+	}
 	pr, err := factory.CreatePullRequest(ctx, taskID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
