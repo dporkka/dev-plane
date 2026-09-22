@@ -229,6 +229,12 @@ func (s *Server) routes() {
 			r.Post("/workspaces/{id}/artifacts", h.UploadWorkspaceArtifact)
 			r.Delete("/workspaces/{id}/artifacts", h.DeleteWorkspaceArtifact)
 
+			// Direct multipart artifact uploads (S3/R2)
+			r.Post("/workspaces/{id}/artifact-uploads", h.BeginArtifactUpload)
+			r.Post("/workspaces/{id}/artifact-uploads/{uploadID}/parts", h.PresignArtifactUploadParts)
+			r.Post("/workspaces/{id}/artifact-uploads/{uploadID}/complete", h.CompleteArtifactUpload)
+			r.Delete("/workspaces/{id}/artifact-uploads/{uploadID}", h.AbortArtifactUpload)
+
 			// Artifact collaboration leases
 			r.Get("/workspaces/{id}/artifact-leases", h.GetArtifactLease)
 			r.Post("/workspaces/{id}/artifact-leases/acquire", h.AcquireArtifactLease)

@@ -187,7 +187,15 @@ func (h *Handler) persistArtifact(
 	artifact artifactstore.Artifact,
 	analysis artifactstore.AdapterAnalysis,
 ) (ArtifactMetadataResponse, error) {
-	id := uuid.NewString()
+	return h.persistArtifactWithID(ctx, uuid.NewString(), orgID, workspaceID, artifact, analysis)
+}
+
+func (h *Handler) persistArtifactWithID(
+	ctx context.Context,
+	id, orgID, workspaceID string,
+	artifact artifactstore.Artifact,
+	analysis artifactstore.AdapterAnalysis,
+) (ArtifactMetadataResponse, error) {
 	now := time.Now().UTC()
 	payload, err := json.Marshal(artifact)
 	if err != nil {

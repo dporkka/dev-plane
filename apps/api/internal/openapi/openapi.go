@@ -2397,6 +2397,108 @@ func buildPaths() map[string]PathItem {
 			},
 		},
 	}
+	paths["/api/v1/workspaces/{id}/artifact-uploads"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Begin direct multipart artifact upload",
+			Description: "Creates a resumable S3/R2 multipart upload to a temporary staging object and returns an initial batch of presigned UploadPart URLs.",
+			OperationID: "beginArtifactUpload",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Token", In: "header", Required: false, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Generation", In: "header", Required: false, Schema: &Schema{Type: "integer"}},
+			},
+			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
+				"application/json": {Schema: &Schema{Type: "object", Required: []string{"path", "size_bytes", "sha256"}, Properties: map[string]*Schema{
+					"path":            {Type: "string"},
+					"size_bytes":      {Type: "integer"},
+					"sha256":          {Type: "string"},
+					"content_type":    {Type: "string"},
+					"part_size_bytes": {Type: "integer"},
+				}}},
+			}},
+			Responses: map[string]Response{
+				"201": {Description: "Multipart upload session created", Content: map[string]MediaType{"application/json": {Schema: &Schema{Type: "object"}}}},
+				"400": {Description: "Invalid upload parameters"},
+				"404": {Description: "Workspace not found"},
+				"423": {Description: "Valid artifact write lease required"},
+				"503": {Description: "Direct object-store uploads unavailable"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/artifact-uploads/{uploadID}/parts"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Presign multipart upload parts",
+			Description: "Returns a bounded batch of short-lived presigned UploadPart URLs for an existing direct upload session.",
+			OperationID: "presignArtifactUploadParts",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "uploadID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
+				"application/json": {Schema: &Schema{Type: "object", Required: []string{"start_part"}, Properties: map[string]*Schema{
+					"start_part": {Type: "integer"},
+					"count":      {Type: "integer"},
+				}}},
+			}},
+			Responses: map[string]Response{
+				"200": {Description: "Presigned part URLs", Content: map[string]MediaType{"application/json": {Schema: &Schema{Type: "object"}}}},
+				"404": {Description: "Upload session not found"},
+				"409": {Description: "Upload session no longer accepts parts"},
+				"410": {Description: "Upload session expired"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/artifact-uploads/{uploadID}/complete"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Complete and verify direct artifact upload",
+			Description: "Completes multipart upload, streams the staged object through SHA-256 verification, promotes verified bytes into CAS with server-side CopyObject, runs semantic analysis, and records the workspace artifact.",
+			OperationID: "completeArtifactUpload",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "uploadID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Token", In: "header", Required: false, Schema: &Schema{Type: "string"}},
+				{Name: "X-Artifact-Lease-Generation", In: "header", Required: false, Schema: &Schema{Type: "integer"}},
+			},
+			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
+				"application/json": {Schema: &Schema{Type: "object", Required: []string{"parts"}, Properties: map[string]*Schema{
+					"parts": {Type: "array", Items: &Schema{Type: "object", Properties: map[string]*Schema{
+						"part_number": {Type: "integer"},
+						"etag":        {Type: "string"},
+					}}},
+				}}},
+			}},
+			Responses: map[string]Response{
+				"201": {Description: "Verified artifact registered", Content: map[string]MediaType{"application/json": {Schema: &Schema{Type: "object"}}}},
+				"200": {Description: "Previously completed upload"},
+				"400": {Description: "Integrity verification or completion failed"},
+				"404": {Description: "Upload session not found"},
+				"423": {Description: "Valid artifact write lease required"},
+			},
+		},
+	}
+	paths["/api/v1/workspaces/{id}/artifact-uploads/{uploadID}"] = PathItem{
+		Delete: &Operation{
+			Tags:        []string{"Artifacts", "Workspaces"},
+			Summary:     "Abort direct artifact upload",
+			OperationID: "abortArtifactUpload",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "uploadID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Upload aborted"},
+				"404": {Description: "Upload session not found"},
+				"409": {Description: "Completed upload cannot be aborted"},
+			},
+		},
+	}
 	paths["/api/v1/workspaces/{id}/artifact-leases"] = PathItem{
 		Get: &Operation{
 			Tags:        []string{"Artifacts", "Workspaces"},

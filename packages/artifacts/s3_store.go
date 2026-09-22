@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"os"
 	"path"
 	"sort"
@@ -217,12 +220,22 @@ func (s *S3Store) objectKey(digest Digest) string {
 }
 
 func (s *S3Store) do(ctx context.Context, method, key string, body io.Reader, size int64, payloadHash string) (*http.Response, error) {
-	u := *s.endpoint
-	base := strings.TrimRight(u.Path, "/")
-	u.Path = base + "/" + s.bucket + "/" + strings.TrimLeft(key, "/")
-	u.RawPath = ""
-	u.RawQuery = ""
+	return s.doRequest(ctx, method, key, nil, nil, body, size, payloadHash)
+}
 
+func (s *S3Store) doRequest(
+	ctx context.Context,
+	method, key string,
+	query url.Values,
+	headers http.Header,
+	body io.Reader,
+	size int64,
+	payloadHash string,
+) (*http.Response, error) {
+	u := s.objectURL(key)
+	if query != nil {
+		u.RawQuery = query.Encode()
+	}
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), body)
 	if err != nil {
 		return nil, fmt.Errorf("create S3 artifact request: %w", err)
@@ -231,6 +244,11 @@ func (s *S3Store) do(ctx context.Context, method, key string, body io.Reader, si
 		req.ContentLength = size
 		req.Header.Set("Content-Type", "application/octet-stream")
 	}
+	for name, values := range headers {
+		for _, value := range values {
+			req.Header.Add(name, value)
+		}
+	}
 	s.sign(req, payloadHash, s.now())
 
 	resp, err := s.client.Do(req)
@@ -238,6 +256,15 @@ func (s *S3Store) do(ctx context.Context, method, key string, body io.Reader, si
 		return nil, fmt.Errorf("S3 artifact request: %w", err)
 	}
 	return resp, nil
+}
+
+func (s *S3Store) objectURL(key string) *url.URL {
+	u := *s.endpoint
+	base := strings.TrimRight(u.Path, "/")
+	u.Path = base + "/" + s.bucket + "/" + strings.TrimLeft(key, "/")
+	u.RawPath = ""
+	u.RawQuery = ""
+	return &u
 }
 
 func (s *S3Store) sign(req *http.Request, payloadHash string, now time.Time) {
@@ -258,6 +285,13 @@ func (s *S3Store) sign(req *http.Request, payloadHash string, now time.Time) {
 	}
 	if s.sessionToken != "" {
 		headers["x-amz-security-token"] = s.sessionToken
+	}
+	for name, values := range req.Header {
+		lower := strings.ToLower(name)
+		if !strings.HasPrefix(lower, "x-amz-") || lower == "x-amz-content-sha256" || lower == "x-amz-date" || lower == "x-amz-security-token" {
+			continue
+		}
+		headers[lower] = strings.Join(values, ",")
 	}
 	names := make([]string, 0, len(headers))
 	for name := range headers {
@@ -298,6 +332,231 @@ func (s *S3Store) sign(req *http.Request, payloadHash string, now time.Time) {
 
 	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential="+s.accessKeyID+"/"+scope+
 		", SignedHeaders="+signedHeaders+", Signature="+signature)
+}
+
+type initiateMultipartResult struct {
+	UploadID string `xml:"UploadId"`
+}
+
+func (s *S3Store) BeginMultipart(ctx context.Context, stagingKey, mediaType string) (string, error) {
+	if strings.TrimSpace(stagingKey) == "" {
+		return "", fmt.Errorf("multipart staging key is required")
+	}
+	headers := make(http.Header)
+	if strings.TrimSpace(mediaType) != "" {
+		headers.Set("Content-Type", mediaType)
+	}
+	resp, err := s.doRequest(ctx, http.MethodPost, stagingKey, url.Values{"uploads": {""}}, headers, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", s.responseError(resp, "initiate multipart upload")
+	}
+	var result initiateMultipartResult
+	if err := xml.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode multipart initiation response: %w", err)
+	}
+	if strings.TrimSpace(result.UploadID) == "" {
+		return "", fmt.Errorf("multipart initiation response did not include upload id")
+	}
+	return result.UploadID, nil
+}
+
+func (s *S3Store) PresignUploadPart(ctx context.Context, stagingKey, uploadID string, partNumber int, ttl time.Duration) (PresignedPart, error) {
+	if err := ctx.Err(); err != nil {
+		return PresignedPart{}, err
+	}
+	if partNumber < 1 || partNumber > MaxMultipartParts {
+		return PresignedPart{}, fmt.Errorf("multipart part number must be between 1 and %d", MaxMultipartParts)
+	}
+	if strings.TrimSpace(uploadID) == "" {
+		return PresignedPart{}, fmt.Errorf("multipart upload id is required")
+	}
+	if ttl <= 0 {
+		ttl = DefaultPresignTTL
+	}
+	if ttl > 7*24*time.Hour {
+		return PresignedPart{}, fmt.Errorf("presigned URL lifetime exceeds 7 days")
+	}
+	now := s.now().UTC()
+	u := s.objectURL(stagingKey)
+	query := url.Values{
+		"partNumber":            {strconv.Itoa(partNumber)},
+		"uploadId":              {uploadID},
+		"X-Amz-Algorithm":       {"AWS4-HMAC-SHA256"},
+		"X-Amz-Credential":      {s.accessKeyID + "/" + now.Format("20060102") + "/" + s.region + "/s3/aws4_request"},
+		"X-Amz-Date":            {now.Format("20060102T150405Z")},
+		"X-Amz-Expires":         {strconv.FormatInt(int64(ttl/time.Second), 10)},
+		"X-Amz-SignedHeaders":   {"host"},
+		"X-Amz-Content-Sha256":  {"UNSIGNED-PAYLOAD"},
+	}
+	if s.sessionToken != "" {
+		query.Set("X-Amz-Security-Token", s.sessionToken)
+	}
+	u.RawQuery = query.Encode()
+	canonicalHeaders := "host:" + u.Host + "\n"
+	canonicalRequest := strings.Join([]string{
+		http.MethodPut,
+		u.EscapedPath(),
+		u.RawQuery,
+		canonicalHeaders,
+		"host",
+		"UNSIGNED-PAYLOAD",
+	}, "\n")
+	shortDate := now.Format("20060102")
+	scope := shortDate + "/" + s.region + "/s3/aws4_request"
+	stringToSign := strings.Join([]string{
+		"AWS4-HMAC-SHA256",
+		now.Format("20060102T150405Z"),
+		scope,
+		sha256Hex([]byte(canonicalRequest)),
+	}, "\n")
+	dateKey := hmacSHA256([]byte("AWS4"+s.secretAccessKey), shortDate)
+	regionKey := hmacSHA256(dateKey, s.region)
+	serviceKey := hmacSHA256(regionKey, "s3")
+	signingKey := hmacSHA256(serviceKey, "aws4_request")
+	signature := hex.EncodeToString(hmacSHA256(signingKey, stringToSign))
+	query.Set("X-Amz-Signature", signature)
+	u.RawQuery = query.Encode()
+	return PresignedPart{
+		PartNumber: partNumber,
+		URL:        u.String(),
+		ExpiresAt:  now.Add(ttl),
+	}, nil
+}
+
+func (s *S3Store) CompleteMultipart(ctx context.Context, stagingKey, uploadID string, parts []CompletedPart) error {
+	if len(parts) == 0 {
+		return fmt.Errorf("multipart completion requires at least one part")
+	}
+	var payload strings.Builder
+	payload.WriteString("<CompleteMultipartUpload>")
+	for i, part := range parts {
+		if part.PartNumber != i+1 {
+			return fmt.Errorf("multipart parts must be consecutive starting at 1")
+		}
+		etag := strings.TrimSpace(part.ETag)
+		if etag == "" {
+			return fmt.Errorf("multipart part %d ETag is required", part.PartNumber)
+		}
+		payload.WriteString("<Part><PartNumber>")
+		payload.WriteString(strconv.Itoa(part.PartNumber))
+		payload.WriteString("</PartNumber><ETag>")
+		_ = xml.EscapeText(&payload, []byte(etag))
+		payload.WriteString("</ETag></Part>")
+	}
+	payload.WriteString("</CompleteMultipartUpload>")
+	body := []byte(payload.String())
+	resp, err := s.doRequest(
+		ctx, http.MethodPost, stagingKey,
+		url.Values{"uploadId": {uploadID}},
+		http.Header{"Content-Type": {"application/xml"}},
+		strings.NewReader(string(body)), int64(len(body)), sha256Hex(body),
+	)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return s.responseError(resp, "complete multipart upload")
+	}
+	return nil
+}
+
+func (s *S3Store) AbortMultipart(ctx context.Context, stagingKey, uploadID string) error {
+	resp, err := s.doRequest(ctx, http.MethodDelete, stagingKey, url.Values{"uploadId": {uploadID}}, nil, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return s.responseError(resp, "abort multipart upload")
+	}
+	return nil
+}
+
+func (s *S3Store) VerifyObject(ctx context.Context, key string, expected Descriptor) error {
+	if !expected.Digest.Valid() {
+		return fmt.Errorf("expected artifact digest is invalid")
+	}
+	resp, err := s.doRequest(ctx, http.MethodGet, key, nil, nil, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return ErrNotFound
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return s.responseError(resp, "verify multipart object")
+	}
+	h := sha256.New()
+	size, err := io.Copy(h, contextReader{ctx: ctx, r: resp.Body})
+	if err != nil {
+		return fmt.Errorf("hash multipart object: %w", err)
+	}
+	if size != expected.Size {
+		return fmt.Errorf("artifact size mismatch: got %d, want %d", size, expected.Size)
+	}
+	actual := Digest{Algorithm: AlgorithmSHA256, Hex: hex.EncodeToString(h.Sum(nil))}
+	if actual != expected.Digest {
+		return fmt.Errorf("artifact digest mismatch: got %s, want %s", actual.String(), expected.Digest.String())
+	}
+	return nil
+}
+
+func (s *S3Store) PromoteToCAS(ctx context.Context, stagingKey string, expected Descriptor) error {
+	if !expected.Digest.Valid() {
+		return fmt.Errorf("expected artifact digest is invalid")
+	}
+	exists, err := s.Has(ctx, expected.Digest)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	sourceURL := &url.URL{Path: "/" + s.bucket + "/" + strings.TrimLeft(stagingKey, "/")}
+	headers := make(http.Header)
+	headers.Set("X-Amz-Copy-Source", sourceURL.EscapedPath())
+	if expected.MediaType != "" {
+		headers.Set("X-Amz-Metadata-Directive", "REPLACE")
+		headers.Set("Content-Type", expected.MediaType)
+	}
+	resp, err := s.doRequest(ctx, http.MethodPut, s.objectKey(expected.Digest), nil, headers, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return s.responseError(resp, "promote multipart object")
+	}
+	return nil
+}
+
+func (s *S3Store) DeleteObject(ctx context.Context, key string) error {
+	resp, err := s.doRequest(ctx, http.MethodDelete, key, nil, nil, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return s.responseError(resp, "delete object")
+	}
+	return nil
+}
+
+func sha256Base64(data []byte) string {
+	sum := sha256.Sum256(data)
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func (s *S3Store) responseError(resp *http.Response, operation string) error {

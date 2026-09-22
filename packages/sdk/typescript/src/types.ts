@@ -483,6 +483,48 @@ export interface ArtifactLeaseRequest {
   ttl_seconds?: number;
 }
 
+export interface PresignedArtifactPart {
+  part_number: number;
+  url: string;
+  expires_at: string;
+}
+
+export interface BeginArtifactUploadRequest {
+  path: string;
+  size_bytes: number;
+  sha256: string;
+  content_type?: string;
+  part_size_bytes?: number;
+}
+
+export interface BeginArtifactUploadResponse {
+  id: string;
+  workspace_id: string;
+  path: string;
+  digest: ArtifactDigest;
+  size_bytes: number;
+  content_type: string;
+  part_size_bytes: number;
+  part_count: number;
+  status: string;
+  expires_at: string;
+  parts?: PresignedArtifactPart[];
+}
+
+export interface PresignArtifactPartsRequest {
+  start_part: number;
+  count: number;
+}
+
+export interface CompletedArtifactPart {
+  part_number: number;
+  etag: string;
+}
+
+export interface CompleteArtifactUploadRequest {
+  parts: CompletedArtifactPart[];
+}
+
 export interface WorkspaceSnapshot {
   id: string;
   workspace_id: string;
