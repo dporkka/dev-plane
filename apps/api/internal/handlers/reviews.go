@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -204,7 +205,7 @@ func (h *Handler) prepareReviewSnapshot(ctx context.Context, runID string) (revi
 	if err != nil {
 		return reviewSnapshot{}, err
 	}
-	snapshot.preReviewHead = stringTrimSpace(head.Stdout)
+	snapshot.preReviewHead = strings.TrimSpace(head.Stdout)
 	if snapshot.preReviewHead == "" {
 		return reviewSnapshot{}, errors.New("reviewed workspace has no HEAD commit")
 	}
@@ -291,23 +292,3 @@ func (h *Handler) saveReviewedCandidate(
 	})
 }
 
-func stringTrimSpace(value string) string {
-	for len(value) > 0 {
-		switch value[0] {
-		case ' ', '\t', '\n', '\r':
-			value = value[1:]
-		default:
-			goto trimRight
-		}
-	}
-trimRight:
-	for len(value) > 0 {
-		switch value[len(value)-1] {
-		case ' ', '\t', '\n', '\r':
-			value = value[:len(value)-1]
-		default:
-			return value
-		}
-	}
-	return value
-}
