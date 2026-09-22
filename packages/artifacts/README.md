@@ -119,10 +119,53 @@ Dev Plane persists these bindings in `workspace_snapshots`, so reviews,
 restores, provenance, and later candidate verification can refer to the exact
 code and non-code state together.
 
+## Format-aware analysis
+
+`AdapterRegistry` turns opaque binary payloads into reproducible derived
+representations without replacing the original bytes.
+
+The default registry currently includes:
+
+- **DOCX** — detects OOXML content, extracts paragraph-structured semantic JSON,
+  and stores it as a semantic derivative.
+- **Images** — detects common image formats, records dimensions/format, stores
+  semantic JSON, and creates a bounded PNG thumbnail.
+- **PDF** — uses a pluggable `PDFToolRunner`. The default Poppler-backed runner
+  extracts text with `pdftotext` and renders the first page with `pdftoppm`.
+  If those tools are not installed, analysis degrades gracefully instead of
+  invalidating the source artifact.
+
+Analysis always operates on a temporary materialization of the immutable
+artifact. Generated semantics and previews are stored back into the same CAS
+and attached by digest:
+
+```text
+original.docx
+  sha256:ORIGINAL
+      |
+      +-- semantic-document -> sha256:SEMANTIC_JSON
+
+hero.png
+  sha256:ORIGINAL
+      |
+      +-- semantic-image    -> sha256:IMAGE_METADATA
+      +-- preview-thumbnail -> sha256:THUMBNAIL
+
+report.pdf
+  sha256:ORIGINAL
+      |
+      +-- semantic-text     -> sha256:EXTRACTED_TEXT
+      +-- preview-page-1    -> sha256:PAGE_PREVIEW
+```
+
+The adapter and adapter version are recorded in artifact metadata and on each
+derivative's generator record, making derived representations reproducible and
+safe to invalidate when an adapter changes.
+
 ## Next integrations
 
-1. Wire artifact manifests into VCS snapshots/workspace metadata.
-2. Add an R2/S3 `BlobStore`.
-3. Add large-object chunk manifests and content-defined chunking.
-4. Add MIME-aware document/PDF/image adapters.
-5. Add short-lived write leases for non-mergeable formats.
+1. Persist workspace snapshot records automatically from the coordinator.
+2. Add artifact upload/materialization and snapshot-history API endpoints.
+3. Add XLSX/PPTX semantic adapters and richer DOCX structure.
+4. Add short-lived write leases for non-mergeable formats.
+5. Add format-aware semantic diff and review APIs.
