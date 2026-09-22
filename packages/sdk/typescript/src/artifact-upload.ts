@@ -122,7 +122,7 @@ export async function uploadArtifactMultipart(
 
   throwIfAborted(options.signal);
 
-  let sha256 = normalizeSha256(options.sha256);
+  let sha256 = normalizeSha256(options.sha256 ?? options.checkpoint?.sha256);
   if (!sha256) {
     reportProgress(options, {
       phase: 'hashing',
@@ -190,7 +190,18 @@ export async function uploadArtifactMultipart(
       part_count: session.part_count,
       completed_parts: [],
     };
-    await saveCheckpoint(options, checkpoint);
+    try {
+      await saveCheckpoint(options, checkpoint);
+    } catch (error) {
+      if (options.abortOnError !== false) {
+        try {
+          await transport.abort(workspaceId, session.id);
+        } catch {
+          // Preserve the checkpoint persistence error.
+        }
+      }
+      throw error;
+    }
   }
 
   const completed = new Map<number, CompletedArtifactPart>();
@@ -431,7 +442,9 @@ function sourceSlice(
     source instanceof Uint8Array
       ? source.subarray(start, end)
       : new Uint8Array(source, start, end - start);
-  return bytes.slice().buffer;
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
 }
 
 async function sourceSliceBytes(
@@ -491,6 +504,10 @@ function validateCheckpoint(
   }
   if (checkpoint.part_size_bytes <= 0 || checkpoint.part_count <= 0) {
     throw new Error('artifact upload checkpoint has invalid multipart geometry');
+  }
+  const expectedParts = Math.ceil(size / checkpoint.part_size_bytes);
+  if (checkpoint.part_count !== expectedParts) {
+    throw new Error('artifact upload checkpoint part count does not match its part size');
   }
 }
 
@@ -556,14 +573,25 @@ async function retryDelay(
   }
   const delay = Math.min(baseDelayMs * 2 ** attempt, 30_000);
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, delay);
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+      callback();
+    };
+    const timer = setTimeout(() => finish(resolve), delay);
+    const onAbort = () => {
+      clearTimeout(timer);
+      finish(() => reject(abortError()));
+    };
     if (!signal) {
       return;
     }
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortError());
-    };
     if (signal.aborted) {
       onAbort();
       return;
@@ -597,6 +625,9 @@ export async function hashSourceSHA256(
   signal?: AbortSignal,
   onProgress?: (processedBytes: number) => void,
 ): Promise<string> {
+  if (!Number.isInteger(chunkSize) || chunkSize <= 0) {
+    throw new Error('SHA-256 chunk size must be a positive integer');
+  }
   const size = sourceSize(source);
   const hash = new IncrementalSHA256();
   for (let offset = 0; offset < size; offset += chunkSize) {
