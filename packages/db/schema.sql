@@ -289,6 +289,10 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     state           TEXT NOT NULL DEFAULT 'open',
     draft           BOOLEAN NOT NULL DEFAULT false,
     created_by      UUID NOT NULL REFERENCES users(id),
+    reviewed_commit_id TEXT,
+    published_commit_id TEXT,
+    target_head_id  TEXT,
+    verification    JSONB DEFAULT '{}',
     merged_at       TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -298,6 +302,7 @@ CREATE TABLE IF NOT EXISTS pull_requests (
 CREATE INDEX IF NOT EXISTS idx_pull_requests_task_id ON pull_requests(task_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_repository_id ON pull_requests(repository_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
+CREATE INDEX IF NOT EXISTS idx_pull_requests_published_commit_id ON pull_requests(published_commit_id);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created_at);
 
 -- =====================================================

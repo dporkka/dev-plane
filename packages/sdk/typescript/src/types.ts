@@ -357,6 +357,9 @@ export interface PullRequest {
   state: PRState;
   draft: boolean;
   created_by: string;
+  reviewed_commit_id?: string;
+  published_commit_id?: string;
+  target_head_id?: string;
   merged_at?: string;
   created_at: string;
   updated_at: string;
