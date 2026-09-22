@@ -30,6 +30,7 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/v1/workspaces", h.createWorkspace)
 	r.Delete("/v1/workspaces/{sessionID}", h.destroyWorkspace)
 	r.Post("/v1/workspaces/{sessionID}/commands", h.executeCommand)
+	r.Post("/v1/workspaces/{sessionID}/vcs/publish", h.publishVCS)
 	r.Get("/v1/workspaces/{sessionID}/files/*", h.readFile)
 	r.Put("/v1/workspaces/{sessionID}/files/*", h.writeFile)
 	r.Post("/v1/workspaces/{sessionID}/patches", h.applyPatch)
@@ -67,6 +68,30 @@ func (h *Handler) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "destroyed"})
+}
+
+func (h *Handler) publishVCS(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	publisher, ok := h.provider.(runtimes.VCSWorkspacePublisher)
+	if !ok {
+		respondError(w, http.StatusNotImplemented, fmt.Errorf("runtime provider does not support VCS publication"))
+		return
+	}
+
+	var req runtimes.VCSPublishRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Errorf("decode VCS publish request: %w", err))
+		return
+	}
+	if err := publisher.PublishVCS(r.Context(), sessionID, req); err != nil {
+		if errors.Is(err, runtimes.ErrSessionNotFound) {
+			respondError(w, http.StatusNotFound, err)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, map[string]string{"status": "published"})
 }
 
 func (h *Handler) executeCommand(w http.ResponseWriter, r *http.Request) {
