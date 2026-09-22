@@ -87,6 +87,14 @@ type DirectMultipartChecksumStore interface {
 	) (verified bool, err error)
 }
 
+type DirectMultipartSHA256Store interface {
+	VerifyAndPromoteSHA256(
+		ctx context.Context,
+		stagingKey string,
+		expected Descriptor,
+	) (verified bool, mode string, err error)
+}
+
 func MultipartPartSize(size, requested int64) (int64, int, error) {
 	if size <= 0 {
 		return 0, 0, fmt.Errorf("artifact size must be positive for multipart upload")
@@ -240,34 +248,46 @@ func (m *Manager) VerifyAndPromoteMultipartWithChecksum(
 	if err != nil {
 		return "", err
 	}
-	mode := "stream_sha256"
-	if nativeChecksumEnabled && checksum != nil {
-		if enhanced, ok := store.(DirectMultipartChecksumStore); ok {
-			verified, err := enhanced.VerifyObjectChecksum(ctx, stagingKey, expected, checksum)
-			if err != nil {
-				if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
-					return "cas_existing", recoverErr
-				}
-				return "", err
-			}
-			if verified {
-				mode = "native_" + strings.ToLower(checksum.Algorithm)
-			} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
-				if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
-					return "cas_existing", recoverErr
-				}
-				return "", err
-			}
-		} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
-			if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
-				return "cas_existing", recoverErr
-			}
+
+	// CAS identity is SHA-256. If this digest already exists, the canonical
+	// bytes are already trusted and the staged duplicate can be discarded.
+	exists, err := m.store.Has(ctx, expected.Digest)
+	if err != nil {
+		return "", err
+	}
+	if exists {
+		if err := store.DeleteObject(ctx, stagingKey); err != nil && !errors.Is(err, ErrNotFound) {
 			return "", err
 		}
-	} else if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
-		if recovered, recoverErr := m.recoverPromotedCAS(ctx, expected, err); recovered || recoverErr != nil {
-			return "cas_existing", recoverErr
+		return "cas_existing", nil
+	}
+
+	// CRC64/NVME is useful for provider-side transport validation, but it does
+	// not prove the client-supplied SHA-256 CAS identity. Treat it as an
+	// additional check only; a full SHA-256 proof is still required below.
+	if nativeChecksumEnabled && checksum != nil {
+		if enhanced, ok := store.(DirectMultipartChecksumStore); ok {
+			if _, err := enhanced.VerifyObjectChecksum(ctx, stagingKey, expected, checksum); err != nil {
+				return "", err
+			}
 		}
+	}
+
+	// Some stores can compute a direct full-object SHA-256 without sending the
+	// bytes through Dev Plane. This method must only return verified=true after
+	// comparing a provider-computed SHA-256 to expected.Digest and promoting
+	// those exact bytes into CAS.
+	if enhanced, ok := store.(DirectMultipartSHA256Store); ok {
+		verified, mode, err := enhanced.VerifyAndPromoteSHA256(ctx, stagingKey, expected)
+		if err != nil {
+			return "", err
+		}
+		if verified {
+			return mode, nil
+		}
+	}
+
+	if err := store.VerifyObject(ctx, stagingKey, expected); err != nil {
 		return "", err
 	}
 	if err := store.PromoteToCAS(ctx, stagingKey, expected); err != nil {
@@ -276,16 +296,5 @@ func (m *Manager) VerifyAndPromoteMultipartWithChecksum(
 	if err := store.DeleteObject(ctx, stagingKey); err != nil {
 		return "", err
 	}
-	return mode, nil
-}
-
-func (m *Manager) recoverPromotedCAS(ctx context.Context, expected Descriptor, verificationErr error) (bool, error) {
-	if !errors.Is(verificationErr, ErrNotFound) {
-		return false, nil
-	}
-	exists, err := m.store.Has(ctx, expected.Digest)
-	if err != nil {
-		return false, err
-	}
-	return exists, nil
+	return "stream_sha256", nil
 }

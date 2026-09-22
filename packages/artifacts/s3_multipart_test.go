@@ -238,14 +238,18 @@ func TestS3StoreVerifyObjectRejectsDigestMismatch(t *testing.T) {
 }
 
 
-func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
+func TestS3StoreProviderSHA256CopyAvoidsGET(t *testing.T) {
 	payload := []byte("native-checksum-payload")
 	checksum := &MultipartChecksum{
 		Algorithm: MultipartChecksumCRC64NVME,
 		Base64:    CRC64NVMEBase64(payload),
 	}
 	desc := Descriptor{Digest: HashBytes(payload), Size: int64(len(payload)), MediaType: "application/octet-stream"}
-	var getCalls int
+	expectedSHA256, err := digestBase64(desc.Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var getCalls, shaCopyCalls int
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -269,6 +273,9 @@ func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
 				return
 			}
 			_, _ = io.WriteString(w, "<CompleteMultipartUploadResult/>")
+		case r.Method == http.MethodHead && strings.HasSuffix(r.URL.Path, ".sha256-verify"):
+			w.Header().Set("Content-Length", strconv.FormatInt(desc.Size, 10))
+			w.WriteHeader(http.StatusOK)
 		case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/uploads/"):
 			if got := r.Header.Get("X-Amz-Checksum-Mode"); got != "ENABLED" {
 				http.Error(w, "wrong checksum mode: "+got, http.StatusBadRequest)
@@ -284,12 +291,17 @@ func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
 				http.Error(w, "copy source required", http.StatusBadRequest)
 				return
 			}
+			if r.Header.Get("X-Amz-Checksum-Algorithm") == "SHA256" {
+				shaCopyCalls++
+				_, _ = io.WriteString(w, "<CopyObjectResult><ChecksumSHA256>"+expectedSHA256+"</ChecksumSHA256></CopyObjectResult>")
+				return
+			}
 			_, _ = io.WriteString(w, "<CopyObjectResult/>")
 		case r.Method == http.MethodDelete:
 			w.WriteHeader(http.StatusNoContent)
 		case r.Method == http.MethodGet:
 			getCalls++
-			http.Error(w, "native verification should not GET staging", http.StatusInternalServerError)
+			http.Error(w, "provider SHA-256 verification should not GET staging", http.StatusInternalServerError)
 		default:
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 		}
@@ -321,7 +333,7 @@ func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
 		context.Background(),
 		"uploads/org/ws/native",
 		uploadID,
-		[]CompletedPart{{PartNumber: 1, ETag: ""etag-1""}},
+		[]CompletedPart{{PartNumber: 1, ETag: "\"etag-1\""}},
 		desc,
 		checksum,
 		native,
@@ -334,8 +346,11 @@ func TestS3StoreNativeCRC64MultipartVerificationAvoidsGET(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mode != "native_crc64nvme" {
+	if mode != "native_copy_sha256" {
 		t.Fatalf("verification mode = %q", mode)
+	}
+	if shaCopyCalls != 1 {
+		t.Fatalf("provider SHA-256 copy calls = %d, want 1", shaCopyCalls)
 	}
 	if getCalls != 0 {
 		t.Fatalf("GET calls = %d, want 0", getCalls)
@@ -397,6 +412,55 @@ func TestS3StoreNativeChecksumFallsBackToStreamingWhenHEADDoesNotExposeChecksum(
 	}
 }
 
+func TestS3StoreProviderSHA256MismatchDoesNotFallbackToStreaming(t *testing.T) {
+	payload := []byte("expected-bytes")
+	desc := Descriptor{Digest: HashBytes(payload), Size: int64(len(payload))}
+	wrongSHA256, err := digestBase64(HashBytes([]byte("different-bytes")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var getCalls int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodHead:
+			http.NotFound(w, r)
+		case r.Method == http.MethodPut && r.Header.Get("X-Amz-Checksum-Algorithm") == "SHA256":
+			_, _ = io.WriteString(w, "<CopyObjectResult><ChecksumSHA256>"+wrongSHA256+"</ChecksumSHA256></CopyObjectResult>")
+		case r.Method == http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet:
+			getCalls++
+			_, _ = w.Write(payload)
+		default:
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	store, err := NewS3Store(S3StoreConfig{
+		Endpoint: server.URL, Region: "auto", Bucket: "artifacts",
+		AccessKeyID: "key", SecretAccessKey: "secret",
+		AllowInsecure: true, HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.VerifyAndPromoteMultipartWithChecksum(
+		context.Background(), "uploads/test/mismatch", desc, nil, false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "provider-computed SHA-256 mismatch") {
+		t.Fatalf("expected provider SHA-256 mismatch, got %v", err)
+	}
+	if getCalls != 0 {
+		t.Fatalf("GET calls = %d, want 0 after authoritative SHA-256 mismatch", getCalls)
+	}
+}
+
 func TestS3StoreBadDigestDoesNotFallbackToUncheckedCompletion(t *testing.T) {
 	var completeCalls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -426,7 +490,7 @@ func TestS3StoreBadDigestDoesNotFallbackToUncheckedCompletion(t *testing.T) {
 		context.Background(),
 		"uploads/test",
 		"upload-1",
-		[]CompletedPart{{PartNumber: 1, ETag: ""etag""}},
+		[]CompletedPart{{PartNumber: 1, ETag: "\"etag\""}},
 		Descriptor{Digest: HashBytes([]byte("123456789")), Size: 9},
 		checksum,
 	)

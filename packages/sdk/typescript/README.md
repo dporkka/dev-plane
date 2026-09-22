@@ -53,11 +53,11 @@ session for an explicit later retry. Process/browser crashes naturally leave
 the SQL-backed session resumable until its server-side expiry.
 
 SHA-256 remains the canonical artifact identity. CRC64/NVME is an independent
-transport checksum that S3/R2 can validate without Dev Plane downloading the
-whole staging object again. If the caller already knows checksums, pass
-`sha256` and/or `crc64nvme` to avoid recomputing them. If a provider does not
-support native CRC64/NVME multipart validation, the server transparently falls
-back to streamed SHA-256 verification.
+transport checksum; matching CRC64/NVME does not replace SHA-256 verification.
+When the backend can compute a direct full-object SHA-256 server-side, Dev Plane
+uses that proof to avoid a staging-object GET. Otherwise it streams the staged
+object through SHA-256 before CAS promotion. If the caller already knows
+checksums, pass `sha256` and/or `crc64nvme` to avoid recomputing them.
 
 ## Browser CORS requirement
 

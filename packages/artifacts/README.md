@@ -80,12 +80,19 @@ Very large media can bypass API-worker bandwidth through the direct multipart
 data plane. The API creates a random staging key and S3/R2 multipart upload,
 returns short-lived presigned `UploadPart` URLs in bounded batches, and persists
 the upload session in SQL. For new SDK uploads, the client computes SHA-256 and CRC64/NVME in the same
-streaming pass. Dev Plane asks the object store to validate the full-object
-CRC64/NVME checksum during multipart completion and then confirms it with a
-checksum-enabled HEAD request before promotion. SHA-256 remains the canonical
-CAS identity. If the backend does not support native checksum validation, or
-does not expose the stored checksum on HEAD, Dev Plane falls back to streaming
-the staging object through SHA-256 before promotion.
+streaming pass. CRC64/NVME is an additional provider-side transport-integrity
+check during multipart completion; it is **not** used as proof of the SHA-256
+CAS identity.
+
+SHA-256 remains the canonical CAS address, so promotion requires a full-object
+SHA-256 proof. On AWS S3-compatible backends that support checksum-enabled
+`CopyObject`, Dev Plane can ask the provider to copy objects up to 5 GB to a
+temporary verification object while computing a direct SHA-256, compare that
+provider-computed digest to the expected CAS digest, and then promote without a
+full GET. Backends that do not support that extension (including Cloudflare R2's
+current S3 `CopyObject` checksum surface), objects above the atomic-copy size
+limit, and compatible stores that return no SHA-256 automatically fall back to
+streaming the staging object through Dev Plane's SHA-256 verifier.
 
 The TypeScript SDK exposes `uploadWorkspaceArtifactMultipart`, which adds:
 
@@ -118,9 +125,10 @@ The reconciler handles these recovery states:
 - stale `finalizing` uploads: verify whether provider completion actually
   succeeded, recover verified bytes into CAS when possible, or reset the
   session to `initiated` for a safe client retry;
-- `uploaded` sessions: verify with provider-native CRC64/NVME when available
-  (otherwise stream SHA-256), promote staging to CAS, and finalize the artifact
-  record even if the API process crashed;
+- `uploaded` sessions: prove the SHA-256 CAS identity with provider-computed
+  full-object SHA-256 when supported, otherwise stream SHA-256; CRC64/NVME is
+  retained as an independent transport-integrity check; then promote staging
+  and finalize the artifact record even if the API process crashed;
 - `verified` sessions: recreate/finalize the deterministic artifact row when
   promotion succeeded but database persistence did not;
 - `cleanup_pending` sessions: retry provider abort and staging deletion until
@@ -284,7 +292,7 @@ path. This prevents a restore from overwriting an agent's in-flight media edit.
 ## Next integrations
 
 1. Persist workspace snapshots automatically when agent candidates complete.
-2. Add provider-specific accelerated checksum implementations and benchmark native CRC64/NVME versus streamed SHA-256 fallback at multi-GB sizes.
+2. Extend native SHA-256 verification beyond the atomic CopyObject limit (for example, provider checksum-compute jobs) and benchmark it against streamed verification for multi-GB artifacts.
 3. Add richer DOCX structure (headings, tables, comments) and richer spreadsheet formatting semantics.
 4. Add visual pixel-diff/overlay derivatives for image review.
 5. Add structured merge engines that can relax lease requirements safely.

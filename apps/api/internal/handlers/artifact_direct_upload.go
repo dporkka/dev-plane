@@ -163,10 +163,9 @@ func (h *Handler) BeginArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadGateway, fmt.Errorf("initiate multipart upload: %w", err))
 		return
 	}
-	verificationMode := "stream_sha256"
-	if nativeChecksumEnabled && nativeChecksum != nil {
-		verificationMode = "native_" + strings.ToLower(nativeChecksum.Algorithm)
-	}
+	// The final CAS verification mode is not known until completion. CRC64/NVME
+	// may validate upload transport, but only full SHA-256 proves CAS identity.
+	verificationMode := "pending"
 	now := time.Now().UTC()
 	expiresAt := now.Add(directUploadTTL)
 	var nativeAlgorithm, nativeBase64 any

@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,7 +20,10 @@ import (
 	"time"
 )
 
-const emptySHA256Hex = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+const (
+	emptySHA256Hex          = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	maxNativeSHA256CopySize = int64(5_000_000_000)
+)
 
 // S3StoreConfig configures an S3-compatible content-addressed store.
 //
@@ -660,6 +665,115 @@ func (s *S3Store) VerifyObject(ctx context.Context, key string, expected Descrip
 		return fmt.Errorf("artifact digest mismatch: got %s, want %s", actual.String(), expected.Digest.String())
 	}
 	return nil
+}
+
+type copyObjectChecksumResult struct {
+	ChecksumSHA256 string `xml:"ChecksumSHA256"`
+}
+
+func (s *S3Store) VerifyAndPromoteSHA256(
+	ctx context.Context,
+	stagingKey string,
+	expected Descriptor,
+) (bool, string, error) {
+	if expected.Digest.Algorithm != AlgorithmSHA256 || expected.Size < 0 {
+		return false, "", nil
+	}
+	// CopyObject can calculate a direct full-object SHA-256 in one provider-side
+	// operation, but AWS S3 limits atomic CopyObject to 5 GB. Larger objects
+	// must use the streaming verifier unless a future backend adds a stronger
+	// provider-native primitive.
+	if expected.Size > maxNativeSHA256CopySize {
+		return false, "", nil
+	}
+
+	expectedBase64, err := digestBase64(expected.Digest)
+	if err != nil {
+		return false, "", err
+	}
+
+	verifyKey := stagingKey + ".sha256-verify"
+	// A prior crashed verification attempt may have left this deterministic
+	// temporary object behind. It is never authoritative and is safe to replace.
+	_ = s.DeleteObject(ctx, verifyKey)
+	defer func() {
+		_ = s.DeleteObject(context.Background(), verifyKey)
+	}()
+
+	sourceURL := &url.URL{Path: "/" + s.bucket + "/" + strings.TrimLeft(stagingKey, "/")}
+	headers := make(http.Header)
+	headers.Set("X-Amz-Copy-Source", sourceURL.EscapedPath())
+	headers.Set("X-Amz-Checksum-Algorithm", "SHA256")
+
+	resp, err := s.doRequest(ctx, http.MethodPut, verifyKey, nil, headers, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return false, "", err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body := readResponseBody(resp)
+		resp.Body.Close()
+		if checksumFeatureUnsupported(resp.StatusCode, body) {
+			return false, "", nil
+		}
+		return false, "", responseStatusError(resp.StatusCode, body, "copy object for SHA-256 verification")
+	}
+	var result copyObjectChecksumResult
+	decodeErr := xml.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result)
+	resp.Body.Close()
+	if decodeErr != nil {
+		return false, "", fmt.Errorf("decode SHA-256 verification copy response: %w", decodeErr)
+	}
+	actual := strings.TrimSpace(result.ChecksumSHA256)
+	if actual == "" {
+		// Compatible stores such as R2 may support CopyObject but not the
+		// checksum-algorithm extension. Fall back to streamed SHA-256.
+		return false, "", nil
+	}
+	if actual != expectedBase64 {
+		return false, "", fmt.Errorf(
+			"provider-computed SHA-256 mismatch: got %s, want %s",
+			actual,
+			expectedBase64,
+		)
+	}
+
+	head, err := s.doRequest(ctx, http.MethodHead, verifyKey, nil, nil, nil, 0, emptySHA256Hex)
+	if err != nil {
+		return false, "", err
+	}
+	defer head.Body.Close()
+	if head.StatusCode < 200 || head.StatusCode >= 300 {
+		return false, "", s.responseError(head, "head SHA-256 verification copy")
+	}
+	if head.ContentLength < 0 {
+		return false, "", nil
+	}
+	if head.ContentLength != expected.Size {
+		return false, "", fmt.Errorf(
+			"artifact size mismatch after provider SHA-256 copy: got %d, want %d",
+			head.ContentLength,
+			expected.Size,
+		)
+	}
+
+	if err := s.PromoteToCAS(ctx, verifyKey, expected); err != nil {
+		return false, "", err
+	}
+	if err := s.DeleteObject(ctx, stagingKey); err != nil && !errors.Is(err, ErrNotFound) {
+		return false, "", err
+	}
+	return true, "native_copy_sha256", nil
+}
+
+func digestBase64(digest Digest) (string, error) {
+	if digest.Algorithm != AlgorithmSHA256 || !digest.Valid() {
+		return "", fmt.Errorf("SHA-256 digest is required")
+	}
+	raw, err := hex.DecodeString(digest.Hex)
+	if err != nil {
+		return "", fmt.Errorf("decode SHA-256 digest: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
 }
 
 func (s *S3Store) PromoteToCAS(ctx context.Context, stagingKey string, expected Descriptor) error {
