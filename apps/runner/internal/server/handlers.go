@@ -29,6 +29,7 @@ func NewHandler(provider runtimes.Provider, logger *slog.Logger) *Handler {
 func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/v1/workspaces", h.createWorkspace)
 	r.Delete("/v1/workspaces/{sessionID}", h.destroyWorkspace)
+	r.Post("/v1/workspaces/{sessionID}/attach", h.attachWorkspace)
 	r.Post("/v1/workspaces/{sessionID}/commands", h.executeCommand)
 	r.Post("/v1/workspaces/{sessionID}/vcs/publish", h.publishVCS)
 	r.Get("/v1/workspaces/{sessionID}/files/*", h.readFile)
@@ -54,6 +55,36 @@ func (h *Handler) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusCreated, sess)
+}
+
+func (h *Handler) attachWorkspace(w http.ResponseWriter, r *http.Request) {
+	sessionID := chi.URLParam(r, "sessionID")
+	attacher, ok := h.provider.(runtimes.SessionAttacher)
+	if !ok {
+		respondError(w, http.StatusNotImplemented, fmt.Errorf("runtime provider does not support session reattachment"))
+		return
+	}
+	var req struct {
+		WorkspaceID string `json:"workspace_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Errorf("decode attach request: %w", err))
+		return
+	}
+	if strings.TrimSpace(req.WorkspaceID) == "" {
+		respondError(w, http.StatusBadRequest, fmt.Errorf("workspace_id is required"))
+		return
+	}
+	sess, err := attacher.AttachSession(r.Context(), sessionID, req.WorkspaceID)
+	if err != nil {
+		if errors.Is(err, runtimes.ErrSessionNotFound) {
+			respondError(w, http.StatusNotFound, err)
+			return
+		}
+		respondError(w, http.StatusInternalServerError, err)
+		return
+	}
+	respondJSON(w, http.StatusOK, sess)
 }
 
 func (h *Handler) destroyWorkspace(w http.ResponseWriter, r *http.Request) {
