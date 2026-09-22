@@ -59,18 +59,18 @@ type ArtifactUploadReconciler struct {
 }
 
 type reconciledArtifactUpload struct {
-	ID               string
-	OrganizationID   string
-	WorkspaceID      string
-	LogicalPath      string
-	MediaType        string
-	DigestAlgorithm  string
-	DigestHex        string
-	ExpectedSize     int64
-	StagingKey       string
-	ProviderUploadID string
-	Status           string
-	InitiatedBy      string
+	ID                      string
+	OrganizationID          string
+	WorkspaceID             string
+	LogicalPath             string
+	MediaType               string
+	DigestAlgorithm         string
+	DigestHex               string
+	ExpectedSize            int64
+	StagingKey              string
+	ProviderUploadID        string
+	Status                  string
+	InitiatedBy             string
 	ExpiresAt               time.Time
 	NativeChecksumAlgorithm sql.NullString
 	NativeChecksumBase64    sql.NullString

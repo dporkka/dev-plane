@@ -62,20 +62,20 @@ type CompleteArtifactUploadRequest struct {
 }
 
 type directUploadRecord struct {
-	ID               string
-	OrganizationID   string
-	WorkspaceID      string
-	LogicalPath      string
-	MediaType        string
-	DigestAlgorithm  string
-	DigestHex        string
-	ExpectedSize     int64
-	StagingKey       string
-	ProviderUploadID string
-	PartSize         int64
-	PartCount        int
-	Status           string
-	InitiatedBy      string
+	ID                      string
+	OrganizationID          string
+	WorkspaceID             string
+	LogicalPath             string
+	MediaType               string
+	DigestAlgorithm         string
+	DigestHex               string
+	ExpectedSize            int64
+	StagingKey              string
+	ProviderUploadID        string
+	PartSize                int64
+	PartCount               int
+	Status                  string
+	InitiatedBy             string
 	ArtifactID              sql.NullString
 	ErrorMessage            sql.NullString
 	ExpiresAt               time.Time

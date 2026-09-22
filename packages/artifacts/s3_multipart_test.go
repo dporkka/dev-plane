@@ -237,7 +237,6 @@ func TestS3StoreVerifyObjectRejectsDigestMismatch(t *testing.T) {
 	}
 }
 
-
 func TestS3StoreProviderSHA256CopyAvoidsGET(t *testing.T) {
 	payload := []byte("native-checksum-payload")
 	checksum := &MultipartChecksum{
