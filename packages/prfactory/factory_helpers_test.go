@@ -248,8 +248,6 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 	}
 }
 
-
-
 func TestLoadRunUsesExactTaskAndRunAuthority(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
