@@ -382,24 +382,36 @@ func (h *Handler) AbortArtifactUpload(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusConflict, errors.New("completed artifact upload cannot be aborted"))
 		return
 	}
+	var cleanupErrs []error
 	if upload.Status == "initiated" || upload.Status == "finalizing" {
-		if err := h.artifactManager.AbortMultipart(ctx, upload.StagingKey, upload.ProviderUploadID); err != nil {
+		if err := h.artifactManager.AbortMultipart(ctx, upload.StagingKey, upload.ProviderUploadID); err != nil &&
+			!errors.Is(err, artifactstore.ErrNotFound) {
+			cleanupErrs = append(cleanupErrs, err)
 			h.logger.Warn("failed to abort provider multipart upload", "upload_id", upload.ID, "error", err)
 		}
 	} else {
-		if err := h.artifactManager.DeleteDirectStaging(ctx, upload.StagingKey); err != nil {
+		if err := h.artifactManager.DeleteDirectStaging(ctx, upload.StagingKey); err != nil &&
+			!errors.Is(err, artifactstore.ErrNotFound) {
+			cleanupErrs = append(cleanupErrs, err)
 			h.logger.Warn("failed to delete direct-upload staging object", "upload_id", upload.ID, "error", err)
 		}
 	}
+	status := "aborted"
+	var errorMessage any
+	if len(cleanupErrs) > 0 {
+		status = "cleanup_pending"
+		errorMessage = errors.Join(cleanupErrs...).Error()
+	}
 	_, err = h.db.ExecContext(ctx, `
-		UPDATE artifact_uploads SET status = 'aborted', updated_at = $1
-		WHERE id = $2 AND status <> 'completed'
-	`, time.Now().UTC(), upload.ID)
+		UPDATE artifact_uploads
+		SET status = $1, error_message = $2, updated_at = $3
+		WHERE id = $4 AND status <> 'completed'
+	`, status, errorMessage, time.Now().UTC(), upload.ID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	respond.JSON(w, http.StatusOK, map[string]string{"status": "aborted", "id": upload.ID})
+	respond.JSON(w, http.StatusOK, map[string]string{"status": status, "id": upload.ID})
 }
 
 func (h *Handler) persistVerifiedDirectUpload(ctx context.Context, user *auth.Claims, upload directUploadRecord) (ArtifactMetadataResponse, error) {

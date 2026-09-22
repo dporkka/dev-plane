@@ -136,18 +136,35 @@ func (r *ArtifactUploadReconciler) Reconcile(ctx context.Context) error {
 			continue
 		}
 		r.metrics.claimed.Add(1)
-		if err := r.reconcileClaimed(ctx, upload, claim, now); err != nil {
+
+		processCtx, cancelProcess := context.WithCancel(ctx)
+		heartbeatErr := make(chan error, 1)
+		heartbeatDone := make(chan struct{})
+		go r.heartbeatClaim(processCtx, cancelProcess, upload.ID, claim, heartbeatErr, heartbeatDone)
+
+		reconcileErr := r.reconcileClaimed(processCtx, upload, claim, now)
+		cancelProcess()
+		<-heartbeatDone
+		select {
+		case err := <-heartbeatErr:
+			if reconcileErr == nil {
+				reconcileErr = err
+			}
+		default:
+		}
+
+		if reconcileErr != nil {
 			r.logger.Warn("artifact upload reconciliation failed",
 				"upload_id", upload.ID,
 				"status", upload.Status,
-				"error", err,
+				"error", reconcileErr,
 			)
 			r.metrics.failures.Add(1)
 			r.metrics.lastFailureUnix.Store(now.Unix())
 			if firstErr == nil {
-				firstErr = err
+				firstErr = reconcileErr
 			}
-			_ = r.releaseClaim(context.Background(), upload.ID, claim, upload.Status, err.Error(), r.now())
+			_ = r.releaseClaim(context.Background(), upload.ID, claim, upload.Status, reconcileErr.Error(), r.now())
 		}
 	}
 	if firstErr == nil {
@@ -231,6 +248,67 @@ func (r *ArtifactUploadReconciler) claim(ctx context.Context, upload reconciledA
 	`, claim, now.Add(r.claimTTL), upload.ID, upload.Status, now)
 	if err != nil {
 		return false, fmt.Errorf("claim artifact upload %s: %w", upload.ID, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows == 1, nil
+}
+
+func (r *ArtifactUploadReconciler) heartbeatClaim(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	uploadID, claim string,
+	errCh chan<- error,
+	done chan<- struct{},
+) {
+	defer close(done)
+	interval := r.claimTTL / 3
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			renewed, err := r.renewClaim(ctx, uploadID, claim, r.now())
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				cancel()
+				return
+			}
+			if !renewed {
+				select {
+				case errCh <- fmt.Errorf("artifact upload reconciliation claim %s was lost", uploadID):
+				default:
+				}
+				cancel()
+				return
+			}
+		}
+	}
+}
+
+func (r *ArtifactUploadReconciler) renewClaim(
+	ctx context.Context,
+	uploadID, claim string,
+	now time.Time,
+) (bool, error) {
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE artifact_uploads
+		SET reconciliation_claim_expires_at = $1
+		WHERE id = $2 AND reconciliation_claim = $3
+	`, now.Add(r.claimTTL), uploadID, claim)
+	if err != nil {
+		return false, fmt.Errorf("renew artifact upload reconciliation claim %s: %w", uploadID, err)
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
