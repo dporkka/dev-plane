@@ -20,5 +20,6 @@ use (
 	./packages/reviewer
 	./packages/runtimes
 	./packages/securityscan
+	./packages/taskgraph
 	./packages/vcs
 )

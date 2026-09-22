@@ -158,6 +158,23 @@ CREATE INDEX IF NOT EXISTS idx_tasks_priority ON tasks(priority);
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
 
+
+-- =====================================================
+-- 6a. task_dependencies
+-- =====================================================
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    task_id             UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    depends_on_task_id  UUID NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (task_id, depends_on_task_id),
+    CHECK (task_id <> depends_on_task_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_task_id
+    ON task_dependencies(task_id);
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_depends_on_task_id
+    ON task_dependencies(depends_on_task_id);
+
 -- =====================================================
 -- 7. agent_runs
 -- =====================================================

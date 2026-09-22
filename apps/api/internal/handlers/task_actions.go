@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/taskgraph"
 )
 
 // GetTaskSpec returns the generated spec for a task.
@@ -166,6 +168,21 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 
 	if task.Status != "approved" {
 		respond.Error(w, http.StatusBadRequest, fmt.Errorf("task must be in 'approved' status, current: %s", task.Status))
+		return
+	}
+
+	blockers, err := taskgraph.ListBlockers(ctx, h.db, taskID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("check task dependencies: %w", err))
+		return
+	}
+	if len(blockers) > 0 {
+		details := make([]string, 0, len(blockers))
+		for _, blocker := range blockers {
+			details = append(details, fmt.Sprintf("%s(%s)", blocker.DependencyTaskID, blocker.Status))
+		}
+		respond.Error(w, http.StatusConflict,
+			fmt.Errorf("task dependencies are not satisfied: %s", strings.Join(details, ", ")))
 		return
 	}
 	if workspaceID.Valid {

@@ -13,6 +13,9 @@ const (
 	TaskCancelled = "tasks.cancelled"
 )
 
+// TaskDependenciesSatisfied is emitted when all dependencies of an approved task are done.
+const TaskDependenciesSatisfied = "tasks.dependencies_satisfied"
+
 // Agent event subject constants.
 const (
 	AgentRunStarted    = "agents.run.started"

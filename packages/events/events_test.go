@@ -208,6 +208,7 @@ func TestEventConstants(t *testing.T) {
 		{TaskApproved, "tasks.approved"},
 		{TaskStarted, "tasks.started"},
 		{TaskCompleted, "tasks.completed"},
+		{TaskDependenciesSatisfied, "tasks.dependencies_satisfied"},
 		{TaskFailed, "tasks.failed"},
 		{TaskCancelled, "tasks.cancelled"},
 		{AgentRunStarted, "agents.run.started"},
