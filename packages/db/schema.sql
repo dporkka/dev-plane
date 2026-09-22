@@ -149,6 +149,26 @@ CREATE INDEX IF NOT EXISTS idx_workspace_snapshots_artifact_version
     ON workspace_snapshots(artifact_version_digest);
 
 -- =====================================================
+-- 5b. artifact_leases
+-- =====================================================
+CREATE TABLE IF NOT EXISTS artifact_leases (
+    scope_id       TEXT NOT NULL,
+    artifact_path  TEXT NOT NULL,
+    owner_id       TEXT NOT NULL,
+    token_hash     TEXT NOT NULL,
+    generation     BIGINT NOT NULL DEFAULT 1,
+    expires_at     TIMESTAMPTZ NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (scope_id, artifact_path)
+);
+
+CREATE INDEX IF NOT EXISTS idx_artifact_leases_owner
+    ON artifact_leases(owner_id);
+CREATE INDEX IF NOT EXISTS idx_artifact_leases_expires_at
+    ON artifact_leases(expires_at);
+
+-- =====================================================
 -- 6. tasks
 -- =====================================================
 CREATE TABLE IF NOT EXISTS tasks (

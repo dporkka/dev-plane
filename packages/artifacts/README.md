@@ -162,10 +162,54 @@ The adapter and adapter version are recorded in artifact metadata and on each
 derivative's generator record, making derived representations reproducible and
 safe to invalidate when an adapter changes.
 
+## Semantic diffs and collaboration policy
+
+`Manager.DiffArtifacts` compares the richest common semantic representation
+available rather than diffing binary bytes:
+
+- DOCX semantic JSON is compared paragraph-by-paragraph.
+- PDF extracted text is compared line-by-line.
+- Images compare dimensions, decoded format, and preview identity.
+- Artifacts without a common semantic derivative fall back to immutable payload
+  digests and explicitly report that no semantic diff was available.
+
+Normal documents use a bounded LCS diff. Extremely large semantic sequences
+fall back to a prefix/suffix-bounded algorithm so an adversarial document cannot
+force unbounded diff memory.
+
+`DefaultCollaborationPolicy` is deliberately conservative about merge support.
+Text can use ordinary three-way merge. Formats for which Dev Plane does not yet
+have a lossless merge engine require a short-lived write lease, while still
+allowing agents to fork speculative variants.
+
+## Artifact write leases
+
+Both local and durable lease stores implement the same `LeaseStore` contract:
+
+```text
+Acquire(scope, path, owner, ttl)
+Renew(lease, ttl)
+Release(lease)
+Get(scope, path)
+```
+
+Lease grants carry a random capability token and a monotonic generation. The
+generation prevents an old agent from accidentally becoming valid again after
+a lease expires and is re-acquired (the ABA problem).
+
+`MemoryLeaseStore` is intended for tests/local execution. `SQLLeaseStore`
+uses the `artifact_leases` table for swarm coordination on SQLite or
+PostgreSQL. Acquisition is one atomic upsert conditioned on expiry, so competing
+workers cannot both acquire the same path. Only SHA-256 hashes of capability
+tokens are persisted; raw tokens remain with the lease holder.
+
+The maximum lease TTL is 24 hours. Normal agent workflows should use much
+shorter leases and renew them while work is active.
+
 ## Next integrations
 
 1. Persist workspace snapshot records automatically from the coordinator.
-2. Add artifact upload/materialization and snapshot-history API endpoints.
+2. Add artifact upload/materialization, diff, lease, and snapshot-history API endpoints.
 3. Add XLSX/PPTX semantic adapters and richer DOCX structure.
-4. Add short-lived write leases for non-mergeable formats.
-5. Add format-aware semantic diff and review APIs.
+4. Add visual pixel-diff/overlay derivatives for image review.
+5. Add structured merge engines that can relax lease requirements safely.
