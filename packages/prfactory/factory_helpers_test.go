@@ -265,7 +265,7 @@ func TestLoadRunUsesExactTaskAndRunAuthority(t *testing.T) {
 		WithArgs("run-1", "task-1").
 		WillReturnRows(sqlmock.NewRows(cols).AddRow(
 			"run-1", "task-1", "ws-1", "implementer", "model", "provider", "reviewed",
-			10, 5, 0.1, nil, "done", "{}", now, now,
+			10, 5, 0.1, nil, "done", []byte("{}"), now, now,
 		))
 
 	run, err := NewFactory(db, nil).loadRun(context.Background(), "task-1", "run-1")
