@@ -123,7 +123,7 @@ func TestGitHubPushEnvUsesEnvironmentAuth(t *testing.T) {
 	if env["GIT_CONFIG_COUNT"] != "1" {
 		t.Fatalf("GIT_CONFIG_COUNT = %q, want 1", env["GIT_CONFIG_COUNT"])
 	}
-	if env["GIT_CONFIG_KEY_0"] != "http.extraHeader" {
+	if env["GIT_CONFIG_KEY_0"] != "http.https://github.com/.extraHeader" {
 		t.Fatalf("GIT_CONFIG_KEY_0 = %q", env["GIT_CONFIG_KEY_0"])
 	}
 	if !strings.HasPrefix(env["GIT_CONFIG_VALUE_0"], "Authorization: Basic ") {
