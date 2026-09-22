@@ -348,7 +348,6 @@ func insertApprovalFixture(t *testing.T, db *sql.DB, id, taskID, runID, approval
 	}
 }
 
-
 func TestHandleApprovalApprovedLoadsRunFromApprovalRecordForPRCreate(t *testing.T) {
 	db := setupApprovalHandlerDB(t)
 	defer db.Close()
