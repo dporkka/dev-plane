@@ -129,20 +129,20 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	rev := reviewer.NewReviewer(f.db, f.logger)
 	report, err := rev.Get(ctx, run.ID)
 	if err != nil {
-		f.logger.Warn("no review report found, generating default", "error", err)
-		report = &reviewer.ReviewReport{
-			RunID:         run.ID,
-			Summary:       "Review report not available.",
-			RiskLevel:     "medium",
-			Approvable:    true,
-			Suggestions:   []string{"Manual review recommended."},
-			TestCoverage:  "Unknown",
-			SecurityNotes: "No automated security scan performed.",
-		}
+		return nil, fmt.Errorf("load review report: %w", err)
+	}
+	reviewed, err := vcs.LoadReviewedCandidate(ctx, f.db, run.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load reviewed candidate: %w", err)
+	}
+	if reviewed.TaskID != taskID {
+		return nil, fmt.Errorf("reviewed candidate task %s does not match requested task %s", reviewed.TaskID, taskID)
 	}
 
-	// 4. Build PR body
+	// 4. Build PR body from the review evidence bound to the immutable candidate.
 	prBody := f.BuildPRBody(task, nil, report, run)
+	prBody += fmt.Sprintf("\n## Reviewed Candidate\n\n- **Commit:** `%s`\n- **Review digest:** `%s`\n",
+		reviewed.Candidate.Revision.CommitID, reviewed.ReviewDigest)
 
 	// 5. Determine branch names
 	branch := task.TargetBranch
@@ -150,19 +150,13 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		branch = "main"
 	}
 
-	workspaceBranch := branch
+	workspaceBranch := reviewed.Candidate.Branch
 	var workspace *models.Workspace
-	workspaceID := run.WorkspaceID
-	if workspaceID == nil {
-		workspaceID = task.WorkspaceID
-	}
-	if workspaceID != nil && strings.TrimSpace(*workspaceID) != "" {
-		workspace, err = f.loadWorkspace(ctx, *workspaceID)
+	workspaceID := reviewed.WorkspaceID
+	if strings.TrimSpace(workspaceID) != "" {
+		workspace, err = f.loadWorkspace(ctx, workspaceID)
 		if err != nil {
-			return nil, fmt.Errorf("load workspace: %w", err)
-		}
-		if workspace != nil && workspace.Branch != "" {
-			workspaceBranch = workspace.Branch
+			return nil, fmt.Errorf("load reviewed workspace: %w", err)
 		}
 	}
 
@@ -187,8 +181,9 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("workspace is required to publish branch %s", workspaceBranch)
 	}
 	publishRemoteURL := fmt.Sprintf("https://github.com/%s/%s.git", repoOwner, repoName)
-	if err := f.publishWorkspaceBranch(ctx, workspace, workspaceBranch, publishRemoteURL); err != nil {
-		return nil, fmt.Errorf("publish branch %s: %w", workspaceBranch, err)
+	if err := f.publishWorkspaceRevision(ctx, workspace, workspaceBranch, reviewed.Candidate.Revision, publishRemoteURL); err != nil {
+		return nil, fmt.Errorf("publish reviewed branch %s at %s: %w",
+			workspaceBranch, reviewed.Candidate.Revision.CommitID, err)
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
@@ -389,6 +384,10 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 // backend. Local worktrees use direct execution; isolated runtimes use the
 // runtime VCS transport so Docker/remote branches are published too.
 func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.Workspace, branch, remoteURL string) error {
+	return f.publishWorkspaceRevision(ctx, workspace, branch, vcs.Revision{}, remoteURL)
+}
+
+func (f *Factory) publishWorkspaceRevision(ctx context.Context, workspace *models.Workspace, branch string, revision vcs.Revision, remoteURL string) error {
 	if workspace == nil {
 		return fmt.Errorf("workspace is required")
 	}
@@ -403,10 +402,11 @@ func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.
 	if workspace.WorktreePath != nil && strings.TrimSpace(*workspace.WorktreePath) != "" {
 		backend := vcs.NewGitBackend(nil)
 		return backend.Publish(ctx, vcs.PublishRequest{
-			WorkspacePath: strings.TrimSpace(*workspace.WorktreePath),
-			Ref:           branch,
-			RemoteURL:     remoteURL,
-			Env:           authEnv,
+			WorkspacePath:  strings.TrimSpace(*workspace.WorktreePath),
+			Ref:            branch,
+			SourceRevision: revision,
+			RemoteURL:      remoteURL,
+			Env:            authEnv,
 		})
 	}
 
@@ -432,9 +432,10 @@ func (f *Factory) publishWorkspaceBranch(ctx context.Context, workspace *models.
 		return fmt.Errorf("runtime provider %q does not support privileged VCS publication", providerName)
 	}
 	return publisher.PublishVCS(ctx, *workspace.RuntimeSessionID, vcs.PublishRequest{
-		Ref:       branch,
-		RemoteURL: remoteURL,
-		Env:       authEnv,
+		Ref:            branch,
+		SourceRevision: revision,
+		RemoteURL:      remoteURL,
+		Env:            authEnv,
 	})
 }
 
