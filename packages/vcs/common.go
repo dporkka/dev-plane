@@ -29,11 +29,11 @@ func validatePublishRemoteURL(raw string) error {
 	if err != nil {
 		return fmt.Errorf("parse publish remote URL: %w", err)
 	}
-	if parsed.User != nil {
-		return fmt.Errorf("publish remote URL must not contain credentials")
-	}
 	if parsed.Scheme != "https" {
 		return fmt.Errorf("publish remote URL must use https")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("publish remote URL must not contain credentials")
 	}
 	if strings.TrimSpace(parsed.Host) == "" {
 		return fmt.Errorf("publish remote URL host is required")
