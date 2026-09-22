@@ -238,4 +238,3 @@ func (h *Handler) saveReviewedCandidate(
 		Candidate:    candidate,
 	})
 }
-
