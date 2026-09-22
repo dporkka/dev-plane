@@ -105,13 +105,26 @@ func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger the review only when no immutable candidate has been frozen yet.
-	report, err := rev.Review(ctx, runID)
+	// Capture and materialize one exact staged snapshot before review. This makes
+	// untracked files part of the review surface and prevents workspace mutation
+	// between review and candidate publication.
+	snapshot, err := h.prepareReviewSnapshot(ctx, runID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	if err := h.freezeReviewedCandidate(ctx, runID, report); err != nil {
+	candidate, err := h.materializeReviewSnapshot(ctx, runID, snapshot)
+	if err != nil {
+		h.logger.Error("failed to materialize reviewed snapshot", "run_id", runID, "error", err)
+		respond.Error(w, http.StatusConflict, err)
+		return
+	}
+	report, err := rev.ReviewDiff(ctx, runID, snapshot.diff, snapshot.securityWorkspacePath)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := h.saveReviewedCandidate(ctx, runID, snapshot, candidate, report); err != nil {
 		h.logger.Error("failed to freeze reviewed candidate", "run_id", runID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -134,7 +147,17 @@ func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, report)
 }
 
-func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, report *reviewer.ReviewReport) error {
+type reviewSnapshot struct {
+	taskID                string
+	workspaceID           string
+	workspacePath         string
+	securityWorkspacePath string
+	preReviewHead         string
+	diff                  string
+	runner                vcs.CommandRunner
+}
+
+func (h *Handler) prepareReviewSnapshot(ctx context.Context, runID string) (reviewSnapshot, error) {
 	var taskID string
 	var workspaceID sql.NullString
 	if err := h.db.QueryRowContext(ctx, `
@@ -142,45 +165,118 @@ func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, rep
 		FROM agent_runs
 		WHERE id = $1
 	`, runID).Scan(&taskID, &workspaceID); err != nil {
-		return err
+		return reviewSnapshot{}, err
 	}
 	if !workspaceID.Valid || workspaceID.String == "" {
-		return errors.New("reviewed agent run has no workspace")
+		return reviewSnapshot{}, errors.New("reviewed agent run has no workspace")
 	}
 
 	workspace, err := h.loadWorkspaceRuntimeMetadata(ctx, workspaceID.String)
 	if err != nil {
-		return err
-	}
-	workspacePath := "."
-	var runner vcs.CommandRunner
-	if workspace.WorktreePath != nil && *workspace.WorktreePath != "" {
-		workspacePath = *workspace.WorktreePath
-	} else {
-		workspace, provider, err := h.getRuntimeWorkspace(ctx, workspaceID.String)
-		if err != nil {
-			return err
-		}
-		if provider == nil || workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID == "" {
-			return errors.New("reviewed workspace has neither a local worktree nor an attached runtime")
-		}
-		runner = runtimes.NewVCSCommandRunner(provider, *workspace.RuntimeSessionID)
+		return reviewSnapshot{}, err
 	}
 
-	candidate, err := vcs.NewCandidateMaterializer(runner, nil).Materialize(
+	snapshot := reviewSnapshot{
+		taskID:        taskID,
+		workspaceID:   workspaceID.String,
+		workspacePath: ".",
+		runner:        vcs.ExecRunner{},
+	}
+	if workspace.WorktreePath != nil && *workspace.WorktreePath != "" {
+		snapshot.workspacePath = *workspace.WorktreePath
+		snapshot.securityWorkspacePath = *workspace.WorktreePath
+	} else {
+		workspace, provider, runtimeErr := h.getRuntimeWorkspace(ctx, workspaceID.String)
+		if runtimeErr != nil {
+			return reviewSnapshot{}, runtimeErr
+		}
+		if provider == nil || workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID == "" {
+			return reviewSnapshot{}, errors.New("reviewed workspace has neither a local worktree nor an attached runtime")
+		}
+		snapshot.runner = runtimes.NewVCSCommandRunner(provider, *workspace.RuntimeSessionID)
+	}
+
+	head, err := snapshot.runner.Run(ctx, vcs.Command{
+		Name: "git",
+		Args: []string{"rev-parse", "--verify", "HEAD^{commit}"},
+		Dir:  snapshot.workspacePath,
+	})
+	if err != nil {
+		return reviewSnapshot{}, err
+	}
+	snapshot.preReviewHead = stringTrimSpace(head.Stdout)
+	if snapshot.preReviewHead == "" {
+		return reviewSnapshot{}, errors.New("reviewed workspace has no HEAD commit")
+	}
+
+	// Stage into the controlled workspace before computing the review patch so
+	// new/untracked files are included. CandidateMaterializer will commit this
+	// exact staged state after the patch is captured.
+	if _, err := snapshot.runner.Run(ctx, vcs.Command{
+		Name: "git",
+		Args: []string{"add", "-A", "--"},
+		Dir:  snapshot.workspacePath,
+	}); err != nil {
+		return reviewSnapshot{}, err
+	}
+	patch, err := snapshot.runner.Run(ctx, vcs.Command{
+		Name: "git",
+		Args: []string{"diff", "--cached", "--no-ext-diff", "--binary", "--full-index", "HEAD", "--"},
+		Dir:  snapshot.workspacePath,
+	})
+	if err != nil {
+		return reviewSnapshot{}, err
+	}
+	snapshot.diff = patch.Stdout
+	return snapshot, nil
+}
+
+func (h *Handler) materializeReviewSnapshot(ctx context.Context, runID string, snapshot reviewSnapshot) (vcs.VerifiedCandidate, error) {
+	candidate, err := vcs.NewCandidateMaterializer(snapshot.runner, nil).Materialize(
 		ctx,
-		workspacePath,
-		"reviewed candidate for task "+taskID+" run "+runID,
+		snapshot.workspacePath,
+		"reviewed candidate for task "+snapshot.taskID+" run "+runID,
 		vcs.CandidateMetadata{
-			TaskID:      taskID,
+			TaskID:      snapshot.taskID,
 			AgentID:     runID,
-			WorkspaceID: workspaceID.String,
+			WorkspaceID: snapshot.workspaceID,
 		},
 	)
 	if err != nil {
-		return err
+		return vcs.VerifiedCandidate{}, err
 	}
 
+	materialized, err := snapshot.runner.Run(ctx, vcs.Command{
+		Name: "git",
+		Args: []string{
+			"diff", "--no-ext-diff", "--binary", "--full-index",
+			snapshot.preReviewHead, candidate.Revision.CommitID, "--",
+		},
+		Dir: snapshot.workspacePath,
+	})
+	if err != nil {
+		return vcs.VerifiedCandidate{}, err
+	}
+	if sha256.Sum256([]byte(materialized.Stdout)) != sha256.Sum256([]byte(snapshot.diff)) {
+		if candidate.Revision.CommitID != snapshot.preReviewHead {
+			_, _ = snapshot.runner.Run(context.Background(), vcs.Command{
+				Name: "git",
+				Args: []string{"reset", "--mixed", snapshot.preReviewHead},
+				Dir:  snapshot.workspacePath,
+			})
+		}
+		return vcs.VerifiedCandidate{}, errors.New("workspace changed while freezing review snapshot; candidate rejected")
+	}
+	return candidate, nil
+}
+
+func (h *Handler) saveReviewedCandidate(
+	ctx context.Context,
+	runID string,
+	snapshot reviewSnapshot,
+	candidate vcs.VerifiedCandidate,
+	report *reviewer.ReviewReport,
+) error {
 	payload, err := json.Marshal(report)
 	if err != nil {
 		return err
@@ -188,9 +284,30 @@ func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, rep
 	sum := sha256.Sum256(payload)
 	return vcs.SaveReviewedCandidate(ctx, h.db, vcs.ReviewedCandidate{
 		RunID:        runID,
-		TaskID:       taskID,
-		WorkspaceID:  workspaceID.String,
+		TaskID:       snapshot.taskID,
+		WorkspaceID:  snapshot.workspaceID,
 		ReviewDigest: hex.EncodeToString(sum[:]),
 		Candidate:    candidate,
 	})
+}
+
+func stringTrimSpace(value string) string {
+	for len(value) > 0 {
+		switch value[0] {
+		case ' ', '\t', '\n', '\r':
+			value = value[1:]
+		default:
+			goto trimRight
+		}
+	}
+trimRight:
+	for len(value) > 0 {
+		switch value[len(value)-1] {
+		case ' ', '\t', '\n', '\r':
+			value = value[:len(value)-1]
+		default:
+			return value
+		}
+	}
+	return value
 }
