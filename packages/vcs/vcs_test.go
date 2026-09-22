@@ -101,6 +101,88 @@ func TestJujutsuPublishUsesBookmarkAndLeaseSafePush(t *testing.T) {
 	}
 }
 
+func TestGitPublishUsesTrustedRemoteAndDisablesExecutionHooks(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewGitBackend(runner)
+	err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: t.TempDir(),
+		Ref:           "agent/task-42",
+		RemoteURL:     "https://github.com/acme/app.git",
+		Env:           map[string]string{"GIT_CONFIG_VALUE_0": "Authorization: Basic secret"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 1 {
+		t.Fatalf("commands = %d, want 1", len(runner.commands))
+	}
+	cmd := runner.commands[0]
+	for _, want := range []string{
+		"core.hooksPath=/dev/null",
+		"credential.helper=",
+		"core.askPass=",
+		"http.sslVerify=true",
+		"push",
+		"--",
+		"https://github.com/acme/app.git",
+		"agent/task-42:refs/heads/agent/task-42",
+	} {
+		found := false
+		for _, arg := range cmd.Args {
+			if arg == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("publish args missing %q: %#v", want, cmd.Args)
+		}
+	}
+	if cmd.Env["GIT_CONFIG_VALUE_0"] != "Authorization: Basic secret" {
+		t.Fatalf("publish env lost auth: %#v", cmd.Env)
+	}
+}
+
+func TestPublishRejectsUntrustedRemoteURL(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewGitBackend(runner)
+	err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: t.TempDir(),
+		Ref:           "agent/task-42",
+		RemoteURL:     "ssh://git@github.com/acme/app.git",
+	})
+	if err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("error = %v, want HTTPS rejection", err)
+	}
+	if len(runner.commands) != 0 {
+		t.Fatalf("runner invoked for invalid remote: %#v", runner.commands)
+	}
+}
+
+func TestJujutsuPublishUsesTrustedRemoteWhenProvided(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewJujutsuBackend(runner)
+	err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: t.TempDir(),
+		Ref:           "agent/task-42",
+		RemoteURL:     "https://github.com/acme/app.git",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runner.commands) != 2 {
+		t.Fatalf("commands = %d, want bookmark + git push", len(runner.commands))
+	}
+	if runner.commands[1].Name != "git" {
+		t.Fatalf("trusted remote publish command = %q, want git", runner.commands[1].Name)
+	}
+	if !reflect.DeepEqual(runner.commands[1].Args[len(runner.commands[1].Args)-3:], []string{
+		"--", "https://github.com/acme/app.git", "agent/task-42:refs/heads/agent/task-42",
+	}) {
+		t.Fatalf("trusted remote push args = %#v", runner.commands[1].Args)
+	}
+}
+
 func TestCloneRejectsCredentialBearingURL(t *testing.T) {
 	runner := &fakeRunner{}
 	backend := NewGitBackend(runner)
