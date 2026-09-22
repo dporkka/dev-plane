@@ -128,6 +128,13 @@ func (s *ArtifactSnapshotter) captureSource(
 	runtimeSession, worktreePath sql.NullString,
 ) (*runtimes.Snapshot, error) {
 	if s.runtime != nil && runtimeSession.Valid && strings.TrimSpace(runtimeSession.String) != "" {
+		if attacher, ok := s.runtime.(interface {
+			AttachSession(context.Context, string, string) (*runtimes.Session, error)
+		}); ok {
+			if _, err := attacher.AttachSession(ctx, runtimeSession.String, workspaceID); err != nil {
+				return nil, fmt.Errorf("reattach runtime session before snapshot: %w", err)
+			}
+		}
 		snap, err := s.runtime.Snapshot(ctx, runtimeSession.String)
 		if err != nil {
 			return nil, fmt.Errorf("capture runtime source snapshot: %w", err)

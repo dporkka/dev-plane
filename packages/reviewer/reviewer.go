@@ -162,6 +162,16 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 		baseBranch = ""
 	}
 
+	if runtimeSessionID != "" && r.runtimeProvider != nil {
+		if attacher, ok := r.runtimeProvider.(interface {
+			AttachSession(context.Context, string, string) (*runtimes.Session, error)
+		}); ok {
+			if _, attachErr := attacher.AttachSession(ctx, runtimeSessionID, *run.WorkspaceID); attachErr != nil {
+				r.logger.Warn("failed to reattach runtime session for review", "workspace_id", *run.WorkspaceID, "session_id", runtimeSessionID, "error", attachErr)
+			}
+		}
+	}
+
 	diff := ""
 	candidateRevision, revisionErr := r.getCandidateRevision(ctx, runID, *run.WorkspaceID)
 	if revisionErr != nil && !errors.Is(revisionErr, sql.ErrNoRows) {
