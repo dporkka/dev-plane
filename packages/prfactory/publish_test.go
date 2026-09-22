@@ -7,6 +7,7 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 type publishRuntimeProvider struct {
@@ -123,5 +124,28 @@ func TestPublishWorkspaceBranchRejectsUnregisteredRuntime(t *testing.T) {
 	}, "agent/task-1", "https://github.com/acme/app.git")
 	if err == nil || !strings.Contains(err.Error(), "not registered") {
 		t.Fatalf("error = %v, want unregistered runtime error", err)
+	}
+}
+
+
+func TestPublishWorkspaceRevisionCarriesReviewedCommitToRuntime(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	provider := &publishRuntimeProvider{}
+	factory := NewFactory(nil, nil).
+		WithGitHubToken("ghp_runtime_secret").
+		WithRuntimeProvider("docker", provider)
+
+	sessionID := "session-reviewed"
+	workspace := &models.Workspace{
+		ID:               "workspace-reviewed",
+		RuntimeProvider:  "docker",
+		RuntimeSessionID: &sessionID,
+	}
+	revision := vcs.Revision{CommitID: "0123456789abcdef0123456789abcdef01234567", ChangeID: "change-42"}
+	if err := factory.publishWorkspaceRevision(context.Background(), workspace, "agent/task-42", revision, "https://github.com/acme/app.git"); err != nil {
+		t.Fatalf("publishWorkspaceRevision() error = %v", err)
+	}
+	if provider.publishReq.SourceRevision != revision {
+		t.Fatalf("source revision = %+v, want %+v", provider.publishReq.SourceRevision, revision)
 	}
 }
