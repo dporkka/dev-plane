@@ -32,22 +32,25 @@ import (
 
 // PullRequestResponse is the API representation of a pull request.
 type PullRequestResponse struct {
-	ID         string     `json:"id"`
-	TaskID     string     `json:"task_id"`
-	RunID      *string    `json:"run_id,omitempty"`
-	RepoID     string     `json:"repository_id"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title"`
-	Body       string     `json:"body"`
-	Branch     string     `json:"branch"`
-	BaseBranch string     `json:"base_branch"`
-	URL        string     `json:"url"`
-	State      string     `json:"state"`
-	Draft      bool       `json:"draft"`
-	CreatedBy  string     `json:"created_by"`
-	MergedAt   *time.Time `json:"merged_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID                string     `json:"id"`
+	TaskID            string     `json:"task_id"`
+	RunID             *string    `json:"run_id,omitempty"`
+	RepoID            string     `json:"repository_id"`
+	Number            int        `json:"number"`
+	Title             string     `json:"title"`
+	Body              string     `json:"body"`
+	Branch            string     `json:"branch"`
+	BaseBranch        string     `json:"base_branch"`
+	URL               string     `json:"url"`
+	State             string     `json:"state"`
+	Draft             bool       `json:"draft"`
+	CreatedBy         string     `json:"created_by"`
+	ReviewedCommitID  string     `json:"reviewed_commit_id,omitempty"`
+	PublishedCommitID string     `json:"published_commit_id,omitempty"`
+	TargetHeadID      string     `json:"target_head_id,omitempty"`
+	MergedAt          *time.Time `json:"merged_at,omitempty"`
+	CreatedAt         time.Time  `json:"created_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
 }
 
 // ListPullRequests returns PRs for a project.
@@ -97,7 +100,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 	// Build parameterized query for IN clause
 	query := `
 		SELECT id, task_id, run_id, repository_id, number, title, body,
-		       branch, base_branch, url, state, draft, created_by, merged_at, created_at, updated_at
+		       branch, base_branch, url, state, draft, created_by, reviewed_commit_id, published_commit_id, target_head_id, merged_at, created_at, updated_at
 		FROM pull_requests
 		WHERE repository_id IN (`
 	args := make([]interface{}, len(repoIDs))
@@ -120,12 +123,12 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 	var prs []PullRequestResponse
 	for prRows.Next() {
 		var pr PullRequestResponse
-		var runID sql.NullString
+		var runID, reviewedCommitID, publishedCommitID, targetHeadID sql.NullString
 		var mergedAt sql.NullTime
 		err := prRows.Scan(
 			&pr.ID, &pr.TaskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 			&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-			&mergedAt, &pr.CreatedAt, &pr.UpdatedAt,
+			&reviewedCommitID, &publishedCommitID, &targetHeadID, &mergedAt, &pr.CreatedAt, &pr.UpdatedAt,
 		)
 		if err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
@@ -133,6 +136,15 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		}
 		if runID.Valid {
 			pr.RunID = &runID.String
+		}
+		if reviewedCommitID.Valid {
+			pr.ReviewedCommitID = reviewedCommitID.String
+		}
+		if publishedCommitID.Valid {
+			pr.PublishedCommitID = publishedCommitID.String
+		}
+		if targetHeadID.Valid {
+			pr.TargetHeadID = targetHeadID.String
 		}
 		if mergedAt.Valid {
 			pr.MergedAt = &mergedAt.Time
@@ -166,17 +178,19 @@ func (h *Handler) GetPullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pr PullRequestResponse
-	var runID sql.NullString
+	var runID, reviewedCommitID, publishedCommitID, targetHeadID sql.NullString
 	var mergedAt sql.NullTime
 
 	err := h.db.QueryRowContext(ctx, `
 		SELECT id, task_id, run_id, repository_id, number, title, body,
-		       branch, base_branch, url, state, draft, created_by, merged_at, created_at, updated_at
+		       branch, base_branch, url, state, draft, created_by,
+		       reviewed_commit_id, published_commit_id, target_head_id,
+		       merged_at, created_at, updated_at
 		FROM pull_requests WHERE id = $1
 	`, id).Scan(
 		&pr.ID, &pr.TaskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt,
+		&reviewedCommitID, &publishedCommitID, &targetHeadID, &mergedAt, &pr.CreatedAt, &pr.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -188,6 +202,15 @@ func (h *Handler) GetPullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if runID.Valid {
 		pr.RunID = &runID.String
+	}
+	if reviewedCommitID.Valid {
+		pr.ReviewedCommitID = reviewedCommitID.String
+	}
+	if publishedCommitID.Valid {
+		pr.PublishedCommitID = publishedCommitID.String
+	}
+	if targetHeadID.Valid {
+		pr.TargetHeadID = targetHeadID.String
 	}
 	if mergedAt.Valid {
 		pr.MergedAt = &mergedAt.Time
@@ -321,22 +344,25 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusCreated, PullRequestResponse{
-		ID:         pr.ID,
-		TaskID:     pr.TaskID,
-		RunID:      pr.RunID,
-		RepoID:     pr.RepoID,
-		Number:     pr.Number,
-		Title:      pr.Title,
-		Body:       pr.Body,
-		Branch:     pr.Branch,
-		BaseBranch: pr.BaseBranch,
-		URL:        pr.URL,
-		State:      pr.State,
-		Draft:      pr.Draft,
-		CreatedBy:  pr.CreatedBy,
-		MergedAt:   pr.MergedAt,
-		CreatedAt:  pr.CreatedAt,
-		UpdatedAt:  pr.UpdatedAt,
+		ID:                pr.ID,
+		TaskID:            pr.TaskID,
+		RunID:             pr.RunID,
+		RepoID:            pr.RepoID,
+		Number:            pr.Number,
+		Title:             pr.Title,
+		Body:              pr.Body,
+		Branch:            pr.Branch,
+		BaseBranch:        pr.BaseBranch,
+		URL:               pr.URL,
+		State:             pr.State,
+		Draft:             pr.Draft,
+		CreatedBy:         pr.CreatedBy,
+		ReviewedCommitID:  pr.ReviewedCommitID,
+		PublishedCommitID: pr.PublishedCommitID,
+		TargetHeadID:      pr.TargetHeadID,
+		MergedAt:          pr.MergedAt,
+		CreatedAt:         pr.CreatedAt,
+		UpdatedAt:         pr.UpdatedAt,
 	})
 }
 
@@ -375,13 +401,14 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var pr PullRequestResponse
-	var runID sql.NullString
+	var runID, reviewedCommitID, publishedCommitID, targetHeadID sql.NullString
 	var mergedAt sql.NullTime
 	var repoOwner, repoName, taskID, taskStatus string
 
 	err := h.db.QueryRowContext(ctx, `
 		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
-		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by, pr.merged_at,
+		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by,
+		       pr.reviewed_commit_id, pr.published_commit_id, pr.target_head_id, pr.merged_at,
 		       pr.created_at, pr.updated_at, r.owner, r.name, t.status
 		FROM pull_requests pr
 		JOIN repositories r ON r.id = pr.repository_id
@@ -390,7 +417,8 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	`, id).Scan(
 		&pr.ID, &taskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
+		&reviewedCommitID, &publishedCommitID, &targetHeadID, &mergedAt,
+		&pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -403,6 +431,15 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	pr.TaskID = taskID
 	if runID.Valid {
 		pr.RunID = &runID.String
+	}
+	if reviewedCommitID.Valid {
+		pr.ReviewedCommitID = reviewedCommitID.String
+	}
+	if publishedCommitID.Valid {
+		pr.PublishedCommitID = publishedCommitID.String
+	}
+	if targetHeadID.Valid {
+		pr.TargetHeadID = targetHeadID.String
 	}
 	if mergedAt.Valid {
 		pr.MergedAt = &mergedAt.Time
@@ -459,9 +496,67 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	if gh == nil {
 		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
-	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
+	oauthToken := &oauth2.Token{AccessToken: token}
+
+	mergeSHA := strings.TrimSpace(req.SHA)
+	if pr.PublishedCommitID != "" {
+		if mergeSHA != "" && mergeSHA != pr.PublishedCommitID {
+			respond.Error(w, http.StatusConflict, fmt.Errorf(
+				"requested merge SHA %s does not match verified published commit %s",
+				mergeSHA, pr.PublishedCommitID,
+			))
+			return
+		}
+
+		remotePR, getErr := gh.GetPR(ctx, oauthToken, repoOwner, repoName, pr.Number)
+		if getErr != nil {
+			h.logger.Error("failed to verify pull request authority", "pr_id", id, "error", getErr)
+			respond.Error(w, http.StatusBadGateway, fmt.Errorf("verify pull request authority: %w", getErr))
+			return
+		}
+		if remotePR == nil {
+			respond.Error(w, http.StatusBadGateway, errors.New("github returned no pull request authority"))
+			return
+		}
+		if remotePR.Head.SHA != pr.PublishedCommitID {
+			respond.Error(w, http.StatusConflict, fmt.Errorf(
+				"pull request head changed after verified publication: got %s, expected %s",
+				remotePR.Head.SHA, pr.PublishedCommitID,
+			))
+			return
+		}
+		if remotePR.Base.Ref != pr.BaseBranch {
+			respond.Error(w, http.StatusConflict, fmt.Errorf(
+				"pull request base changed after verified publication: got %s, expected %s",
+				remotePR.Base.Ref, pr.BaseBranch,
+			))
+			return
+		}
+		if pr.TargetHeadID != "" {
+			currentBase, branchErr := gh.GetBranch(ctx, oauthToken, repoOwner, repoName, pr.BaseBranch)
+			if branchErr != nil {
+				h.logger.Error("failed to verify target branch authority", "pr_id", id, "error", branchErr)
+				respond.Error(w, http.StatusBadGateway, fmt.Errorf("verify target branch authority: %w", branchErr))
+				return
+			}
+			if currentBase == nil {
+				respond.Error(w, http.StatusBadGateway, errors.New("github returned no target branch authority"))
+				return
+			}
+			if currentBase.Commit.SHA != pr.TargetHeadID {
+				respond.Error(w, http.StatusConflict, fmt.Errorf(
+					"target branch advanced since verification: got %s, expected %s; re-verification required",
+					currentBase.Commit.SHA, pr.TargetHeadID,
+				))
+				return
+			}
+		}
+		mergeSHA = pr.PublishedCommitID
+	}
+
+	mergeResult, err := gh.MergePR(ctx, oauthToken, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
 		Method: req.Method,
-		SHA:    req.SHA,
+		SHA:    mergeSHA,
 	})
 	if err != nil {
 		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)

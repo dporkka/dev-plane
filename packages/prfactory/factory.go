@@ -190,9 +190,31 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID, runID string) (
 		return nil, fmt.Errorf("workspace is required to publish branch %s", workspaceBranch)
 	}
 	publishRemoteURL := fmt.Sprintf("https://github.com/%s/%s.git", repoOwner, repoName)
-	if err := f.publishWorkspaceRevision(ctx, workspace, workspaceBranch, reviewed.Candidate.Revision, publishRemoteURL); err != nil {
-		return nil, fmt.Errorf("publish reviewed branch %s at %s: %w",
-			workspaceBranch, reviewed.Candidate.Revision.CommitID, err)
+	publication, err := f.prepareWorkspacePublication(
+		ctx, task.RepositoryID, workspace, branch, reviewed.Candidate, publishRemoteURL,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("prepare reviewed candidate for publication: %w", err)
+	}
+	if err := validatePublicationOutcome(publication, branch); err != nil {
+		return nil, err
+	}
+
+	verificationJSON, err := json.Marshal(publication.Verification)
+	if err != nil {
+		return nil, fmt.Errorf("marshal publication verification: %w", err)
+	}
+	prBody += fmt.Sprintf(
+		"\n## Publication Refinery\n\n- **Status:** %s\n- **Verified target:** `%s`\n- **Published commit:** `%s`\n- **Verification passed:** %v\n",
+		publication.Status,
+		publication.TargetHead,
+		publication.PublishedRevision.CommitID,
+		publication.Verification.Passed,
+	)
+
+	if err := f.publishWorkspaceRevision(ctx, workspace, workspaceBranch, publication.PublishedRevision, publishRemoteURL); err != nil {
+		return nil, fmt.Errorf("publish refined branch %s at %s: %w",
+			workspaceBranch, publication.PublishedRevision.CommitID, err)
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
@@ -200,24 +222,32 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID, runID string) (
 	if err != nil {
 		return nil, fmt.Errorf("create github pull request: %w", err)
 	}
+	if created.Head.SHA != "" && created.Head.SHA != publication.PublishedRevision.CommitID {
+		return nil, fmt.Errorf("github PR head %s does not match published authority %s",
+			created.Head.SHA, publication.PublishedRevision.CommitID)
+	}
 
 	// 8. Create PR record
 	pr := &models.PullRequest{
-		ID:         uuid.New().String(),
-		TaskID:     taskID,
-		RunID:      &run.ID,
-		RepoID:     task.RepositoryID,
-		Number:     created.Number,
-		Title:      prTitle,
-		Body:       prBody,
-		Branch:     workspaceBranch,
-		BaseBranch: branch,
-		URL:        created.HTMLURL,
-		State:      models.PRStateOpen,
-		Draft:      draft,
-		CreatedBy:  task.CreatedBy,
-		CreatedAt:  time.Now().UTC(),
-		UpdatedAt:  time.Now().UTC(),
+		ID:                uuid.New().String(),
+		TaskID:            taskID,
+		RunID:             &run.ID,
+		RepoID:            task.RepositoryID,
+		Number:            created.Number,
+		Title:             prTitle,
+		Body:              prBody,
+		Branch:            workspaceBranch,
+		BaseBranch:        branch,
+		URL:               created.HTMLURL,
+		State:             models.PRStateOpen,
+		Draft:             draft,
+		CreatedBy:         task.CreatedBy,
+		ReviewedCommitID:  reviewed.Candidate.Revision.CommitID,
+		PublishedCommitID: publication.PublishedRevision.CommitID,
+		TargetHeadID:      publication.TargetHead,
+		Verification:      verificationJSON,
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
 	}
 
 	if err := f.createPRRecord(ctx, pr); err != nil {
@@ -378,10 +408,14 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 	_, err := f.db.ExecContext(ctx, `
 		INSERT INTO pull_requests (
 			id, task_id, run_id, repository_id, number, title, body,
-			branch, base_branch, url, state, draft, created_by, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+			branch, base_branch, url, state, draft, created_by,
+			reviewed_commit_id, published_commit_id, target_head_id, verification,
+			created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
 	`, pr.ID, pr.TaskID, pr.RunID, pr.RepoID, pr.Number, pr.Title, pr.Body,
-		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt, pr.UpdatedAt,
+		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy,
+		pr.ReviewedCommitID, pr.PublishedCommitID, pr.TargetHeadID, pr.Verification,
+		pr.CreatedAt, pr.UpdatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert pull request: %w", err)

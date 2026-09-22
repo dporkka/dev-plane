@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -51,6 +53,13 @@ type GitHubRepo struct {
 		Push  bool `json:"push"`
 		Pull  bool `json:"pull"`
 	} `json:"permissions"`
+}
+
+type GitHubBranch struct {
+	Name   string `json:"name"`
+	Commit struct {
+		SHA string `json:"sha"`
+	} `json:"commit"`
 }
 
 // GitHubPR represents a GitHub pull request.
@@ -233,6 +242,30 @@ func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner
 	var result GitHubPR
 	if err := g.post(ctx, token, url, body, &result); err != nil {
 		return nil, fmt.Errorf("create github pr: %w", err)
+	}
+	return &result, nil
+}
+
+// GetBranch retrieves the current head of one repository branch.
+func (g *GitHubGateway) GetBranch(ctx context.Context, token *oauth2.Token, owner, name, branch string) (*GitHubBranch, error) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" {
+		return nil, fmt.Errorf("branch is required")
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/branches/%s", g.apiBaseURL, owner, name, url.PathEscape(branch))
+	var result GitHubBranch
+	if err := g.get(ctx, token, endpoint, &result); err != nil {
+		return nil, fmt.Errorf("get github branch %s/%s:%s: %w", owner, name, branch, err)
+	}
+	return &result, nil
+}
+
+// GetPR retrieves one pull request including its current head and base SHAs.
+func (g *GitHubGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*GitHubPR, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", g.apiBaseURL, owner, name, number)
+	var result GitHubPR
+	if err := g.get(ctx, token, url, &result); err != nil {
+		return nil, fmt.Errorf("get github pr %s/%s#%d: %w", owner, name, number, err)
 	}
 	return &result, nil
 }

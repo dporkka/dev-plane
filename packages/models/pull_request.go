@@ -2,6 +2,7 @@ package models
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -15,22 +16,26 @@ const (
 
 // PullRequest represents a GitHub pull request created by an agent run.
 type PullRequest struct {
-	ID         string     `json:"id"`
-	TaskID     string     `json:"task_id"`
-	RunID      *string    `json:"run_id,omitempty"`
-	RepoID     string     `json:"repository_id"`
-	Number     int        `json:"number"`
-	Title      string     `json:"title"`
-	Body       string     `json:"body"`
-	Branch     string     `json:"branch"`
-	BaseBranch string     `json:"base_branch"`
-	URL        string     `json:"url"`
-	State      string     `json:"state"` // open, closed, merged
-	Draft      bool       `json:"draft"`
-	CreatedBy  string     `json:"created_by"`
-	MergedAt   *time.Time `json:"merged_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	ID                string          `json:"id"`
+	TaskID            string          `json:"task_id"`
+	RunID             *string         `json:"run_id,omitempty"`
+	RepoID            string          `json:"repository_id"`
+	Number            int             `json:"number"`
+	Title             string          `json:"title"`
+	Body              string          `json:"body"`
+	Branch            string          `json:"branch"`
+	BaseBranch        string          `json:"base_branch"`
+	URL               string          `json:"url"`
+	State             string          `json:"state"` // open, closed, merged
+	Draft             bool            `json:"draft"`
+	CreatedBy         string          `json:"created_by"`
+	ReviewedCommitID  string          `json:"reviewed_commit_id,omitempty"`
+	PublishedCommitID string          `json:"published_commit_id,omitempty"`
+	TargetHeadID      string          `json:"target_head_id,omitempty"`
+	Verification      json.RawMessage `json:"verification,omitempty"`
+	MergedAt          *time.Time      `json:"merged_at,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // Validate checks that the pull request has required fields.

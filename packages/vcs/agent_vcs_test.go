@@ -471,3 +471,200 @@ func TestReviewSnapshotRejectsMutationAfterCaptureAndRestoresBase(t *testing.T) 
 		t.Fatalf("working tree mutation was lost: %q", data)
 	}
 }
+
+func TestPublicationRefineryUsesReviewedCandidateWhenTargetUnchanged(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "publication-unchanged")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/publication-unchanged", workspace, "main")
+	if err := os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := NewCandidateMaterializer(nil, nil).Materialize(
+		context.Background(),
+		workspace,
+		"reviewed publication candidate",
+		CandidateMetadata{TaskID: "task-pub", AgentID: "run-pub", WorkspaceID: "ws-pub"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outcome, err := NewPublicationRefinery(nil, nil).Prepare(context.Background(), PublicationRequest{
+		WorkspacePath: workspace,
+		TargetBranch:  "main",
+		Candidate:     candidate,
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if outcome.Status != PublicationTargetUnchanged {
+		t.Fatalf("status = %q, want %q", outcome.Status, PublicationTargetUnchanged)
+	}
+	if outcome.PublishedRevision.CommitID != candidate.Revision.CommitID {
+		t.Fatalf("published commit = %q, want reviewed %q", outcome.PublishedRevision.CommitID, candidate.Revision.CommitID)
+	}
+	if got := runRefineryGit(t, workspace, "branch", "--show-current"); got != "agent/publication-unchanged" {
+		t.Fatalf("workspace branch = %q", got)
+	}
+	if got := runRefineryGit(t, workspace, "rev-parse", "HEAD"); got != candidate.Revision.CommitID {
+		t.Fatalf("workspace HEAD = %q, want reviewed %q", got, candidate.Revision.CommitID)
+	}
+}
+
+func TestPublicationRefineryReplaysOntoAdvancedTargetAndRestoresWorkspace(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "publication-replay")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/publication-replay", workspace, "main")
+	if err := os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := NewCandidateMaterializer(nil, nil).Materialize(
+		context.Background(),
+		workspace,
+		"reviewed replay candidate",
+		CandidateMetadata{TaskID: "task-replay", AgentID: "run-replay", WorkspaceID: "ws-replay"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "target.txt"), []byte("target advanced\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runRefineryGit(t, repo, "add", "target.txt")
+	runRefineryGit(t, repo, "commit", "-m", "advance target")
+	targetHead := runRefineryGit(t, repo, "rev-parse", "main")
+
+	outcome, err := NewPublicationRefinery(nil, nil).Prepare(context.Background(), PublicationRequest{
+		WorkspacePath: workspace,
+		TargetBranch:  "main",
+		Candidate:     candidate,
+		Verifier:      requireFiles("feature.txt", "target.txt"),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if outcome.Status != PublicationPrepared {
+		t.Fatalf("status = %q, want %q: %+v", outcome.Status, PublicationPrepared, outcome)
+	}
+	if outcome.TargetHead != targetHead {
+		t.Fatalf("target head = %q, want %q", outcome.TargetHead, targetHead)
+	}
+	if outcome.PublishedRevision.CommitID == candidate.Revision.CommitID {
+		t.Fatal("replayed publication reused stale reviewed commit")
+	}
+	if !outcome.Verification.Passed {
+		t.Fatalf("verification = %+v, want passed", outcome.Verification)
+	}
+	if got := runRefineryGit(t, workspace, "show", outcome.PublishedRevision.CommitID+":feature.txt"); got != "feature" {
+		t.Fatalf("replayed feature content = %q", got)
+	}
+	if got := runRefineryGit(t, workspace, "show", outcome.PublishedRevision.CommitID+":target.txt"); got != "target advanced" {
+		t.Fatalf("replayed target content = %q", got)
+	}
+	if got := runRefineryGit(t, workspace, "branch", "--show-current"); got != "agent/publication-replay" {
+		t.Fatalf("workspace branch = %q after replay", got)
+	}
+	if got := runRefineryGit(t, workspace, "rev-parse", "HEAD"); got != candidate.Revision.CommitID {
+		t.Fatalf("workspace HEAD = %q, want reviewed %q after replay", got, candidate.Revision.CommitID)
+	}
+}
+
+func TestPublicationRefineryReturnsConflictWithoutMovingReviewedWorkspace(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "publication-conflict")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/publication-conflict", workspace, "main")
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("candidate\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := NewCandidateMaterializer(nil, nil).Materialize(
+		context.Background(),
+		workspace,
+		"reviewed conflict candidate",
+		CandidateMetadata{TaskID: "task-conflict", AgentID: "run-conflict", WorkspaceID: "ws-conflict"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("target\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runRefineryGit(t, repo, "add", "README.md")
+	runRefineryGit(t, repo, "commit", "-m", "conflicting target")
+
+	outcome, err := NewPublicationRefinery(nil, nil).Prepare(context.Background(), PublicationRequest{
+		WorkspacePath: workspace,
+		TargetBranch:  "main",
+		Candidate:     candidate,
+		Verifier:      requireFiles("README.md"),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if outcome.Status != PublicationConflict {
+		t.Fatalf("status = %q, want conflict: %+v", outcome.Status, outcome)
+	}
+	if got := runRefineryGit(t, workspace, "rev-parse", "HEAD"); got != candidate.Revision.CommitID {
+		t.Fatalf("workspace HEAD = %q, want reviewed %q", got, candidate.Revision.CommitID)
+	}
+	if got := runRefineryGit(t, workspace, "status", "--porcelain"); got != "" {
+		t.Fatalf("workspace dirty after conflict: %q", got)
+	}
+}
+
+func TestPublicationRefineryRejectsAdvancedTargetWithoutVerifier(t *testing.T) {
+	repo := refineryRepository(t)
+	workspace := filepath.Join(t.TempDir(), "publication-no-verifier")
+	runRefineryGit(t, repo, "worktree", "add", "-b", "agent/publication-no-verifier", workspace, "main")
+	if err := os.WriteFile(filepath.Join(workspace, "feature.txt"), []byte("feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := NewCandidateMaterializer(nil, nil).Materialize(
+		context.Background(),
+		workspace,
+		"reviewed candidate",
+		CandidateMetadata{TaskID: "task-no-verify", AgentID: "run-no-verify", WorkspaceID: "ws-no-verify"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "target.txt"), []byte("advance\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runRefineryGit(t, repo, "add", "target.txt")
+	runRefineryGit(t, repo, "commit", "-m", "advance target")
+
+	outcome, err := NewPublicationRefinery(nil, nil).Prepare(context.Background(), PublicationRequest{
+		WorkspacePath: workspace,
+		TargetBranch:  "main",
+		Candidate:     candidate,
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if outcome.Status != PublicationRejected {
+		t.Fatalf("status = %q, want rejected: %+v", outcome.Status, outcome)
+	}
+	if !strings.Contains(outcome.Detail, "no deterministic verifier") {
+		t.Fatalf("detail = %q", outcome.Detail)
+	}
+}
+
+func TestCommandVerifierFailsClosed(t *testing.T) {
+	workspace := t.TempDir()
+	verifier := NewCommandVerifier(nil, []VerificationCommand{
+		{Label: "present", Command: "test -d ."},
+		{Label: "failure", Command: "false"},
+	})
+	report, err := verifier.Verify(context.Background(), workspace)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if report.Passed {
+		t.Fatalf("report = %+v, want rejection", report)
+	}
+	if report.Evidence["present"] != "passed" || report.Evidence["failure"] != "failed" {
+		t.Fatalf("evidence = %+v", report.Evidence)
+	}
+}

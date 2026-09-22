@@ -325,3 +325,23 @@ func testGateway(server *httptest.Server) *GitHubGateway {
 	g.oauthConfig.Endpoint.AuthStyle = oauth2.AuthStyleInParams
 	return g
 }
+
+func TestGetBranchReturnsCurrentHeadAndEscapesBranchName(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.EscapedPath() != "/repos/owner/repo/branches/feature%2Freplay" {
+			t.Fatalf("escaped path = %q", r.URL.EscapedPath())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"feature/replay","commit":{"sha":"abc123"}}`))
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	branch, err := g.GetBranch(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", "feature/replay")
+	if err != nil {
+		t.Fatalf("GetBranch() error = %v", err)
+	}
+	if branch.Name != "feature/replay" || branch.Commit.SHA != "abc123" {
+		t.Fatalf("branch = %+v", branch)
+	}
+}

@@ -354,6 +354,9 @@ export interface PullRequest {
   base_branch: string;
   url: string;
   status: "open" | "merged" | "closed";
+  reviewed_commit_id?: string;
+  published_commit_id?: string;
+  target_head_id?: string;
   created_at: string;
   updated_at: string;
 }
