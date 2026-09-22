@@ -294,11 +294,11 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	// Publish pr.created event
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      pr.ID,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"branch":     pr.Branch,
-			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"pr_id":     pr.ID,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"branch":    pr.Branch,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("pr.created", data); pubErr != nil {
