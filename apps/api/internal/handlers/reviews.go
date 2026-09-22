@@ -88,8 +88,24 @@ func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Trigger the review
+	// A frozen reviewed candidate is immutable authority for this run. Repeated
+	// review requests return the report already bound to that candidate rather
+	// than overwriting the evidence with a new timestamp/digest.
 	rev := reviewer.NewReviewer(h.db, h.logger)
+	if _, frozenErr := vcs.LoadReviewedCandidate(ctx, h.db, runID); frozenErr == nil {
+		report, getErr := rev.Get(ctx, runID)
+		if getErr != nil {
+			respond.Error(w, http.StatusInternalServerError, getErr)
+			return
+		}
+		respond.JSON(w, http.StatusOK, report)
+		return
+	} else if !errors.Is(frozenErr, vcs.ErrReviewedCandidateNotFound) {
+		respond.Error(w, http.StatusInternalServerError, frozenErr)
+		return
+	}
+
+	// Trigger the review only when no immutable candidate has been frozen yet.
 	report, err := rev.Review(ctx, runID)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
@@ -117,7 +133,6 @@ func (h *Handler) RequestReview(w http.ResponseWriter, r *http.Request) {
 
 	respond.JSON(w, http.StatusOK, report)
 }
-
 
 func (h *Handler) freezeReviewedCandidate(ctx context.Context, runID string, report *reviewer.ReviewReport) error {
 	var taskID string
