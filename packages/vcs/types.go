@@ -31,6 +31,9 @@ type WorkspaceRequest struct {
 	WorkspacePath  string
 	Name           string
 	Base           string
+	// Ref is the forge-visible Git branch/bookmark to publish. It may differ
+	// from the local workspace name.
+	Ref            string
 }
 
 type PublishRequest struct {
