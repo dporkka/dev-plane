@@ -169,6 +169,59 @@ export interface Task {
   deleted_at?: string;
 }
 
+export interface NLAPGoal {
+  id: string;
+  project_id: string;
+  conversation_id?: string;
+  intent: string;
+  desired_state?: Record<string, unknown>;
+  constraints?: Record<string, unknown>;
+  success_criteria?: string[];
+  budget_usd?: number;
+  deadline?: string;
+  status: 'created' | 'running' | 'blocked' | 'verifying' | 'completed' | 'cancelled';
+}
+
+export interface NLAPTask {
+  id: string;
+  goal_id: string;
+  parent_task_id?: string;
+  manager: 'engineering' | 'research' | 'operations' | 'data' | 'voice';
+  description: string;
+  dependencies?: string[];
+  required_capabilities?: string[];
+  acceptance_criteria?: string[];
+  budget_usd?: number;
+  timeout_secs?: number;
+  status:
+    | 'created'
+    | 'ready'
+    | 'assigned'
+    | 'running'
+    | 'blocked'
+    | 'verifying'
+    | 'failed'
+    | 'completed'
+    | 'cancelled';
+  assigned_agent_id?: string;
+}
+
+export interface NLAPBudget {
+  max_cost_usd?: number;
+  max_duration_secs?: number;
+  max_model_calls?: number;
+  max_tool_calls?: number;
+  max_parallel_agents?: number;
+}
+
+export interface NLAPExecutionRequest {
+  repository_id: string;
+  target_branch?: string;
+  goal: NLAPGoal;
+  task: NLAPTask;
+  budget?: NLAPBudget;
+}
+
 export interface TaskSpec {
   id: string;
   task_id: string;
