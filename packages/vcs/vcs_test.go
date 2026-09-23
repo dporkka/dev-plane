@@ -82,6 +82,17 @@ func TestJujutsuSnapshotReturnsStableChangeID(t *testing.T) {
 	}
 }
 
+func TestJujutsuRestoreCreatesFreshWorkingCopyAtRevision(t *testing.T) {
+	runner := &fakeRunner{}
+	backend := NewJujutsuBackend(runner)
+	if err := backend.Restore(context.Background(), t.TempDir(), "abc123"); err != nil {
+		t.Fatal(err)
+	}
+	if got := runner.commands[0].Args; !reflect.DeepEqual(got, []string{"new", "abc123"}) {
+		t.Fatalf("restore args = %#v", got)
+	}
+}
+
 func TestJujutsuPublishUsesBookmarkAndLeaseSafePush(t *testing.T) {
 	runner := &fakeRunner{}
 	backend := NewJujutsuBackend(runner)
@@ -183,6 +194,7 @@ func (fakeBackend) Diff(context.Context, string) (string, error)            { re
 func (b fakeBackend) Snapshot(context.Context, string, string) (Revision, error) {
 	return b.snapshot, nil
 }
+func (fakeBackend) Restore(context.Context, string, string) error { return nil }
 func (fakeBackend) Publish(context.Context, PublishRequest) error { return nil }
 
 type memoryRecorder struct{ events []ProvenanceEvent }
