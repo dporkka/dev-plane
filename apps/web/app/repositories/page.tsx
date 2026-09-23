@@ -18,18 +18,61 @@ import {
 } from "lucide-react";
 import { type FormEvent, useState } from "react";
 
-function parseRepositoryInput(value: string) {
-  const normalized = value
-    .trim()
-    .replace(/^https?:\/\/github\.com\//i, "")
-    .replace(/^git@github\.com:/i, "")
-    .replace(/\.git$/i, "")
-    .replace(/^\/+|\/+$/g, "");
-  const [owner, name, extra] = normalized.split("/");
-  if (!owner || !name || extra) {
-    throw new Error("Enter a GitHub repository as owner/repo or a GitHub URL.");
+type ForgeProvider = "github" | "gitea";
+type VCSBackend = "git" | "jj";
+
+function parseRepositoryInput(
+  value: string,
+  provider: ForgeProvider,
+  configuredBaseUrl: string,
+  vcsBackend: VCSBackend,
+) {
+  const raw = value.trim().replace(/\.git$/i, "");
+  let owner = "";
+  let name = "";
+  let baseUrl =
+    provider === "github"
+      ? "https://github.com"
+      : configuredBaseUrl.trim().replace(/\/$/, "");
+
+  if (/^https?:\/\//i.test(raw)) {
+    const parsed = new URL(raw);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    if (parts.length < 2) {
+      throw new Error("Repository URL must include owner/repository.");
+    }
+    name = parts.pop() || "";
+    owner = parts.pop() || "";
+    if (provider === "gitea") {
+      baseUrl = parsed.origin + (parts.length ? `/${parts.join("/")}` : "");
+    } else if (parsed.hostname.toLowerCase() !== "github.com") {
+      throw new Error("Select Gitea for non-github.com repository URLs.");
+    }
+  } else {
+    const normalized = raw
+      .replace(/^git@github\.com:/i, "")
+      .replace(/^\/+|\/+$/g, "");
+    const parts = normalized.split("/");
+    if (parts.length !== 2) {
+      throw new Error("Enter a repository as owner/repo or an HTTPS URL.");
+    }
+    [owner, name] = parts;
   }
-  return { owner, name };
+
+  if (!owner || !name) {
+    throw new Error("Repository owner and name are required.");
+  }
+  if (provider === "gitea" && !baseUrl) {
+    throw new Error("Gitea base URL is required for owner/repo input.");
+  }
+
+  return {
+    owner,
+    name,
+    provider,
+    base_url: baseUrl,
+    vcs_backend: vcsBackend,
+  };
 }
 
 export default function RepositoriesPage() {
@@ -38,6 +81,9 @@ export default function RepositoriesPage() {
   const [search, setSearch] = useState("");
   const [showConnect, setShowConnect] = useState(false);
   const [newRepoUrl, setNewRepoUrl] = useState("");
+  const [forgeProvider, setForgeProvider] = useState<ForgeProvider>("github");
+  const [forgeBaseUrl, setForgeBaseUrl] = useState("https://gitea.com");
+  const [vcsBackend, setVcsBackend] = useState<VCSBackend>("git");
   const [actionError, setActionError] = useState<string | null>(null);
 
   const { data: repos, isLoading } = useQuery({
@@ -53,7 +99,15 @@ export default function RepositoriesPage() {
       if (!selectedProject) {
         throw new Error("Select a project before connecting a repository.");
       }
-      return api.connectRepo(selectedProject, parseRepositoryInput(newRepoUrl));
+      return api.connectRepo(
+        selectedProject,
+        parseRepositoryInput(
+          newRepoUrl,
+          forgeProvider,
+          forgeBaseUrl,
+          vcsBackend,
+        ),
+      );
     },
     onSuccess: async () => {
       await invalidateRepos();
@@ -117,7 +171,7 @@ export default function RepositoriesPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-white">Repositories</h1>
-          <p className="text-gray-500 mt-1">Connected GitHub repositories</p>
+          <p className="text-gray-500 mt-1">Connected GitHub and Gitea repositories</p>
         </div>
         <button
           onClick={() => setShowConnect(!showConnect)}
@@ -133,6 +187,47 @@ export default function RepositoriesPage() {
       {showConnect && (
         <Card>
           <form onSubmit={submitRepository} className="space-y-3">
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 text-sm font-medium text-gray-300">
+                <span>Git forge</span>
+                <select
+                  value={forgeProvider}
+                  onChange={(event) =>
+                    setForgeProvider(event.target.value as ForgeProvider)
+                  }
+                  className="h-10 w-full rounded-md border border-[#30363d] bg-[#0d1117] px-3 text-sm text-gray-200"
+                  disabled={connectRepo.isPending}
+                >
+                  <option value="github">GitHub</option>
+                  <option value="gitea">Gitea</option>
+                </select>
+              </label>
+              <label className="space-y-1 text-sm font-medium text-gray-300">
+                <span>Agent VCS</span>
+                <select
+                  value={vcsBackend}
+                  onChange={(event) =>
+                    setVcsBackend(event.target.value as VCSBackend)
+                  }
+                  className="h-10 w-full rounded-md border border-[#30363d] bg-[#0d1117] px-3 text-sm text-gray-200"
+                  disabled={connectRepo.isPending}
+                >
+                  <option value="git">Git</option>
+                  <option value="jj">Jujutsu (jj)</option>
+                </select>
+              </label>
+            </div>
+            {forgeProvider === "gitea" && (
+              <label className="block space-y-1 text-sm font-medium text-gray-300">
+                <span>Gitea base URL</span>
+                <Input
+                  value={forgeBaseUrl}
+                  onChange={(event) => setForgeBaseUrl(event.target.value)}
+                  placeholder="https://git.example.com"
+                  disabled={connectRepo.isPending}
+                />
+              </label>
+            )}
             <label
               htmlFor="repository-url"
               className="block text-sm font-medium text-gray-300"
@@ -144,7 +239,11 @@ export default function RepositoriesPage() {
                 id="repository-url"
                 value={newRepoUrl}
                 onChange={(e) => setNewRepoUrl(e.target.value)}
-                placeholder="e.g. myorg/myrepo or https://github.com/myorg/myrepo"
+                placeholder={
+                  forgeProvider === "github"
+                    ? "myorg/myrepo or https://github.com/myorg/myrepo"
+                    : "myorg/myrepo or https://git.example.com/myorg/myrepo"
+                }
                 className="flex-1"
                 disabled={connectRepo.isPending}
               />
@@ -188,6 +287,8 @@ export default function RepositoriesPage() {
                   <div className="text-white font-medium">{repo.full_name}</div>
                   <div className="text-xs text-gray-500 flex items-center gap-2">
                     <span>Branch: {repo.default_branch || "main"}</span>
+                    <span className="uppercase">{repo.forge_provider || "github"}</span>
+                    <span>{repo.vcs_backend === "jj" ? "jj" : "git"}</span>
                     {repo.private && (
                       <span className="bg-gray-800 px-1.5 py-0.5 rounded text-[10px]">
                         Private
@@ -207,11 +308,11 @@ export default function RepositoriesPage() {
                   <RefreshCw className="w-4 h-4" />
                 </button>
                 <a
-                  href={`https://github.com/${repo.full_name}`}
+                  href={`${repo.forge_base_url || "https://github.com"}/${repo.full_name}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="p-2 rounded-md hover:bg-gray-800 text-gray-400 hover:text-gray-200 transition-colors"
-                  title="Open in GitHub"
+                  title={`Open in ${repo.forge_provider === "gitea" ? "Gitea" : "GitHub"}`}
                 >
                   <ExternalLink className="w-4 h-4" />
                 </a>
@@ -238,7 +339,7 @@ export default function RepositoriesPage() {
           <GitBranch className="w-12 h-12 mx-auto mb-3 text-gray-700" />
           <p className="text-lg font-medium">No repositories connected</p>
           <p className="text-sm mt-1">
-            Connect a GitHub repository to start creating tasks
+            Connect a GitHub or Gitea repository to start creating tasks
           </p>
         </div>
       )}

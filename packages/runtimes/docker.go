@@ -211,6 +211,13 @@ func (p *DockerProvider) AttachSession(ctx context.Context, sessionID, workspace
 
 // CreateWorkspace provisions a new Docker-based workspace.
 func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
+	vcsBackend := strings.ToLower(strings.TrimSpace(req.VCSBackend))
+	if vcsBackend == "jujutsu" {
+		vcsBackend = "jj"
+	}
+	if vcsBackend != "" && vcsBackend != "git" {
+		return nil, fmt.Errorf("docker runtime does not support VCS backend %q yet; use local or remote runtime for jj workspaces", req.VCSBackend)
+	}
 	if req.CloneURL == "" {
 		return nil, fmt.Errorf("clone url is required")
 	}

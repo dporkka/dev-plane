@@ -8,6 +8,7 @@ import (
 
 const (
 	integrationTypeGitHub  = "github"
+	integrationTypeGitea   = "gitea"
 	integrationTypeLinear  = "linear"
 	integrationTypeSlack   = "slack"
 	integrationTypeDiscord = "discord"
@@ -48,6 +49,14 @@ func SupportedIntegrationProviders() []IntegrationProvider {
 			Description:          "Repository sync, pull requests, and signed GitHub webhooks.",
 			Capabilities:         []string{"repositories", "pull_requests", "webhooks"},
 			RequiredConfigFields: []string{"project_id", "repository_id", "created_by"},
+			SupportsWebhook:      true,
+		},
+		{
+			Type:                 integrationTypeGitea,
+			Name:                 "Gitea",
+			Description:          "Self-hosted Git forge events for repository and AI agent workflows.",
+			Capabilities:         []string{"repositories", "pull_requests", "webhooks"},
+			RequiredConfigFields: []string{"project_id", "repository_id", "created_by", "webhook_secret"},
 			SupportsWebhook:      true,
 		},
 		{
@@ -133,6 +142,8 @@ func parseIntegrationConfig(raw json.RawMessage) (integrationRuntimeConfig, erro
 
 func integrationSourceForProvider(providerType string) string {
 	switch providerType {
+	case integrationTypeGitea:
+		return integrationTypeGitea
 	case integrationTypeLinear:
 		return integrationTypeLinear
 	case integrationTypeSlack:

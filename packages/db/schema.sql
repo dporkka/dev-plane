@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS repositories (
     id                  UUID PRIMARY KEY,
     project_id          UUID NOT NULL REFERENCES projects(id),
     github_id           BIGINT,
+    forge_provider      TEXT NOT NULL DEFAULT 'github',
+    forge_base_url      TEXT NOT NULL DEFAULT 'https://github.com',
+    forge_repository_id TEXT,
+    vcs_backend         TEXT NOT NULL DEFAULT 'git',
     owner               TEXT NOT NULL,
     name                TEXT NOT NULL,
     full_name           TEXT NOT NULL,
@@ -85,10 +89,12 @@ CREATE TABLE IF NOT EXISTS repositories (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     deleted_at          TIMESTAMPTZ,
-    UNIQUE(project_id, full_name)
+    UNIQUE(project_id, forge_provider, forge_base_url, full_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_repositories_project_id ON repositories(project_id);
+CREATE INDEX IF NOT EXISTS idx_repositories_forge_provider ON repositories(forge_provider);
+CREATE INDEX IF NOT EXISTS idx_repositories_vcs_backend ON repositories(vcs_backend);
 CREATE INDEX IF NOT EXISTS idx_repositories_full_name ON repositories(full_name);
 CREATE INDEX IF NOT EXISTS idx_repositories_connection_status ON repositories(connection_status);
 CREATE INDEX IF NOT EXISTS idx_repositories_deleted_at ON repositories(deleted_at);

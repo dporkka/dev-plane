@@ -14,11 +14,15 @@ const (
 	ConnectionStatusError     = "error"
 )
 
-// Repository represents a connected GitHub repository.
+// Repository represents a repository connected through a supported Git forge.
 type Repository struct {
 	ID               string          `json:"id"`
 	ProjectID        string          `json:"project_id"`
 	GitHubID         *int64          `json:"github_id,omitempty"`
+	ForgeProvider    string          `json:"forge_provider"`
+	ForgeBaseURL     string          `json:"forge_base_url"`
+	ForgeRepositoryID *string        `json:"forge_repository_id,omitempty"`
+	VCSBackend       string          `json:"vcs_backend"`
 	Owner            string          `json:"owner"`
 	Name             string          `json:"name"`
 	FullName         string          `json:"full_name"`
@@ -56,7 +60,11 @@ func (r *Repository) Validate() error {
 
 // NullRepository returns a Repository from sql.Null fields.
 func NullRepository(id sql.NullString, projectID sql.NullString, githubID sql.NullInt64, owner sql.NullString, name sql.NullString, fullName sql.NullString, cloneURL sql.NullString, defaultBranch sql.NullString, private sql.NullBool, connStatus sql.NullString, lastSyncedAt sql.NullTime, webhookSecret sql.NullString, settings sql.NullString, createdAt sql.NullTime, updatedAt sql.NullTime, deletedAt sql.NullTime) *Repository {
-	r := &Repository{}
+	r := &Repository{
+		ForgeProvider: "github",
+		ForgeBaseURL:  "https://github.com",
+		VCSBackend:    "git",
+	}
 	if id.Valid {
 		r.ID = id.String
 	}

@@ -96,13 +96,14 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		TargetBranch  string
 		CloneURL      string
 		DefaultBranch string
+		VCSBackend    string
 	}
 	err := h.db.QueryRow(`
-		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch
+		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch, r.vcs_backend
 		FROM tasks t
 		JOIN repositories r ON r.id = t.repository_id
 		WHERE t.id = $1 AND t.deleted_at IS NULL AND r.deleted_at IS NULL
-	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch)
+	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch, &task.VCSBackend)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return msg.Ack() // Task not found, ack to remove from queue
@@ -119,6 +120,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		TargetBranch:  task.TargetBranch,
 		CloneURL:      task.CloneURL,
 		DefaultBranch: task.DefaultBranch,
+		VCSBackend:    task.VCSBackend,
 		WorkspaceID:   workspaceID,
 	}, now)
 	if err != nil {
@@ -184,6 +186,7 @@ type approvedTask struct {
 	TargetBranch  string
 	CloneURL      string
 	DefaultBranch string
+	VCSBackend    string
 	WorkspaceID   string
 }
 
@@ -228,6 +231,7 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		Branch:       branchName,
 		BaseBranch:   baseBranch,
 		WorktreeName: workspace.Name,
+		VCSBackend:   task.VCSBackend,
 	})
 	if err != nil {
 		return provisionedWorkspace{}, err

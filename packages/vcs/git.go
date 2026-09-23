@@ -49,9 +49,13 @@ func (b *GitBackend) CreateWorkspace(ctx context.Context, req WorkspaceRequest) 
 	if err := os.MkdirAll(filepath.Dir(req.WorkspacePath), 0o755); err != nil {
 		return fmt.Errorf("create workspace parent: %w", err)
 	}
+	branch := strings.TrimSpace(req.Ref)
+	if branch == "" {
+		branch = req.Name
+	}
 	_, err := b.runner.Run(ctx, Command{
 		Name: "git",
-		Args: []string{"worktree", "add", "-B", req.Name, req.WorkspacePath, req.Base},
+		Args: []string{"worktree", "add", "-B", branch, req.WorkspacePath, req.Base},
 		Dir:  req.RepositoryPath,
 	})
 	return err
@@ -89,11 +93,19 @@ func (b *GitBackend) Snapshot(ctx context.Context, workspacePath, message string
 		return Revision{}, err
 	}
 	if strings.TrimSpace(changed.Stdout) != "" {
-		if _, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"commit", "-m", message}, Dir: workspacePath}); err != nil {
+		if _, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"-c", "user.email=dev-plane@example.invalid", "-c", "user.name=Dev Plane", "commit", "-m", message}, Dir: workspacePath}); err != nil {
 			return Revision{}, err
 		}
 	}
 	return b.revision(ctx, workspacePath)
+}
+
+func (b *GitBackend) Restore(ctx context.Context, workspacePath, revision string) error {
+	if strings.TrimSpace(revision) == "" {
+		return fmt.Errorf("restore revision is required")
+	}
+	_, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"reset", "--hard", revision}, Dir: workspacePath})
+	return err
 }
 
 func (b *GitBackend) Publish(ctx context.Context, req PublishRequest) error {

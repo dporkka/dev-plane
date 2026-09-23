@@ -18,6 +18,7 @@ import {
   AudioLines,
   CheckCircle,
   Github,
+  GitBranch,
   MessageSquare,
   Plug,
   Slack,
@@ -29,6 +30,7 @@ import { useMemo, useState } from "react";
 
 const iconMap: Record<IntegrationType, ElementType> = {
   github: Github,
+  gitea: GitBranch,
   linear: CheckCircle,
   slack: Slack,
   discord: MessageSquare,
