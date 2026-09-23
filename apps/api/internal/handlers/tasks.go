@@ -56,16 +56,16 @@ type CreateTaskRequest struct {
 }
 
 type createTaskOptions struct {
-	ProjectID    string
-	RepositoryID string
-	CreatedBy    string
-	Source       string
-	SourceID     *string
-	Title        string
-	Description  string
-	Priority     string
-	RiskLevel    string
-	TargetBranch string
+	ProjectID          string
+	RepositoryID       string
+	CreatedBy          string
+	Source             string
+	SourceID           *string
+	Title              string
+	Description        string
+	Priority           string
+	RiskLevel          string
+	TargetBranch       string
 	MaxCost            *float64
 	MaxRuntimeMinutes  int
 	Spec               json.RawMessage
@@ -520,24 +520,24 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 	}
 
 	task := Task{
-		ID:                id,
-		ProjectID:         opts.ProjectID,
-		RepositoryID:      opts.RepositoryID,
-		CreatedBy:         opts.CreatedBy,
-		Source:            source,
-		SourceID:          opts.SourceID,
-		Title:             opts.Title,
-		Status:            "backlog",
-		Priority:          priority,
-		RiskLevel:         riskLevel,
-		TargetBranch:      targetBranch,
-		Spec:                 opts.Spec,
-		AcceptanceCriteria:   acceptanceCriteria,
-		Metadata:             metadata,
-		MaxCost:              opts.MaxCost,
-		MaxRuntimeMinutes:    maxRuntimeMinutes,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                 id,
+		ProjectID:          opts.ProjectID,
+		RepositoryID:       opts.RepositoryID,
+		CreatedBy:          opts.CreatedBy,
+		Source:             source,
+		SourceID:           opts.SourceID,
+		Title:              opts.Title,
+		Status:             "backlog",
+		Priority:           priority,
+		RiskLevel:          riskLevel,
+		TargetBranch:       targetBranch,
+		Spec:               opts.Spec,
+		AcceptanceCriteria: acceptanceCriteria,
+		Metadata:           metadata,
+		MaxCost:            opts.MaxCost,
+		MaxRuntimeMinutes:  maxRuntimeMinutes,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if opts.Description != "" {
 		desc := opts.Description
