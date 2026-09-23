@@ -40,15 +40,6 @@ type Repository struct {
 
 // Validate checks that the repository has required fields.
 func (r *Repository) Validate() error {
-	if r.ForgeProvider == "" {
-		return errors.New("repository forge_provider is required")
-	}
-	if r.ForgeBaseURL == "" {
-		return errors.New("repository forge_base_url is required")
-	}
-	if r.VCSBackend == "" {
-		return errors.New("repository vcs_backend is required")
-	}
 	if r.Owner == "" {
 		return errors.New("repository owner is required")
 	}
