@@ -52,21 +52,21 @@ func (h *Handler) CreateNLAPTask(w http.ResponseWriter, r *http.Request) {
 	sourceID := req.Task.ID
 	description := req.Goal.Intent
 	task, err := h.insertTask(ctx, createTaskOptions{
-		ProjectID:           projectID,
-		RepositoryID:        req.RepositoryID,
-		CreatedBy:           user.UserID,
-		Source:              "nlap",
-		SourceID:            &sourceID,
-		Title:               req.Task.Description,
-		Description:         description,
-		Priority:            "medium",
-		RiskLevel:           "low",
-		TargetBranch:        req.TargetBranch,
-		MaxCost:             maxCost,
-		MaxRuntimeMinutes:   maxRuntimeMinutes,
-		Spec:                spec,
-		AcceptanceCriteria:  acceptance,
-		Metadata:            metadata,
+		ProjectID:          projectID,
+		RepositoryID:       req.RepositoryID,
+		CreatedBy:          user.UserID,
+		Source:             "nlap",
+		SourceID:           &sourceID,
+		Title:              req.Task.Description,
+		Description:        description,
+		Priority:           "medium",
+		RiskLevel:          "low",
+		TargetBranch:       req.TargetBranch,
+		MaxCost:            maxCost,
+		MaxRuntimeMinutes:  maxRuntimeMinutes,
+		Spec:               spec,
+		AcceptanceCriteria: acceptance,
+		Metadata:           metadata,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
