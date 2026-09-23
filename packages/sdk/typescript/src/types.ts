@@ -618,6 +618,10 @@ export interface CreateProjectRequest {
 export interface ConnectRepositoryRequest {
   owner: string;
   name: string;
+  provider?: 'github' | 'gitea';
+  base_url?: string;
+  vcs_backend?: 'git' | 'jj';
+  default_branch?: string;
 }
 
 export interface CreateTaskRequest {
