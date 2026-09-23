@@ -14,11 +14,15 @@ const (
 	ConnectionStatusError     = "error"
 )
 
-// Repository represents a connected GitHub repository.
+// Repository represents a repository connected through a supported Git forge.
 type Repository struct {
 	ID               string          `json:"id"`
 	ProjectID        string          `json:"project_id"`
 	GitHubID         *int64          `json:"github_id,omitempty"`
+	ForgeProvider    string          `json:"forge_provider"`
+	ForgeBaseURL     string          `json:"forge_base_url"`
+	ForgeRepositoryID *string        `json:"forge_repository_id,omitempty"`
+	VCSBackend       string          `json:"vcs_backend"`
 	Owner            string          `json:"owner"`
 	Name             string          `json:"name"`
 	FullName         string          `json:"full_name"`
@@ -36,6 +40,15 @@ type Repository struct {
 
 // Validate checks that the repository has required fields.
 func (r *Repository) Validate() error {
+	if r.ForgeProvider == "" {
+		return errors.New("repository forge_provider is required")
+	}
+	if r.ForgeBaseURL == "" {
+		return errors.New("repository forge_base_url is required")
+	}
+	if r.VCSBackend == "" {
+		return errors.New("repository vcs_backend is required")
+	}
 	if r.Owner == "" {
 		return errors.New("repository owner is required")
 	}
