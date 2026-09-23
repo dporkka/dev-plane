@@ -66,9 +66,11 @@ type createTaskOptions struct {
 	Priority     string
 	RiskLevel    string
 	TargetBranch string
-	MaxCost      *float64
-	Spec         json.RawMessage
-	Metadata     json.RawMessage
+	MaxCost            *float64
+	MaxRuntimeMinutes  int
+	Spec               json.RawMessage
+	AcceptanceCriteria json.RawMessage
+	Metadata           json.RawMessage
 }
 
 // UpdateTaskRequest is the request body for updating a task.
@@ -497,14 +499,22 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 	if len(opts.Metadata) > 0 {
 		metadata = opts.Metadata
 	}
+	acceptanceCriteria := json.RawMessage(`[]`)
+	if len(opts.AcceptanceCriteria) > 0 {
+		acceptanceCriteria = opts.AcceptanceCriteria
+	}
+	maxRuntimeMinutes := opts.MaxRuntimeMinutes
+	if maxRuntimeMinutes <= 0 {
+		maxRuntimeMinutes = 60
+	}
 
 	_, err := h.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, project_id, repository_id, created_by, source, source_id, title,
 			description, status, priority, risk_level, target_branch, spec,
 			acceptance_criteria, max_cost, max_runtime_minutes, approval_requirements, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9, $10, $11, $12,
-			'[]', $13, 60, '[]', $14, $15, $15)
-	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, opts.MaxCost, metadata, now)
+			$13, $14, $15, '[]', $16, $17, $17)
+	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, acceptanceCriteria, opts.MaxCost, maxRuntimeMinutes, metadata, now)
 	if err != nil {
 		return Task{}, err
 	}
@@ -521,10 +531,11 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 		Priority:          priority,
 		RiskLevel:         riskLevel,
 		TargetBranch:      targetBranch,
-		Spec:              opts.Spec,
-		Metadata:          metadata,
-		MaxCost:           opts.MaxCost,
-		MaxRuntimeMinutes: 60,
+		Spec:                 opts.Spec,
+		AcceptanceCriteria:   acceptanceCriteria,
+		Metadata:             metadata,
+		MaxCost:              opts.MaxCost,
+		MaxRuntimeMinutes:    maxRuntimeMinutes,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
