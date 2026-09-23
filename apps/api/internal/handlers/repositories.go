@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
+	"fmt"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -19,7 +21,11 @@ import (
 type Repository struct {
 	ID               string          `json:"id"`
 	ProjectID        string          `json:"project_id"`
-	GitHubID         *int64          `json:"github_id,omitempty"`
+	GitHubID          *int64          `json:"github_id,omitempty"`
+	ForgeProvider     string          `json:"forge_provider"`
+	ForgeBaseURL      string          `json:"forge_base_url"`
+	ForgeRepositoryID *string         `json:"forge_repository_id,omitempty"`
+	VCSBackend        string          `json:"vcs_backend"`
 	Owner            string          `json:"owner"`
 	Name             string          `json:"name"`
 	FullName         string          `json:"full_name"`
@@ -35,8 +41,12 @@ type Repository struct {
 
 // ConnectRepositoryRequest is the request body for connecting a repository.
 type ConnectRepositoryRequest struct {
-	Owner string `json:"owner"`
-	Name  string `json:"name"`
+	Owner         string `json:"owner"`
+	Name          string `json:"name"`
+	Provider      string `json:"provider,omitempty"`
+	BaseURL       string `json:"base_url,omitempty"`
+	VCSBackend    string `json:"vcs_backend,omitempty"`
+	DefaultBranch string `json:"default_branch,omitempty"`
 }
 
 // ListRepositories returns all repositories for a project.
@@ -59,9 +69,9 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, project_id, github_id, owner, name, full_name, clone_url,
-		       default_branch, private, connection_status, last_synced_at,
-		       settings, created_at, updated_at
+		SELECT id, project_id, github_id, forge_provider, forge_base_url, forge_repository_id, vcs_backend,
+		       owner, name, full_name, clone_url, default_branch, private, connection_status,
+		       last_synced_at, settings, created_at, updated_at
 		FROM repositories
 		WHERE project_id = $1 AND deleted_at IS NULL
 		ORDER BY created_at DESC
@@ -76,16 +86,20 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var repo Repository
 		var ghID sql.NullInt64
+		var forgeRepositoryID, settings sql.NullString
 		var lastSync sql.NullTime
-		var settings sql.NullString
-		if err := rows.Scan(&repo.ID, &repo.ProjectID, &ghID, &repo.Owner, &repo.Name,
-			&repo.FullName, &repo.CloneURL, &repo.DefaultBranch, &repo.Private,
-			&repo.ConnectionStatus, &lastSync, &settings, &repo.CreatedAt, &repo.UpdatedAt); err != nil {
+		if err := rows.Scan(&repo.ID, &repo.ProjectID, &ghID, &repo.ForgeProvider, &repo.ForgeBaseURL,
+			&forgeRepositoryID, &repo.VCSBackend, &repo.Owner, &repo.Name, &repo.FullName, &repo.CloneURL,
+			&repo.DefaultBranch, &repo.Private, &repo.ConnectionStatus, &lastSync, &settings,
+			&repo.CreatedAt, &repo.UpdatedAt); err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
 		}
 		if ghID.Valid {
 			repo.GitHubID = &ghID.Int64
+		}
+		if forgeRepositoryID.Valid {
+			repo.ForgeRepositoryID = &forgeRepositoryID.String
 		}
 		if lastSync.Valid {
 			repo.LastSyncedAt = &lastSync.Time
@@ -129,11 +143,38 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 
 	req.Owner = strings.TrimSpace(req.Owner)
 	req.Name = strings.TrimSpace(req.Name)
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	req.VCSBackend = strings.ToLower(strings.TrimSpace(req.VCSBackend))
+	if req.Provider == "" {
+		req.Provider = "github"
+	}
+	if req.VCSBackend == "" {
+		req.VCSBackend = "git"
+	}
+	if req.VCSBackend == "jujutsu" {
+		req.VCSBackend = "jj"
+	}
+	if req.DefaultBranch == "" {
+		req.DefaultBranch = "main"
+	}
 	if req.Owner == "" || req.Name == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("owner and name are required"))
 		return
 	}
-	if err := validateGitHubOwner(req.Owner); err != nil {
+	if req.Provider != "github" && req.Provider != "gitea" {
+		respond.Error(w, http.StatusBadRequest, errors.New("provider must be github or gitea"))
+		return
+	}
+	if req.VCSBackend != "git" && req.VCSBackend != "jj" {
+		respond.Error(w, http.StatusBadRequest, errors.New("vcs_backend must be git or jj"))
+		return
+	}
+	if req.Provider == "github" {
+		if err := validateGitHubOwner(req.Owner); err != nil {
+			respond.Error(w, http.StatusBadRequest, err)
+			return
+		}
+	} else if err := validateForgeNamespace(req.Owner); err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
@@ -142,16 +183,31 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	baseURL := strings.TrimSpace(req.BaseURL)
+	if baseURL == "" {
+		if req.Provider == "github" {
+			baseURL = "https://github.com"
+		} else {
+			baseURL = "https://gitea.com"
+		}
+	}
+	baseURL, err := normalizeForgeBaseURL(baseURL)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+
 	id := uuid.New().String()
 	now := time.Now().UTC()
 	fullName := req.Owner + "/" + req.Name
-	cloneURL := "https://github.com/" + fullName + ".git"
+	cloneURL := baseURL + "/" + fullName + ".git"
 
-	_, err := h.db.ExecContext(ctx, `
-		INSERT INTO repositories (id, project_id, owner, name, full_name, clone_url,
-			default_branch, connection_status, settings, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'main', 'connected', '{}', $7, $8)
-	`, id, projectID, req.Owner, req.Name, fullName, cloneURL, now, now)
+	_, err = h.db.ExecContext(ctx, `
+		INSERT INTO repositories (id, project_id, forge_provider, forge_base_url, vcs_backend,
+			owner, name, full_name, clone_url, default_branch, connection_status, settings, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'connected', '{}', $11, $12)
+	`, id, projectID, req.Provider, baseURL, req.VCSBackend, req.Owner, req.Name, fullName, cloneURL,
+		req.DefaultBranch, now, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -160,15 +216,48 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, Repository{
 		ID:               id,
 		ProjectID:        projectID,
+		ForgeProvider:    req.Provider,
+		ForgeBaseURL:     baseURL,
+		VCSBackend:       req.VCSBackend,
 		Owner:            req.Owner,
 		Name:             req.Name,
 		FullName:         fullName,
 		CloneURL:         cloneURL,
-		DefaultBranch:    "main",
+		DefaultBranch:    req.DefaultBranch,
 		ConnectionStatus: "connected",
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	})
+}
+
+func normalizeForgeBaseURL(raw string) (string, error) {
+	parsed, err := url.Parse(strings.TrimRight(strings.TrimSpace(raw), "/"))
+	if err != nil {
+		return "", fmt.Errorf("invalid forge base_url: %w", err)
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return "", errors.New("forge base_url must use http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", errors.New("forge base_url must be an absolute URL without credentials, query, or fragment")
+	}
+	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+func validateForgeNamespace(owner string) error {
+	if owner == "" || len(owner) > 255 {
+		return errors.New("owner must be between 1 and 255 characters")
+	}
+	if strings.Contains(owner, "/") || strings.Contains(owner, "\\") || owner == "." || owner == ".." {
+		return errors.New("owner is invalid")
+	}
+	for _, r := range owner {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return errors.New("owner may only contain letters, numbers, dots, hyphens, and underscores")
+	}
+	return nil
 }
 
 func validateGitHubOwner(owner string) error {
@@ -227,17 +316,18 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 
 	var repo Repository
 	var ghID sql.NullInt64
+	var forgeRepositoryID, settings sql.NullString
 	var lastSync sql.NullTime
-	var settings sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT id, project_id, github_id, owner, name, full_name, clone_url,
-		       default_branch, private, connection_status, last_synced_at,
-		       settings, created_at, updated_at
+		SELECT id, project_id, github_id, forge_provider, forge_base_url, forge_repository_id, vcs_backend,
+		       owner, name, full_name, clone_url, default_branch, private, connection_status,
+		       last_synced_at, settings, created_at, updated_at
 		FROM repositories
 		WHERE id = $1 AND deleted_at IS NULL
-	`, id).Scan(&repo.ID, &repo.ProjectID, &ghID, &repo.Owner, &repo.Name,
-		&repo.FullName, &repo.CloneURL, &repo.DefaultBranch, &repo.Private,
-		&repo.ConnectionStatus, &lastSync, &settings, &repo.CreatedAt, &repo.UpdatedAt)
+	`, id).Scan(&repo.ID, &repo.ProjectID, &ghID, &repo.ForgeProvider, &repo.ForgeBaseURL,
+		&forgeRepositoryID, &repo.VCSBackend, &repo.Owner, &repo.Name, &repo.FullName, &repo.CloneURL,
+		&repo.DefaultBranch, &repo.Private, &repo.ConnectionStatus, &lastSync, &settings,
+		&repo.CreatedAt, &repo.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
@@ -248,6 +338,9 @@ func (h *Handler) GetRepository(w http.ResponseWriter, r *http.Request) {
 	}
 	if ghID.Valid {
 		repo.GitHubID = &ghID.Int64
+	}
+	if forgeRepositoryID.Valid {
+		repo.ForgeRepositoryID = &forgeRepositoryID.String
 	}
 	if lastSync.Valid {
 		repo.LastSyncedAt = &lastSync.Time
