@@ -1,7 +1,7 @@
 // Package prfactory creates pull requests for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive PR descriptions and create pull requests on supported Git forges.
 package prfactory
 
 import (
@@ -76,9 +76,6 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	if f.githubToken != "" {
 		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
-	if f.giteaToken != "" {
-		f.gitea = gateway.NewGiteaGateway(os.Getenv("GITEA_BASE_URL"))
-	}
 	return f
 }
 
@@ -112,7 +109,7 @@ func (f *Factory) WithGiteaUsername(username string) *Factory {
 	return f
 }
 
-// CreatePullRequest opens a GitHub PR for completed task changes.
+// CreatePullRequest opens a forge pull request for completed task changes.
 //
 // Steps:
 //  1. Load task, workspace, agent run from DB
@@ -120,7 +117,7 @@ func (f *Factory) WithGiteaUsername(username string) *Factory {
 //  3. Get git diff and review report
 //  4. Build comprehensive PR body
 //  5. Push branch to origin (if not already pushed)
-//  6. Create PR via GitHub API
+//  6. Create PR via the configured forge API
 //  7. Save PR record in DB
 //  8. Update task status to "pr_created"
 //  9. Publish pr.created event
@@ -406,13 +403,14 @@ func (f *Factory) createForgePR(ctx context.Context, target repositoryTarget, ti
 			Number: created.Number, HTMLURL: created.HTMLURL, State: created.State, Draft: draft,
 		}, nil
 	case "gitea":
-		if f.gitea == nil {
-			return nil, fmt.Errorf("gitea gateway is not configured; set GITEA_TOKEN or inject a Gitea gateway")
-		}
 		if f.giteaToken == "" {
 			return nil, fmt.Errorf("gitea token is not configured")
 		}
-		return f.gitea.CreatePullRequest(ctx, f.giteaToken, target.Owner, target.Name, request)
+		client := f.gitea
+		if client == nil {
+			client = gateway.NewGiteaGateway(target.BaseURL)
+		}
+		return client.CreatePullRequest(ctx, f.giteaToken, target.Owner, target.Name, request)
 	default:
 		return nil, fmt.Errorf("unsupported forge provider %q", target.Provider)
 	}
