@@ -69,7 +69,11 @@ func (r *Repository) Validate() error {
 
 // NullRepository returns a Repository from sql.Null fields.
 func NullRepository(id sql.NullString, projectID sql.NullString, githubID sql.NullInt64, owner sql.NullString, name sql.NullString, fullName sql.NullString, cloneURL sql.NullString, defaultBranch sql.NullString, private sql.NullBool, connStatus sql.NullString, lastSyncedAt sql.NullTime, webhookSecret sql.NullString, settings sql.NullString, createdAt sql.NullTime, updatedAt sql.NullTime, deletedAt sql.NullTime) *Repository {
-	r := &Repository{}
+	r := &Repository{
+		ForgeProvider: "github",
+		ForgeBaseURL:  "https://github.com",
+		VCSBackend:    "git",
+	}
 	if id.Valid {
 		r.ID = id.String
 	}
