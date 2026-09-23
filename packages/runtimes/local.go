@@ -99,6 +99,7 @@ func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) 
 		WorkspacePath:  worktreePath,
 		Name:           req.WorktreeName,
 		Base:           base,
+		Ref:            branch,
 	}); err != nil {
 		return nil, fmt.Errorf("%s create workspace: %w", backend.Name(), err)
 	}
