@@ -49,9 +49,13 @@ func (b *GitBackend) CreateWorkspace(ctx context.Context, req WorkspaceRequest) 
 	if err := os.MkdirAll(filepath.Dir(req.WorkspacePath), 0o755); err != nil {
 		return fmt.Errorf("create workspace parent: %w", err)
 	}
+	branch := strings.TrimSpace(req.Ref)
+	if branch == "" {
+		branch = req.Name
+	}
 	_, err := b.runner.Run(ctx, Command{
 		Name: "git",
-		Args: []string{"worktree", "add", "-B", req.Name, req.WorkspacePath, req.Base},
+		Args: []string{"worktree", "add", "-B", branch, req.WorkspacePath, req.Base},
 		Dir:  req.RepositoryPath,
 	})
 	return err
