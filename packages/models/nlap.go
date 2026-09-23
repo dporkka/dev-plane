@@ -45,14 +45,15 @@ type NLAPTask struct {
 
 func (t *NLAPTask) UnmarshalJSON(data []byte) error {
 	type alias NLAPTask
-	var wire struct {
-		alias
+	wire := struct {
+		*alias
 		LegacyTimeout *uint64 `json:"timeout"`
+	}{
+		alias: (*alias)(t),
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
-	*t = NLAPTask(wire.alias)
 	if t.TimeoutSecs == 0 && wire.LegacyTimeout != nil {
 		t.TimeoutSecs = *wire.LegacyTimeout
 	}
