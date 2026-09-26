@@ -32,7 +32,10 @@ func (f *fakeRunner) Run(_ context.Context, cmd Command) (CommandResult, error) 
 }
 
 func TestMergeEnvDisablesTerminalPrompts(t *testing.T) {
-	env := mergeEnv([]string{"PATH=/bin", "GIT_TERMINAL_PROMPT=1"}, map[string]string{"GIT_ASKPASS": "/tmp/askpass"})
+	env := mergeEnv([]string{"PATH=/bin", "GIT_TERMINAL_PROMPT=1"}, map[string]string{
+		"GIT_ASKPASS":         "/tmp/askpass",
+		"GIT_TERMINAL_PROMPT": "1",
+	})
 	joined := "\n" + strings.Join(env, "\n") + "\n"
 	if !strings.Contains(joined, "\nGIT_TERMINAL_PROMPT=0\n") {
 		t.Fatalf("terminal prompt was not disabled: %#v", env)
