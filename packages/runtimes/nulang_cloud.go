@@ -284,7 +284,7 @@ func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, fun
 	if err != nil { return "", nil, err }
 	cleanup := func() { _ = os.RemoveAll(dir) }
 	repoDir := filepath.Join(dir, "repo")
-	args := []string{"clone", "--no-checkout", req.CloneURL, repoDir}
+	args := []string{"clone", "--no-checkout", "--", req.CloneURL, repoDir}
 	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
