@@ -75,14 +75,14 @@ var operationResourceMap = map[string]struct {
 	OpStopPreview:     {ResourceType: "deploy", Action: "execute"},
 	OpRunMigration:    {ResourceType: "command", Action: "migrate"},
 	OpDestructiveDB:   {ResourceType: "command", Action: "destructive_db"},
-	OpReadRepository: {ResourceType: "git", Action: "read"},
-	OpCreateBranch:   {ResourceType: "git", Action: "create_branch"},
-	OpCreateCommit:   {ResourceType: "git", Action: "commit"},
-	OpPushBranch:     {ResourceType: "git", Action: "push"},
-	OpOpenPR:         {ResourceType: "git", Action: "create_pr"},
-	OpReviewPR:       {ResourceType: "git", Action: "review"},
-	OpMergePR:        {ResourceType: "git", Action: "merge"},
-	OpReadChecks:     {ResourceType: "git", Action: "read_checks"},
+	OpReadRepository:  {ResourceType: "git", Action: "read"},
+	OpCreateBranch:    {ResourceType: "git", Action: "create_branch"},
+	OpCreateCommit:    {ResourceType: "git", Action: "commit"},
+	OpPushBranch:      {ResourceType: "git", Action: "push"},
+	OpOpenPR:          {ResourceType: "git", Action: "create_pr"},
+	OpReviewPR:        {ResourceType: "git", Action: "review"},
+	OpMergePR:         {ResourceType: "git", Action: "merge"},
+	OpReadChecks:      {ResourceType: "git", Action: "read_checks"},
 	OpDeploy:          {ResourceType: "deploy", Action: "execute"},
 	OpDeleteWorkspace: {ResourceType: "workspace", Action: "delete"},
 	OpModifyPolicy:    {ResourceType: "policy", Action: "write"},
@@ -115,18 +115,17 @@ func GetResourceAndAction(op string) (resourceType, action string) {
 	return "", ""
 }
 
-
 // ForgeOperation* values are the provider-neutral operation vocabulary shared
 // with Nulang's forge gateway. They deliberately describe intent rather than a
 // specific forge provider API.
 const (
-	ForgeOperationRepoRead      = "repo.read"
-	ForgeOperationBranchCreate  = "branch.create"
-	ForgeOperationCommitWrite   = "commit.write"
-	ForgeOperationChangeCreate  = "change.create"
-	ForgeOperationChangeReview  = "change.review"
-	ForgeOperationChangeMerge   = "change.merge"
-	ForgeOperationCheckRead     = "check.read"
+	ForgeOperationRepoRead     = "repo.read"
+	ForgeOperationBranchCreate = "branch.create"
+	ForgeOperationCommitWrite  = "commit.write"
+	ForgeOperationChangeCreate = "change.create"
+	ForgeOperationChangeReview = "change.review"
+	ForgeOperationChangeMerge  = "change.merge"
+	ForgeOperationCheckRead    = "check.read"
 )
 
 var forgeOperationMap = map[string]string{
