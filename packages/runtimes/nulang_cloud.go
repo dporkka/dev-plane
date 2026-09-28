@@ -3,6 +3,7 @@ package runtimes
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -30,7 +31,13 @@ func NewNulangCloudProvider(baseURL, token string) *NulangCloudProvider {
 	return &NulangCloudProvider{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token: token,
-		client: &http.Client{Timeout: 120 * time.Second},
+		client: &http.Client{
+			Timeout: 120 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				// Never forward the internal service token through redirects.
+				return http.ErrUseLastResponse
+			},
+		},
 		cloneRepository: cloneRepositoryForSeed,
 	}
 }
@@ -76,6 +83,12 @@ func workspaceID(req CreateRequest) string {
 	}
 	id = strings.Trim(b.String(), "-")
 	if id == "" { id = fmt.Sprintf("devplane-%d", time.Now().UnixNano()) }
+	const maxWorkspaceIDBytes = 128
+	if len(id) > maxWorkspaceIDBytes {
+		sum := sha256.Sum256([]byte(id))
+		suffix := fmt.Sprintf("-%x", sum[:8])
+		id = id[:maxWorkspaceIDBytes-len(suffix)] + suffix
+	}
 	return id
 }
 
