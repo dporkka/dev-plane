@@ -286,6 +286,57 @@ type fakeRunExecutor struct {
 	err   error
 }
 
+type fakeSchedulerStartBudget struct {
+	allowed bool
+	reason  string
+	err     error
+	runID   string
+}
+
+func (b *fakeSchedulerStartBudget) CheckRunStart(_ context.Context, runID string) (bool, string, error) {
+	b.runID = runID
+	return b.allowed, b.reason, b.err
+}
+
+func TestSchedulerAdmissionBlocksBudgetAfterAtomicClaim(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+
+	budget := &fakeSchedulerStartBudget{allowed: false, reason: "concurrent admitted runs 3 exceed max 2"}
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192}).WithStartBudget(budget)
+	decision, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || !contains(decision.Reason, "budget-blocked") {
+		t.Fatalf("decision = %#v, want budget-blocked", decision)
+	}
+	if budget.runID != "run-a" {
+		t.Fatalf("budget runID = %q, want run-a", budget.runID)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query run-a: %v", err)
+	}
+	if status != "queued" {
+		t.Fatalf("run-a status = %q, want queued after denied admission releases claim", status)
+	}
+}
+
+func TestSchedulerAdmissionPropagatesBudgetCheckFailure(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192}).
+		WithStartBudget(&fakeSchedulerStartBudget{err: errors.New("budget database unavailable")})
+	_, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err == nil || !contains(err.Error(), "budget database unavailable") {
+		t.Fatalf("AdmitRun() error = %v, want budget failure", err)
+	}
+}
+
 func TestSchedulerAdmissionDeniesOwnershipConflictWithRunningRun(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
@@ -574,6 +625,9 @@ func TestHandleRunTriggeredRejectsRunWhenAdmissionDenies(t *testing.T) {
 	err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
 	if err == nil {
 		t.Fatal("expected admission error")
+	}
+	if !errors.Is(err, ErrRunAdmissionDeferred) {
+		t.Fatalf("error = %v, want ErrRunAdmissionDeferred", err)
 	}
 	if !contains(err.Error(), "ownership-conflict") {
 		t.Fatalf("error = %v", err)

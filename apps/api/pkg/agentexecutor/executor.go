@@ -78,6 +78,21 @@ func (e *Executor) ExecuteRun(ctx context.Context, runID string) error {
 	return e.runner.Run(ctx, runID)
 }
 
+// CheckRunStart evaluates budget admission before a queued run enters the running set.
+func (e *Executor) CheckRunStart(ctx context.Context, runID string) (bool, string, error) {
+	if e == nil || e.runner == nil {
+		return false, "", errors.New("agent executor is not configured")
+	}
+	result, err := e.runner.CheckRunStart(ctx, runID)
+	if err != nil {
+		return false, "", err
+	}
+	if result == nil {
+		return false, "budget check returned no result", nil
+	}
+	return result.Allowed, result.Reason, nil
+}
+
 // deterministicProvider is a modelrouter.Provider that returns pre-configured
 // responses in order. It is only used by WithDeterministicResponses.
 type deterministicProvider struct {

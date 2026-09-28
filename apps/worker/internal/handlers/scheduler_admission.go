@@ -18,9 +18,14 @@ type SchedulerCapacity struct {
 	MemoryMB    int
 }
 
+type RunStartBudget interface {
+	CheckRunStart(ctx context.Context, runID string) (allowed bool, reason string, err error)
+}
+
 type SchedulerAdmission struct {
 	db       *sql.DB
 	capacity SchedulerCapacity
+	budget   RunStartBudget
 }
 
 const schedulerAdmissionClaimTTL = 10 * time.Minute
@@ -57,6 +62,13 @@ func NewSchedulerAdmission(db *sql.DB, capacity SchedulerCapacity) *SchedulerAdm
 	return &SchedulerAdmission{db: db, capacity: capacity}
 }
 
+func (a *SchedulerAdmission) WithStartBudget(budget RunStartBudget) *SchedulerAdmission {
+	if a != nil {
+		a.budget = budget
+	}
+	return a
+}
+
 func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error) {
 	if a == nil || a.db == nil {
 		return RunAdmissionDecision{Allowed: true}, nil
@@ -66,27 +78,28 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 	if err != nil {
 		return RunAdmissionDecision{}, err
 	}
-	if config == nil {
-		return RunAdmissionDecision{Allowed: true}, nil
-	}
 
-	for _, dependency := range config.DependsOn {
-		var status string
-		err := a.db.QueryRowContext(ctx, `
-			SELECT status FROM tasks
-			WHERE id = $1 AND deleted_at IS NULL
-		`, dependency).Scan(&status)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return RunAdmissionDecision{Allowed: false, Reason: "dependency-missing:" + dependency}, nil
+	if config != nil {
+		for _, dependency := range config.DependsOn {
+			var status string
+			err := a.db.QueryRowContext(ctx, `
+				SELECT status FROM tasks
+				WHERE id = $1 AND deleted_at IS NULL
+			`, dependency).Scan(&status)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return RunAdmissionDecision{Allowed: false, Reason: "dependency-missing:" + dependency}, nil
+				}
+				return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency %s: %w", dependency, err)
 			}
-			return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency %s: %w", dependency, err)
-		}
-		if status != "done" {
-			return RunAdmissionDecision{Allowed: false, Reason: "dependency-pending:" + dependency}, nil
+			if status != "done" {
+				return RunAdmissionDecision{Allowed: false, Reason: "dependency-pending:" + dependency}, nil
+			}
 		}
 	}
 
+	// Claim before budget admission so concurrent candidates are visible as
+	// "admitting" to project-level concurrency accounting.
 	claimed, err := a.claimRun(ctx, runID)
 	if err != nil {
 		return RunAdmissionDecision{}, err
@@ -100,6 +113,28 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 			_ = a.ReleaseRun(context.Background(), runID)
 		}
 	}()
+
+	if a.budget != nil {
+		allowed, reason, err := a.budget.CheckRunStart(ctx, runID)
+		if err != nil {
+			return RunAdmissionDecision{}, fmt.Errorf("check run-start budget: %w", err)
+		}
+		if !allowed {
+			reason = strings.TrimSpace(reason)
+			if reason == "" {
+				reason = "start budget denied"
+			}
+			return RunAdmissionDecision{Allowed: false, Reason: "budget-blocked: " + reason}, nil
+		}
+	}
+
+	// Legacy tasks without scheduler metadata/specs still receive atomic
+	// duplicate suppression and budget admission, but bypass ownership/resource
+	// scheduling until they opt into scheduler ownership.
+	if config == nil {
+		keepClaim = true
+		return RunAdmissionDecision{Allowed: true}, nil
+	}
 
 	running, legacyRunning, err := a.loadRunningClaims(ctx, candidate)
 	if err != nil {
