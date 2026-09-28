@@ -282,7 +282,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		CloneURL      string
 		DefaultBranch string
 	}
-	err := h.db.QueryRow(`
+	err = h.db.QueryRow(`
 		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch
 		FROM tasks t
 		JOIN repositories r ON r.id = t.repository_id
