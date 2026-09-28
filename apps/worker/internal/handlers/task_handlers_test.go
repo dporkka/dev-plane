@@ -174,6 +174,48 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	}
 }
 
+func TestHandleTaskApprovedDefersWhenSchedulerDeniesOwnership(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	insertTaskSpecFixture(t, db, "task-1", []string{"apps/api/routes/campaigns/handler.go"}, nil)
+	insertRunningTaskFixture(t, db, "task-running", "repo-1", "project-1")
+	insertTaskSpecFixture(t, db, "task-running", []string{"apps/api/routes/campaigns"}, nil)
+
+	provider := &fakeRuntimeProvider{}
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved"}`)})
+	if err != nil {
+		t.Fatalf("HandleTaskApproved() error: %v", err)
+	}
+
+	var status string
+	var workspaceID sql.NullString
+	if err := db.QueryRow(`SELECT status, workspace_id FROM tasks WHERE id = 'task-1'`).Scan(&status, &workspaceID); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if status != "approved" || workspaceID.Valid {
+		t.Fatalf("task status/workspace = %q/%v, want approved/null", status, workspaceID)
+	}
+	var runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runCount); err != nil {
+		t.Fatalf("query run count: %v", err)
+	}
+	if runCount != 0 {
+		t.Fatalf("run count = %d, want 0", runCount)
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called despite admission denial: %+v", provider.req)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("published subject = %q, want none", publisher.subject)
+	}
+}
+
 func TestHandleTaskApprovedRepublishesExistingQueuedRun(t *testing.T) {
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
