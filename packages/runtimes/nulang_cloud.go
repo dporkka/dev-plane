@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,6 +23,7 @@ type NulangCloudProvider struct {
 	baseURL string
 	token   string
 	client  *http.Client
+	cloneRepository func(context.Context, CreateRequest) (string, error)
 }
 
 func NewNulangCloudProvider(baseURL, token string) *NulangCloudProvider {
@@ -27,6 +31,7 @@ func NewNulangCloudProvider(baseURL, token string) *NulangCloudProvider {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token: token,
 		client: &http.Client{Timeout: 120 * time.Second},
+		cloneRepository: cloneRepositoryForSeed,
 	}
 }
 
@@ -75,12 +80,7 @@ func workspaceID(req CreateRequest) string {
 }
 
 func (p *NulangCloudProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
-	// Repository acquisition is intentionally outside the no-egress guest. Until
-	// trusted archive seeding lands, refuse requests that would imply guest Git.
-	if req.CloneURL != "" {
-		return nil, fmt.Errorf("nulang-cloud repository seeding is not implemented: trusted archive seeding is required")
-	}
-	id := workspaceID(req)
+		id := workspaceID(req)
 	resp, err := p.request(ctx, http.MethodPost, "/workspaces", map[string]any{"id": id})
 	if err != nil { return nil, fmt.Errorf("create Nulang Cloud workspace: %w", err) }
 	defer resp.Body.Close()
@@ -95,7 +95,14 @@ func (p *NulangCloudProvider) CreateWorkspace(ctx context.Context, req CreateReq
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
 	status := out.Workspace.Status
 	if out.GuestReady { status = "ready" }
-	return &Session{ID: out.Workspace.WorkspaceID, WorkspaceID: out.Workspace.WorkspaceID, Status: status, Provider: "nulang-cloud", CreatedAt: time.Now().UTC()}, nil
+	session := &Session{ID: out.Workspace.WorkspaceID, WorkspaceID: out.Workspace.WorkspaceID, Status: status, Provider: "nulang-cloud", CreatedAt: time.Now().UTC()}
+	if req.CloneURL != "" {
+		if err := p.seedRepository(ctx, session.ID, req); err != nil {
+			_ = p.DestroyWorkspace(context.Background(), session.ID)
+			return nil, fmt.Errorf("seed Nulang Cloud workspace: %w", err)
+		}
+	}
+	return session, nil
 }
 
 func (p *NulangCloudProvider) DestroyWorkspace(ctx context.Context, id string) error {
@@ -202,4 +209,96 @@ func (p *NulangCloudProvider) GetStatus(ctx context.Context, id string) (*Sessio
 
 func (p *NulangCloudProvider) StreamLogs(context.Context, string) (<-chan LogLine, error) {
 	return nil, fmt.Errorf("nulang-cloud log streaming: %w", ErrNotImplemented)
+}
+
+
+const nulangCloudSeedChunkBytes = 4 * 1024 * 1024
+
+func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, error) {
+	dir, err := os.MkdirTemp("", "devplane-nulang-seed-*")
+	if err != nil { return "", err }
+	repoDir := filepath.Join(dir, "repo")
+	args := []string{"clone", "--no-checkout", req.CloneURL, repoDir}
+	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
+		_ = os.RemoveAll(dir)
+		return "", fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	ref := req.Branch
+	if ref == "" { ref = req.BaseBranch }
+	if ref != "" {
+		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", ref)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("git checkout %q: %w: %s", ref, err, strings.TrimSpace(string(out)))
+		}
+	} else {
+		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "HEAD")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", fmt.Errorf("git checkout HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	return repoDir, nil
+}
+
+func archiveRepository(ctx context.Context, repoDir string) (string, func(), error) {
+	f, err := os.CreateTemp("", "devplane-nulang-seed-*.tar")
+	if err != nil { return "", nil, err }
+	path := f.Name()
+	if err := f.Close(); err != nil { _ = os.Remove(path); return "", nil, err }
+	cmd := exec.CommandContext(ctx, "tar", "-C", repoDir, "-cf", path, ".")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.Remove(path)
+		return "", nil, fmt.Errorf("archive repository: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return path, func(){ _ = os.Remove(path) }, nil
+}
+
+func (p *NulangCloudProvider) writeFileChunk(ctx context.Context, id, path string, offset int64, data []byte, truncate, sync bool) error {
+	resp, err := p.request(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(id)+"/files/write-chunk", map[string]any{
+		"path": path, "offset": offset, "content_base64": base64.StdEncoding.EncodeToString(data), "truncate": truncate, "sync": sync,
+	})
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return p.apiError(resp) }
+	return nil
+}
+
+func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req CreateRequest) error {
+	repoDir, err := p.cloneRepository(ctx, req)
+	if err != nil { return err }
+	defer os.RemoveAll(filepath.Dir(repoDir))
+
+	archive, cleanup, err := archiveRepository(ctx, repoDir)
+	if err != nil { return err }
+	defer cleanup()
+
+	f, err := os.Open(archive)
+	if err != nil { return err }
+	defer f.Close()
+	buf := make([]byte, nulangCloudSeedChunkBytes)
+	var offset int64
+	first := true
+	for {
+		n, readErr := f.Read(buf)
+		if n > 0 {
+			final := readErr == io.EOF
+			if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, buf[:n], first, final); err != nil { return err }
+			first = false
+			offset += int64(n)
+		}
+		if readErr == io.EOF { break }
+		if readErr != nil { return readErr }
+	}
+	// Empty archives are not expected, but keep the transport contract complete.
+	if first {
+		if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", 0, nil, true, true); err != nil { return err }
+	}
+	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"tar", "-xf", ".devplane/repo.tar", "-C", "/workspace"}, Dir: "/workspace"})
+	if err != nil { return err }
+	if result.ExitCode != 0 { return fmt.Errorf("extract repository: %s", strings.TrimSpace(result.Stderr)) }
+	result, err = p.ExecuteCommand(ctx, id, Command{Args: []string{"rm", "-f", ".devplane/repo.tar"}, Dir: "/workspace"})
+	if err != nil { return err }
+	if result.ExitCode != 0 { return fmt.Errorf("remove seed archive: %s", strings.TrimSpace(result.Stderr)) }
+	return nil
 }
