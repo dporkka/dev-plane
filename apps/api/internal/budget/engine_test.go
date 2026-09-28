@@ -853,7 +853,8 @@ func TestCheckRunStartBlocksAtConcurrentLimit(t *testing.T) {
 		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
 		INSERT INTO agent_runs (id, task_id, status) VALUES
 			('run-1', 'task-1', 'running'),
-			('run-2', 'task-1', 'running');
+			('run-2', 'task-1', 'running'),
+			('run-candidate', 'task-1', 'admitting');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agents: %v", err)
@@ -866,7 +867,7 @@ func TestCheckRunStartBlocksAtConcurrentLimit(t *testing.T) {
 	if result.Allowed {
 		t.Fatalf("CheckRunStart() allowed at concurrency limit: %+v", result)
 	}
-	if !strings.Contains(result.Reason, "concurrent runs 2 reached max 2") {
+	if !strings.Contains(result.Reason, "concurrent admitted runs 3 exceed max 2") {
 		t.Fatalf("CheckRunStart() reason = %q", result.Reason)
 	}
 }
@@ -881,7 +882,9 @@ func TestCheckRunStartAllowsBelowConcurrentLimit(t *testing.T) {
 	_, err := db.Exec(`
 		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
 		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
-		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'running');
+		INSERT INTO agent_runs (id, task_id, status) VALUES
+			('run-1', 'task-1', 'running'),
+			('run-candidate', 'task-1', 'admitting');
 	`)
 	if err != nil {
 		t.Fatalf("seed running agent: %v", err)
