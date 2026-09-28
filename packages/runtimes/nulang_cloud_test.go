@@ -102,6 +102,7 @@ func TestNulangCloudCreateWorkspaceSeedsRepositoryInBoundedChunks(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil { t.Fatal(err) }
 
 	var chunks int
+	var uploadedBytes int64
 	var sawExtract, sawRemove, sawSync bool
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -120,7 +121,15 @@ func TestNulangCloudCreateWorkspaceSeedsRepositoryInBoundedChunks(t *testing.T) 
 			data, err := base64.StdEncoding.DecodeString(body.Content); if err != nil { t.Fatal(err) }
 			if len(data) > nulangCloudSeedChunkBytes { t.Fatalf("chunk = %d", len(data)) }
 			if chunks == 0 && !body.Truncate { t.Fatal("first chunk must truncate") }
-			if body.Sync { sawSync = true }
+			if body.Sync {
+				sawSync = true
+				if len(data) != 0 { t.Fatalf("final sync wrote %d bytes, want 0", len(data)) }
+				if body.Offset != uploadedBytes { t.Fatalf("final sync offset = %d, want %d", body.Offset, uploadedBytes) }
+				if body.Truncate { t.Fatal("final sync must not truncate the uploaded archive") }
+			} else {
+				if body.Offset != uploadedBytes { t.Fatalf("chunk offset = %d, want %d", body.Offset, uploadedBytes) }
+				uploadedBytes += int64(len(data))
+			}
 			chunks++
 			_, _ = w.Write([]byte("{\"kind\":\"chunk\",\"path\":\".devplane/repo.tar\",\"offset\":0,\"bytes_written\":1,\"size\":1}"))
 		case r.URL.Path == "/workspaces/seed/exec":
