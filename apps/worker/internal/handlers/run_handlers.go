@@ -39,9 +39,12 @@ type RunExecutor interface {
 	ExecuteRun(ctx context.Context, runID string) error
 }
 
+var ErrRunAdmissionDeferred = errors.New("run admission deferred")
+
 type RunAdmissionDecision struct {
-	Allowed bool
-	Reason  string
+	Allowed    bool
+	Reason     string
+	RetryAfter time.Duration
 }
 
 type RunAdmission interface {
@@ -451,7 +454,18 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 			if reason == "" {
 				reason = "scheduler admission denied"
 			}
-			return fmt.Errorf("run %s not admitted: %s", event.RunID, reason)
+			retryAfter := decision.RetryAfter
+			if retryAfter <= 0 {
+				retryAfter = 5 * time.Second
+			}
+			if msg != nil && msg.Reply != "" {
+				if nakErr := msg.NakWithDelay(retryAfter); nakErr != nil &&
+					!errors.Is(nakErr, nats.ErrMsgNotBound) &&
+					!errors.Is(nakErr, nats.ErrMsgNoReply) {
+					return fmt.Errorf("defer run admission: %w", nakErr)
+				}
+			}
+			return fmt.Errorf("%w: run %s not admitted: %s", ErrRunAdmissionDeferred, event.RunID, reason)
 		}
 	}
 	err := h.executor.ExecuteRun(ctx, event.RunID)
