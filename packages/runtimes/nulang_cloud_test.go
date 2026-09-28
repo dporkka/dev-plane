@@ -119,7 +119,7 @@ func TestNulangCloudCreateWorkspaceSeedsRepositoryInBoundedChunks(t *testing.T) 
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
 			if body.Path != ".devplane/repo.tar" { t.Fatalf("path = %q", body.Path) }
 			data, err := base64.StdEncoding.DecodeString(body.Content); if err != nil { t.Fatal(err) }
-			if len(data) > nulangCloudSeedChunkBytes { t.Fatalf("chunk = %d", len(data)) }
+			if len(data) > nulangCloudChunkBytes { t.Fatalf("chunk = %d", len(data)) }
 			if chunks == 0 && !body.Truncate { t.Fatal("first chunk must truncate") }
 			if body.Sync {
 				sawSync = true
@@ -180,4 +180,77 @@ func TestNulangCloudExecuteCommandRejectsTimeoutAboveMaximum(t *testing.T) {
 	p := NewNulangCloudProvider("http://127.0.0.1:1", "")
 	_, err := p.ExecuteCommand(context.Background(), "w1", Command{Args: []string{"sleep", "60"}, Timeout: 51 * time.Second})
 	if err == nil { t.Fatal("expected timeout validation error") }
+}
+
+
+func TestNulangCloudWriteFileChunksPayloadAboveSingleRPCMax(t *testing.T) {
+	data := make([]byte, nulangCloudSingleFileBytes+1)
+	for i := range data { data[i] = byte(i % 251) }
+
+	var singleWrites int
+	var chunkWrites int
+	var uploaded []byte
+	var sawSync bool
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/workspaces/w1/files/write":
+			singleWrites++
+			t.Fatal("large write must not use single-file endpoint")
+		case "/workspaces/w1/files/write-chunk":
+			var body struct {
+				Path string `json:"path"`
+				Content string `json:"content_base64"`
+				Offset int64 `json:"offset"`
+				Truncate bool `json:"truncate"`
+				Sync bool `json:"sync"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+			if body.Path != "large.bin" { t.Fatalf("path = %q", body.Path) }
+			chunk, err := base64.StdEncoding.DecodeString(body.Content)
+			if err != nil { t.Fatal(err) }
+			if len(chunk) > nulangCloudChunkBytes { t.Fatalf("chunk = %d", len(chunk)) }
+			if body.Offset != int64(len(uploaded)) { t.Fatalf("offset = %d, want %d", body.Offset, len(uploaded)) }
+			if chunkWrites == 0 && !body.Truncate { t.Fatal("first chunk must truncate") }
+			if chunkWrites > 0 && body.Truncate { t.Fatal("only first chunk may truncate") }
+			if body.Sync {
+				sawSync = true
+				if len(chunk) != 0 { t.Fatalf("sync chunk = %d bytes, want 0", len(chunk)) }
+			} else {
+				uploaded = append(uploaded, chunk...)
+			}
+			chunkWrites++
+			_, _ = w.Write([]byte(`{"kind":"chunk","path":"large.bin","offset":0,"bytes_written":1,"size":1}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer s.Close()
+
+	if err := NewNulangCloudProvider(s.URL, "").WriteFile(context.Background(), "w1", "large.bin", data); err != nil { t.Fatal(err) }
+	if singleWrites != 0 { t.Fatalf("single writes = %d", singleWrites) }
+	if chunkWrites != 4 { t.Fatalf("chunk writes = %d, want 4", chunkWrites) }
+	if !sawSync { t.Fatal("missing final durable sync") }
+	if len(uploaded) != len(data) { t.Fatalf("uploaded bytes = %d, want %d", len(uploaded), len(data)) }
+	for i := range data {
+		if uploaded[i] != data[i] { t.Fatalf("uploaded byte %d = %d, want %d", i, uploaded[i], data[i]) }
+	}
+}
+
+func TestNulangCloudWriteFileUsesSingleRPCAtLimit(t *testing.T) {
+	data := make([]byte, nulangCloudSingleFileBytes)
+	var writes int
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspaces/w1/files/write" { t.Fatalf("unexpected path %s", r.URL.Path) }
+		writes++
+		var body struct { Content string `json:"content_base64"` }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		decoded, err := base64.StdEncoding.DecodeString(body.Content)
+		if err != nil { t.Fatal(err) }
+		if len(decoded) != len(data) { t.Fatalf("decoded bytes = %d, want %d", len(decoded), len(data)) }
+		_, _ = w.Write([]byte(`{"kind":"ack"}`))
+	}))
+	defer s.Close()
+
+	if err := NewNulangCloudProvider(s.URL, "").WriteFile(context.Background(), "w1", "limit.bin", data); err != nil { t.Fatal(err) }
+	if writes != 1 { t.Fatalf("writes = %d, want 1", writes) }
 }
