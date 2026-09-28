@@ -453,6 +453,15 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 			if reason == "" {
 				reason = "scheduler-blocked"
 			}
+			retryAfter := decision.RetryAfter
+			if retryAfter <= 0 {
+				retryAfter = 5 * time.Second
+			}
+			if msg != nil {
+				if nakErr := msg.NakWithDelay(retryAfter); nakErr != nil && !errors.Is(nakErr, nats.ErrMsgNotBound) {
+					return fmt.Errorf("defer run admission: %w", nakErr)
+				}
+			}
 			return fmt.Errorf("%w: %s", ErrRunAdmissionDeferred, reason)
 		}
 	}
