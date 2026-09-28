@@ -149,7 +149,7 @@ func main() {
 		MaxParallel: *schedulerMaxParallel,
 		CPU:         *schedulerCPU,
 		MemoryMB:    *schedulerMemoryMB,
-	})
+	}).WithStartBudget(runExecutor)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
