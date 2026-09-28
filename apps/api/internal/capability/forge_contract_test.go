@@ -46,23 +46,25 @@ func TestKernelEvaluateForgeUsesDevPlanePolicy(t *testing.T) {
 
 	tests := []struct {
 		name         string
+		role         string
 		forgeOp      string
 		wantEffect   policies.Effect
 		wantApproval bool
 	}{
-		{"repo read allowed", ForgeOperationRepoRead, policies.EffectAllow, false},
-		{"check read allowed", ForgeOperationCheckRead, policies.EffectAllow, false},
-		{"branch create asks", ForgeOperationBranchCreate, policies.EffectAsk, true},
-		{"commit write asks", ForgeOperationCommitWrite, policies.EffectAsk, true},
-		{"change create asks", ForgeOperationChangeCreate, policies.EffectAsk, true},
-		{"change review asks", ForgeOperationChangeReview, policies.EffectAsk, true},
-		{"change merge admin only", ForgeOperationChangeMerge, policies.EffectAdminOnly, true},
+		{"repo read allowed", models.AgentRoleImplementer, ForgeOperationRepoRead, policies.EffectAllow, false},
+		{"check read allowed", models.AgentRoleImplementer, ForgeOperationCheckRead, policies.EffectAllow, false},
+		{"branch create asks", models.AgentRoleImplementer, ForgeOperationBranchCreate, policies.EffectAsk, true},
+		{"commit write asks", models.AgentRoleImplementer, ForgeOperationCommitWrite, policies.EffectAsk, true},
+		{"change create asks", models.AgentRoleImplementer, ForgeOperationChangeCreate, policies.EffectAsk, true},
+		{"change review asks", models.AgentRoleReviewer, ForgeOperationChangeReview, policies.EffectAsk, true},
+		{"change merge admin only", models.AgentRoleReleaseManager, ForgeOperationChangeMerge, policies.EffectAdminOnly, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := k.EvaluateForge(ctx, tt.forgeOp, Request{
 				ActorType: "agent",
+				AgentRole: tt.role,
 				Resource:  "nulang-org/nulang",
 			})
 			if err != nil {
