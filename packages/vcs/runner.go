@@ -59,13 +59,13 @@ func mergeEnv(base []string, overrides map[string]string) []string {
 			values[key] = value
 		}
 	}
+	for key, value := range overrides {
+		values[key] = value
+	}
 	// VCS operations must never block an autonomous worker waiting for a
 	// terminal credential prompt. Callers can still supply GIT_ASKPASS or a
 	// credential helper through the environment.
 	values["GIT_TERMINAL_PROMPT"] = "0"
-	for key, value := range overrides {
-		values[key] = value
-	}
 	keys := make([]string, 0, len(values))
 	for key := range values {
 		keys = append(keys, key)
