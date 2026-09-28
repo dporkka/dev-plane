@@ -18,9 +18,14 @@ type SchedulerCapacity struct {
 	MemoryMB    int
 }
 
+type RunStartBudget interface {
+	CheckRunStart(ctx context.Context, runID string) (allowed bool, reason string, err error)
+}
+
 type SchedulerAdmission struct {
 	db       *sql.DB
 	capacity SchedulerCapacity
+	budget   RunStartBudget
 }
 
 const schedulerAdmissionClaimTTL = 10 * time.Minute
@@ -57,9 +62,30 @@ func NewSchedulerAdmission(db *sql.DB, capacity SchedulerCapacity) *SchedulerAdm
 	return &SchedulerAdmission{db: db, capacity: capacity}
 }
 
+func (a *SchedulerAdmission) WithStartBudget(budget RunStartBudget) *SchedulerAdmission {
+	if a != nil {
+		a.budget = budget
+	}
+	return a
+}
+
 func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error) {
 	if a == nil || a.db == nil {
 		return RunAdmissionDecision{Allowed: true}, nil
+	}
+
+	if a.budget != nil {
+		allowed, reason, err := a.budget.CheckRunStart(ctx, runID)
+		if err != nil {
+			return RunAdmissionDecision{}, fmt.Errorf("check run-start budget: %w", err)
+		}
+		if !allowed {
+			reason = strings.TrimSpace(reason)
+			if reason == "" {
+				reason = "start budget denied"
+			}
+			return RunAdmissionDecision{Allowed: false, Reason: "budget-blocked: " + reason}, nil
+		}
 	}
 
 	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
