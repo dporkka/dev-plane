@@ -257,6 +257,23 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
+	admission, err := h.schedulerAdmission(context.Background(), event.TaskID)
+	if err != nil {
+		return fmt.Errorf("scheduler admission: %w", err)
+	}
+	if !admission.Allowed {
+		h.logger.Info("deferring approved task for scheduler admission",
+			"task_id", event.TaskID,
+			"reason", admission.Reason,
+		)
+		if msg != nil {
+			if err := msg.NakWithDelay(30 * time.Second); err != nil && !errors.Is(err, nats.ErrMsgNoReply) {
+				h.logger.Warn("failed to defer task approval message", "task_id", event.TaskID, "error", err)
+			}
+		}
+		return nil
+	}
+
 	// Load task details
 	var task struct {
 		ID            string
