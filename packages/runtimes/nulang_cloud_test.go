@@ -15,6 +15,60 @@ import (
 	"time"
 )
 
+func TestNulangCloudWorkspaceIDIsBoundedAndDeterministic(t *testing.T) {
+	name := strings.Repeat("Very Long Feature Name/", 12) + "alpha"
+	first := workspaceID(CreateRequest{WorktreeName: name})
+	second := workspaceID(CreateRequest{WorktreeName: name})
+	other := workspaceID(CreateRequest{WorktreeName: name + "-other"})
+
+	if len(first) > 128 {
+		t.Fatalf("workspace id length = %d, want <= 128", len(first))
+	}
+	if first != second {
+		t.Fatalf("workspace id is not deterministic: %q != %q", first, second)
+	}
+	if first == other {
+		t.Fatalf("distinct long names collided: %q", first)
+	}
+	for _, r := range first {
+		if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_') {
+			t.Fatalf("workspace id contains invalid character %q: %q", r, first)
+		}
+	}
+}
+
+func TestNulangCloudDoesNotFollowRedirects(t *testing.T) {
+	var leaked bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Internal-Auth-Token") != "" {
+			leaked = true
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Internal-Auth-Token"); got != "secret" {
+			t.Fatalf("source auth = %q, want secret", got)
+		}
+		http.Redirect(w, r, target.URL+"/workspaces/w1", http.StatusFound)
+	}))
+	defer source.Close()
+
+	p := NewNulangCloudProvider(source.URL, "secret")
+	resp, err := p.request(context.Background(), http.MethodGet, "/workspaces/w1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusFound)
+	}
+	if leaked {
+		t.Fatal("internal auth token was forwarded to redirect target")
+	}
+}
+
 func TestNulangCloudCreateWorkspace(t *testing.T) {
 	var auth string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
