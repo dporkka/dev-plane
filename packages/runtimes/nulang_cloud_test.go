@@ -38,9 +38,9 @@ func TestNulangCloudCreateWorkspace(t *testing.T) {
 func TestNulangCloudExecuteCommand(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/workspaces/w1/exec" { t.Fatalf("path = %s", r.URL.Path) }
-		var body struct { Command string `json:"command"`; Args []string `json:"args"`; Cwd string `json:"cwd"` }
+		var body struct { Command string `json:"command"`; Args []string `json:"args"`; Cwd string `json:"cwd"`; Env map[string]string `json:"env"` }
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
-		if body.Command != "go" || len(body.Args) != 1 || body.Args[0] != "test" || body.Cwd != "/workspace" { t.Fatalf("body = %+v", body) }
+		if body.Command != "go" || len(body.Args) != 1 || body.Args[0] != "test" || body.Cwd != "/workspace" || body.Env == nil { t.Fatalf("body = %+v", body) }
 		_, _ = w.Write([]byte(`{"kind":"exec","exit_code":0,"timed_out":false,"stdout_base64":"`+base64.StdEncoding.EncodeToString([]byte("ok\n"))+`","stderr_base64":""}`))
 	}))
 	defer s.Close()
