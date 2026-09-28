@@ -344,8 +344,8 @@ func TestDefaultEngine(t *testing.T) {
 	engine := DefaultEngine()
 	policies := engine.Policies()
 
-	if len(policies) != 22 {
-		t.Errorf("DefaultEngine() loaded %d policies, want 22", len(policies))
+	if len(policies) != 26 {
+		t.Errorf("DefaultEngine() loaded %d policies, want 26", len(policies))
 	}
 
 	// Verify we have the expected policy names
@@ -355,6 +355,8 @@ func TestDefaultEngine(t *testing.T) {
 		"allow_repo_search":     false,
 		"allow_static_analysis": false,
 		"allow_tests":           false,
+		"allow_git_read":        false,
+		"allow_check_read":      false,
 
 		// Ask policies
 		"ask_file_writes":        false,
@@ -365,6 +367,8 @@ func TestDefaultEngine(t *testing.T) {
 		"ask_git_push":           false,
 		"ask_network":            false,
 		"ask_pr_create":          false,
+		"ask_branch_create":      false,
+		"ask_pr_review":          false,
 
 		// Deny policies
 		"deny_production_secrets": false,
