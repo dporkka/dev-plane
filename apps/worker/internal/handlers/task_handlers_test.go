@@ -214,6 +214,110 @@ func TestHandleTaskApprovedRepublishesExistingQueuedRun(t *testing.T) {
 	}
 }
 
+
+
+func TestSchedulerAdmissionBlocksOverlappingRunningTask(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	insertTaskSpecFixture(t, db, "task-1", []string{"apps/api/routes/campaigns/handler.go"}, nil)
+	insertRunningTaskFixture(t, db, "task-running", "repo-1", "project-1")
+	insertTaskSpecFixture(t, db, "task-running", []string{"apps/api/routes/campaigns"}, nil)
+
+	handler := NewTaskHandler(db, slog.Default())
+	decision, err := handler.schedulerAdmission(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("schedulerAdmission() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "ownership-conflict" {
+		t.Fatalf("decision = %+v, want ownership-conflict denial", decision)
+	}
+}
+
+func TestSchedulerAdmissionAllowsDisjointTask(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	insertTaskSpecFixture(t, db, "task-1", []string{"apps/web/features/inventory/page.tsx"}, nil)
+	insertRunningTaskFixture(t, db, "task-running", "repo-1", "project-1")
+	insertTaskSpecFixture(t, db, "task-running", []string{"apps/api/routes/campaigns"}, nil)
+
+	handler := NewTaskHandler(db, slog.Default())
+	decision, err := handler.schedulerAdmission(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("schedulerAdmission() error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("decision = %+v, want allowed", decision)
+	}
+}
+
+func TestSchedulerAdmissionEnforcesProjectConcurrentAgentBudget(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	insertTaskSpecFixture(t, db, "task-1", []string{"apps/web/features/inventory"}, nil)
+	insertRunningTaskFixture(t, db, "task-running", "repo-1", "project-1")
+	insertTaskSpecFixture(t, db, "task-running", []string{"apps/api/routes/campaigns"}, nil)
+	_, err := db.Exec(`
+		INSERT INTO budgets (id, project_id, max_concurrent_agents, created_at)
+		VALUES ('budget-1', 'project-1', 1, CURRENT_TIMESTAMP)
+	`)
+	if err != nil {
+		t.Fatalf("insert budget: %v", err)
+	}
+
+	handler := NewTaskHandler(db, slog.Default())
+	decision, err := handler.schedulerAdmission(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("schedulerAdmission() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "concurrency-budget" {
+		t.Fatalf("decision = %+v, want concurrency-budget denial", decision)
+	}
+}
+
+func TestSchedulerAdmissionFailsClosedWhenOwnershipUnknownAndRepositoryBusy(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	insertRunningTaskFixture(t, db, "task-running", "repo-1", "project-1")
+	insertTaskSpecFixture(t, db, "task-running", []string{"apps/api"}, nil)
+
+	handler := NewTaskHandler(db, slog.Default())
+	decision, err := handler.schedulerAdmission(context.Background(), "task-1")
+	if err != nil {
+		t.Fatalf("schedulerAdmission() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "ownership-unknown" {
+		t.Fatalf("decision = %+v, want ownership-unknown denial", decision)
+	}
+}
+
+func insertTaskSpecFixture(t *testing.T, db *sql.DB, taskID string, filesToChange, filesToCreate []string) {
+	t.Helper()
+	changed, _ := json.Marshal(filesToChange)
+	created, _ := json.Marshal(filesToCreate)
+	_, err := db.Exec(`
+		INSERT INTO task_specs (task_id, files_to_change, files_to_create)
+		VALUES (?, ?, ?)
+	`, taskID, string(changed), string(created))
+	if err != nil {
+		t.Fatalf("insert task spec: %v", err)
+	}
+}
+
+func insertRunningTaskFixture(t *testing.T, db *sql.DB, taskID, repositoryID, projectID string) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO tasks (id, project_id, repository_id, target_branch, status)
+		VALUES (?, ?, ?, 'main', 'running')
+	`, taskID, projectID, repositoryID)
+	if err != nil {
+		t.Fatalf("insert running task: %v", err)
+	}
+}
+
 func setupTaskHandlerDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite3", ":memory:")
@@ -230,6 +334,7 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 		);
 		CREATE TABLE tasks (
 			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL,
 			repository_id TEXT NOT NULL,
 			target_branch TEXT NOT NULL,
 			workspace_id TEXT,
@@ -251,6 +356,17 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 			status TEXT NOT NULL,
 			created_at DATETIME,
 			updated_at DATETIME
+		);
+		CREATE TABLE task_specs (
+			task_id TEXT PRIMARY KEY,
+			files_to_change TEXT DEFAULT '[]',
+			files_to_create TEXT DEFAULT '[]'
+		);
+		CREATE TABLE budgets (
+			id TEXT PRIMARY KEY,
+			project_id TEXT,
+			max_concurrent_agents INTEGER DEFAULT 0,
+			created_at DATETIME
 		);
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
@@ -278,8 +394,8 @@ func insertApprovedTaskFixture(t *testing.T, db *sql.DB) {
 	_, err := db.Exec(`
 		INSERT INTO repositories (id, clone_url, default_branch)
 		VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
-		INSERT INTO tasks (id, repository_id, target_branch, status)
-		VALUES ('task-1', 'repo-1', 'main', 'approved');
+		INSERT INTO tasks (id, project_id, repository_id, target_branch, status)
+		VALUES ('task-1', 'project-1', 'repo-1', 'main', 'approved');
 	`)
 	if err != nil {
 		t.Fatalf("insert approved task fixture: %v", err)
