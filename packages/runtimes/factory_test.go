@@ -68,6 +68,13 @@ func TestNewProviderNulangCloudRequiresURL(t *testing.T) {
 	}
 }
 
+func TestNewProviderNulangCloudRequiresToken(t *testing.T) {
+	_, _, err := NewProvider("nulang-cloud", "", "https://cloud.nulang.test", "")
+	if err == nil {
+		t.Fatal("NewProvider(nulang-cloud) error = nil, want error")
+	}
+}
+
 func TestNewProviderUnsupported(t *testing.T) {
 	_, _, err := NewProvider("unknown", "", "", "")
 	if err == nil {
