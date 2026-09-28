@@ -135,6 +135,31 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 	return result, nil
 }
 
+// CheckRunStart verifies whether a new run may enter the running set.
+// Unlike CheckRun, the concurrency comparison is inclusive because the
+// candidate run is not counted as running yet.
+func (e *Engine) CheckRunStart(ctx context.Context, budget *models.Budget, runState *RunState) (*CheckResult, error) {
+	result, err := e.CheckRun(ctx, budget, runState)
+	if err != nil || result == nil || !result.Allowed || budget == nil || budget.IsUnlimited() {
+		return result, err
+	}
+	if e.db == nil || budget.MaxConcurrentAgents <= 0 || budget.ProjectID == nil {
+		return result, nil
+	}
+
+	concurrent, err := e.GetConcurrentRuns(ctx, *budget.ProjectID)
+	if err != nil {
+		return nil, fmt.Errorf("check start concurrency: %w", err)
+	}
+	if concurrent >= budget.MaxConcurrentAgents {
+		result.Allowed = false
+		result.Violations = append(result.Violations,
+			fmt.Sprintf("concurrent runs %d reached max %d", concurrent, budget.MaxConcurrentAgents))
+		result.Reason = fmt.Sprintf("budget violations: %v", result.Violations)
+	}
+	return result, nil
+}
+
 // RecordUsage persists model usage for budget tracking.
 func (e *Engine) RecordUsage(ctx context.Context, runID, taskID, model, provider string, promptTokens, completionTokens int, cost float64, latencyMs int) error {
 	if e.db == nil {
