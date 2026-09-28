@@ -111,6 +111,35 @@ X-Dev-Plane-Signature: sha256=<HMAC-SHA256(secret, timestamp + "." + raw_body)>
 
 The existing API Factory local generator remains available as a fallback while the Dev Plane path proves production parity.
 
+## Nulang Forge Gateway integration
+
+Nulang exposes a provider-neutral `forge.*` command vocabulary to agents. Dev
+Plane remains the execution/policy authority for software-development forge
+actions.
+
+The shared operation contract is:
+
+| Nulang forge operation | Dev Plane capability operation | Default policy |
+| --- | --- | --- |
+| `repo.read` | `read_repository` | allow |
+| `branch.create` | `create_branch` | ask |
+| `commit.write` | `create_commit` | ask |
+| `change.create` | `open_pull_request` | ask |
+| `change.review` | `review_pull_request` | ask |
+| `change.merge` | `merge_pull_request` | admin-only |
+| `check.read` | `read_checks` | allow |
+
+Nulang must not accept model-supplied forge grants as authority. A trusted host
+constructs the agent-facing session, while Dev Plane independently derives and
+evaluates authority from its task, agent, project, repository, approval, budget,
+sandbox, and audit context. Unknown provider-neutral forge operations fail
+closed.
+
+Provider credentials, branch publication, pull-request creation/merge, approval
+state, and audit records stay in Dev Plane. Nulang Cloud may provide the runtime
+and durable execution substrate, but it does not become a second policy engine
+or credential store.
+
 ## Nulang Cloud runtime provider
 
 Dev Plane's `packages/runtimes.Provider` is the intended integration point. A future provider should preserve the existing interface semantics rather than make the runner depend directly on Nulang Cloud internals.
