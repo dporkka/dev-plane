@@ -19,6 +19,7 @@ use (
 	./packages/repo-intel
 	./packages/reviewer
 	./packages/runtimes
+	./packages/scheduler
 	./packages/securityscan
 	./packages/vcs
 )
