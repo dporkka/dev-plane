@@ -225,6 +225,23 @@ func (p *NulangCloudProvider) Restore(ctx context.Context, id string, snap *Snap
 	return nil
 }
 
+func (p *NulangCloudProvider) ForkSnapshot(ctx context.Context, id string, snap *Snapshot, targetID string) (*Session, error) {
+	if snap == nil || snap.ID == "" { return nil, fmt.Errorf("snapshot id is required") }
+	if snap.SessionID != "" && snap.SessionID != id { return nil, fmt.Errorf("snapshot belongs to workspace %q, not %q", snap.SessionID, id) }
+	if targetID == "" { return nil, fmt.Errorf("target workspace id is required") }
+	path := "/workspaces/"+url.PathEscape(id)+"/checkpoints/"+url.PathEscape(snap.ID)+"/fork"
+	resp, err := p.request(ctx, http.MethodPost, path, map[string]any{"target_id": targetID})
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
+	var out struct {
+		WorkspaceID string `json:"workspace_id"`
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
+	return &Session{ID: out.WorkspaceID, WorkspaceID: out.WorkspaceID, Status: out.Status, Provider: "nulang-cloud", CreatedAt: time.Now().UTC()}, nil
+}
+
 func (p *NulangCloudProvider) GetStatus(ctx context.Context, id string) (*SessionStatus, error) {
 	resp, err := p.request(ctx, http.MethodGet, "/workspaces/"+url.PathEscape(id), nil)
 	if err != nil { return nil, err }
