@@ -337,3 +337,28 @@ func TestNulangCloudExecuteCommandAllowsExplicitUnsafeShell(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+
+func TestNulangCloudForkSnapshot(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspaces/w1/checkpoints/cp1/fork" { t.Fatalf("path = %s", r.URL.Path) }
+		var body struct { TargetID string `json:"target_id"` }
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		if body.TargetID != "forked-w1" { t.Fatalf("target_id = %q", body.TargetID) }
+		_, _ = w.Write([]byte(`{"workspace_id":"forked-w1","source_workspace_id":"w1","checkpoint_id":"cp1","status":"stopped"}`))
+	}))
+	defer s.Close()
+
+	p := NewNulangCloudProvider(s.URL, "")
+	session, err := p.ForkSnapshot(context.Background(), "w1", &Snapshot{ID:"cp1", SessionID:"w1"}, "forked-w1")
+	if err != nil { t.Fatal(err) }
+	if session.ID != "forked-w1" || session.Status != "stopped" || session.Provider != "nulang-cloud" {
+		t.Fatalf("session = %+v", session)
+	}
+}
+
+func TestNulangCloudPublicCommandRejectsProviderOnlyExecutable(t *testing.T) {
+	p := NewNulangCloudProvider("http://127.0.0.1:1", "")
+	_, err := p.ExecuteCommand(context.Background(), "w1", Command{Args:[]string{"rm","-rf","."}})
+	if err == nil || !strings.Contains(err.Error(), "not in the allow-list") { t.Fatalf("error = %v", err) }
+}
