@@ -626,6 +626,9 @@ func TestHandleRunTriggeredRejectsRunWhenAdmissionDenies(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected admission error")
 	}
+	if !errors.Is(err, ErrRunAdmissionDeferred) {
+		t.Fatalf("error = %v, want ErrRunAdmissionDeferred", err)
+	}
 	if !contains(err.Error(), "ownership-conflict") {
 		t.Fatalf("error = %v", err)
 	}
