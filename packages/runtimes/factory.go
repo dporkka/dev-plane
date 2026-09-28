@@ -24,8 +24,11 @@ func NewProvider(name, baseDir, runnerURL, runnerToken string) (Provider, string
 		}
 		return NewRemoteProvider(runnerURL, runnerToken), "remote", nil
 	case "nulang-cloud":
-		if runnerURL == "" {
+		if strings.TrimSpace(runnerURL) == "" {
 			return nil, "", fmt.Errorf("nulang-cloud runtime requires RUNNER_URL")
+		}
+		if strings.TrimSpace(runnerToken) == "" {
+			return nil, "", fmt.Errorf("nulang-cloud runtime requires RUNNER_TOKEN")
 		}
 		return NewNulangCloudProvider(runnerURL, runnerToken), "nulang-cloud", nil
 	default:
