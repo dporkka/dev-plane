@@ -74,6 +74,46 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 		return RunAdmissionDecision{Allowed: true}, nil
 	}
 
+	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
+	if err != nil {
+		return RunAdmissionDecision{}, err
+	}
+
+	if config != nil {
+		for _, dependency := range config.DependsOn {
+			var status string
+			err := a.db.QueryRowContext(ctx, `
+				SELECT status FROM tasks
+				WHERE id = $1 AND deleted_at IS NULL
+			`, dependency).Scan(&status)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					return RunAdmissionDecision{Allowed: false, Reason: "dependency-missing:" + dependency}, nil
+				}
+				return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency %s: %w", dependency, err)
+			}
+			if status != "done" {
+				return RunAdmissionDecision{Allowed: false, Reason: "dependency-pending:" + dependency}, nil
+			}
+		}
+	}
+
+	// Claim before budget admission so concurrent candidates are visible as
+	// "admitting" to project-level concurrency accounting.
+	claimed, err := a.claimRun(ctx, runID)
+	if err != nil {
+		return RunAdmissionDecision{}, err
+	}
+	if !claimed {
+		return RunAdmissionDecision{Allowed: false, Reason: "run-already-claimed"}, nil
+	}
+	keepClaim := false
+	defer func() {
+		if !keepClaim {
+			_ = a.ReleaseRun(context.Background(), runID)
+		}
+	}()
+
 	if a.budget != nil {
 		allowed, reason, err := a.budget.CheckRunStart(ctx, runID)
 		if err != nil {
@@ -88,44 +128,13 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 		}
 	}
 
-	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
-	if err != nil {
-		return RunAdmissionDecision{}, err
-	}
+	// Legacy tasks without scheduler metadata/specs still receive atomic
+	// duplicate suppression and budget admission, but bypass ownership/resource
+	// scheduling until they opt into scheduler ownership.
 	if config == nil {
+		keepClaim = true
 		return RunAdmissionDecision{Allowed: true}, nil
 	}
-
-	for _, dependency := range config.DependsOn {
-		var status string
-		err := a.db.QueryRowContext(ctx, `
-			SELECT status FROM tasks
-			WHERE id = $1 AND deleted_at IS NULL
-		`, dependency).Scan(&status)
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return RunAdmissionDecision{Allowed: false, Reason: "dependency-missing:" + dependency}, nil
-			}
-			return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency %s: %w", dependency, err)
-		}
-		if status != "done" {
-			return RunAdmissionDecision{Allowed: false, Reason: "dependency-pending:" + dependency}, nil
-		}
-	}
-
-	claimed, err := a.claimRun(ctx, runID)
-	if err != nil {
-		return RunAdmissionDecision{}, err
-	}
-	if !claimed {
-		return RunAdmissionDecision{Allowed: false, Reason: "run-already-claimed"}, nil
-	}
-	keepClaim := false
-	defer func() {
-		if !keepClaim {
-			_ = a.ReleaseRun(context.Background(), runID)
-		}
-	}()
 
 	running, legacyRunning, err := a.loadRunningClaims(ctx, candidate)
 	if err != nil {
