@@ -90,6 +90,8 @@ func DefaultEngine() *Engine {
 		{Name: "allow_repo_search", ResourceType: "command", Action: "search", Effect: EffectAllow, Priority: 100},
 		{Name: "allow_static_analysis", ResourceType: "command", Action: "analyze", Effect: EffectAllow, Priority: 100},
 		{Name: "allow_tests", ResourceType: "command", Action: "test", Effect: EffectAllow, Priority: 100},
+		{Name: "allow_git_read", ResourceType: "git", Action: "read", Effect: EffectAllow, Priority: 100},
+		{Name: "allow_check_read", ResourceType: "git", Action: "read_checks", Effect: EffectAllow, Priority: 100},
 
 		// Ask: mutations and external actions
 		{Name: "ask_file_writes", ResourceType: "file", Action: "write", Effect: EffectAsk, Priority: 200},
@@ -100,6 +102,8 @@ func DefaultEngine() *Engine {
 		{Name: "ask_git_push", ResourceType: "git", Action: "push", Effect: EffectAsk, Priority: 200},
 		{Name: "ask_network", ResourceType: "network", Action: "*", Effect: EffectAsk, Priority: 200},
 		{Name: "ask_pr_create", ResourceType: "git", Action: "create_pr", Effect: EffectAsk, Priority: 200},
+		{Name: "ask_branch_create", ResourceType: "git", Action: "create_branch", Effect: EffectAsk, Priority: 200},
+		{Name: "ask_pr_review", ResourceType: "git", Action: "review", Effect: EffectAsk, Priority: 200},
 
 		// Deny: dangerous operations
 		{Name: "deny_production_secrets", ResourceType: "secret", Action: "read", Effect: EffectDeny, Priority: 300, Conditions: map[string]any{"scope": "production"}},
