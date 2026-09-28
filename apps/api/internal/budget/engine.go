@@ -117,7 +117,7 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 
 		// Check concurrent runs for project-level budgets
 		if budget.MaxConcurrentAgents > 0 && budget.ProjectID != nil {
-			concurrent, err := e.GetConcurrentAdmissionRuns(ctx, *budget.ProjectID)
+			concurrent, err := e.GetConcurrentRuns(ctx, *budget.ProjectID)
 			if err != nil {
 				e.logWarn("failed to get concurrent runs", "error", err)
 			} else if concurrent > budget.MaxConcurrentAgents {
@@ -148,7 +148,7 @@ func (e *Engine) CheckRunStart(ctx context.Context, budget *models.Budget, runSt
 		return result, nil
 	}
 
-	concurrent, err := e.GetConcurrentRuns(ctx, *budget.ProjectID)
+	concurrent, err := e.GetConcurrentAdmissionRuns(ctx, *budget.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("check start concurrency: %w", err)
 	}
