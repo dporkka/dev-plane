@@ -48,15 +48,22 @@ func (h *Handler) runtimeProvider(name string) (runtimes.Provider, error) {
 		return provider, nil
 	}
 
-	runnerURL := os.Getenv("RUNNER_URL")
-	runnerToken := os.Getenv("RUNNER_AUTH_TOKEN")
+	runnerURL := strings.TrimSpace(os.Getenv("RUNNER_URL"))
+	runnerToken := strings.TrimSpace(os.Getenv("RUNNER_AUTH_TOKEN"))
 	baseDir := workspaceRuntimeBaseDir()
 
-	// Preserve the legacy RUNNER_URL override for existing providers, but let
-	// Nulang Cloud consume RUNNER_URL as its own authenticated Workspace API
-	// endpoint. Otherwise a configured Nulang Cloud runtime would be silently
-	// replaced by RemoteProvider.
-	if runnerURL != "" && name != "nulang-cloud" {
+	if name == "nulang-cloud" {
+		// Keep the Nulang Cloud service credential separate from the Dev Plane
+		// runner credential. RUNNER_* remains a compatibility fallback while
+		// deployments migrate to the dedicated NULANG_CLOUD_* variables.
+		if value := strings.TrimSpace(os.Getenv("NULANG_CLOUD_URL")); value != "" {
+			runnerURL = value
+		}
+		if value := strings.TrimSpace(os.Getenv("NULANG_CLOUD_TOKEN")); value != "" {
+			runnerToken = value
+		}
+	} else if runnerURL != "" {
+		// Preserve the legacy RUNNER_URL override for existing providers.
 		provider := runtimes.NewRemoteProvider(runnerURL, runnerToken)
 		h.runtimeProviders[name] = provider
 		return provider, nil
