@@ -8,7 +8,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -253,4 +255,36 @@ func TestNulangCloudWriteFileUsesSingleRPCAtLimit(t *testing.T) {
 
 	if err := NewNulangCloudProvider(s.URL, "").WriteFile(context.Background(), "w1", "limit.bin", data); err != nil { t.Fatal(err) }
 	if writes != 1 { t.Fatalf("writes = %d, want 1", writes) }
+}
+
+
+func TestCloneRepositoryForSeedCreatesWorkspaceBranchFromBase(t *testing.T) {
+	source := t.TempDir()
+	run := func(args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", source}, args...)...)
+		out, err := cmd.CombinedOutput()
+		if err != nil { t.Fatalf("git %v: %v: %s", args, err, strings.TrimSpace(string(out))) }
+		return strings.TrimSpace(string(out))
+	}
+	run("init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("base
+"), 0o644); err != nil { t.Fatal(err) }
+	run("add", "README.md")
+	cmd := exec.Command("git", "-C", source, "-c", "user.email=dev-plane@example.invalid", "-c", "user.name=Dev Plane", "commit", "-m", "base")
+	if out, err := cmd.CombinedOutput(); err != nil { t.Fatalf("git commit: %v: %s", err, strings.TrimSpace(string(out))) }
+
+	repo, cleanup, err := cloneRepositoryForSeed(context.Background(), CreateRequest{
+		CloneURL: source,
+		BaseBranch: "main",
+		Branch: "agent/test-workspace",
+	})
+	if err != nil { t.Fatal(err) }
+	defer cleanup()
+
+	branchOut, err := exec.Command("git", "-C", repo, "rev-parse", "--abbrev-ref", "HEAD").CombinedOutput()
+	if err != nil { t.Fatalf("rev-parse branch: %v: %s", err, strings.TrimSpace(string(branchOut))) }
+	if got := strings.TrimSpace(string(branchOut)); got != "agent/test-workspace" { t.Fatalf("branch = %q", got) }
+
+	baseOut, err := exec.Command("git", "-C", repo, "merge-base", "--is-ancestor", "main", "HEAD").CombinedOutput()
+	if err != nil { t.Fatalf("workspace branch is not based on main: %v: %s", err, strings.TrimSpace(string(baseOut))) }
 }
