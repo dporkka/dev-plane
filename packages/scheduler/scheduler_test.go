@@ -9,7 +9,7 @@ import (
 func TestPlanWavesSerializesOwnershipConflictsAndOverlapsDisjointTasks(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 3,
-		Capacity: Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    Capacity{CPU: 4, MemoryMB: 4096},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"apps/api"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
 			{ID: "B", Owns: []string{"apps/api/routes"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
@@ -30,7 +30,7 @@ func TestPlanWavesSerializesOwnershipConflictsAndOverlapsDisjointTasks(t *testin
 func TestPlanWavesRespectsCapacity(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 4,
-		Capacity: Capacity{CPU: 2, MemoryMB: 1024},
+		Capacity:    Capacity{CPU: 2, MemoryMB: 1024},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"a"}, Resources: Resources{CPU: 2, MemoryMB: 512}},
 			{ID: "B", Owns: []string{"b"}, Resources: Resources{CPU: 2, MemoryMB: 512}},
@@ -51,7 +51,7 @@ func TestPlanWavesRespectsCapacity(t *testing.T) {
 func TestPlanWavesHonorsDependencies(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 3,
-		Capacity: Capacity{CPU: 3, MemoryMB: 3072},
+		Capacity:    Capacity{CPU: 3, MemoryMB: 3072},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"a"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
 			{ID: "B", Owns: []string{"b"}, DependsOn: []string{"A"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
@@ -72,7 +72,7 @@ func TestPlanWavesHonorsDependencies(t *testing.T) {
 func TestValidateRejectsDependencyCycle(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 2,
-		Capacity: Capacity{CPU: 2, MemoryMB: 1024},
+		Capacity:    Capacity{CPU: 2, MemoryMB: 1024},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"a"}, DependsOn: []string{"B"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
 			{ID: "B", Owns: []string{"b"}, DependsOn: []string{"A"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
@@ -87,7 +87,7 @@ func TestValidateRejectsDependencyCycle(t *testing.T) {
 func TestValidateRejectsTaskThatCannotFitCapacity(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 2,
-		Capacity: Capacity{CPU: 2, MemoryMB: 1024},
+		Capacity:    Capacity{CPU: 2, MemoryMB: 1024},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"a"}, Resources: Resources{CPU: 3, MemoryMB: 256}},
 		},
@@ -118,7 +118,7 @@ func TestOwnershipConflictUsesConservativePathPrefixes(t *testing.T) {
 func TestReadyTasksSkipsFailedDependentsAndKeepsIndependentWork(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 3,
-		Capacity: Capacity{CPU: 3, MemoryMB: 3072},
+		Capacity:    Capacity{CPU: 3, MemoryMB: 3072},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"a"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
 			{ID: "B", Owns: []string{"b"}, DependsOn: []string{"A"}, Resources: Resources{CPU: 1, MemoryMB: 256}},
@@ -146,11 +146,11 @@ func TestReadyTasksSkipsFailedDependentsAndKeepsIndependentWork(t *testing.T) {
 func TestNextAccountsForAlreadyRunningResourceAndOwnershipClaims(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 3,
-		Capacity: Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    Capacity{CPU: 4, MemoryMB: 4096},
 		Tasks: []Task{
 			{ID: "A", Owns: []string{"apps/api"}, Resources: Resources{CPU: 2, MemoryMB: 1024}},
 			{ID: "B", Owns: []string{"apps/api/routes"}, Resources: Resources{CPU: 1, MemoryMB: 512}},
-			{ID: "C", Owns: []string{"apps/web"}, Resources: Resources{CPU: 2, MemoryMB: 1024}},
+			{ID: "C", Owns: []string{"apps/web"}, Resources: Resources{CPU: 3, MemoryMB: 1024}},
 			{ID: "D", Owns: []string{"packages/shared"}, Resources: Resources{CPU: 1, MemoryMB: 512}},
 		},
 	}
