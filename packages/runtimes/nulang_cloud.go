@@ -144,7 +144,6 @@ func (p *NulangCloudProvider) ReadFile(ctx context.Context, id, path string) ([]
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
-	var out struct { Kind, Content string; Path string `json:"path"` }
 	// content_base64 needs an explicit tag because the wire contract is snake_case.
 	var wire struct { Content string `json:"content_base64"` }
 	if err := json.NewDecoder(resp.Body).Decode(&wire); err != nil { return nil, err }
