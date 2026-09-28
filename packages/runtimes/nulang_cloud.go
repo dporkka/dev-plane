@@ -145,7 +145,9 @@ func (p *NulangCloudProvider) executeCommand(ctx context.Context, id string, cmd
 	timeoutMS := int64(0)
 	if cmd.Timeout > 50*time.Second { return nil, fmt.Errorf("command timeout %s exceeds Nulang Cloud maximum of 50s", cmd.Timeout) }
 	if cmd.Timeout > 0 { timeoutMS = cmd.Timeout.Milliseconds() }
-	body := map[string]any{"command": command, "args": args, "env": cmd.Env}
+	env := cmd.Env
+	if env == nil { env = map[string]string{} }
+	body := map[string]any{"command": command, "args": args, "env": env}
 	if cmd.Dir != "" { body["cwd"] = cmd.Dir }
 	if timeoutMS > 0 { body["timeout_ms"] = timeoutMS }
 	started := time.Now()
