@@ -22,7 +22,7 @@ func main() {
 	cfg := config.Load()
 	logger := newLogger(cfg.LogLevel)
 
-	provider, providerName, err := runtimes.NewProvider(cfg.Runtime, cfg.RuntimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
+	provider, providerName, err := runtimes.NewProvider(cfg.Runtime, cfg.RuntimeBaseDir, cfg.RuntimeURL, cfg.RuntimeToken)
 	if err != nil {
 		logger.Error("failed to initialize workspace runtime", "error", err)
 		os.Exit(1)

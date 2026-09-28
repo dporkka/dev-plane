@@ -48,6 +48,33 @@ func TestNewProviderRemoteRequiresURL(t *testing.T) {
 	}
 }
 
+func TestNewProviderNulangCloud(t *testing.T) {
+	p, name, err := NewProvider("nulang-cloud", "", "https://cloud.nulang.test", "token")
+	if err != nil {
+		t.Fatalf("NewProvider(nulang-cloud) error: %v", err)
+	}
+	if name != "nulang-cloud" {
+		t.Fatalf("name = %q, want nulang-cloud", name)
+	}
+	if _, ok := p.(*NulangCloudProvider); !ok {
+		t.Fatalf("provider type = %T, want *NulangCloudProvider", p)
+	}
+}
+
+func TestNewProviderNulangCloudRequiresURL(t *testing.T) {
+	_, _, err := NewProvider("nulang-cloud", "", "", "token")
+	if err == nil {
+		t.Fatal("NewProvider(nulang-cloud) error = nil, want error")
+	}
+}
+
+func TestNewProviderNulangCloudRequiresToken(t *testing.T) {
+	_, _, err := NewProvider("nulang-cloud", "", "https://cloud.nulang.test", "")
+	if err == nil {
+		t.Fatal("NewProvider(nulang-cloud) error = nil, want error")
+	}
+}
+
 func TestNewProviderUnsupported(t *testing.T) {
 	_, _, err := NewProvider("unknown", "", "", "")
 	if err == nil {

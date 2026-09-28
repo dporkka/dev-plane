@@ -15,7 +15,11 @@ type Config struct {
 	Runtime string
 	// RuntimeBaseDir is the base directory for workspace storage.
 	RuntimeBaseDir string
-	// AuthToken is a shared secret required on incoming requests.
+	// RuntimeURL is the outbound endpoint used by URL-backed providers.
+	RuntimeURL string
+	// RuntimeToken authenticates outbound calls to the selected runtime.
+	RuntimeToken string
+	// AuthToken is the runner's shared secret required on incoming requests.
 	AuthToken string
 	// LogLevel is the slog level.
 	LogLevel string
@@ -27,6 +31,8 @@ func Load() *Config {
 		Port:           8082,
 		Runtime:        os.Getenv("WORKSPACE_RUNTIME"),
 		RuntimeBaseDir: os.Getenv("WORKSPACE_BASE_DIR"),
+		RuntimeURL:     os.Getenv("RUNNER_URL"),
+		RuntimeToken:   os.Getenv("RUNNER_AUTH_TOKEN"),
 		AuthToken:      os.Getenv("RUNNER_AUTH_TOKEN"),
 		LogLevel:       os.Getenv("LOG_LEVEL"),
 	}
@@ -36,6 +42,14 @@ func Load() *Config {
 	}
 	if cfg.RuntimeBaseDir == "" {
 		cfg.RuntimeBaseDir = os.TempDir() + "/ai-dev-control-plane-workspaces"
+	}
+	if cfg.Runtime == "nulang-cloud" {
+		if value := os.Getenv("NULANG_CLOUD_URL"); value != "" {
+			cfg.RuntimeURL = value
+		}
+		if value := os.Getenv("NULANG_CLOUD_TOKEN"); value != "" {
+			cfg.RuntimeToken = value
+		}
 	}
 	if portStr := os.Getenv("RUNNER_PORT"); portStr != "" {
 		if port, err := strconv.Atoi(portStr); err == nil {

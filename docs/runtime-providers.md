@@ -111,7 +111,7 @@ Set via environment variables (or the runner/worker CLI flags `--workspace-runti
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKSPACE_RUNTIME` | `local` | Provider name: `local` or `docker` |
+| `WORKSPACE_RUNTIME` | `local` | Provider name: `local`, `docker`, `remote`, or `nulang-cloud` |
 | `WORKSPACE_BASE_DIR` | `<os-temp>/ai-dev-control-plane-workspaces` | Base directory for workspace staging |
 | `WORKSPACE_TMPFS_SIZE` | _(unset)_ | Optional tmpfs size (e.g. `4g`, `50%`) |
 | `WORKSPACE_TMPFS_DISABLE` | _(unset)_ | Set to `1` or `true` to use regular disk |
@@ -186,9 +186,36 @@ The `runner` service (`apps/runner`) exposes any in-process provider over HTTP. 
 
 `packages/runtimes/client.go` provides `RemoteProvider`, which implements the same `Provider` interface via the runner API.
 
+## Nulang Cloud Runtime
+
+`packages/runtimes/nulang_cloud.go` adapts the Provider contract to Nulang Cloud's authenticated Workspace API. Nulang Cloud owns Firecracker lifecycle, vsock routing, durable workspace disks, checkpoint/fork behavior, and guest isolation; Dev Plane retains repository/task/review semantics.
+
+| Variable | Description |
+|----------|-------------|
+| `WORKSPACE_RUNTIME` | Set to `nulang-cloud` |
+| `NULANG_CLOUD_URL` | Nulang Cloud host-agent Workspace API endpoint |
+| `NULANG_CLOUD_TOKEN` | Internal service token sent as `X-Internal-Auth-Token` |
+
+`RUNNER_URL` and `RUNNER_AUTH_TOKEN` remain compatibility fallbacks for the Nulang Cloud endpoint/token, but dedicated `NULANG_CLOUD_*` variables take precedence so the Nulang service credential is not coupled to the Dev Plane runner credential.
+
+Repository acquisition happens in the trusted Dev Plane process, not inside the guest. The checked-out repository, including `.git`, is archived and uploaded through bounded 4 MiB chunk requests before extraction into `/workspace`. The default guest therefore does not require Git credentials or ambient internet access.
+
+The provider supports workspace create/destroy, validated exec, file read/write, chunked large writes, patch application, portable checkpoint/restore, checkpoint fork, and status. Streaming logs remain unsupported until Nulang Cloud exposes a streaming workspace contract.
+
+Production promotion is intentionally gated on a real-KVM exact-head conformance run:
+
+```bash
+RUN_NULANG_CLOUD_INTEGRATION=1 \
+NULANG_CLOUD_URL=<host-agent-url> \
+NULANG_CLOUD_TOKEN=<internal-token> \
+go test ./packages/runtimes -run TestNulangCloudProviderIntegrationCheckpointRestoreFork -v
+```
+
+The gate covers repository seeding, working-branch creation, command execution, small and chunked file I/O, checkpoint → mutation → restore, checkpoint fork/restart, state verification, and default no-egress behavior.
+
 ## Future Providers
 
-> These providers are not implemented yet. The only supported providers are `local` and `docker`.
+> The implemented providers are `local`, `docker`, `remote`, and `nulang-cloud`. The providers below remain future options.
 
 ### gVisor
 
