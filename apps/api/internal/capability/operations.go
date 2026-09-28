@@ -1,5 +1,7 @@
 package capability
 
+import "github.com/ai-dev-control-plane/models"
+
 // All operations that must go through the Capability Kernel.
 const (
 	// File operations
@@ -143,4 +145,57 @@ var forgeOperationMap = map[string]string{
 func OperationForForge(operation string) (string, bool) {
 	op, ok := forgeOperationMap[operation]
 	return op, ok
+}
+
+
+var forgeAgentRoleOperations = map[string]map[string]struct{}{
+	models.AgentRolePlanner: {
+		ForgeOperationRepoRead: {},
+		ForgeOperationCheckRead: {},
+	},
+	models.AgentRoleImplementer: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationBranchCreate: {},
+		ForgeOperationCommitWrite:  {},
+		ForgeOperationChangeCreate: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleReviewer: {
+		ForgeOperationRepoRead:      {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationCheckRead:     {},
+	},
+	models.AgentRoleTestRunner: {
+		ForgeOperationRepoRead:  {},
+		ForgeOperationCheckRead: {},
+	},
+	models.AgentRoleSecurity: {
+		ForgeOperationRepoRead:      {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationCheckRead:     {},
+	},
+	models.AgentRoleDocs: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationBranchCreate: {},
+		ForgeOperationCommitWrite:  {},
+		ForgeOperationChangeCreate: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleReleaseManager: {
+		ForgeOperationRepoRead:      {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationChangeMerge:  {},
+		ForgeOperationCheckRead:     {},
+	},
+}
+
+// ForgeOperationAllowedForAgentRole enforces least-privilege forge authority
+// independently of the caller's local session grants. Unknown roles fail closed.
+func ForgeOperationAllowedForAgentRole(role, operation string) bool {
+	operations, ok := forgeAgentRoleOperations[role]
+	if !ok {
+		return false
+	}
+	_, ok = operations[operation]
+	return ok
 }
