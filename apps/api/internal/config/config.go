@@ -26,6 +26,8 @@ type Config struct {
 	AgentVaultToken     string
 	AgentVaultProject   string
 	SecretKeys          string
+	NulangWorkloadID     string
+	NulangWorkloadSecret string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -34,6 +36,10 @@ func Load() (*Config, error) {
 	jwtSecret := EnvOrDefault("JWT_SECRET", "")
 	if len(jwtSecret) < 32 {
 		return nil, errors.New("JWT_SECRET must be at least 32 characters")
+	}
+	nulangWorkloadSecret := EnvOrDefault("NULANG_WORKLOAD_SECRET", "")
+	if nulangWorkloadSecret != "" && len(nulangWorkloadSecret) < 32 {
+		return nil, errors.New("NULANG_WORKLOAD_SECRET must be at least 32 characters when configured")
 	}
 
 	return &Config{
@@ -54,6 +60,8 @@ func Load() (*Config, error) {
 		AgentVaultToken:     EnvOrDefault("AGENTVAULT_TOKEN", ""),
 		AgentVaultProject:   EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:          EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
+		NulangWorkloadID:     EnvOrDefault("NULANG_WORKLOAD_ID", "nulang-cloud"),
+		NulangWorkloadSecret: nulangWorkloadSecret,
 	}, nil
 }
 
