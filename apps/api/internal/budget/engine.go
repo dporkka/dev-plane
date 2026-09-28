@@ -117,7 +117,7 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 
 		// Check concurrent runs for project-level budgets
 		if budget.MaxConcurrentAgents > 0 && budget.ProjectID != nil {
-			concurrent, err := e.GetConcurrentRuns(ctx, *budget.ProjectID)
+			concurrent, err := e.GetConcurrentAdmissionRuns(ctx, *budget.ProjectID)
 			if err != nil {
 				e.logWarn("failed to get concurrent runs", "error", err)
 			} else if concurrent > budget.MaxConcurrentAgents {
@@ -135,10 +135,10 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 	return result, nil
 }
 
-// CheckRunStart verifies whether a new run may enter the running set.
-// CheckRun uses a strict-greater-than concurrency guard because it also runs
-// after the candidate has transitioned to running. Admission runs before that
-// transition, so reaching the configured maximum must block the candidate.
+// CheckRunStart verifies whether a claimed run may enter the running set.
+// The caller claims the candidate as "admitting" before this check, so the
+// admission count includes the candidate and must not exceed the configured
+// maximum. This makes concurrent admission attempts fail closed.
 func (e *Engine) CheckRunStart(ctx context.Context, budget *models.Budget, runState *RunState) (*CheckResult, error) {
 	result, err := e.CheckRun(ctx, budget, runState)
 	if err != nil || result == nil || !result.Allowed || budget == nil || budget.IsUnlimited() {
@@ -152,10 +152,10 @@ func (e *Engine) CheckRunStart(ctx context.Context, budget *models.Budget, runSt
 	if err != nil {
 		return nil, fmt.Errorf("check start concurrency: %w", err)
 	}
-	if concurrent >= budget.MaxConcurrentAgents {
+	if concurrent > budget.MaxConcurrentAgents {
 		result.Allowed = false
 		result.Violations = append(result.Violations,
-			fmt.Sprintf("concurrent runs %d reached max %d", concurrent, budget.MaxConcurrentAgents))
+			fmt.Sprintf("concurrent admitted runs %d exceed max %d", concurrent, budget.MaxConcurrentAgents))
 		result.Reason = fmt.Sprintf("budget violations: %v", result.Violations)
 	}
 	return result, nil
@@ -230,6 +230,27 @@ func (e *Engine) GetConcurrentRuns(ctx context.Context, projectID string) (int, 
 		return 0, fmt.Errorf("get concurrent runs: %w", err)
 	}
 
+	return count, nil
+}
+
+// GetConcurrentAdmissionRuns returns running plus atomically claimed
+// "admitting" runs for a project. It is used only by pre-run admission.
+func (e *Engine) GetConcurrentAdmissionRuns(ctx context.Context, projectID string) (int, error) {
+	if e.db == nil {
+		return 0, nil
+	}
+
+	var count int
+	err := e.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM agent_runs ar
+		JOIN tasks t ON ar.task_id = t.id
+		WHERE t.project_id = $1
+		  AND ar.status IN ('running', 'admitting')
+	`, projectID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("get concurrent admission runs: %w", err)
+	}
 	return count, nil
 }
 
