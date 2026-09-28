@@ -116,12 +116,21 @@ func (p *NulangCloudProvider) DestroyWorkspace(ctx context.Context, id string) e
 }
 
 func (p *NulangCloudProvider) ExecuteCommand(ctx context.Context, id string, cmd Command) (*CommandResult, error) {
-	command := cmd.Command
-	args := cmd.Args
-	if len(args) > 0 {
-		command, args = args[0], args[1:]
-	} else if command == "" {
-		return nil, fmt.Errorf("command is required")
+	var command string
+	var args []string
+	if len(cmd.Args) > 0 {
+		if err := ValidateCommandArgs(cmd.Args); err != nil {
+			return nil, fmt.Errorf("invalid command args: %w", err)
+		}
+		command, args = cmd.Args[0], cmd.Args[1:]
+	} else {
+		if cmd.Command == "" { return nil, fmt.Errorf("command is required") }
+		if !cmd.UnsafeShell {
+			if _, err := ParseCommandString(cmd.Command); err != nil {
+				return nil, fmt.Errorf("invalid command: %w", err)
+			}
+		}
+		command, args = "sh", []string{"-c", cmd.Command}
 	}
 	timeoutMS := int64(0)
 	if cmd.Timeout > 50*time.Second { return nil, fmt.Errorf("command timeout %s exceeds Nulang Cloud maximum of 50s", cmd.Timeout) }
@@ -150,7 +159,7 @@ func (p *NulangCloudProvider) ExecuteCommand(ctx context.Context, id string, cmd
 }
 
 func (p *NulangCloudProvider) ReadFile(ctx context.Context, id, path string) ([]byte, error) {
-	resp, err := p.request(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(id)+"/files/read", map[string]any{"path": path})
+	resp, err := p.request(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(id)+"/files/read", map[string]any{"path": path, "max_bytes": nulangCloudSingleFileBytes})
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
