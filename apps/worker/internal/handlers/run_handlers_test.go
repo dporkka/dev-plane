@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -331,6 +332,40 @@ func TestSchedulerAdmissionAtomicClaimBlocksSecondOwnershipConflict(t *testing.T
 	}
 }
 
+func TestSchedulerAdmissionReclaimsStaleAdmissionClaim(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+	stale := time.Now().UTC().Add(-schedulerAdmissionClaimTTL - time.Minute)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'admitting', updated_at = ? WHERE id = 'run-a'`, stale); err != nil {
+		t.Fatalf("mark stale admitting: %v", err)
+	}
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err != nil || !decision.Allowed {
+		t.Fatalf("stale admission = %#v, %v", decision, err)
+	}
+}
+
+func TestSchedulerAdmissionDoesNotStealFreshAdmissionClaim(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'admitting', updated_at = ? WHERE id = 'run-a'`, time.Now().UTC()); err != nil {
+		t.Fatalf("mark fresh admitting: %v", err)
+	}
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err != nil {
+		t.Fatalf("fresh AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "run-already-claimed" {
+		t.Fatalf("fresh admission = %#v, want run-already-claimed", decision)
+	}
+}
+
 func TestSchedulerAdmissionReleaseRestoresOnlyAdmittingRun(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
@@ -436,7 +471,8 @@ func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
