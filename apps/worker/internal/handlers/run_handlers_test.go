@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/nats-io/nats.go"
 
@@ -256,6 +257,61 @@ func TestHandleRunTriggeredExecutesQueuedRun(t *testing.T) {
 	}
 }
 
+func TestHandleRunTriggeredChecksAdmissionBeforeExecuting(t *testing.T) {
+	executor := &fakeRunExecutor{}
+	admission := &fakeRunAdmission{decision: RunAdmissionDecision{Allowed: true}}
+	handler := NewRunHandler(nil, slog.Default(), nil).
+		WithRunExecutor(executor).
+		WithRunAdmission(admission)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"queued"}`)}
+
+	if err := handler.HandleRunTriggered(msg); err != nil {
+		t.Fatalf("HandleRunTriggered() error: %v", err)
+	}
+	if admission.runID != "run-1" || admission.taskID != "task-1" {
+		t.Fatalf("admission checked run/task = %q/%q, want run-1/task-1", admission.runID, admission.taskID)
+	}
+	if executor.runID != "run-1" {
+		t.Fatalf("executor runID = %q, want run-1", executor.runID)
+	}
+}
+
+func TestHandleRunTriggeredDefersWhenAdmissionIsBlocked(t *testing.T) {
+	executor := &fakeRunExecutor{}
+	admission := &fakeRunAdmission{decision: RunAdmissionDecision{Allowed: false, Reason: "ownership-conflict", RetryAfter: time.Second}}
+	handler := NewRunHandler(nil, slog.Default(), nil).
+		WithRunExecutor(executor).
+		WithRunAdmission(admission)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"queued"}`)}
+
+	err := handler.HandleRunTriggered(msg)
+	if !errors.Is(err, ErrRunAdmissionDeferred) {
+		t.Fatalf("HandleRunTriggered() error = %v, want ErrRunAdmissionDeferred", err)
+	}
+	if executor.runID != "" {
+		t.Fatalf("executor runID = %q, want no execution", executor.runID)
+	}
+	if !contains(err.Error(), "ownership-conflict") {
+		t.Fatalf("error = %v, want admission reason", err)
+	}
+}
+
+func TestHandleRunTriggeredFailsClosedOnAdmissionError(t *testing.T) {
+	executor := &fakeRunExecutor{}
+	admission := &fakeRunAdmission{err: errors.New("load active runs")}
+	handler := NewRunHandler(nil, slog.Default(), nil).
+		WithRunExecutor(executor).
+		WithRunAdmission(admission)
+
+	err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
+	if err == nil || !contains(err.Error(), "load active runs") {
+		t.Fatalf("HandleRunTriggered() error = %v, want admission failure", err)
+	}
+	if executor.runID != "" {
+		t.Fatalf("executor runID = %q, want no execution", executor.runID)
+	}
+}
+
 func TestHandleRunTriggeredRequiresExecutor(t *testing.T) {
 	handler := NewRunHandler(nil, slog.Default(), nil)
 	err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1"}`)})
@@ -277,6 +333,19 @@ func TestHandleRunTriggeredReturnsExecutorError(t *testing.T) {
 	if !contains(err.Error(), "model provider unavailable") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+type fakeRunAdmission struct {
+	runID    string
+	taskID   string
+	decision RunAdmissionDecision
+	err      error
+}
+
+func (a *fakeRunAdmission) CheckRunAdmission(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error) {
+	a.runID = runID
+	a.taskID = taskID
+	return a.decision, a.err
 }
 
 type fakeRunExecutor struct {
