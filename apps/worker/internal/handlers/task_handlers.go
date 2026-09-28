@@ -137,7 +137,7 @@ func (h *TaskHandler) schedulerAdmission(ctx context.Context, taskID string) (sc
 		  AND id <> $2
 		  AND status = 'running'
 		  AND deleted_at IS NULL
-		ORDER BY created_at ASC, id ASC
+		ORDER BY id ASC
 	`, repositoryID, taskID)
 	if err != nil {
 		return schedulerAdmissionDecision{}, fmt.Errorf("load active repository tasks: %w", err)
