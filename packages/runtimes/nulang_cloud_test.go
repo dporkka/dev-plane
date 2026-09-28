@@ -7,7 +7,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -30,12 +31,6 @@ func TestNulangCloudCreateWorkspace(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if auth != "Bearer secret" { t.Fatalf("authorization = %q", auth) }
 	if got.ID != "task-123" || got.Provider != "nulang-cloud" || got.Status != "ready" { t.Fatalf("session = %+v", got) }
-}
-
-func TestNulangCloudCreateWorkspaceFailsClosedForCloneURL(t *testing.T) {
-	p := NewNulangCloudProvider("http://unused.invalid", "")
-	_, err := p.CreateWorkspace(context.Background(), CreateRequest{WorktreeName:"task", CloneURL:"https://github.com/example/repo.git"})
-	if err == nil || !strings.Contains(err.Error(), "trusted archive seeding") { t.Fatalf("error = %v", err) }
 }
 
 func TestNulangCloudExecuteCommand(t *testing.T) {
@@ -97,4 +92,75 @@ func TestNulangCloudNotFoundMapsToProviderError(t *testing.T) {
 	defer s.Close()
 	err := NewNulangCloudProvider(s.URL, "").DestroyWorkspace(context.Background(),"missing")
 	if !errors.Is(err, ErrSessionNotFound) { t.Fatalf("error = %v", err) }
+}
+
+
+func TestNulangCloudCreateWorkspaceSeedsRepositoryInBoundedChunks(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("seeded"), 0o644); err != nil { t.Fatal(err) }
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(repo, ".git", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil { t.Fatal(err) }
+
+	var chunks int
+	var sawExtract, sawRemove bool
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/workspaces":
+			_, _ = w.Write([]byte("{\"workspace\":{\"workspace_id\":\"seed\",\"status\":\"running\"},\"guest_ready\":true}"))
+		case r.URL.Path == "/workspaces/seed/files/write-chunk":
+			var body struct {
+				Path string `json:"path"`
+				Content string `json:"content_base64"`
+				Offset int64 `json:"offset"`
+				Truncate bool `json:"truncate"`
+				Sync bool `json:"sync"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+			if body.Path != ".devplane/repo.tar" { t.Fatalf("path = %q", body.Path) }
+			data, err := base64.StdEncoding.DecodeString(body.Content); if err != nil { t.Fatal(err) }
+			if len(data) > nulangCloudSeedChunkBytes { t.Fatalf("chunk = %d", len(data)) }
+			if chunks == 0 && !body.Truncate { t.Fatal("first chunk must truncate") }
+			chunks++
+			_, _ = w.Write([]byte("{\"kind\":\"chunk\",\"path\":\".devplane/repo.tar\",\"offset\":0,\"bytes_written\":1,\"size\":1}"))
+		case r.URL.Path == "/workspaces/seed/exec":
+			var body struct { Command string `json:"command"`; Args []string `json:"args"` }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+			if body.Command == "tar" { sawExtract = true }
+			if body.Command == "rm" { sawRemove = true }
+			_, _ = w.Write([]byte("{\"kind\":\"exec\",\"exit_code\":0,\"timed_out\":false,\"stdout_base64\":\"\",\"stderr_base64\":\"\"}"))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer s.Close()
+
+	p := NewNulangCloudProvider(s.URL, "")
+	p.cloneRepository = func(context.Context, CreateRequest) (string, error) { return repo, nil }
+	got, err := p.CreateWorkspace(context.Background(), CreateRequest{WorktreeName:"seed", CloneURL:"https://example.invalid/repo.git"})
+	if err != nil { t.Fatal(err) }
+	if got.ID != "seed" || chunks == 0 || !sawExtract || !sawRemove {
+		t.Fatalf("session=%+v chunks=%d extract=%v remove=%v", got, chunks, sawExtract, sawRemove)
+	}
+}
+
+func TestNulangCloudCreateWorkspaceDestroysWorkspaceWhenSeedFails(t *testing.T) {
+	var destroyed bool
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/workspaces" {
+			_, _ = w.Write([]byte("{\"workspace\":{\"workspace_id\":\"seed-fail\",\"status\":\"running\"},\"guest_ready\":true}"))
+			return
+		}
+		if r.Method == http.MethodDelete && r.URL.Path == "/workspaces/seed-fail" {
+			destroyed = true
+			_, _ = w.Write([]byte("{}"))
+			return
+		}
+		t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+	}))
+	defer s.Close()
+
+	p := NewNulangCloudProvider(s.URL, "")
+	p.cloneRepository = func(context.Context, CreateRequest) (string, error) { return "", errors.New("clone failed") }
+	_, err := p.CreateWorkspace(context.Background(), CreateRequest{WorktreeName:"seed-fail", CloneURL:"https://example.invalid/repo.git"})
+	if err == nil || !destroyed { t.Fatalf("error=%v destroyed=%v", err, destroyed) }
 }
