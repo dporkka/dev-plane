@@ -298,12 +298,12 @@ func (b *fakeSchedulerStartBudget) CheckRunStart(_ context.Context, runID string
 	return b.allowed, b.reason, b.err
 }
 
-func TestSchedulerAdmissionBlocksBudgetBeforeClaim(t *testing.T) {
+func TestSchedulerAdmissionBlocksBudgetAfterAtomicClaim(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
 	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
 
-	budget := &fakeSchedulerStartBudget{allowed: false, reason: "concurrent runs 2 reached max 2"}
+	budget := &fakeSchedulerStartBudget{allowed: false, reason: "concurrent admitted runs 3 exceed max 2"}
 	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192}).WithStartBudget(budget)
 	decision, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
 	if err != nil {
@@ -320,7 +320,7 @@ func TestSchedulerAdmissionBlocksBudgetBeforeClaim(t *testing.T) {
 		t.Fatalf("query run-a: %v", err)
 	}
 	if status != "queued" {
-		t.Fatalf("run-a status = %q, want queued before scheduler claim", status)
+		t.Fatalf("run-a status = %q, want queued after denied admission releases claim", status)
 	}
 }
 
