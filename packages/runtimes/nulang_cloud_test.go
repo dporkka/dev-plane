@@ -270,8 +270,7 @@ func TestCloneRepositoryForSeedCreatesWorkspaceBranchFromBase(t *testing.T) {
 		return strings.TrimSpace(string(out))
 	}
 	run("init", "-b", "main")
-	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("base
-"), 0o644); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(filepath.Join(source, "README.md"), []byte("base\\n"), 0o644); err != nil { t.Fatal(err) }
 	run("add", "README.md")
 	cmd := exec.Command("git", "-C", source, "-c", "user.email=dev-plane@example.invalid", "-c", "user.name=Dev Plane", "commit", "-m", "base")
 	if out, err := cmd.CombinedOutput(); err != nil { t.Fatalf("git commit: %v: %s", err, strings.TrimSpace(string(out))) }
@@ -309,8 +308,7 @@ func TestNulangCloudExecuteCommandLegacyStringUsesValidatedShell(t *testing.T) {
 
 	got, err := NewNulangCloudProvider(s.URL, "").ExecuteCommand(context.Background(), "w1", Command{Command:"echo hello"})
 	if err != nil { t.Fatal(err) }
-	if got.Stdout != "hello
-" { t.Fatalf("stdout = %q", got.Stdout) }
+	if got.Stdout != "hello\\n" { t.Fatalf("stdout = %q", got.Stdout) }
 }
 
 func TestNulangCloudExecuteCommandRejectsUnsafeLegacyStringByDefault(t *testing.T) {
