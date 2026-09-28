@@ -50,7 +50,7 @@ func (p *NulangCloudProvider) request(ctx context.Context, method, path string, 
 	req, err := http.NewRequestWithContext(ctx, method, p.baseURL+path, reader)
 	if err != nil { return nil, err }
 	if body != nil { req.Header.Set("Content-Type", "application/json") }
-	if p.token != "" { req.Header.Set("Authorization", "Bearer "+p.token) }
+	if p.token != "" { req.Header.Set("X-Internal-Auth-Token", p.token) }
 	return p.client.Do(req)
 }
 
