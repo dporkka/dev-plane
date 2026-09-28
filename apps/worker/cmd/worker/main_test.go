@@ -59,6 +59,23 @@ func TestInitRuntimeProvider_PreservesLegacyRunnerURLOverride(t *testing.T) {
 	}
 }
 
+func TestRuntimeProviderConnectionPrefersDedicatedNulangCloudConfig(t *testing.T) {
+	t.Setenv("RUNNER_URL", "https://runner.test")
+	t.Setenv("RUNNER_AUTH_TOKEN", "runner-token")
+	t.Setenv("NULANG_CLOUD_URL", "https://cloud.nulang.test")
+	t.Setenv("NULANG_CLOUD_TOKEN", "cloud-token")
+
+	url, token := runtimeProviderConnection("nulang-cloud")
+	if url != "https://cloud.nulang.test" || token != "cloud-token" {
+		t.Fatalf("connection = (%q, %q), want dedicated Nulang Cloud values", url, token)
+	}
+
+	url, token = runtimeProviderConnection("docker")
+	if url != "https://runner.test" || token != "runner-token" {
+		t.Fatalf("docker connection = (%q, %q), want RUNNER values", url, token)
+	}
+}
+
 func TestEnvOrDefault(t *testing.T) {
 	key := "TEST_ENV_OR_DEFAULT"
 	os.Unsetenv(key)
