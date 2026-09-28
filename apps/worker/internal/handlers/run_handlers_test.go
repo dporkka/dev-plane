@@ -284,6 +284,240 @@ type fakeRunExecutor struct {
 	err   error
 }
 
+func TestSchedulerAdmissionDeniesOwnershipConflictWithRunningRun(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-running", "run-running", "running", `{"scheduler":{"owns":["apps/api"],"cpu":2,"memory_mb":1024}}`)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":{"owns":["apps/api/routes"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed {
+		t.Fatal("Allowed = true, want false")
+	}
+	if !contains(decision.Reason, "ownership-conflict") {
+		t.Fatalf("Reason = %q", decision.Reason)
+	}
+}
+
+func TestSchedulerAdmissionAtomicClaimBlocksSecondOwnershipConflict(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+	insertSchedulerTask(t, db, "task-b", "run-b", "queued", `{"scheduler":{"owns":["apps/api/routes"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	first, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err != nil || !first.Allowed {
+		t.Fatalf("first admission = %#v, %v", first, err)
+	}
+	second, err := admission.AdmitRun(context.Background(), "run-b", "task-b")
+	if err != nil {
+		t.Fatalf("second AdmitRun() error: %v", err)
+	}
+	if second.Allowed || !contains(second.Reason, "ownership-conflict") {
+		t.Fatalf("second admission = %#v, want ownership conflict", second)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query run-a: %v", err)
+	}
+	if status != "admitting" {
+		t.Fatalf("run-a status = %q, want admitting", status)
+	}
+}
+
+func TestSchedulerAdmissionReleaseRestoresOnlyAdmittingRun(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-a", "task-a")
+	if err != nil || !decision.Allowed {
+		t.Fatalf("admission = %#v, %v", decision, err)
+	}
+	if err := admission.ReleaseRun(context.Background(), "run-a"); err != nil {
+		t.Fatalf("ReleaseRun() error: %v", err)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query run-a: %v", err)
+	}
+	if status != "queued" {
+		t.Fatalf("run-a status = %q, want queued", status)
+	}
+
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'running' WHERE id = 'run-a'`); err != nil {
+		t.Fatalf("mark running: %v", err)
+	}
+	if err := admission.ReleaseRun(context.Background(), "run-a"); err != nil {
+		t.Fatalf("ReleaseRun running: %v", err)
+	}
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query running run-a: %v", err)
+	}
+	if status != "running" {
+		t.Fatalf("running run-a status = %q, want running", status)
+	}
+}
+
+func TestSchedulerAdmissionAllowsDisjointRunWithinCapacity(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-running", "run-running", "running", `{"scheduler":{"owns":["apps/api"],"cpu":2,"memory_mb":1024}}`)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":{"owns":["apps/web"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("Allowed = false, reason %q", decision.Reason)
+	}
+}
+
+func TestSchedulerAdmissionDeniesWhenDependencyIsNotDone(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-dependency", "", "completed", `{"scheduler":{"owns":["packages/shared"],"cpu":1,"memory_mb":256}}`)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":{"owns":["apps/web"],"depends_on":["task-dependency"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed {
+		t.Fatal("Allowed = true, want false")
+	}
+	if !contains(decision.Reason, "dependency-pending") {
+		t.Fatalf("Reason = %q", decision.Reason)
+	}
+}
+
+func TestSchedulerAdmissionAllowsWhenDependencyIsDone(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-dependency", "", "done", `{"scheduler":{"owns":["packages/shared"],"cpu":1,"memory_mb":256}}`)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":{"owns":["apps/web"],"depends_on":["task-dependency"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("Allowed = false, reason %q", decision.Reason)
+	}
+}
+
+func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	db.SetMaxOpenConns(1)
+	_, err = db.Exec(`
+		CREATE TABLE tasks (
+			id TEXT PRIMARY KEY,
+			project_id TEXT NOT NULL DEFAULT 'project-1',
+			repository_id TEXT NOT NULL DEFAULT 'repo-1',
+			status TEXT NOT NULL,
+			metadata TEXT DEFAULT '{}',
+			deleted_at DATETIME
+		);
+		CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			status TEXT NOT NULL
+		);
+	`)
+	if err != nil {
+		t.Fatalf("create scheduler schema: %v", err)
+	}
+	return db
+}
+
+func insertSchedulerTask(t *testing.T, db *sql.DB, taskID, runID, status, metadata string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO tasks (id, status, metadata) VALUES (?, ?, ?)`, taskID, status, metadata); err != nil {
+		t.Fatalf("insert task %s: %v", taskID, err)
+	}
+	if runID != "" {
+		if _, err := db.Exec(`INSERT INTO agent_runs (id, task_id, status) VALUES (?, ?, ?)`, runID, taskID, mapRunStatus(status)); err != nil {
+			t.Fatalf("insert run %s: %v", runID, err)
+		}
+	}
+}
+
+func mapRunStatus(taskStatus string) string {
+	if taskStatus == "running" {
+		return "running"
+	}
+	return "queued"
+}
+
+func TestHandleRunTriggeredRejectsRunWhenAdmissionDenies(t *testing.T) {
+	executor := &fakeRunExecutor{}
+	admission := &fakeRunAdmission{decision: RunAdmissionDecision{Allowed: false, Reason: "ownership-conflict"}}
+	handler := NewRunHandler(nil, slog.Default(), nil).
+		WithRunExecutor(executor).
+		WithRunAdmission(admission)
+
+	err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
+	if err == nil {
+		t.Fatal("expected admission error")
+	}
+	if !contains(err.Error(), "ownership-conflict") {
+		t.Fatalf("error = %v", err)
+	}
+	if executor.runID != "" {
+		t.Fatalf("executor received run %q, want no execution", executor.runID)
+	}
+	if admission.runID != "run-1" || admission.taskID != "task-1" {
+		t.Fatalf("admission saw run=%q task=%q", admission.runID, admission.taskID)
+	}
+}
+
+func TestHandleRunTriggeredExecutesRunWhenAdmissionAllows(t *testing.T) {
+	executor := &fakeRunExecutor{}
+	admission := &fakeRunAdmission{decision: RunAdmissionDecision{Allowed: true}}
+	handler := NewRunHandler(nil, slog.Default(), nil).
+		WithRunExecutor(executor).
+		WithRunAdmission(admission)
+
+	if err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}); err != nil {
+		t.Fatalf("HandleRunTriggered() error: %v", err)
+	}
+	if executor.runID != "run-1" {
+		t.Fatalf("executor runID = %q, want run-1", executor.runID)
+	}
+}
+
+type fakeRunAdmission struct {
+	runID    string
+	taskID   string
+	decision RunAdmissionDecision
+	err      error
+}
+
+func (a *fakeRunAdmission) AdmitRun(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error) {
+	a.runID = runID
+	a.taskID = taskID
+	return a.decision, a.err
+}
+
+func (a *fakeRunAdmission) ReleaseRun(ctx context.Context, runID string) error {
+	return nil
+}
+
 func (e *fakeRunExecutor) ExecuteRun(ctx context.Context, runID string) error {
 	e.runID = runID
 	return e.err
