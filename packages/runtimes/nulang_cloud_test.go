@@ -360,3 +360,34 @@ func TestNulangCloudPublicCommandRejectsProviderOnlyExecutable(t *testing.T) {
 	_, err := p.ExecuteCommand(context.Background(), "w1", Command{Args:[]string{"rm","-rf","."}})
 	if err == nil || !strings.Contains(err.Error(), "not in the allow-list") { t.Fatalf("error = %v", err) }
 }
+
+
+func TestNulangCloudSnapshotSurfacesRestartFailure(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"checkpoint":{"id":"cp1","workspace_id":"w1","created_at_ms":1000},"restarted":false,"restart_error":"guest did not reconnect"}`))
+	}))
+	defer s.Close()
+
+	_, err := NewNulangCloudProvider(s.URL, "").Snapshot(context.Background(), "w1")
+	if err == nil || !strings.Contains(err.Error(), "guest did not reconnect") { t.Fatalf("error = %v", err) }
+}
+
+func TestNulangCloudRestoreSurfacesRestartFailure(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"checkpoint":{"id":"cp1","workspace_id":"w1","created_at_ms":1000},"restarted":false,"restart_error":"restart failed"}`))
+	}))
+	defer s.Close()
+
+	err := NewNulangCloudProvider(s.URL, "").Restore(context.Background(), "w1", &Snapshot{ID:"cp1", SessionID:"w1"})
+	if err == nil || !strings.Contains(err.Error(), "restart failed") { t.Fatalf("error = %v", err) }
+}
+
+func TestNulangCloudGetStatusMapsNotProvisionedToNotFound(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":"missing","status":"not_provisioned","guest_ready":false}`))
+	}))
+	defer s.Close()
+
+	_, err := NewNulangCloudProvider(s.URL, "").GetStatus(context.Background(), "missing")
+	if !errors.Is(err, ErrSessionNotFound) { t.Fatalf("error = %v", err) }
+}
