@@ -159,6 +159,9 @@ func (p *NulangCloudProvider) ReadFile(ctx context.Context, id, path string) ([]
 }
 
 func (p *NulangCloudProvider) WriteFile(ctx context.Context, id, path string, data []byte) error {
+	if len(data) > nulangCloudSingleFileBytes {
+		return p.uploadFileChunks(ctx, id, path, bytes.NewReader(data))
+	}
 	resp, err := p.request(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(id)+"/files/write", map[string]any{"path": path, "content_base64": base64.StdEncoding.EncodeToString(data), "create_parents": true})
 	if err != nil { return err }
 	defer resp.Body.Close()
@@ -213,7 +216,11 @@ func (p *NulangCloudProvider) StreamLogs(context.Context, string) (<-chan LogLin
 }
 
 
-const nulangCloudSeedChunkBytes = 4 * 1024 * 1024
+const (
+	nulangCloudSingleFileBytes = 8 * 1024 * 1024
+	nulangCloudChunkBytes = 4 * 1024 * 1024
+	nulangCloudStreamFileBytes int64 = 64 * 1024 * 1024 * 1024
+)
 
 func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "devplane-nulang-seed-*")
@@ -266,6 +273,29 @@ func (p *NulangCloudProvider) writeFileChunk(ctx context.Context, id, path strin
 	return nil
 }
 
+func (p *NulangCloudProvider) uploadFileChunks(ctx context.Context, id, path string, reader io.Reader) error {
+	buf := make([]byte, nulangCloudChunkBytes)
+	var offset int64
+	first := true
+	for {
+		n, readErr := reader.Read(buf)
+		if n > 0 {
+			if offset > nulangCloudStreamFileBytes-int64(n) {
+				return fmt.Errorf("file exceeds Nulang Cloud streamed-file limit of %d bytes", nulangCloudStreamFileBytes)
+			}
+			if err := p.writeFileChunk(ctx, id, path, offset, buf[:n], first, false); err != nil { return err }
+			first = false
+			offset += int64(n)
+		}
+		if readErr == io.EOF { break }
+		if readErr != nil { return readErr }
+	}
+	// A Read call may return a full final chunk with a nil error. Finalize with
+	// an empty write at the exact end offset so durability does not depend on
+	// detecting EOF on the last data-bearing request.
+	return p.writeFileChunk(ctx, id, path, offset, nil, first, true)
+}
+
 func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req CreateRequest) error {
 	repoDir, cleanupRepo, err := p.cloneRepository(ctx, req)
 	if err != nil { return err }
@@ -278,22 +308,7 @@ func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req
 	f, err := os.Open(archive)
 	if err != nil { return err }
 	defer f.Close()
-	buf := make([]byte, nulangCloudSeedChunkBytes)
-	var offset int64
-	first := true
-	for {
-		n, readErr := f.Read(buf)
-		if n > 0 {
-			if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, buf[:n], first, false); err != nil { return err }
-			first = false
-			offset += int64(n)
-		}
-		if readErr == io.EOF { break }
-		if readErr != nil { return readErr }
-	}
-	// Mark the completed upload durable. A regular file read may return n>0,nil
-	// for the final full chunk, so EOF cannot safely identify the final write.
-	if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, nil, first, true); err != nil { return err }
+	if err := p.uploadFileChunks(ctx, id, ".devplane/repo.tar", f); err != nil { return err }
 	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"tar", "-xf", ".devplane/repo.tar", "-C", "/workspace"}, Dir: "/workspace"})
 	if err != nil { return err }
 	if result.ExitCode != 0 { return fmt.Errorf("extract repository: %s", strings.TrimSpace(result.Stderr)) }
