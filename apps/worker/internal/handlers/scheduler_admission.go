@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ai-dev-control-plane/scheduler"
 )
@@ -21,6 +22,8 @@ type SchedulerAdmission struct {
 	db       *sql.DB
 	capacity SchedulerCapacity
 }
+
+const schedulerAdmissionClaimTTL = 10 * time.Minute
 
 type schedulerTaskMetadata struct {
 	Scheduler *struct {
@@ -152,11 +155,17 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 }
 
 func (a *SchedulerAdmission) claimRun(ctx context.Context, runID string) (bool, error) {
+	now := time.Now().UTC()
+	staleBefore := now.Add(-schedulerAdmissionClaimTTL)
 	result, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'admitting'
-		WHERE id = $1 AND status = 'queued'
-	`, runID)
+		SET status = 'admitting', updated_at = $2
+		WHERE id = $1
+		  AND (
+			status = 'queued'
+			OR (status = 'admitting' AND updated_at < $3)
+		  )
+	`, runID, now, staleBefore)
 	if err != nil {
 		return false, fmt.Errorf("claim scheduler run %s: %w", runID, err)
 	}
@@ -173,9 +182,9 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 	}
 	_, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'queued'
+		SET status = 'queued', updated_at = $2
 		WHERE id = $1 AND status = 'admitting'
-	`, runID)
+	`, runID, time.Now().UTC())
 	if err != nil {
 		return fmt.Errorf("release scheduler run %s: %w", runID, err)
 	}
@@ -199,8 +208,8 @@ func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID st
 	if err != nil {
 		return row, nil, fmt.Errorf("load scheduler candidate: %w", err)
 	}
-	if runStatus != "queued" {
-		return row, nil, fmt.Errorf("scheduler candidate run %s has status %s, want queued", runID, runStatus)
+	if runStatus != "queued" && runStatus != "admitting" {
+		return row, nil, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
 	}
 	var metadata schedulerTaskMetadata
 	if err := json.Unmarshal([]byte(row.Metadata), &metadata); err != nil {
