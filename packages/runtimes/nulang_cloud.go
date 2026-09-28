@@ -209,8 +209,14 @@ func (p *NulangCloudProvider) Snapshot(ctx context.Context, id string) (*Snapsho
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
-	var out struct { Checkpoint struct { ID string `json:"id"`; WorkspaceID string `json:"workspace_id"`; CreatedAtMS int64 `json:"created_at_ms"` } `json:"checkpoint"` }
+	var out struct {
+		Checkpoint struct { ID string `json:"id"`; WorkspaceID string `json:"workspace_id"`; CreatedAtMS int64 `json:"created_at_ms"` } `json:"checkpoint"`
+		RestartError *string `json:"restart_error"`
+	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
+	if out.RestartError != nil && strings.TrimSpace(*out.RestartError) != "" {
+		return nil, fmt.Errorf("Nulang Cloud checkpoint created but workspace restart failed: %s", strings.TrimSpace(*out.RestartError))
+	}
 	return &Snapshot{ID:out.Checkpoint.ID, SessionID:out.Checkpoint.WorkspaceID, Description:"Nulang Cloud portable filesystem checkpoint", CreatedAt:time.UnixMilli(out.Checkpoint.CreatedAtMS).UTC()}, nil
 }
 
@@ -222,6 +228,11 @@ func (p *NulangCloudProvider) Restore(ctx context.Context, id string, snap *Snap
 	if err != nil { return err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return p.apiError(resp) }
+	var out struct { RestartError *string `json:"restart_error"` }
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return err }
+	if out.RestartError != nil && strings.TrimSpace(*out.RestartError) != "" {
+		return fmt.Errorf("Nulang Cloud restore completed but workspace restart failed: %s", strings.TrimSpace(*out.RestartError))
+	}
 	return nil
 }
 
@@ -249,7 +260,9 @@ func (p *NulangCloudProvider) GetStatus(ctx context.Context, id string) (*Sessio
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
 	var out struct { ID string `json:"id"`; Status string `json:"status"`; GuestReady bool `json:"guest_ready"` }
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
-	status := out.Status; if out.GuestReady && status == "running" { status = "ready" }
+	status := out.Status
+	if status == "not_provisioned" { return nil, ErrSessionNotFound }
+	if out.GuestReady && status == "running" { status = "ready" }
 	return &SessionStatus{SessionID:out.ID, Status:status, LastActive:time.Now().UTC()}, nil
 }
 
