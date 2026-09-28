@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,6 +13,27 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
 	"github.com/ai-dev-control-plane/models"
 )
+func (r *Runner) CheckRunStart(ctx context.Context, runID string) (*budget.CheckResult, error) {
+	if r.budget == nil {
+		return &budget.CheckResult{Allowed: true}, nil
+	}
+	run, err := r.loadAgentRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	taskBudget, err := r.loadTaskBudget(ctx, run.TaskID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return &budget.CheckResult{Allowed: true}, nil
+		}
+		return nil, err
+	}
+	if taskBudget == nil {
+		return &budget.CheckResult{Allowed: true}, nil
+	}
+	return r.budget.CheckRunStart(ctx, taskBudget, &budget.RunState{})
+}
+
 func (r *Runner) checkBudget(ctx context.Context, taskID string, state *RunState) (*budget.CheckResult, error) {
 	if r.budget == nil {
 		return &budget.CheckResult{Allowed: true}, nil
