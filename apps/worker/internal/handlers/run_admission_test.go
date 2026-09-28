@@ -35,7 +35,7 @@ func TestSchedulerAdmissionAllowsDisjointOwnershipWithinCapacity(t *testing.T) {
 	budget := &fakeStartBudget{allowed: true}
 	admission := NewSchedulerAdmission(db, budget, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	decision, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err != nil {
@@ -59,7 +59,7 @@ func TestSchedulerAdmissionBlocksOwnershipConflict(t *testing.T) {
 
 	admission := NewSchedulerAdmission(db, &fakeStartBudget{allowed: true}, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	decision, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSchedulerAdmissionBlocksWhenRunningResourcesConsumeCapacity(t *testing.
 
 	admission := NewSchedulerAdmission(db, &fakeStartBudget{allowed: true}, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	decision, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err != nil {
@@ -101,7 +101,7 @@ func TestSchedulerAdmissionFallsBackToWholeRepositoryOwnership(t *testing.T) {
 
 	admission := NewSchedulerAdmission(db, &fakeStartBudget{allowed: true}, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	decision, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err != nil {
@@ -120,7 +120,7 @@ func TestSchedulerAdmissionStopsAtBudgetDenial(t *testing.T) {
 
 	admission := NewSchedulerAdmission(db, &fakeStartBudget{allowed: false, reason: "concurrent runs 2 reached max 2"}, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	decision, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err != nil {
@@ -136,7 +136,7 @@ func TestSchedulerAdmissionFailsClosedOnBudgetError(t *testing.T) {
 	defer db.Close()
 	admission := NewSchedulerAdmission(db, &fakeStartBudget{err: errors.New("budget db unavailable")}, SchedulerAdmissionConfig{
 		MaxParallel: 3,
-		Capacity: scheduler.Capacity{CPU: 4, MemoryMB: 4096},
+		Capacity:    scheduler.Capacity{CPU: 4, MemoryMB: 4096},
 	})
 	_, err := admission.CheckRunAdmission(context.Background(), "run-queued", "task-queued")
 	if err == nil || !strings.Contains(err.Error(), "budget db unavailable") {
