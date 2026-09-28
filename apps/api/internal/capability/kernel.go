@@ -117,6 +117,21 @@ func (k *Kernel) EvaluateForge(ctx context.Context, forgeOperation string, req R
 		return result, ErrCapabilityUnknown
 	}
 	req.Operation = operation
+	if req.ActorType == "agent" && !ForgeOperationAllowedForAgentRole(req.AgentRole, forgeOperation) {
+		result := &Result{
+			Effect:           policies.EffectDeny,
+			RequiredApproval: false,
+			AuditRequired:    true,
+			Reason: fmt.Sprintf(
+				"agent role %q lacks forge authority for %s",
+				req.AgentRole,
+				forgeOperation,
+			),
+			RiskLevel: RiskLevelHigh,
+		}
+		k.logAudit(ctx, req, result)
+		return result, nil
+	}
 	return k.Evaluate(ctx, req)
 }
 
