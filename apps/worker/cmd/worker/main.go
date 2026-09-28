@@ -25,6 +25,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -36,6 +39,7 @@ import (
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/reviewer"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/scheduler"
 
 	"github.com/ai-dev-control-plane/worker/internal/handlers"
 	"github.com/ai-dev-control-plane/worker/internal/webhooks"
@@ -141,7 +145,18 @@ func main() {
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
 	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
+	schedulerAdmission := handlers.NewSchedulerAdmission(database.DB, runExecutor, handlers.SchedulerAdmissionConfig{
+		MaxParallel: positiveEnvInt("DEV_PLANE_MAX_PARALLEL_RUNS", max(1, runtime.NumCPU()/2)),
+		Capacity: scheduler.Capacity{
+			CPU:      float64(positiveEnvInt("DEV_PLANE_SCHEDULER_CPU", runtime.NumCPU())),
+			MemoryMB: positiveEnvInt("DEV_PLANE_SCHEDULER_MEMORY_MB", 8192),
+		},
+		RetryAfter: time.Duration(positiveEnvInt("DEV_PLANE_SCHEDULER_RETRY_SECONDS", 5)) * time.Second,
+	})
+	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+		WithRunExecutor(runExecutor).
+		WithRunAdmission(schedulerAdmission).
+		WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -380,6 +395,18 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+func positiveEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }
 
 // startHealthServer starts a minimal HTTP server for container health checks.
