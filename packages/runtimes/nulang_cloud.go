@@ -23,7 +23,7 @@ type NulangCloudProvider struct {
 	baseURL string
 	token   string
 	client  *http.Client
-	cloneRepository func(context.Context, CreateRequest) (string, error)
+	cloneRepository func(context.Context, CreateRequest) (string, func(), error)
 }
 
 func NewNulangCloudProvider(baseURL, token string) *NulangCloudProvider {
@@ -122,6 +122,7 @@ func (p *NulangCloudProvider) ExecuteCommand(ctx context.Context, id string, cmd
 		return nil, fmt.Errorf("command is required")
 	}
 	timeoutMS := int64(0)
+	if cmd.Timeout > 50*time.Second { return nil, fmt.Errorf("command timeout %s exceeds Nulang Cloud maximum of 50s", cmd.Timeout) }
 	if cmd.Timeout > 0 { timeoutMS = cmd.Timeout.Milliseconds() }
 	body := map[string]any{"command": command, "args": args, "env": cmd.Env}
 	if cmd.Dir != "" { body["cwd"] = cmd.Dir }
@@ -180,7 +181,7 @@ func (p *NulangCloudProvider) Snapshot(ctx context.Context, id string) (*Snapsho
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
-	var out struct { Checkpoint struct { ID, WorkspaceID string; CreatedAtMS int64 `json:"created_at_ms"` } `json:"checkpoint"` }
+	var out struct { Checkpoint struct { ID string `json:"id"`; WorkspaceID string `json:"workspace_id"`; CreatedAtMS int64 `json:"created_at_ms"` } `json:"checkpoint"` }
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
 	return &Snapshot{ID:out.Checkpoint.ID, SessionID:out.Checkpoint.WorkspaceID, Description:"Nulang Cloud portable filesystem checkpoint", CreatedAt:time.UnixMilli(out.Checkpoint.CreatedAtMS).UTC()}, nil
 }
@@ -201,10 +202,10 @@ func (p *NulangCloudProvider) GetStatus(ctx context.Context, id string) (*Sessio
 	if err != nil { return nil, err }
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 { return nil, p.apiError(resp) }
-	var out struct { ID, Status string; GuestReady bool `json:"guest_ready"`; Memory int64 `json:"memory_mb"` }
+	var out struct { ID string `json:"id"`; Status string `json:"status"`; GuestReady bool `json:"guest_ready"` }
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil { return nil, err }
 	status := out.Status; if out.GuestReady && status == "running" { status = "ready" }
-	return &SessionStatus{SessionID:out.ID, Status:status, MemoryUsage:out.Memory<<20, LastActive:time.Now().UTC()}, nil
+	return &SessionStatus{SessionID:out.ID, Status:status, LastActive:time.Now().UTC()}, nil
 }
 
 func (p *NulangCloudProvider) StreamLogs(context.Context, string) (<-chan LogLine, error) {
@@ -214,14 +215,15 @@ func (p *NulangCloudProvider) StreamLogs(context.Context, string) (<-chan LogLin
 
 const nulangCloudSeedChunkBytes = 4 * 1024 * 1024
 
-func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, error) {
+func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "devplane-nulang-seed-*")
-	if err != nil { return "", err }
+	if err != nil { return "", nil, err }
+	cleanup := func() { _ = os.RemoveAll(dir) }
 	repoDir := filepath.Join(dir, "repo")
 	args := []string{"clone", "--no-checkout", req.CloneURL, repoDir}
 	if out, err := exec.CommandContext(ctx, "git", args...).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(dir)
-		return "", fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
+		return "", nil, fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	ref := req.Branch
 	if ref == "" { ref = req.BaseBranch }
@@ -229,16 +231,16 @@ func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, err
 		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", ref)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
-			return "", fmt.Errorf("git checkout %q: %w: %s", ref, err, strings.TrimSpace(string(out)))
+			return "", nil, fmt.Errorf("git checkout %q: %w: %s", ref, err, strings.TrimSpace(string(out)))
 		}
 	} else {
 		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "HEAD")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
-			return "", fmt.Errorf("git checkout HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+			return "", nil, fmt.Errorf("git checkout HEAD: %w: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
-	return repoDir, nil
+	return repoDir, cleanup, nil
 }
 
 func archiveRepository(ctx context.Context, repoDir string) (string, func(), error) {
@@ -265,9 +267,9 @@ func (p *NulangCloudProvider) writeFileChunk(ctx context.Context, id, path strin
 }
 
 func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req CreateRequest) error {
-	repoDir, err := p.cloneRepository(ctx, req)
+	repoDir, cleanupRepo, err := p.cloneRepository(ctx, req)
 	if err != nil { return err }
-	defer os.RemoveAll(filepath.Dir(repoDir))
+	if cleanupRepo != nil { defer cleanupRepo() }
 
 	archive, cleanup, err := archiveRepository(ctx, repoDir)
 	if err != nil { return err }
