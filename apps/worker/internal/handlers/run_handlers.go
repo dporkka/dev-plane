@@ -9,8 +9,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -26,16 +26,27 @@ import (
 
 // RunHandler handles agent run lifecycle events.
 type RunHandler struct {
-	db       *sql.DB
-	logger   *slog.Logger
-	eventBus WorkerEventPublisher
-	executor RunExecutor
-	reviewer ReviewService
+	db        *sql.DB
+	logger    *slog.Logger
+	eventBus  WorkerEventPublisher
+	executor  RunExecutor
+	reviewer  ReviewService
+	admission RunAdmission
 }
 
 // RunExecutor executes queued agent runs.
 type RunExecutor interface {
 	ExecuteRun(ctx context.Context, runID string) error
+}
+
+type RunAdmissionDecision struct {
+	Allowed bool
+	Reason  string
+}
+
+type RunAdmission interface {
+	AdmitRun(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error)
+	ReleaseRun(ctx context.Context, runID string) error
 }
 
 // ReviewService reviews completed agent runs and persists review reports.
@@ -51,6 +62,11 @@ func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublishe
 // WithRunExecutor enables runs.triggered execution dispatch.
 func (h *RunHandler) WithRunExecutor(executor RunExecutor) *RunHandler {
 	h.executor = executor
+	return h
+}
+
+func (h *RunHandler) WithRunAdmission(admission RunAdmission) *RunHandler {
+	h.admission = admission
 	return h
 }
 
@@ -425,7 +441,29 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 	h.logger.Info("executing triggered run", "run_id", event.RunID, "task_id", event.TaskID)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if err := h.executor.ExecuteRun(ctx, event.RunID); err != nil {
+	if h.admission != nil {
+		decision, err := h.admission.AdmitRun(ctx, event.RunID, event.TaskID)
+		if err != nil {
+			return fmt.Errorf("admit run %s: %w", event.RunID, err)
+		}
+		if !decision.Allowed {
+			reason := strings.TrimSpace(decision.Reason)
+			if reason == "" {
+				reason = "scheduler admission denied"
+			}
+			return fmt.Errorf("run %s not admitted: %s", event.RunID, reason)
+		}
+	}
+	err := h.executor.ExecuteRun(ctx, event.RunID)
+	if h.admission != nil {
+		if releaseErr := h.admission.ReleaseRun(ctx, event.RunID); releaseErr != nil {
+			if err == nil {
+				return fmt.Errorf("release run admission %s: %w", event.RunID, releaseErr)
+			}
+			h.logger.Warn("failed to release run admission after execution error", "run_id", event.RunID, "error", releaseErr)
+		}
+	}
+	if err != nil {
 		return fmt.Errorf("execute run %s: %w", event.RunID, err)
 	}
 	return ackMessage(msg)

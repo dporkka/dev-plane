@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -48,11 +49,14 @@ func main() {
 
 	// Parse flags
 	var (
-		dbURL          = flag.String("db", os.Getenv("DATABASE_URL"), "Database URL (or DATABASE_URL env)")
-		natsURL        = flag.String("nats", os.Getenv("NATS_URL"), "NATS URL (or NATS_URL env, default nats://localhost:4222)")
-		logLevel       = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
-		runtimeName    = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
-		runtimeBaseDir = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
+		dbURL                = flag.String("db", os.Getenv("DATABASE_URL"), "Database URL (or DATABASE_URL env)")
+		natsURL              = flag.String("nats", os.Getenv("NATS_URL"), "NATS URL (or NATS_URL env, default nats://localhost:4222)")
+		logLevel             = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
+		runtimeName          = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
+		runtimeBaseDir       = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
+		schedulerMaxParallel = flag.Int("scheduler-max-parallel", envIntOrDefault("SCHEDULER_MAX_PARALLEL", 2), "Maximum concurrently admitted scheduler-enabled runs per worker")
+		schedulerCPU         = flag.Float64("scheduler-cpu", envFloatOrDefault("SCHEDULER_CPU", 4), "Scheduler CPU capacity units")
+		schedulerMemoryMB    = flag.Int("scheduler-memory-mb", envIntOrDefault("SCHEDULER_MEMORY_MB", 8192), "Scheduler memory capacity in MiB")
 	)
 	flag.Parse()
 
@@ -141,7 +145,15 @@ func main() {
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
 	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).WithRunExecutor(runExecutor).WithReviewer(reviewService)
+	runAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
+		MaxParallel: *schedulerMaxParallel,
+		CPU:         *schedulerCPU,
+		MemoryMB:    *schedulerMemoryMB,
+	})
+	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+		WithRunExecutor(runExecutor).
+		WithRunAdmission(runAdmission).
+		WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -380,6 +392,30 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+func envIntOrDefault(key string, defaultValue int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
+}
+
+func envFloatOrDefault(key string, defaultValue float64) float64 {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed <= 0 {
+		return defaultValue
+	}
+	return parsed
 }
 
 // startHealthServer starts a minimal HTTP server for container health checks.
