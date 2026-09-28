@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -80,7 +82,7 @@ func workspaceID(req CreateRequest) string {
 }
 
 func (p *NulangCloudProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
-		id := workspaceID(req)
+	id := workspaceID(req)
 	resp, err := p.request(ctx, http.MethodPost, "/workspaces", map[string]any{"id": id})
 	if err != nil { return nil, fmt.Errorf("create Nulang Cloud workspace: %w", err) }
 	defer resp.Body.Close()
@@ -282,18 +284,16 @@ func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req
 	for {
 		n, readErr := f.Read(buf)
 		if n > 0 {
-			final := readErr == io.EOF
-			if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, buf[:n], first, final); err != nil { return err }
+			if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, buf[:n], first, false); err != nil { return err }
 			first = false
 			offset += int64(n)
 		}
 		if readErr == io.EOF { break }
 		if readErr != nil { return readErr }
 	}
-	// Empty archives are not expected, but keep the transport contract complete.
-	if first {
-		if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", 0, nil, true, true); err != nil { return err }
-	}
+	// Mark the completed upload durable. A regular file read may return n>0,nil
+	// for the final full chunk, so EOF cannot safely identify the final write.
+	if err := p.writeFileChunk(ctx, id, ".devplane/repo.tar", offset, nil, first, true); err != nil { return err }
 	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"tar", "-xf", ".devplane/repo.tar", "-C", "/workspace"}, Dir: "/workspace"})
 	if err != nil { return err }
 	if result.ExitCode != 0 { return fmt.Errorf("extract repository: %s", strings.TrimSpace(result.Stderr)) }
