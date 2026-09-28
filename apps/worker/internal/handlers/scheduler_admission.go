@@ -22,13 +22,15 @@ type SchedulerAdmission struct {
 	capacity SchedulerCapacity
 }
 
+type schedulerConfig struct {
+	Owns      []string `json:"owns"`
+	DependsOn []string `json:"depends_on"`
+	CPU       float64  `json:"cpu"`
+	MemoryMB  int      `json:"memory_mb"`
+}
+
 type schedulerTaskMetadata struct {
-	Scheduler *struct {
-		Owns      []string `json:"owns"`
-		DependsOn []string `json:"depends_on"`
-		CPU       float64  `json:"cpu"`
-		MemoryMB  int      `json:"memory_mb"`
-	} `json:"scheduler"`
+	Scheduler *schedulerConfig `json:"scheduler"`
 }
 
 type schedulerTaskRow struct {
@@ -182,12 +184,7 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 	return nil
 }
 
-func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, *struct {
-	Owns      []string `json:"owns"`
-	DependsOn []string `json:"depends_on"`
-	CPU       float64  `json:"cpu"`
-	MemoryMB  int      `json:"memory_mb"`
-}, error) {
+func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, *schedulerConfig, error) {
 	var row schedulerTaskRow
 	var runStatus string
 	err := a.db.QueryRowContext(ctx, `
@@ -202,23 +199,11 @@ func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID st
 	if runStatus != "queued" {
 		return row, nil, fmt.Errorf("scheduler candidate run %s has status %s, want queued", runID, runStatus)
 	}
-	var metadata schedulerTaskMetadata
-	if err := json.Unmarshal([]byte(row.Metadata), &metadata); err != nil {
-		return row, nil, fmt.Errorf("decode scheduler metadata for task %s: %w", taskID, err)
+	config, err := a.resolveSchedulerConfig(ctx, taskID, row.Metadata)
+	if err != nil {
+		return row, nil, err
 	}
-	if metadata.Scheduler == nil {
-		return row, nil, nil
-	}
-	if len(metadata.Scheduler.Owns) == 0 {
-		return row, nil, fmt.Errorf("scheduler metadata for task %s requires owns", taskID)
-	}
-	if metadata.Scheduler.CPU <= 0 {
-		metadata.Scheduler.CPU = 1
-	}
-	if metadata.Scheduler.MemoryMB <= 0 {
-		metadata.Scheduler.MemoryMB = 1024
-	}
-	return row, metadata.Scheduler, nil
+	return row, config, nil
 }
 
 func (a *SchedulerAdmission) loadRunningClaims(ctx context.Context, candidate schedulerTaskRow) ([]scheduler.Task, bool, error) {
@@ -236,42 +221,123 @@ func (a *SchedulerAdmission) loadRunningClaims(ctx context.Context, candidate sc
 	if err != nil {
 		return nil, false, fmt.Errorf("load running scheduler claims: %w", err)
 	}
-	defer rows.Close()
 
-	var claims []scheduler.Task
+	type rawClaim struct {
+		id       string
+		metadata string
+	}
+	rawClaims := make([]rawClaim, 0)
 	for rows.Next() {
-		var id, raw string
-		if err := rows.Scan(&id, &raw); err != nil {
+		var claim rawClaim
+		if err := rows.Scan(&claim.id, &claim.metadata); err != nil {
+			rows.Close()
 			return nil, false, fmt.Errorf("scan running scheduler claim: %w", err)
 		}
-		var metadata schedulerTaskMetadata
-		if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
-			return nil, false, fmt.Errorf("decode scheduler metadata for running task %s: %w", id, err)
+		rawClaims = append(rawClaims, claim)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, false, fmt.Errorf("iterate running scheduler claims: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, false, fmt.Errorf("close running scheduler claims: %w", err)
+	}
+
+	claims := make([]scheduler.Task, 0, len(rawClaims))
+	for _, raw := range rawClaims {
+		config, err := a.resolveSchedulerConfig(ctx, raw.id, raw.metadata)
+		if err != nil {
+			return nil, false, err
 		}
-		if metadata.Scheduler == nil || len(metadata.Scheduler.Owns) == 0 {
+		if config == nil {
 			return nil, true, nil
 		}
-		cpu := metadata.Scheduler.CPU
-		if cpu <= 0 {
-			cpu = 1
-		}
-		memoryMB := metadata.Scheduler.MemoryMB
-		if memoryMB <= 0 {
-			memoryMB = 1024
-		}
 		claims = append(claims, scheduler.Task{
-			ID:   id,
-			Owns: metadata.Scheduler.Owns,
+			ID:   raw.id,
+			Owns: config.Owns,
 			Resources: scheduler.Resources{
-				CPU:      cpu,
-				MemoryMB: memoryMB,
+				CPU:      config.CPU,
+				MemoryMB: config.MemoryMB,
 			},
 		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, false, fmt.Errorf("iterate running scheduler claims: %w", err)
-	}
 	return claims, false, nil
+}
+
+func (a *SchedulerAdmission) resolveSchedulerConfig(ctx context.Context, taskID, rawMetadata string) (*schedulerConfig, error) {
+	var metadata schedulerTaskMetadata
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+		return nil, fmt.Errorf("decode scheduler metadata for task %s: %w", taskID, err)
+	}
+	if metadata.Scheduler != nil {
+		if len(metadata.Scheduler.Owns) == 0 {
+			return nil, fmt.Errorf("scheduler metadata for task %s requires owns", taskID)
+		}
+		applySchedulerDefaults(metadata.Scheduler)
+		return metadata.Scheduler, nil
+	}
+
+	owns, found, err := a.loadTaskSpecOwnership(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	config := &schedulerConfig{Owns: owns}
+	applySchedulerDefaults(config)
+	return config, nil
+}
+
+func (a *SchedulerAdmission) loadTaskSpecOwnership(ctx context.Context, taskID string) ([]string, bool, error) {
+	var changedRaw, createdRaw string
+	err := a.db.QueryRowContext(ctx, `
+		SELECT COALESCE(files_to_change, '[]'), COALESCE(files_to_create, '[]')
+		FROM task_specs
+		WHERE task_id = $1
+		LIMIT 1
+	`, taskID).Scan(&changedRaw, &createdRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("load task spec ownership for %s: %w", taskID, err)
+	}
+
+	var changed, created []string
+	if err := json.Unmarshal([]byte(changedRaw), &changed); err != nil {
+		return nil, false, fmt.Errorf("decode files_to_change for %s: %w", taskID, err)
+	}
+	if err := json.Unmarshal([]byte(createdRaw), &created); err != nil {
+		return nil, false, fmt.Errorf("decode files_to_create for %s: %w", taskID, err)
+	}
+
+	seen := make(map[string]struct{}, len(changed)+len(created))
+	owns := make([]string, 0, len(changed)+len(created))
+	for _, value := range append(changed, created...) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		owns = append(owns, value)
+	}
+	if len(owns) == 0 {
+		return nil, false, nil
+	}
+	return owns, true, nil
+}
+
+func applySchedulerDefaults(config *schedulerConfig) {
+	if config.CPU <= 0 {
+		config.CPU = 1
+	}
+	if config.MemoryMB <= 0 {
+		config.MemoryMB = 1024
+	}
 }
 
 func parseSchedulerCapacity(maxParallel int, cpu float64, memoryMB int) SchedulerCapacity {

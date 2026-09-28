@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -303,6 +304,55 @@ func TestSchedulerAdmissionDeniesOwnershipConflictWithRunningRun(t *testing.T) {
 	}
 }
 
+func TestSchedulerAdmissionDerivesCandidateOwnershipFromTaskSpec(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-running", "run-running", "running", `{"scheduler":{"owns":["apps/api"],"cpu":2,"memory_mb":1024}}`)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{}`)
+	insertSchedulerTaskSpec(t, db, "task-candidate", []string{"apps/api/routes/campaigns/handler.go"}, []string{"apps/api/routes/campaigns/new.go"})
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || !contains(decision.Reason, "ownership-conflict") {
+		t.Fatalf("decision = %#v, want ownership conflict derived from task spec", decision)
+	}
+}
+
+func TestSchedulerAdmissionDerivesRunningOwnershipFromTaskSpec(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-running", "run-running", "running", `{}`)
+	insertSchedulerTaskSpec(t, db, "task-running", []string{"apps/api"}, nil)
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":{"owns":["apps/api/routes"],"cpu":1,"memory_mb":512}}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || !contains(decision.Reason, "ownership-conflict") {
+		t.Fatalf("decision = %#v, want ownership conflict derived from running task spec", decision)
+	}
+}
+
+func TestSchedulerAdmissionKeepsLegacyBypassWithoutMetadataOrTaskSpec(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-candidate", "run-candidate", "queued", `{}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want legacy bypass", decision)
+	}
+}
+
 func TestSchedulerAdmissionAtomicClaimBlocksSecondOwnershipConflict(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
@@ -433,6 +483,11 @@ func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
 			metadata TEXT DEFAULT '{}',
 			deleted_at DATETIME
 		);
+		CREATE TABLE task_specs (
+			task_id TEXT PRIMARY KEY,
+			files_to_change TEXT DEFAULT '[]',
+			files_to_create TEXT DEFAULT '[]'
+		);
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
@@ -454,6 +509,15 @@ func insertSchedulerTask(t *testing.T, db *sql.DB, taskID, runID, status, metada
 		if _, err := db.Exec(`INSERT INTO agent_runs (id, task_id, status) VALUES (?, ?, ?)`, runID, taskID, mapRunStatus(status)); err != nil {
 			t.Fatalf("insert run %s: %v", runID, err)
 		}
+	}
+}
+
+func insertSchedulerTaskSpec(t *testing.T, db *sql.DB, taskID string, filesToChange, filesToCreate []string) {
+	t.Helper()
+	changed, _ := json.Marshal(filesToChange)
+	created, _ := json.Marshal(filesToCreate)
+	if _, err := db.Exec(`INSERT INTO task_specs (task_id, files_to_change, files_to_create) VALUES (?, ?, ?)`, taskID, string(changed), string(created)); err != nil {
+		t.Fatalf("insert task spec %s: %v", taskID, err)
 	}
 }
 
