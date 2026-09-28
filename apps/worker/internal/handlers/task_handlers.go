@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/scheduler"
 )
 
 // TaskHandler handles task-related events.
@@ -70,6 +72,172 @@ func (h *TaskHandler) HandleTaskCreated(msg *nats.Msg) error {
 
 	h.logger.Info("task transitioned to spec_review", "task_id", event.TaskID)
 	return msg.Ack()
+}
+
+type schedulerAdmissionDecision struct {
+	Allowed bool
+	Reason  string
+}
+
+type schedulerTaskClaim struct {
+	ID   string
+	Owns []string
+}
+
+func (h *TaskHandler) schedulerAdmission(ctx context.Context, taskID string) (schedulerAdmissionDecision, error) {
+	if h.db == nil {
+		return schedulerAdmissionDecision{Allowed: true}, nil
+	}
+
+	var projectID, repositoryID string
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT project_id, repository_id
+		FROM tasks
+		WHERE id = $1 AND deleted_at IS NULL
+	`, taskID).Scan(&projectID, &repositoryID); err != nil {
+		return schedulerAdmissionDecision{}, fmt.Errorf("load task scheduler scope: %w", err)
+	}
+
+	var maxConcurrent int
+	err := h.db.QueryRowContext(ctx, `
+		SELECT max_concurrent_agents
+		FROM budgets
+		WHERE project_id = $1
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, projectID).Scan(&maxConcurrent)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return schedulerAdmissionDecision{}, fmt.Errorf("load project concurrency budget: %w", err)
+	}
+	if maxConcurrent > 0 {
+		var active int
+		if err := h.db.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM tasks
+			WHERE project_id = $1
+			  AND status = 'running'
+			  AND deleted_at IS NULL
+		`, projectID).Scan(&active); err != nil {
+			return schedulerAdmissionDecision{}, fmt.Errorf("count active project tasks: %w", err)
+		}
+		if active >= maxConcurrent {
+			return schedulerAdmissionDecision{Allowed: false, Reason: "concurrency-budget"}, nil
+		}
+	}
+
+	candidateOwns, candidateKnown, err := h.loadTaskOwnership(ctx, taskID)
+	if err != nil {
+		return schedulerAdmissionDecision{}, err
+	}
+
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id
+		FROM tasks
+		WHERE repository_id = $1
+		  AND id <> $2
+		  AND status = 'running'
+		  AND deleted_at IS NULL
+		ORDER BY created_at ASC, id ASC
+	`, repositoryID, taskID)
+	if err != nil {
+		return schedulerAdmissionDecision{}, fmt.Errorf("load active repository tasks: %w", err)
+	}
+	defer rows.Close()
+
+	running := make([]schedulerTaskClaim, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return schedulerAdmissionDecision{}, fmt.Errorf("scan active repository task: %w", err)
+		}
+		owns, known, err := h.loadTaskOwnership(ctx, id)
+		if err != nil {
+			return schedulerAdmissionDecision{}, err
+		}
+		if !known {
+			return schedulerAdmissionDecision{Allowed: false, Reason: "ownership-unknown"}, nil
+		}
+		running = append(running, schedulerTaskClaim{ID: id, Owns: owns})
+	}
+	if err := rows.Err(); err != nil {
+		return schedulerAdmissionDecision{}, fmt.Errorf("iterate active repository tasks: %w", err)
+	}
+
+	if len(running) == 0 {
+		return schedulerAdmissionDecision{Allowed: true}, nil
+	}
+	if !candidateKnown {
+		return schedulerAdmissionDecision{Allowed: false, Reason: "ownership-unknown"}, nil
+	}
+
+	tasks := make([]scheduler.Task, 0, len(running)+1)
+	state := scheduler.State{}
+	for _, claim := range running {
+		tasks = append(tasks, scheduler.Task{
+			ID: claim.ID, Owns: claim.Owns,
+			Resources: scheduler.Resources{CPU: 1, MemoryMB: 1},
+		})
+		state[claim.ID] = scheduler.StatusRunning
+	}
+	tasks = append(tasks, scheduler.Task{
+		ID: taskID, Owns: candidateOwns,
+		Resources: scheduler.Resources{CPU: 1, MemoryMB: 1},
+	})
+	state[taskID] = scheduler.StatusPending
+
+	parallel := len(tasks)
+	decision, err := scheduler.Next(scheduler.Manifest{
+		MaxParallel: parallel,
+		Capacity: scheduler.Capacity{CPU: float64(parallel), MemoryMB: parallel},
+		Tasks: tasks,
+	}, state)
+	if err != nil {
+		return schedulerAdmissionDecision{}, fmt.Errorf("evaluate scheduler admission: %w", err)
+	}
+	for _, ready := range decision.Ready {
+		if ready == taskID {
+			return schedulerAdmissionDecision{Allowed: true}, nil
+		}
+	}
+	return schedulerAdmissionDecision{Allowed: false, Reason: "ownership-conflict"}, nil
+}
+
+func (h *TaskHandler) loadTaskOwnership(ctx context.Context, taskID string) ([]string, bool, error) {
+	var changedJSON, createdJSON string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT files_to_change, files_to_create
+		FROM task_specs
+		WHERE task_id = $1
+		LIMIT 1
+	`, taskID).Scan(&changedJSON, &createdJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("load task ownership for %s: %w", taskID, err)
+	}
+
+	var changed, created []string
+	if err := json.Unmarshal([]byte(changedJSON), &changed); err != nil {
+		return nil, false, fmt.Errorf("decode files_to_change for %s: %w", taskID, err)
+	}
+	if err := json.Unmarshal([]byte(createdJSON), &created); err != nil {
+		return nil, false, fmt.Errorf("decode files_to_create for %s: %w", taskID, err)
+	}
+	seen := map[string]struct{}{}
+	owns := make([]string, 0, len(changed)+len(created))
+	for _, value := range append(changed, created...) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		owns = append(owns, value)
+	}
+	return owns, len(owns) > 0, nil
 }
 
 // HandleTaskApproved processes tasks.approved events.
