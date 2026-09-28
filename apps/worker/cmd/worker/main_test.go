@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestInitRuntimeProvider_RejectsLocalInProduction(t *testing.T) {
@@ -27,6 +29,33 @@ func TestInitRuntimeProvider_AllowsLocalInDevelopment(t *testing.T) {
 	_, _, err := initRuntimeProvider("local", "/tmp/workspaces", "", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestInitRuntimeProvider_NulangCloudUsesWorkspaceAPI(t *testing.T) {
+	t.Setenv("APP_ENV", "production")
+	provider, name, err := initRuntimeProvider("nulang-cloud", "/tmp/workspaces", "https://cloud.nulang.test", "internal-token")
+	if err != nil {
+		t.Fatalf("initRuntimeProvider(nulang-cloud) error: %v", err)
+	}
+	if name != "nulang-cloud" {
+		t.Fatalf("name = %q, want nulang-cloud", name)
+	}
+	if _, ok := provider.(*runtimes.NulangCloudProvider); !ok {
+		t.Fatalf("provider type = %T, want *runtimes.NulangCloudProvider", provider)
+	}
+}
+
+func TestInitRuntimeProvider_PreservesLegacyRunnerURLOverride(t *testing.T) {
+	provider, name, err := initRuntimeProvider("docker", "/tmp/workspaces", "https://runner.test", "runner-token")
+	if err != nil {
+		t.Fatalf("initRuntimeProvider(docker with RUNNER_URL) error: %v", err)
+	}
+	if name != "remote" {
+		t.Fatalf("name = %q, want remote", name)
+	}
+	if _, ok := provider.(*runtimes.RemoteProvider); !ok {
+		t.Fatalf("provider type = %T, want *runtimes.RemoteProvider", provider)
 	}
 }
 
