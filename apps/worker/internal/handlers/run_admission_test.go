@@ -162,7 +162,8 @@ func setupAdmissionDB(t *testing.T) *sql.DB {
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	if err != nil {
