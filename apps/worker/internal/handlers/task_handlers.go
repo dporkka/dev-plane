@@ -142,14 +142,25 @@ func (h *TaskHandler) schedulerAdmission(ctx context.Context, taskID string) (sc
 	if err != nil {
 		return schedulerAdmissionDecision{}, fmt.Errorf("load active repository tasks: %w", err)
 	}
-	defer rows.Close()
-
-	running := make([]schedulerTaskClaim, 0)
+	activeIDs := make([]string, 0)
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
+			rows.Close()
 			return schedulerAdmissionDecision{}, fmt.Errorf("scan active repository task: %w", err)
 		}
+		activeIDs = append(activeIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return schedulerAdmissionDecision{}, fmt.Errorf("iterate active repository tasks: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return schedulerAdmissionDecision{}, fmt.Errorf("close active repository tasks: %w", err)
+	}
+
+	running := make([]schedulerTaskClaim, 0, len(activeIDs))
+	for _, id := range activeIDs {
 		owns, known, err := h.loadTaskOwnership(ctx, id)
 		if err != nil {
 			return schedulerAdmissionDecision{}, err
@@ -158,9 +169,6 @@ func (h *TaskHandler) schedulerAdmission(ctx context.Context, taskID string) (sc
 			return schedulerAdmissionDecision{Allowed: false, Reason: "ownership-unknown"}, nil
 		}
 		running = append(running, schedulerTaskClaim{ID: id, Owns: owns})
-	}
-	if err := rows.Err(); err != nil {
-		return schedulerAdmissionDecision{}, fmt.Errorf("iterate active repository tasks: %w", err)
 	}
 
 	if len(running) == 0 {
