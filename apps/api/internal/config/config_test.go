@@ -31,6 +31,8 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("LINEAR_WEBHOOK_SECRET")
 	os.Unsetenv("SLACK_SIGNING_SECRET")
 	os.Unsetenv("DISCORD_WEBHOOK_SECRET")
+	os.Unsetenv("NULANG_WORKLOAD_ID")
+	os.Unsetenv("NULANG_WORKLOAD_SECRET")
 
 	cfg, err := Load()
 	if err != nil {
@@ -41,6 +43,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assertEqual(t, cfg.LogLevel, "info")
 	assertEqual(t, cfg.SecretKeys, "")
 	assertEqual(t, cfg.GitHubWebhookSecret, "")
+	assertEqual(t, cfg.NulangWorkloadID, "nulang-cloud")
+	assertEqual(t, cfg.NulangWorkloadSecret, "")
 	assertEqual(t, len(cfg.AllowedOrigins), 1)
 	assertEqual(t, cfg.AllowedOrigins[0], "http://localhost:3000")
 }
@@ -52,6 +56,8 @@ func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("LOG_LEVEL", "debug")
 	os.Setenv("SECRET_ENCRYPTION_KEYS", "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	os.Setenv("GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
+	os.Setenv("NULANG_WORKLOAD_ID", "nulang-ci")
+	os.Setenv("NULANG_WORKLOAD_SECRET", "0123456789abcdef0123456789abcdef")
 	defer func() {
 		os.Unsetenv("JWT_SECRET")
 		os.Unsetenv("PORT")
@@ -62,6 +68,8 @@ func TestLoad_FromEnv(t *testing.T) {
 		os.Unsetenv("LINEAR_WEBHOOK_SECRET")
 		os.Unsetenv("SLACK_SIGNING_SECRET")
 		os.Unsetenv("DISCORD_WEBHOOK_SECRET")
+		os.Unsetenv("NULANG_WORKLOAD_ID")
+		os.Unsetenv("NULANG_WORKLOAD_SECRET")
 	}()
 
 	cfg, err := Load()
@@ -73,6 +81,8 @@ func TestLoad_FromEnv(t *testing.T) {
 	assertEqual(t, cfg.LogLevel, "debug")
 	assertEqual(t, cfg.SecretKeys, "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	assertEqual(t, cfg.GitHubWebhookSecret, "webhook-secret")
+	assertEqual(t, cfg.NulangWorkloadID, "nulang-ci")
+	assertEqual(t, cfg.NulangWorkloadSecret, "0123456789abcdef0123456789abcdef")
 }
 
 func TestLoad_CustomPort(t *testing.T) {
@@ -135,5 +145,18 @@ func TestLoad_RejectsShortJWTSecret(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("expected error for short JWT_SECRET")
+	}
+}
+
+func TestLoad_RejectsShortNulangWorkloadSecret(t *testing.T) {
+	setValidJWTSecret(t)
+	os.Setenv("NULANG_WORKLOAD_SECRET", "short")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		os.Unsetenv("NULANG_WORKLOAD_SECRET")
+	}()
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for short NULANG_WORKLOAD_SECRET")
 	}
 }
