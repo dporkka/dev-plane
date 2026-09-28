@@ -39,16 +39,15 @@ func TestForgeOperationMapping(t *testing.T) {
 	}
 }
 
-
 func TestKernelEvaluateForgeUsesDevPlanePolicy(t *testing.T) {
 	ctx := context.Background()
 	k := NewKernel(nil, nil, nil, nil)
 
 	tests := []struct {
-		name             string
-		forgeOp          string
-		wantEffect       policies.Effect
-		wantApproval     bool
+		name         string
+		forgeOp      string
+		wantEffect   policies.Effect
+		wantApproval bool
 	}{
 		{"repo read allowed", ForgeOperationRepoRead, policies.EffectAllow, false},
 		{"check read allowed", ForgeOperationCheckRead, policies.EffectAllow, false},
