@@ -18,7 +18,7 @@ import (
 func TestNulangCloudCreateWorkspace(t *testing.T) {
 	var auth string
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth = r.Header.Get("Authorization")
+		auth = r.Header.Get("X-Internal-Auth-Token")
 		if r.Method != http.MethodPost || r.URL.Path != "/workspaces" { t.Fatalf("request = %s %s", r.Method, r.URL.Path) }
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
@@ -31,7 +31,7 @@ func TestNulangCloudCreateWorkspace(t *testing.T) {
 	p := NewNulangCloudProvider(s.URL, "secret")
 	got, err := p.CreateWorkspace(context.Background(), CreateRequest{WorktreeName:"Task 123"})
 	if err != nil { t.Fatal(err) }
-	if auth != "Bearer secret" { t.Fatalf("authorization = %q", auth) }
+	if auth != "secret" { t.Fatalf("X-Internal-Auth-Token = %q", auth) }
 	if got.ID != "task-123" || got.Provider != "nulang-cloud" || got.Status != "ready" { t.Fatalf("session = %+v", got) }
 }
 
