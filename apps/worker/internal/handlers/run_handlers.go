@@ -30,12 +30,25 @@ type RunHandler struct {
 	logger   *slog.Logger
 	eventBus WorkerEventPublisher
 	executor RunExecutor
-	reviewer ReviewService
+	reviewer  ReviewService
+	admission RunAdmission
 }
 
 // RunExecutor executes queued agent runs.
 type RunExecutor interface {
 	ExecuteRun(ctx context.Context, runID string) error
+}
+
+var ErrRunAdmissionDeferred = errors.New("run admission deferred")
+
+type RunAdmissionDecision struct {
+	Allowed    bool
+	Reason     string
+	RetryAfter time.Duration
+}
+
+type RunAdmission interface {
+	CheckRunAdmission(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error)
 }
 
 // ReviewService reviews completed agent runs and persists review reports.
@@ -51,6 +64,11 @@ func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublishe
 // WithRunExecutor enables runs.triggered execution dispatch.
 func (h *RunHandler) WithRunExecutor(executor RunExecutor) *RunHandler {
 	h.executor = executor
+	return h
+}
+
+func (h *RunHandler) WithRunAdmission(admission RunAdmission) *RunHandler {
+	h.admission = admission
 	return h
 }
 
@@ -425,6 +443,19 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 	h.logger.Info("executing triggered run", "run_id", event.RunID, "task_id", event.TaskID)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
+	if h.admission != nil {
+		decision, err := h.admission.CheckRunAdmission(ctx, event.RunID, event.TaskID)
+		if err != nil {
+			return fmt.Errorf("check run admission: %w", err)
+		}
+		if !decision.Allowed {
+			reason := strings.TrimSpace(decision.Reason)
+			if reason == "" {
+				reason = "scheduler-blocked"
+			}
+			return fmt.Errorf("%w: %s", ErrRunAdmissionDeferred, reason)
+		}
+	}
 	if err := h.executor.ExecuteRun(ctx, event.RunID); err != nil {
 		return fmt.Errorf("execute run %s: %w", event.RunID, err)
 	}
