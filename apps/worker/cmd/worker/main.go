@@ -118,7 +118,8 @@ func main() {
 	}
 	logger.Info("NATS event bus connected and streams created")
 
-	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
+	runtimeURL, runtimeToken := runtimeProviderConnection(*runtimeName)
+	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, runtimeURL, runtimeToken)
 	if err != nil {
 		logger.Error("failed to initialize workspace runtime", "error", err)
 		os.Exit(1)
@@ -359,6 +360,20 @@ func detectDriver(url string) string {
 		return "postgres"
 	}
 	return "unknown"
+}
+
+func runtimeProviderConnection(name string) (string, string) {
+	runtimeURL := os.Getenv("RUNNER_URL")
+	runtimeToken := os.Getenv("RUNNER_AUTH_TOKEN")
+	if name == "nulang-cloud" {
+		if value := os.Getenv("NULANG_CLOUD_URL"); value != "" {
+			runtimeURL = value
+		}
+		if value := os.Getenv("NULANG_CLOUD_TOKEN"); value != "" {
+			runtimeToken = value
+		}
+	}
+	return runtimeURL, runtimeToken
 }
 
 func initRuntimeProvider(name, baseDir, runnerURL, runnerToken string) (runtimes.Provider, string, error) {
