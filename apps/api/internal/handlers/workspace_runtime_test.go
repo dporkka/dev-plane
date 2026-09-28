@@ -7,8 +7,10 @@ import (
 )
 
 func TestRuntimeProviderNulangCloudUsesWorkspaceAPI(t *testing.T) {
-	t.Setenv("RUNNER_URL", "https://cloud.nulang.test")
-	t.Setenv("RUNNER_AUTH_TOKEN", "internal-token")
+	t.Setenv("RUNNER_URL", "https://legacy-runner.test")
+	t.Setenv("RUNNER_AUTH_TOKEN", "legacy-runner-token")
+	t.Setenv("NULANG_CLOUD_URL", "https://cloud.nulang.test")
+	t.Setenv("NULANG_CLOUD_TOKEN", "internal-token")
 
 	h := &Handler{}
 	provider, err := h.runtimeProvider("nulang-cloud")
