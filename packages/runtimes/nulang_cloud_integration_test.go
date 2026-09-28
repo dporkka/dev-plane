@@ -19,7 +19,10 @@ func TestNulangCloudProviderIntegrationCheckpointRestoreFork(t *testing.T) {
 	if baseURL == "" {
 		t.Fatal("NULANG_CLOUD_URL is required when RUN_NULANG_CLOUD_INTEGRATION=1")
 	}
-	token := os.Getenv("NULANG_CLOUD_TOKEN")
+	token := strings.TrimSpace(os.Getenv("NULANG_CLOUD_TOKEN"))
+	if token == "" {
+		t.Fatal("NULANG_CLOUD_TOKEN is required when RUN_NULANG_CLOUD_INTEGRATION=1")
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
