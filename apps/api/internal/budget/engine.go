@@ -135,7 +135,6 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 	return result, nil
 }
 
-
 // CheckRunStart verifies whether a new run may enter the running set.
 // CheckRun uses a strict-greater-than concurrency guard because it also runs
 // after the candidate has transitioned to running. Admission runs before that
