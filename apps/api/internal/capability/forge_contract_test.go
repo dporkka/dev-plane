@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
 
@@ -85,5 +86,45 @@ func TestKernelEvaluateForgeUnknownFailsClosed(t *testing.T) {
 	}
 	if result == nil || result.Effect != policies.EffectDeny {
 		t.Fatalf("result = %+v, want deny", result)
+	}
+}
+
+
+func TestKernelEvaluateForgeEnforcesAgentRoleBoundary(t *testing.T) {
+	k := NewKernel(nil, nil, nil, nil)
+	ctx := context.Background()
+
+	tests := []struct {
+		name      string
+		role      string
+		forgeOp   string
+		wantDeny  bool
+	}{
+		{"implementer may write commits", models.AgentRoleImplementer, ForgeOperationCommitWrite, false},
+		{"implementer cannot review", models.AgentRoleImplementer, ForgeOperationChangeReview, true},
+		{"implementer cannot merge", models.AgentRoleImplementer, ForgeOperationChangeMerge, true},
+		{"reviewer may review", models.AgentRoleReviewer, ForgeOperationChangeReview, false},
+		{"reviewer cannot write commits", models.AgentRoleReviewer, ForgeOperationCommitWrite, true},
+		{"release manager may request merge", models.AgentRoleReleaseManager, ForgeOperationChangeMerge, false},
+		{"planner is read only", models.AgentRolePlanner, ForgeOperationRepoRead, false},
+		{"planner cannot create branch", models.AgentRolePlanner, ForgeOperationBranchCreate, true},
+		{"unknown role fails closed", "mystery-agent", ForgeOperationRepoRead, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := k.EvaluateForge(ctx, tt.forgeOp, Request{
+				ActorType: "agent",
+				AgentRole: tt.role,
+				Resource:  "nulang-org/nulang",
+			})
+			if err != nil {
+				t.Fatalf("EvaluateForge() error: %v", err)
+			}
+			gotDeny := result.Effect == policies.EffectDeny
+			if gotDeny != tt.wantDeny {
+				t.Fatalf("effect = %q, wantDeny=%v reason=%s", result.Effect, tt.wantDeny, result.Reason)
+			}
+		})
 	}
 }
