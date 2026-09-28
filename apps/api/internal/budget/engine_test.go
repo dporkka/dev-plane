@@ -840,6 +840,65 @@ func TestCheckRun_MultipleViolations(t *testing.T) {
 	}
 }
 
+func TestCheckRunStartBlocksWhenConcurrentRunsEqualLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	engine := NewEngine(db)
+	ctx := context.Background()
+	budget := makeBudget()
+	budget.MaxConcurrentAgents = 2
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES
+			('run-1', 'task-1', 'running'),
+			('run-2', 'task-1', 'running');
+	`)
+	if err != nil {
+		t.Fatalf("seed running agents: %v", err)
+	}
+
+	result, err := engine.CheckRunStart(ctx, budget, &RunState{})
+	if err != nil {
+		t.Fatalf("CheckRunStart() error: %v", err)
+	}
+	if result.Allowed {
+		t.Fatalf("CheckRunStart() allowed at concurrency limit: %+v", result)
+	}
+	if !strings.Contains(result.Reason, "concurrent runs 2 reached max 2") {
+		t.Fatalf("CheckRunStart() reason = %q", result.Reason)
+	}
+}
+
+func TestCheckRunStartAllowsBelowConcurrentLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	engine := NewEngine(db)
+	ctx := context.Background()
+	budget := makeBudget()
+	budget.MaxConcurrentAgents = 2
+
+	_, err := db.Exec(`
+		INSERT INTO projects (id, organization_id, name, slug) VALUES ('project-1', 'org-1', 'Project 1', 'project-1');
+		INSERT INTO tasks (id, project_id, repository_id, created_by, title) VALUES ('task-1', 'project-1', 'repo-1', 'user-1', 'Task 1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'running');
+	`)
+	if err != nil {
+		t.Fatalf("seed running agent: %v", err)
+	}
+
+	result, err := engine.CheckRunStart(ctx, budget, &RunState{})
+	if err != nil {
+		t.Fatalf("CheckRunStart() error: %v", err)
+	}
+	if !result.Allowed {
+		t.Fatalf("CheckRunStart() denied below concurrency limit: %+v", result)
+	}
+}
+
 // TestNewEngine verifies engine creation.
 func TestNewEngine(t *testing.T) {
 	db := setupTestDB(t)
