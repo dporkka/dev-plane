@@ -9,8 +9,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -26,10 +26,10 @@ import (
 
 // RunHandler handles agent run lifecycle events.
 type RunHandler struct {
-	db       *sql.DB
-	logger   *slog.Logger
-	eventBus WorkerEventPublisher
-	executor RunExecutor
+	db        *sql.DB
+	logger    *slog.Logger
+	eventBus  WorkerEventPublisher
+	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
 }
