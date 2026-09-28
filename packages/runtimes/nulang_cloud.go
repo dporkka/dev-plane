@@ -98,7 +98,9 @@ func (p *NulangCloudProvider) CreateWorkspace(ctx context.Context, req CreateReq
 	session := &Session{ID: out.Workspace.WorkspaceID, WorkspaceID: out.Workspace.WorkspaceID, Status: status, Provider: "nulang-cloud", CreatedAt: time.Now().UTC()}
 	if req.CloneURL != "" {
 		if err := p.seedRepository(ctx, session.ID, req); err != nil {
-			_ = p.DestroyWorkspace(context.Background(), session.ID)
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			_ = p.DestroyWorkspace(cleanupCtx, session.ID)
+			cancel()
 			return nil, fmt.Errorf("seed Nulang Cloud workspace: %w", err)
 		}
 	}
@@ -172,10 +174,14 @@ func (p *NulangCloudProvider) WriteFile(ctx context.Context, id, path string, da
 func (p *NulangCloudProvider) ApplyPatch(ctx context.Context, id, patch string) error {
 	const patchPath = ".devplane/patch.diff"
 	if err := p.WriteFile(ctx, id, patchPath, []byte(patch)); err != nil { return err }
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = p.ExecuteCommand(cleanupCtx, id, Command{Args: []string{"rm", "-f", patchPath}, Dir: "/workspace"})
+	}()
 	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"git", "apply", "--whitespace=nowarn", patchPath}, Dir: "/workspace"})
 	if err != nil { return err }
 	if result.ExitCode != 0 { return fmt.Errorf("git apply failed: %s", strings.TrimSpace(result.Stderr)) }
-	_, _ = p.ExecuteCommand(ctx, id, Command{Args: []string{"rm", "-f", patchPath}, Dir: "/workspace"})
 	return nil
 }
 
@@ -232,19 +238,26 @@ func cloneRepositoryForSeed(ctx context.Context, req CreateRequest) (string, fun
 		_ = os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("git clone: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	ref := req.Branch
-	if ref == "" { ref = req.BaseBranch }
-	if ref != "" {
-		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", ref)
+	if req.BaseBranch != "" {
+		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", req.BaseBranch)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
-			return "", nil, fmt.Errorf("git checkout %q: %w: %s", ref, err, strings.TrimSpace(string(out)))
+			return "", nil, fmt.Errorf("git checkout base branch %q: %w: %s", req.BaseBranch, err, strings.TrimSpace(string(out)))
 		}
 	} else {
 		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "HEAD")
 		if out, err := cmd.CombinedOutput(); err != nil {
 			_ = os.RemoveAll(dir)
 			return "", nil, fmt.Errorf("git checkout HEAD: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	if req.Branch != "" {
+		base := "HEAD"
+		if req.BaseBranch != "" { base = req.BaseBranch }
+		cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "-B", req.Branch, base)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			_ = os.RemoveAll(dir)
+			return "", nil, fmt.Errorf("git create workspace branch %q from %q: %w: %s", req.Branch, base, err, strings.TrimSpace(string(out)))
 		}
 	}
 	return repoDir, cleanup, nil
