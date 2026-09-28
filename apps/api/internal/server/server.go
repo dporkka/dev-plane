@@ -21,6 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/openapi"
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 	events "github.com/ai-dev-control-plane/events"
 )
 
@@ -91,6 +92,16 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	if s.config.NulangWorkloadSecret != "" {
+		verifier, err := workloadauth.NewVerifier(s.config.NulangWorkloadID, s.config.NulangWorkloadSecret, time.Minute)
+		if err != nil {
+			s.logger.Error("invalid Nulang workload auth configuration", "error", err)
+		} else {
+			h = h.WithWorkloadVerifier(verifier)
+		}
+	} else {
+		s.logger.Warn("NULANG_WORKLOAD_SECRET not configured; internal forge workload endpoint is disabled")
+	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
@@ -134,6 +145,12 @@ func (s *Server) routes() {
 		r.Post("/webhooks/slack", wh.SlackWebhook)
 		r.Post("/webhooks/discord", wh.DiscordWebhook)
 		r.Post("/webhooks/{provider}/{integrationID}", wh.IntegrationWebhook)
+
+		// Signed service-to-service endpoint. It is mounted only when the
+		// dedicated Nulang workload secret is configured.
+		if s.config.NulangWorkloadSecret != "" {
+			r.Post("/internal/forge/authorize", h.AuthorizeForgeWorkload)
+		}
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
