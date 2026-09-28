@@ -51,7 +51,7 @@ func main() {
 		dbURL          = flag.String("db", os.Getenv("DATABASE_URL"), "Database URL (or DATABASE_URL env)")
 		natsURL        = flag.String("nats", os.Getenv("NATS_URL"), "NATS URL (or NATS_URL env, default nats://localhost:4222)")
 		logLevel       = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
-		runtimeName    = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
+		runtimeName    = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, remote, or nulang-cloud")
 		runtimeBaseDir = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
 	)
 	flag.Parse()
@@ -362,7 +362,10 @@ func detectDriver(url string) string {
 }
 
 func initRuntimeProvider(name, baseDir, runnerURL, runnerToken string) (runtimes.Provider, string, error) {
-	if runnerURL != "" {
+	// RUNNER_URL historically selected RemoteProvider regardless of the runtime
+	// name. Preserve that compatibility except for nulang-cloud, where the same
+	// URL is the Nulang Cloud Workspace API endpoint.
+	if runnerURL != "" && name != "nulang-cloud" {
 		return runtimes.NewRemoteProvider(runnerURL, runnerToken), "remote", nil
 	}
 	if isProduction() && name == "local" {
