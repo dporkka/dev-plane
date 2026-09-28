@@ -69,6 +69,9 @@ func TestNulangCloudFileCheckpointRestoreAndStatus(t *testing.T) {
 			if body.Path != "a.txt" || body.Content != base64.StdEncoding.EncodeToString([]byte("hello")) || !body.CreateParents { t.Fatalf("write = %+v", body) }
 			_, _ = w.Write([]byte(`{"kind":"ack"}`))
 		case r.URL.Path == "/workspaces/w1/files/read":
+			var body struct { Path string `json:"path"`; MaxBytes int `json:"max_bytes"` }
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+			if body.Path != "a.txt" || body.MaxBytes != nulangCloudSingleFileBytes { t.Fatalf("read request = %+v", body) }
 			_, _ = w.Write([]byte(`{"kind":"file","path":"a.txt","size":5,"content_base64":"aGVsbG8="}`))
 		case r.URL.Path == "/workspaces/w1/checkpoints":
 			_, _ = w.Write([]byte(`{"checkpoint":{"id":"cp1","workspace_id":"w1","created_at_ms":1000},"restarted":true}`))
@@ -287,4 +290,50 @@ func TestCloneRepositoryForSeedCreatesWorkspaceBranchFromBase(t *testing.T) {
 
 	baseOut, err := exec.Command("git", "-C", repo, "merge-base", "--is-ancestor", "main", "HEAD").CombinedOutput()
 	if err != nil { t.Fatalf("workspace branch is not based on main: %v: %s", err, strings.TrimSpace(string(baseOut))) }
+}
+
+
+func TestNulangCloudExecuteCommandLegacyStringUsesValidatedShell(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Command string `json:"command"`
+			Args []string `json:"args"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		if body.Command != "sh" || len(body.Args) != 2 || body.Args[0] != "-c" || body.Args[1] != "echo hello" {
+			t.Fatalf("body = %+v", body)
+		}
+		_, _ = w.Write([]byte(`{"kind":"exec","exit_code":0,"timed_out":false,"stdout_base64":"aGVsbG8K","stderr_base64":""}`))
+	}))
+	defer s.Close()
+
+	got, err := NewNulangCloudProvider(s.URL, "").ExecuteCommand(context.Background(), "w1", Command{Command:"echo hello"})
+	if err != nil { t.Fatal(err) }
+	if got.Stdout != "hello
+" { t.Fatalf("stdout = %q", got.Stdout) }
+}
+
+func TestNulangCloudExecuteCommandRejectsUnsafeLegacyStringByDefault(t *testing.T) {
+	p := NewNulangCloudProvider("http://127.0.0.1:1", "")
+	_, err := p.ExecuteCommand(context.Background(), "w1", Command{Command:"echo hello | cat"})
+	if err == nil || !strings.Contains(err.Error(), "invalid command") { t.Fatalf("error = %v", err) }
+}
+
+func TestNulangCloudExecuteCommandAllowsExplicitUnsafeShell(t *testing.T) {
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Command string `json:"command"`
+			Args []string `json:"args"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+		if body.Command != "sh" || len(body.Args) != 2 || body.Args[0] != "-c" || body.Args[1] != "echo hello | cat" {
+			t.Fatalf("body = %+v", body)
+		}
+		_, _ = w.Write([]byte(`{"kind":"exec","exit_code":0,"timed_out":false,"stdout_base64":"aGVsbG8K","stderr_base64":""}`))
+	}))
+	defer s.Close()
+
+	if _, err := NewNulangCloudProvider(s.URL, "").ExecuteCommand(context.Background(), "w1", Command{Command:"echo hello | cat", UnsafeShell:true}); err != nil {
+		t.Fatal(err)
+	}
 }
