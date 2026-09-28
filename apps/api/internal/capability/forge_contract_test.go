@@ -7,13 +7,13 @@ func TestForgeOperationMapping(t *testing.T) {
 		forgeOp string
 		wantOp  string
 	}{
-		{"repo.read", OpReadFile},
-		{"branch.create", OpPushBranch},
+		{"repo.read", OpReadRepository},
+		{"branch.create", OpCreateBranch},
 		{"commit.write", OpCreateCommit},
 		{"change.create", OpOpenPR},
-		{"change.review", OpStaticAnalysis},
+		{"change.review", OpReviewPR},
 		{"change.merge", OpMergePR},
-		{"check.read", OpSearchRepo},
+		{"check.read", OpReadChecks},
 	}
 
 	for _, tt := range tests {
