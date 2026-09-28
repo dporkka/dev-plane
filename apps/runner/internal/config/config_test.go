@@ -17,6 +17,25 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadNulangCloudRuntimeConnection(t *testing.T) {
+	t.Setenv("WORKSPACE_RUNTIME", "nulang-cloud")
+	t.Setenv("RUNNER_URL", "https://legacy-runner.test")
+	t.Setenv("RUNNER_AUTH_TOKEN", "runner-token")
+	t.Setenv("NULANG_CLOUD_URL", "https://cloud.nulang.test")
+	t.Setenv("NULANG_CLOUD_TOKEN", "cloud-token")
+
+	cfg := Load()
+	if cfg.RuntimeURL != "https://cloud.nulang.test" {
+		t.Fatalf("RuntimeURL = %q, want dedicated Nulang Cloud URL", cfg.RuntimeURL)
+	}
+	if cfg.RuntimeToken != "cloud-token" {
+		t.Fatalf("RuntimeToken = %q, want dedicated Nulang Cloud token", cfg.RuntimeToken)
+	}
+	if cfg.AuthToken != "runner-token" {
+		t.Fatalf("AuthToken = %q, want inbound runner token to remain separate", cfg.AuthToken)
+	}
+}
+
 func TestLoadRunnerPort(t *testing.T) {
 	t.Setenv("RUNNER_PORT", "9090")
 	t.Setenv("PORT", "8080")
