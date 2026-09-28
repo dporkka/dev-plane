@@ -116,16 +116,26 @@ func (p *NulangCloudProvider) DestroyWorkspace(ctx context.Context, id string) e
 }
 
 func (p *NulangCloudProvider) ExecuteCommand(ctx context.Context, id string, cmd Command) (*CommandResult, error) {
+	return p.executeCommand(ctx, id, cmd, false)
+}
+
+func (p *NulangCloudProvider) executeInternalCommand(ctx context.Context, id string, cmd Command) (*CommandResult, error) {
+	return p.executeCommand(ctx, id, cmd, true)
+}
+
+func (p *NulangCloudProvider) executeCommand(ctx context.Context, id string, cmd Command, trustedInternal bool) (*CommandResult, error) {
 	var command string
 	var args []string
 	if len(cmd.Args) > 0 {
-		if err := ValidateCommandArgs(cmd.Args); err != nil {
-			return nil, fmt.Errorf("invalid command args: %w", err)
+		if !trustedInternal {
+			if err := ValidateCommandArgs(cmd.Args); err != nil {
+				return nil, fmt.Errorf("invalid command args: %w", err)
+			}
 		}
 		command, args = cmd.Args[0], cmd.Args[1:]
 	} else {
 		if cmd.Command == "" { return nil, fmt.Errorf("command is required") }
-		if !cmd.UnsafeShell {
+		if !trustedInternal && !cmd.UnsafeShell {
 			if _, err := ParseCommandString(cmd.Command); err != nil {
 				return nil, fmt.Errorf("invalid command: %w", err)
 			}
@@ -186,7 +196,7 @@ func (p *NulangCloudProvider) ApplyPatch(ctx context.Context, id, patch string) 
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = p.ExecuteCommand(cleanupCtx, id, Command{Args: []string{"rm", "-f", patchPath}, Dir: "/workspace"})
+		_, _ = p.executeInternalCommand(cleanupCtx, id, Command{Args: []string{"rm", "-f", patchPath}, Dir: "/workspace"})
 	}()
 	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"git", "apply", "--whitespace=nowarn", patchPath}, Dir: "/workspace"})
 	if err != nil { return err }
@@ -331,10 +341,10 @@ func (p *NulangCloudProvider) seedRepository(ctx context.Context, id string, req
 	if err != nil { return err }
 	defer f.Close()
 	if err := p.uploadFileChunks(ctx, id, ".devplane/repo.tar", f); err != nil { return err }
-	result, err := p.ExecuteCommand(ctx, id, Command{Args: []string{"tar", "-xf", ".devplane/repo.tar", "-C", "/workspace"}, Dir: "/workspace"})
+	result, err := p.executeInternalCommand(ctx, id, Command{Args: []string{"tar", "-xf", ".devplane/repo.tar", "-C", "/workspace"}, Dir: "/workspace"})
 	if err != nil { return err }
 	if result.ExitCode != 0 { return fmt.Errorf("extract repository: %s", strings.TrimSpace(result.Stderr)) }
-	result, err = p.ExecuteCommand(ctx, id, Command{Args: []string{"rm", "-f", ".devplane/repo.tar"}, Dir: "/workspace"})
+	result, err = p.executeInternalCommand(ctx, id, Command{Args: []string{"rm", "-f", ".devplane/repo.tar"}, Dir: "/workspace"})
 	if err != nil { return err }
 	if result.ExitCode != 0 { return fmt.Errorf("remove seed archive: %s", strings.TrimSpace(result.Stderr)) }
 	return nil
