@@ -12,6 +12,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
@@ -39,6 +40,7 @@ type Handler struct {
 	githubToken       string
 	deployGateway     deployGateway
 	deployToken       string
+	workloadVerifier   *workloadauth.Verifier
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
@@ -123,6 +125,13 @@ func (h *Handler) WithDeployGateway(g deployGateway) *Handler {
 // WithDeployToken configures the deployment token used for task deploy operations.
 func (h *Handler) WithDeployToken(token string) *Handler {
 	h.deployToken = token
+	return h
+}
+
+// WithWorkloadVerifier configures service-to-service workload authentication
+// for internal endpoints such as the Nulang forge authorization contract.
+func (h *Handler) WithWorkloadVerifier(verifier *workloadauth.Verifier) *Handler {
+	h.workloadVerifier = verifier
 	return h
 }
 
