@@ -175,3 +175,64 @@ func requireText(label, value string) error {
 	}
 	return nil
 }
+
+
+type ReconcileStatus string
+
+const (
+	ReconcileApplied    ReconcileStatus = "applied"
+	ReconcileNotApplied ReconcileStatus = "not_applied"
+	ReconcileAmbiguous  ReconcileStatus = "ambiguous"
+)
+
+type Evidence struct {
+	Provider     string     `json:"provider"`
+	Repository   string     `json:"repository"`
+	Operation    string     `json:"operation"`
+	CommandType  string     `json:"command_type"`
+	Source       string     `json:"source"`
+	HeadSHA      string     `json:"head_sha,omitempty"`
+	BlobSHA      string     `json:"blob_sha,omitempty"`
+	ChangeNumber uint64     `json:"change_number,omitempty"`
+	ReviewID     *uint64    `json:"review_id,omitempty"`
+	Merged       *bool      `json:"merged,omitempty"`
+	Checks       []CheckRun `json:"checks,omitempty"`
+	Detail       string     `json:"detail,omitempty"`
+}
+
+type ReconcileResult struct {
+	Status   ReconcileStatus `json:"status"`
+	Response *Response       `json:"response,omitempty"`
+	Evidence Evidence        `json:"evidence"`
+	Reason   string          `json:"reason,omitempty"`
+}
+
+func EvidenceFrom(provider string, command Command, response Response) Evidence {
+	operation, _ := command.Operation()
+	evidence := Evidence{
+		Provider:    provider,
+		Repository:  command.Repository.FullName(),
+		Operation:   operation,
+		CommandType: command.Type,
+		Source:      "provider_response",
+	}
+	switch value := response.Value.(type) {
+	case BranchRef:
+		evidence.HeadSHA = value.CommitID
+	case CommitRef:
+		evidence.HeadSHA = value.ID
+	case ChangeRef:
+		evidence.ChangeNumber = value.Number
+	case ReviewRef:
+		evidence.ReviewID = value.ID
+	case MergeResult:
+		merged := value.Merged
+		evidence.Merged = &merged
+		if command.ExpectedHeadSHA != nil {
+			evidence.HeadSHA = *command.ExpectedHeadSHA
+		}
+	case []CheckRun:
+		evidence.Checks = value
+	}
+	return evidence
+}
