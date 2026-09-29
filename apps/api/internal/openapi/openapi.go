@@ -339,7 +339,7 @@ func buildComponents() Components {
 					"id":            {Type: "string", Format: "uuid"},
 					"task_id":       {Type: "string", Format: "uuid"},
 					"agent_run_id":  {Type: "string", Format: "uuid", Nullable: true},
-					"approval_type": {Type: "string", Enum: []interface{}{"spec", "execution", "pr_create", "deploy", "risky_action"}},
+					"approval_type": {Type: "string", Enum: []interface{}{"spec", "execution", "pr_create", "deploy", "risky_action", "forge_capability"}},
 					"requested_by":  {Type: "string"},
 					"requested_at":  {Type: "string", Format: "date-time"},
 					"responded_by":  {Type: "string", Nullable: true},
