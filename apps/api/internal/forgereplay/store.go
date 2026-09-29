@@ -162,6 +162,79 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 	}
 }
 
+func (s *Store) Inspect(ctx context.Context, req Request) (Result, error) {
+	if err := validateRequest(req); err != nil {
+		return Result{}, err
+	}
+	bodyHash := hashBody(req.Body)
+
+	var (
+		workloadID     string
+		existingHash   string
+		taskID         string
+		runID          string
+		operation      string
+		state          string
+		responseStatus sql.NullInt64
+		responseBody   sql.NullString
+		evidence       sql.NullString
+		leaseReleased  bool
+	)
+	err := s.db.QueryRowContext(ctx, `
+		SELECT workload_id, body_sha256, task_id, run_id, operation, state,
+		       response_status, response_body, evidence, lease_released
+		FROM forge_workload_requests
+		WHERE request_id = $1
+	`, req.ID).Scan(
+		&workloadID,
+		&existingHash,
+		&taskID,
+		&runID,
+		&operation,
+		&state,
+		&responseStatus,
+		&responseBody,
+		&evidence,
+		&leaseReleased,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return Result{}, ErrNotFound
+		}
+		return Result{}, fmt.Errorf("inspect forge request: %w", err)
+	}
+	if workloadID != req.WorkloadID ||
+		existingHash != bodyHash ||
+		taskID != req.TaskID ||
+		runID != req.RunID ||
+		operation != req.Operation {
+		return Result{}, ErrConflict
+	}
+
+	out := Result{}
+	if responseStatus.Valid {
+		out.ResponseStatus = int(responseStatus.Int64)
+	}
+	if responseBody.Valid {
+		out.ResponseBody = []byte(responseBody.String)
+	}
+	if evidence.Valid {
+		out.Evidence = []byte(evidence.String)
+	}
+	switch state {
+	case "pending":
+		out.State = StateInFlight
+	case "completed":
+		out.State = StateReplay
+	case "uncertain":
+		out.State = StateUncertain
+	default:
+		return Result{}, fmt.Errorf("unknown forge request state %q", state)
+	}
+	_ = leaseReleased // inspection never acquires a released lease.
+	return out, nil
+}
+
 func (s *Store) Complete(ctx context.Context, requestID string, status int, body []byte) error {
 	return s.CompleteWithEvidence(ctx, requestID, status, body, nil)
 }
