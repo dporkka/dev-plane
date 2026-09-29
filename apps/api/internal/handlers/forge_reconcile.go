@@ -166,7 +166,7 @@ func (h *Handler) writeResolvedForgeReconciliation(w http.ResponseWriter, state 
 		}
 	}
 	respond.JSON(w, http.StatusOK, ForgeReconcileResponse{
-		Status: string(forgeexec.ReconcileApplied),
+		Status:   string(forgeexec.ReconcileApplied),
 		Response: &response,
 		Evidence: evidence,
 	})
