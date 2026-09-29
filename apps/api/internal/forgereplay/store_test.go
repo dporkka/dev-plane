@@ -27,6 +27,9 @@ func testStore(t *testing.T) (*Store, func()) {
 			state TEXT NOT NULL DEFAULT 'pending',
 			response_status INTEGER,
 			response_body TEXT,
+			evidence TEXT,
+			lease_released BOOLEAN NOT NULL DEFAULT false,
+			reconciled_at DATETIME,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
 		)
@@ -173,5 +176,120 @@ func TestReleaseAllowsSafeRetry(t *testing.T) {
 	}
 	if result.State != StateNew {
 		t.Fatalf("state = %q, want %q", result.State, StateNew)
+	}
+}
+
+func TestResolveUncertainReplaysCachedResultWithEvidence(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"commit.write"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkUncertain(ctx, req.ID, []byte("transport reset")); err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte(`{"provider":"gitea","head_sha":"deadbeef"}`)
+	if err := store.ResolveUncertain(ctx, req.ID, 200, []byte(`{"type":"commit","value":{"id":"deadbeef"}}`), evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateReplay {
+		t.Fatalf("state = %q, want %q", result.State, StateReplay)
+	}
+	if string(result.Evidence) != string(evidence) {
+		t.Fatalf("evidence = %q", result.Evidence)
+	}
+}
+
+func TestRetryUncertainMakesSameRequestReclaimable(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"branch.create"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkUncertain(ctx, req.ID, []byte("timeout")); err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte(`{"provider":"gitea","observed":"absent"}`)
+	if err := store.RetryUncertain(ctx, req.ID, evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateNew {
+		t.Fatalf("state = %q, want %q", result.State, StateNew)
+	}
+
+	again, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.State != StateInFlight {
+		t.Fatalf("second state = %q, want %q", again.State, StateInFlight)
+	}
+}
+
+func TestKeepUncertainUpdatesEvidenceWithoutMakingRequestRetryable(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"change.review"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkUncertain(ctx, req.ID, []byte("timeout")); err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte(`{"provider":"gitea","reason":"review attribution ambiguous"}`)
+	if err := store.KeepUncertain(ctx, req.ID, evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateUncertain {
+		t.Fatalf("state = %q, want %q", result.State, StateUncertain)
+	}
+	if string(result.Evidence) != string(evidence) {
+		t.Fatalf("evidence = %q", result.Evidence)
+	}
+}
+
+func TestCompleteWithEvidenceCachesProviderEvidence(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"branch.create"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	evidence := []byte(`{"provider":"gitea","head_sha":"abc"}`)
+	if err := store.CompleteWithEvidence(ctx, req.ID, 200, []byte(`{"ok":true}`), evidence); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateReplay || string(result.Evidence) != string(evidence) {
+		t.Fatalf("result = %+v", result)
 	}
 }
