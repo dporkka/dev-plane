@@ -181,7 +181,8 @@ export type ApprovalType =
   | "execution"
   | "deploy"
   | "risky_action"
-  | "pr_create";
+  | "pr_create"
+  | "forge_capability";
 export type ApprovalResponse = "approved" | "rejected";
 
 export interface Approval {
