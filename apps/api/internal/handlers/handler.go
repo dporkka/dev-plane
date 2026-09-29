@@ -32,6 +32,7 @@ type ForgeReplayStore interface {
 	Claim(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
 	Complete(ctx context.Context, requestID string, status int, body []byte) error
 	MarkUncertain(ctx context.Context, requestID string, detail []byte) error
+	Release(ctx context.Context, requestID string) error
 }
 
 // Handler is the base handler struct that provides access to shared dependencies.
