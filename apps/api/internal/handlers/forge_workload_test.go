@@ -39,12 +39,12 @@ func forgeHandler(t *testing.T) (*Handler, sqlmock.Sqlmock, *workloadauth.Verifi
 
 func forgeContextRows(role string) *sqlmock.Rows {
 	return sqlmock.NewRows([]string{
-		"task_id", "project_id", "repository_id", "task_workspace_id", "risk_level", "target_branch",
+		"task_id", "project_id", "repository_id", "task_workspace_id", "created_by", "risk_level", "target_branch",
 		"run_id", "run_workspace_id", "agent_role", "run_status", "prompt_tokens", "completion_tokens", "total_cost", "started_at", "completed_at",
 		"repo_id", "repo_project_id", "owner", "name", "full_name", "default_branch",
 		"organization_id", "workspace_id", "workspace_branch", "workspace_runtime_provider",
 	}).AddRow(
-		"task-1", "project-1", "repo-1", "workspace-1", "low", "main",
+		"task-1", "project-1", "repo-1", "workspace-1", "user-1", "low", "main",
 		"run-1", "workspace-1", role, "running", 100, 50, 0.01, nil, nil,
 		"repo-1", "project-1", "nulang-org", "nulang", "nulang-org/nulang", "main",
 		"org-1", "workspace-1", "agent/task-1", "docker",
@@ -148,7 +148,7 @@ func TestAuthorizeForgeWorkloadRejectsRunTaskMismatch(t *testing.T) {
 	mock.ExpectQuery("(?s)SELECT.*FROM agent_runs ar.*JOIN tasks t.*JOIN repositories r.*JOIN projects p.*LEFT JOIN workspaces w").
 		WithArgs("run-other", "task-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"task_id", "project_id", "repository_id", "task_workspace_id", "risk_level", "target_branch",
+			"task_id", "project_id", "repository_id", "task_workspace_id", "created_by", "risk_level", "target_branch",
 			"run_id", "run_workspace_id", "agent_role", "run_status", "prompt_tokens", "completion_tokens", "total_cost", "started_at", "completed_at",
 			"repo_id", "repo_project_id", "owner", "name", "full_name", "default_branch",
 			"organization_id", "workspace_id", "workspace_branch", "workspace_runtime_provider",
