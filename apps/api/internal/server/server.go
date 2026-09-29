@@ -104,12 +104,10 @@ func (s *Server) routes() {
 	} else {
 		s.logger.Warn("NULANG_WORKLOAD_SECRET not configured; internal forge workload endpoint is disabled")
 	}
-	if s.config.GiteaBaseURL != "" && s.config.GiteaToken != "" {
-		h = h.WithForgeExecutor(forgeexec.NewGiteaExecutor(
-			s.config.GiteaBaseURL,
-			s.config.GiteaToken,
-			&http.Client{Timeout: 15 * time.Second},
-		))
+	forgeExecutionEnabled := false
+	if executor := newForgeExecutor(s.config, &http.Client{Timeout: 15 * time.Second}); executor != nil {
+		h = h.WithForgeExecutor(executor)
+		forgeExecutionEnabled = true
 	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
@@ -159,7 +157,7 @@ func (s *Server) routes() {
 		// dedicated Nulang workload secret is configured.
 		if s.config.NulangWorkloadSecret != "" {
 			r.Post("/internal/forge/authorize", h.AuthorizeForgeWorkload)
-			if s.config.GiteaBaseURL != "" && s.config.GiteaToken != "" {
+			if forgeExecutionEnabled {
 				r.Post("/internal/forge/execute", h.ExecuteForgeWorkload)
 				r.Post("/internal/forge/reconcile", h.ReconcileForgeWorkload)
 			}
@@ -277,6 +275,41 @@ func (s *Server) routes() {
 			r.Post("/projects/{projectID}/voice-tasks", h.CreateVoiceTask)
 		})
 	})
+}
+
+func newForgeExecutor(cfg *config.Config, client *http.Client) handlers.ForgeExecutor {
+	provider := cfg.ForgeProvider
+	if provider == "" {
+		switch {
+		case cfg.GiteaBaseURL != "" && cfg.GiteaToken != "" &&
+			cfg.GitHubForgeToken == "":
+			provider = "gitea"
+		case cfg.GitHubForgeToken != "" &&
+			(cfg.GiteaBaseURL == "" || cfg.GiteaToken == ""):
+			provider = "github"
+		default:
+			return nil
+		}
+	}
+
+	switch provider {
+	case "gitea":
+		if cfg.GiteaBaseURL == "" || cfg.GiteaToken == "" {
+			return nil
+		}
+		return forgeexec.NewGiteaExecutor(cfg.GiteaBaseURL, cfg.GiteaToken, client)
+	case "github":
+		if cfg.GitHubForgeToken == "" {
+			return nil
+		}
+		baseURL := cfg.GitHubForgeBaseURL
+		if baseURL == "" {
+			baseURL = "https://api.github.com"
+		}
+		return forgeexec.NewGitHubExecutor(baseURL, cfg.GitHubForgeToken, client)
+	default:
+		return nil
+	}
 }
 
 // Start starts the HTTP server on the given address.
