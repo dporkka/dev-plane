@@ -12,6 +12,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 )
 
@@ -31,7 +32,8 @@ func forgeHandler(t *testing.T) (*Handler, sqlmock.Sqlmock, *workloadauth.Verifi
 	verifier.Now = func() time.Time { return now }
 	h := NewHandler(db, slog.Default()).
 		WithCapabilityKernel(capability.NewKernel(nil, nil, nil, slog.Default())).
-		WithWorkloadVerifier(verifier)
+		WithWorkloadVerifier(verifier).
+		WithForgeReplayStore(&fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}})
 	return h, mock, verifier, func() { _ = db.Close() }
 }
 
@@ -66,7 +68,7 @@ func TestAuthorizeForgeWorkloadAllowsRepositoryRead(t *testing.T) {
 		WithArgs("run-1", "task-1").
 		WillReturnRows(forgeContextRows("implementer"))
 
-	req := signedForgeRequest(t, `{"task_id":"task-1","run_id":"run-1","operation":"repo.read"}`)
+	req := signedForgeRequest(t, `{"request_id":"req-0000000000000001","task_id":"task-1","run_id":"run-1","operation":"repo.read"}`)
 	rec := httptest.NewRecorder()
 	h.AuthorizeForgeWorkload(rec, req)
 
@@ -99,7 +101,7 @@ func TestAuthorizeForgeWorkloadKeepsMergeAdminOnly(t *testing.T) {
 		WithArgs("run-1", "task-1").
 		WillReturnRows(forgeContextRows("release_manager"))
 
-	req := signedForgeRequest(t, `{"task_id":"task-1","run_id":"run-1","operation":"change.merge"}`)
+	req := signedForgeRequest(t, `{"request_id":"req-0000000000000001","task_id":"task-1","run_id":"run-1","operation":"change.merge"}`)
 	rec := httptest.NewRecorder()
 	h.AuthorizeForgeWorkload(rec, req)
 
@@ -123,7 +125,7 @@ func TestAuthorizeForgeWorkloadDeniesImplementerMerge(t *testing.T) {
 		WithArgs("run-1", "task-1").
 		WillReturnRows(forgeContextRows("implementer"))
 
-	req := signedForgeRequest(t, `{"task_id":"task-1","run_id":"run-1","operation":"change.merge"}`)
+	req := signedForgeRequest(t, `{"request_id":"req-0000000000000001","task_id":"task-1","run_id":"run-1","operation":"change.merge"}`)
 	rec := httptest.NewRecorder()
 	h.AuthorizeForgeWorkload(rec, req)
 
@@ -152,7 +154,7 @@ func TestAuthorizeForgeWorkloadRejectsRunTaskMismatch(t *testing.T) {
 			"organization_id", "workspace_id", "workspace_branch", "workspace_runtime_provider",
 		}))
 
-	req := signedForgeRequest(t, `{"task_id":"task-1","run_id":"run-other","operation":"repo.read"}`)
+	req := signedForgeRequest(t, `{"request_id":"req-0000000000000001","task_id":"task-1","run_id":"run-other","operation":"repo.read"}`)
 	rec := httptest.NewRecorder()
 	h.AuthorizeForgeWorkload(rec, req)
 
@@ -165,7 +167,7 @@ func TestAuthorizeForgeWorkloadRejectsInvalidSignatureBeforeDatabase(t *testing.
 	h, mock, _, cleanup := forgeHandler(t)
 	defer cleanup()
 
-	body := `{"task_id":"task-1","run_id":"run-1","operation":"repo.read"}`
+	body := `{"request_id":"req-0000000000000001","task_id":"task-1","run_id":"run-1","operation":"repo.read"}`
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/internal/forge/authorize", bytes.NewBufferString(body))
 	workloadauth.Sign(req, "nulang-cloud", forgeWorkloadSecret, time.Unix(1_800_000_000, 0), []byte("{}"))
 	rec := httptest.NewRecorder()
