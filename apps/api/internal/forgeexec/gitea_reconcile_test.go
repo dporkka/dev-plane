@@ -27,7 +27,9 @@ func TestGiteaReconcileCreateBranchApplied(t *testing.T) {
 	result, err := exec.Reconcile(context.Background(), Command{
 		Type: "create_branch", Repository: repo(), Name: "agent/task-1", From: "main",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileApplied || result.Response == nil || result.Response.Type != "branch" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -45,7 +47,9 @@ func TestGiteaReconcileCreateBranchAbsentIsRetryable(t *testing.T) {
 	result, err := exec.Reconcile(context.Background(), Command{
 		Type: "create_branch", Repository: repo(), Name: "agent/task-1", From: "main",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileNotApplied {
 		t.Fatalf("status = %q", result.Status)
 	}
@@ -58,7 +62,7 @@ func TestGiteaReconcileWriteFileMatchesContentAndCapturesBranchHead(t *testing.T
 			if r.URL.Query().Get("ref") != "agent/task-1" {
 				t.Fatalf("ref = %q", r.URL.Query().Get("ref"))
 			}
-			_, _ = w.Write([]byte(`{"path":"src/lib.rs","sha":"blobsha","encoding":"base64","content":"`+base64.StdEncoding.EncodeToString([]byte("hello"))+`"}`))
+			_, _ = w.Write([]byte(`{"path":"src/lib.rs","sha":"blobsha","encoding":"base64","content":"` + base64.StdEncoding.EncodeToString([]byte("hello")) + `"}`))
 		case strings.Contains(r.URL.Path, "/branches/agent/task-1"):
 			_, _ = w.Write([]byte(`{"name":"agent/task-1","commit":{"id":"commitsha"}}`))
 		default:
@@ -69,9 +73,11 @@ func TestGiteaReconcileWriteFileMatchesContentAndCapturesBranchHead(t *testing.T
 
 	result, err := exec.Reconcile(context.Background(), Command{
 		Type: "write_file", Repository: repo(), Path: "src/lib.rs", Branch: "agent/task-1",
-		Content: []int{104,101,108,108,111}, Message: "update",
+		Content: []int{104, 101, 108, 108, 111}, Message: "update",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileApplied {
 		t.Fatalf("result = %+v", result)
 	}
@@ -92,19 +98,21 @@ func TestGiteaReconcileWriteFileDifferentContentStaysAmbiguous(t *testing.T) {
 
 	result, err := exec.Reconcile(context.Background(), Command{
 		Type: "write_file", Repository: repo(), Path: "src/lib.rs", Branch: "agent/task-1",
-		Content: []int{104,101,108,108,111}, Message: "update",
+		Content: []int{104, 101, 108, 108, 111}, Message: "update",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileAmbiguous {
 		t.Fatalf("status = %q", result.Status)
 	}
 }
 
 func TestGiteaReconcileMergeUsesMergeStatusProbe(t *testing.T) {
-	for _, tt := range []struct{
-		name string
+	for _, tt := range []struct {
+		name   string
 		status int
-		want ReconcileStatus
+		want   ReconcileStatus
 	}{
 		{"merged", http.StatusNoContent, ReconcileApplied},
 		{"not merged", http.StatusNotFound, ReconcileNotApplied},
@@ -119,10 +127,14 @@ func TestGiteaReconcileMergeUsesMergeStatusProbe(t *testing.T) {
 			defer cleanup()
 			head := "deadbeef"
 			result, err := exec.Reconcile(context.Background(), Command{
-				Type:"merge_change", Repository:repo(), Number:17, Method:"squash", ExpectedHeadSHA:&head,
+				Type: "merge_change", Repository: repo(), Number: 17, Method: "squash", ExpectedHeadSHA: &head,
 			})
-			if err != nil { t.Fatal(err) }
-			if result.Status != tt.want { t.Fatalf("status = %q", result.Status) }
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Status != tt.want {
+				t.Fatalf("status = %q", result.Status)
+			}
 			if tt.want == ReconcileApplied && result.Evidence.HeadSHA != "deadbeef" {
 				t.Fatalf("evidence = %+v", result.Evidence)
 			}
@@ -140,9 +152,11 @@ func TestGiteaReconcileCreateChangeFindsBaseHeadPair(t *testing.T) {
 	defer cleanup()
 
 	result, err := exec.Reconcile(context.Background(), Command{
-		Type:"create_change", Repository:repo(), Head:"agent/task-1", Base:"main", Title:"Ship it",
+		Type: "create_change", Repository: repo(), Head: "agent/task-1", Base: "main", Title: "Ship it",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileApplied || result.Evidence.ChangeNumber != 42 || result.Evidence.HeadSHA != "headsha" {
 		t.Fatalf("result = %+v", result)
 	}
@@ -155,9 +169,11 @@ func TestGiteaReconcileReviewMatchesStateBodyAndCommit(t *testing.T) {
 	defer cleanup()
 	commit := "deadbeef"
 	result, err := exec.Reconcile(context.Background(), Command{
-		Type:"review_change", Repository:repo(), Number:17, Event:"approve", Body:"looks good", CommitID:&commit,
+		Type: "review_change", Repository: repo(), Number: 17, Event: "approve", Body: "looks good", CommitID: &commit,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if result.Status != ReconcileApplied || result.Evidence.ReviewID == nil || *result.Evidence.ReviewID != 7 {
 		t.Fatalf("result = %+v", result)
 	}
