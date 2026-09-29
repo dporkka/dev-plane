@@ -33,8 +33,11 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("DISCORD_WEBHOOK_SECRET")
 	os.Unsetenv("NULANG_WORKLOAD_ID")
 	os.Unsetenv("NULANG_WORKLOAD_SECRET")
+	os.Unsetenv("FORGE_PROVIDER")
 	os.Unsetenv("GITEA_BASE_URL")
 	os.Unsetenv("GITEA_TOKEN")
+	os.Unsetenv("GITHUB_FORGE_BASE_URL")
+	os.Unsetenv("GITHUB_FORGE_TOKEN")
 
 	cfg, err := Load()
 	if err != nil {
@@ -47,8 +50,11 @@ func TestLoad_Defaults(t *testing.T) {
 	assertEqual(t, cfg.GitHubWebhookSecret, "")
 	assertEqual(t, cfg.NulangWorkloadID, "nulang-cloud")
 	assertEqual(t, cfg.NulangWorkloadSecret, "")
+	assertEqual(t, cfg.ForgeProvider, "")
 	assertEqual(t, cfg.GiteaBaseURL, "")
 	assertEqual(t, cfg.GiteaToken, "")
+	assertEqual(t, cfg.GitHubForgeBaseURL, "")
+	assertEqual(t, cfg.GitHubForgeToken, "")
 	assertEqual(t, len(cfg.AllowedOrigins), 1)
 	assertEqual(t, cfg.AllowedOrigins[0], "http://localhost:3000")
 }
@@ -91,6 +97,7 @@ func TestLoad_FromEnv(t *testing.T) {
 	assertEqual(t, cfg.GitHubWebhookSecret, "webhook-secret")
 	assertEqual(t, cfg.NulangWorkloadID, "nulang-ci")
 	assertEqual(t, cfg.NulangWorkloadSecret, "0123456789abcdef0123456789abcdef")
+	assertEqual(t, cfg.ForgeProvider, "gitea")
 	assertEqual(t, cfg.GiteaBaseURL, "https://git.example.test")
 	assertEqual(t, cfg.GiteaToken, "gitea-token")
 }
@@ -195,4 +202,123 @@ func TestLoad_RejectsPartialGiteaExecutorConfig(t *testing.T) {
 			}
 		})
 	}
+}
+
+func clearForgeEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"FORGE_PROVIDER", "GITEA_BASE_URL", "GITEA_TOKEN",
+		"GITHUB_FORGE_BASE_URL", "GITHUB_FORGE_TOKEN",
+	} {
+		os.Unsetenv(key)
+	}
+}
+
+func TestLoad_GitHubForgeProvider(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("GITHUB_FORGE_TOKEN", "github-token")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, cfg.ForgeProvider, "github")
+	assertEqual(t, cfg.GitHubForgeBaseURL, "https://api.github.com")
+	assertEqual(t, cfg.GitHubForgeToken, "github-token")
+}
+
+func TestLoad_GitHubForgeCustomBaseURL(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("GITHUB_FORGE_BASE_URL", "https://github.enterprise.test/api/v3/")
+	os.Setenv("GITHUB_FORGE_TOKEN", "github-token")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, cfg.ForgeProvider, "github")
+	assertEqual(t, cfg.GitHubForgeBaseURL, "https://github.enterprise.test/api/v3")
+}
+
+func TestLoad_RejectsGitHubForgeBaseURLWithoutToken(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("GITHUB_FORGE_BASE_URL", "https://github.enterprise.test/api/v3")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for GitHub forge base URL without token")
+	}
+}
+
+func TestLoad_RejectsUnknownForgeProvider(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("FORGE_PROVIDER", "gitlab")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for unknown FORGE_PROVIDER")
+	}
+}
+
+func TestLoad_RejectsExplicitGitHubProviderWithoutToken(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("FORGE_PROVIDER", "github")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when GitHub is selected without GITHUB_FORGE_TOKEN")
+	}
+}
+
+func TestLoad_RejectsAmbiguousConfiguredForgeProviders(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("GITEA_BASE_URL", "https://git.example.test")
+	os.Setenv("GITEA_TOKEN", "gitea-token")
+	os.Setenv("GITHUB_FORGE_TOKEN", "github-token")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error when both forge providers are configured without FORGE_PROVIDER")
+	}
+}
+
+func TestLoad_ExplicitForgeProviderDisambiguatesCredentials(t *testing.T) {
+	setValidJWTSecret(t)
+	clearForgeEnv(t)
+	os.Setenv("FORGE_PROVIDER", "github")
+	os.Setenv("GITEA_BASE_URL", "https://git.example.test")
+	os.Setenv("GITEA_TOKEN", "gitea-token")
+	os.Setenv("GITHUB_FORGE_TOKEN", "github-token")
+	defer func() {
+		os.Unsetenv("JWT_SECRET")
+		clearForgeEnv(t)
+	}()
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, cfg.ForgeProvider, "github")
 }
