@@ -31,13 +31,20 @@ type EventPublisher interface {
 // ForgeExecutor executes an already-authorized provider-neutral forge command.
 // Provider credentials are held by the implementation, never by the workload.
 type ForgeExecutor interface {
+	Provider() string
 	Execute(ctx context.Context, command forgeexec.Command) (forgeexec.Response, error)
+	Reconcile(ctx context.Context, command forgeexec.Command) (forgeexec.ReconcileResult, error)
 }
 
 // ForgeReplayStore is the durable idempotency boundary for signed workload calls.
 type ForgeReplayStore interface {
 	Claim(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
+	Inspect(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
 	Complete(ctx context.Context, requestID string, status int, body []byte) error
+	CompleteWithEvidence(ctx context.Context, requestID string, status int, body, evidence []byte) error
+	ResolveUncertain(ctx context.Context, requestID string, status int, body, evidence []byte) error
+	RetryUncertain(ctx context.Context, requestID string, evidence []byte) error
+	KeepUncertain(ctx context.Context, requestID string, evidence []byte) error
 	MarkUncertain(ctx context.Context, requestID string, detail []byte) error
 	Release(ctx context.Context, requestID string) error
 }
