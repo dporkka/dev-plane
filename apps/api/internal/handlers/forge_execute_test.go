@@ -4,15 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/forgeexec"
 	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/workloadauth"
+	"github.com/ai-dev-control-plane/policies"
 )
 
 type fakeForgeExecutor struct {
@@ -113,7 +116,13 @@ func TestExecuteForgeWorkloadMutationFailureBecomesUncertain(t *testing.T) {
 	defer cleanup()
 	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
 	executor := &fakeForgeExecutor{err: errors.New("provider connection reset")}
-	h.WithForgeReplayStore(replay).WithForgeExecutor(executor)
+	allowBranch := policies.NewEngine([]policies.Policy{{
+		Name: "test_allow_branch_create", ResourceType: "git", Action: "create_branch",
+		Effect: policies.EffectAllow, Priority: 100,
+	}})
+	h.WithForgeReplayStore(replay).
+		WithForgeExecutor(executor).
+		WithCapabilityKernel(capability.NewKernel(allowBranch, nil, nil, slog.Default()))
 
 	mock.ExpectQuery("(?s)SELECT.*FROM agent_runs ar.*JOIN tasks t.*JOIN repositories r.*JOIN projects p.*LEFT JOIN workspaces w").
 		WithArgs("run-1", "task-1").
