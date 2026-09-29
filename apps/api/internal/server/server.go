@@ -16,6 +16,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/audit"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/config"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/handlers"
 	appmiddleware "github.com/ai-dev-control-plane/api/internal/middleware"
 	"github.com/ai-dev-control-plane/api/internal/openapi"
@@ -97,7 +98,7 @@ func (s *Server) routes() {
 		if err != nil {
 			s.logger.Error("invalid Nulang workload auth configuration", "error", err)
 		} else {
-			h = h.WithWorkloadVerifier(verifier)
+			h = h.WithWorkloadVerifier(verifier).WithForgeReplayStore(forgereplay.NewStore(s.db))
 		}
 	} else {
 		s.logger.Warn("NULANG_WORKLOAD_SECRET not configured; internal forge workload endpoint is disabled")
