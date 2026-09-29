@@ -152,6 +152,20 @@ func (s *Store) Complete(ctx context.Context, requestID string, status int, body
 	return requireOneRow(result, "complete forge request")
 }
 
+func (s *Store) Release(ctx context.Context, requestID string) error {
+	if !validRequestID(requestID) {
+		return ErrInvalidRequest
+	}
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM forge_workload_requests
+		WHERE request_id = $1 AND state = 'pending'
+	`, requestID)
+	if err != nil {
+		return fmt.Errorf("release forge request: %w", err)
+	}
+	return requireOneRow(result, "release forge request")
+}
+
 func (s *Store) MarkUncertain(ctx context.Context, requestID string, detail []byte) error {
 	if !validRequestID(requestID) {
 		return ErrInvalidRequest
