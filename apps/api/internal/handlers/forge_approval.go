@@ -42,7 +42,7 @@ func (h *Handler) ensureForgeApproval(
 		return forgeApprovalDecision{}, fmt.Errorf("load forge approval: %w", err)
 	}
 
-	id = uuid.New().String()
+	id := uuid.New().String()
 	now := time.Now().UTC()
 	metadata, err := json.Marshal(map[string]any{
 		"auto_created": true,
