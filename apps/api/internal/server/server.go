@@ -161,6 +161,7 @@ func (s *Server) routes() {
 			r.Post("/internal/forge/authorize", h.AuthorizeForgeWorkload)
 			if s.config.GiteaBaseURL != "" && s.config.GiteaToken != "" {
 				r.Post("/internal/forge/execute", h.ExecuteForgeWorkload)
+				r.Post("/internal/forge/reconcile", h.ReconcileForgeWorkload)
 			}
 		}
 
