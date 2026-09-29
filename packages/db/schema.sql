@@ -582,6 +582,9 @@ CREATE TABLE IF NOT EXISTS forge_workload_requests (
     state             TEXT NOT NULL DEFAULT 'pending',
     response_status   INTEGER,
     response_body     TEXT,
+    evidence          JSONB,
+    lease_released    BOOLEAN NOT NULL DEFAULT false,
+    reconciled_at     TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     completed_at      TIMESTAMPTZ,
     CHECK (state IN ('pending', 'completed', 'uncertain'))
