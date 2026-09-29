@@ -131,14 +131,32 @@ The shared operation contract is:
 
 Nulang must not accept model-supplied forge grants as authority. A trusted host
 constructs the agent-facing session, while Dev Plane independently derives and
-evaluates authority from its task, agent, project, repository, approval, budget,
-sandbox, and audit context. Unknown provider-neutral forge operations fail
-closed.
+evaluates authority from its task, agent run, project, repository, workspace,
+approval, budget, sandbox, and audit context. Unknown provider-neutral forge
+operations fail closed.
+
+Hosted authorization uses the opt-in signed endpoint
+`POST /api/v1/internal/forge/authorize`. The request contains only
+`task_id`, `run_id`, and the provider-neutral operation. Repository scope and
+agent role are loaded by Dev Plane from persisted state. Requests use a
+dedicated Nulang workload identity plus a timestamped HMAC-SHA256 signature
+covering workload id, timestamp, HTTP method, request URI, and the SHA-256 body
+digest. The endpoint is not mounted unless `NULANG_WORKLOAD_SECRET` is
+configured.
+
+Dev Plane also applies an independent role allowlist before ordinary policy:
+planners/test runners are read-only; implementers and docs agents may create
+branches/commits/changes but cannot review or merge; reviewers/security agents
+may review but cannot commit; only release-manager runs can reach merge policy.
+Merge remains admin-only even for that role.
 
 Provider credentials, branch publication, pull-request creation/merge, approval
 state, and audit records stay in Dev Plane. Nulang Cloud may provide the runtime
 and durable execution substrate, but it does not become a second policy engine
-or credential store.
+or credential store. The current Nulang guarded-backend adapter is transitional:
+it proves dual authorization before a provider call; hosted production should
+ultimately execute provider mutations inside Dev Plane so forge credentials
+never leave the control plane.
 
 ## Nulang Cloud runtime provider
 
