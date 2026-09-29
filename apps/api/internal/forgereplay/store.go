@@ -38,6 +38,7 @@ type Result struct {
 	State          State
 	ResponseStatus int
 	ResponseBody   []byte
+	Evidence       []byte
 }
 
 type Store struct {
@@ -80,10 +81,12 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 		state          string
 		responseStatus sql.NullInt64
 		responseBody   sql.NullString
+		evidence       sql.NullString
+		leaseReleased  bool
 	)
 	err = s.db.QueryRowContext(ctx, `
 		SELECT workload_id, body_sha256, task_id, run_id, operation, state,
-		       response_status, response_body
+		       response_status, response_body, evidence, lease_released
 		FROM forge_workload_requests
 		WHERE request_id = $1
 	`, req.ID).Scan(
@@ -95,6 +98,8 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 		&state,
 		&responseStatus,
 		&responseBody,
+		&evidence,
+		&leaseReleased,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -113,6 +118,23 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 
 	switch state {
 	case "pending":
+		if leaseReleased {
+			result, err := s.db.ExecContext(ctx, `
+				UPDATE forge_workload_requests
+				SET lease_released = false
+				WHERE request_id = $1 AND state = 'pending' AND lease_released = true
+			`, req.ID)
+			if err != nil {
+				return Result{}, fmt.Errorf("reclaim forge request: %w", err)
+			}
+			rows, err := result.RowsAffected()
+			if err != nil {
+				return Result{}, fmt.Errorf("reclaim forge request rows affected: %w", err)
+			}
+			if rows == 1 {
+				return Result{State: StateNew}, nil
+			}
+		}
 		return Result{State: StateInFlight}, nil
 	case "completed":
 		out := Result{State: StateReplay}
@@ -122,11 +144,17 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 		if responseBody.Valid {
 			out.ResponseBody = []byte(responseBody.String)
 		}
+		if evidence.Valid {
+			out.Evidence = []byte(evidence.String)
+		}
 		return out, nil
 	case "uncertain":
 		out := Result{State: StateUncertain}
 		if responseBody.Valid {
 			out.ResponseBody = []byte(responseBody.String)
+		}
+		if evidence.Valid {
+			out.Evidence = []byte(evidence.String)
 		}
 		return out, nil
 	default:
@@ -135,6 +163,10 @@ func (s *Store) Claim(ctx context.Context, req Request) (Result, error) {
 }
 
 func (s *Store) Complete(ctx context.Context, requestID string, status int, body []byte) error {
+	return s.CompleteWithEvidence(ctx, requestID, status, body, nil)
+}
+
+func (s *Store) CompleteWithEvidence(ctx context.Context, requestID string, status int, body, evidence []byte) error {
 	if !validRequestID(requestID) {
 		return ErrInvalidRequest
 	}
@@ -143,13 +175,73 @@ func (s *Store) Complete(ctx context.Context, requestID string, status int, body
 		SET state = 'completed',
 		    response_status = $1,
 		    response_body = $2,
+		    evidence = $3,
+		    lease_released = false,
 		    completed_at = CURRENT_TIMESTAMP
-		WHERE request_id = $3 AND state = 'pending'
-	`, status, string(body), requestID)
+		WHERE request_id = $4 AND state = 'pending'
+	`, status, string(body), nullableText(evidence), requestID)
 	if err != nil {
 		return fmt.Errorf("complete forge request: %w", err)
 	}
 	return requireOneRow(result, "complete forge request")
+}
+
+func (s *Store) ResolveUncertain(ctx context.Context, requestID string, status int, body, evidence []byte) error {
+	if !validRequestID(requestID) {
+		return ErrInvalidRequest
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE forge_workload_requests
+		SET state = 'completed',
+		    response_status = $1,
+		    response_body = $2,
+		    evidence = $3,
+		    lease_released = false,
+		    reconciled_at = CURRENT_TIMESTAMP,
+		    completed_at = CURRENT_TIMESTAMP
+		WHERE request_id = $4 AND state = 'uncertain'
+	`, status, string(body), nullableText(evidence), requestID)
+	if err != nil {
+		return fmt.Errorf("resolve uncertain forge request: %w", err)
+	}
+	return requireOneRow(result, "resolve uncertain forge request")
+}
+
+func (s *Store) RetryUncertain(ctx context.Context, requestID string, evidence []byte) error {
+	if !validRequestID(requestID) {
+		return ErrInvalidRequest
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE forge_workload_requests
+		SET state = 'pending',
+		    response_status = NULL,
+		    response_body = NULL,
+		    evidence = $1,
+		    lease_released = true,
+		    reconciled_at = CURRENT_TIMESTAMP,
+		    completed_at = NULL
+		WHERE request_id = $2 AND state = 'uncertain'
+	`, nullableText(evidence), requestID)
+	if err != nil {
+		return fmt.Errorf("make uncertain forge request retryable: %w", err)
+	}
+	return requireOneRow(result, "make uncertain forge request retryable")
+}
+
+func (s *Store) KeepUncertain(ctx context.Context, requestID string, evidence []byte) error {
+	if !validRequestID(requestID) {
+		return ErrInvalidRequest
+	}
+	result, err := s.db.ExecContext(ctx, `
+		UPDATE forge_workload_requests
+		SET evidence = $1,
+		    reconciled_at = CURRENT_TIMESTAMP
+		WHERE request_id = $2 AND state = 'uncertain'
+	`, nullableText(evidence), requestID)
+	if err != nil {
+		return fmt.Errorf("update uncertain forge request evidence: %w", err)
+	}
+	return requireOneRow(result, "update uncertain forge request evidence")
 }
 
 func (s *Store) Release(ctx context.Context, requestID string) error {
@@ -174,6 +266,7 @@ func (s *Store) MarkUncertain(ctx context.Context, requestID string, detail []by
 		UPDATE forge_workload_requests
 		SET state = 'uncertain',
 		    response_body = $1,
+		    lease_released = false,
 		    completed_at = CURRENT_TIMESTAMP
 		WHERE request_id = $2 AND state = 'pending'
 	`, string(detail), requestID)
@@ -181,6 +274,13 @@ func (s *Store) MarkUncertain(ctx context.Context, requestID string, detail []by
 		return fmt.Errorf("mark forge request uncertain: %w", err)
 	}
 	return requireOneRow(result, "mark forge request uncertain")
+}
+
+func nullableText(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return string(value)
 }
 
 func requireOneRow(result sql.Result, action string) error {
