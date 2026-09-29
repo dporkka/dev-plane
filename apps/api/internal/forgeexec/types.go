@@ -177,7 +177,6 @@ func requireText(label, value string) error {
 	return nil
 }
 
-
 type ReconcileStatus string
 
 const (
