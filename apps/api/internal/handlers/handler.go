@@ -40,7 +40,7 @@ type Handler struct {
 	githubToken       string
 	deployGateway     deployGateway
 	deployToken       string
-	workloadVerifier   *workloadauth.Verifier
+	workloadVerifier  *workloadauth.Verifier
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
