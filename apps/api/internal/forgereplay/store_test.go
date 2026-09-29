@@ -15,6 +15,7 @@ func testStore(t *testing.T) (*Store, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	if _, err := db.Exec(`
 		CREATE TABLE forge_workload_requests (
 			request_id TEXT PRIMARY KEY,
