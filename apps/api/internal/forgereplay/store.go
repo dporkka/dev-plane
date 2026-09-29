@@ -141,11 +141,11 @@ func (s *Store) Complete(ctx context.Context, requestID string, status int, body
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE forge_workload_requests
 		SET state = 'completed',
-		    response_status = $2,
-		    response_body = $3,
+		    response_status = $1,
+		    response_body = $2,
 		    completed_at = CURRENT_TIMESTAMP
-		WHERE request_id = $1 AND state = 'pending'
-	`, requestID, status, string(body))
+		WHERE request_id = $3 AND state = 'pending'
+	`, status, string(body), requestID)
 	if err != nil {
 		return fmt.Errorf("complete forge request: %w", err)
 	}
@@ -159,10 +159,10 @@ func (s *Store) MarkUncertain(ctx context.Context, requestID string, detail []by
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE forge_workload_requests
 		SET state = 'uncertain',
-		    response_body = $2,
+		    response_body = $1,
 		    completed_at = CURRENT_TIMESTAMP
-		WHERE request_id = $1 AND state = 'pending'
-	`, requestID, string(detail))
+		WHERE request_id = $2 AND state = 'pending'
+	`, string(detail), requestID)
 	if err != nil {
 		return fmt.Errorf("mark forge request uncertain: %w", err)
 	}
