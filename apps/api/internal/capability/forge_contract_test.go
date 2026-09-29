@@ -91,16 +91,15 @@ func TestKernelEvaluateForgeUnknownFailsClosed(t *testing.T) {
 	}
 }
 
-
 func TestKernelEvaluateForgeEnforcesAgentRoleBoundary(t *testing.T) {
 	k := NewKernel(nil, nil, nil, nil)
 	ctx := context.Background()
 
 	tests := []struct {
-		name      string
-		role      string
-		forgeOp   string
-		wantDeny  bool
+		name     string
+		role     string
+		forgeOp  string
+		wantDeny bool
 	}{
 		{"implementer may write commits", models.AgentRoleImplementer, ForgeOperationCommitWrite, false},
 		{"implementer cannot review", models.AgentRoleImplementer, ForgeOperationChangeReview, true},
