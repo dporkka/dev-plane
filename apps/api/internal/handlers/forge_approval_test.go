@@ -39,7 +39,7 @@ func TestExecuteForgeWorkloadCreatesStableApprovalAndReleasesClaim(t *testing.T)
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO approvals").
 		WithArgs(sqlmock.AnyArg(), "task-1", "run-1", models.ApprovalTypeForgeCapability,
-			"user-1", sqlmock.AnyArg(), sqlmock.AnyArg()).
+			"user-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "req-approval-00000001").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	rec := httptest.NewRecorder()
@@ -185,7 +185,7 @@ func TestExecuteForgeWorkloadExpiredApprovalIsTerminal(t *testing.T) {
 		WillReturnRows(forgeContextRows("implementer"))
 	mock.ExpectQuery("SELECT id, response, expires_at FROM approvals WHERE forge_request_id = \\$1").
 		WithArgs("req-approval-00000001").
-		WillReturnRows(approvalRow("approval-1", nil, time.Unix(1_799_999_999, 0)))
+		WillReturnRows(approvalRow("approval-1", nil, time.Unix(1, 0)))
 
 	rec := httptest.NewRecorder()
 	h.ExecuteForgeWorkload(rec, signedForgeExecuteRequest(t, branchCreateBody()))
