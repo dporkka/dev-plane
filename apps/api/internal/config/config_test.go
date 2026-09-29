@@ -33,6 +33,8 @@ func TestLoad_Defaults(t *testing.T) {
 	os.Unsetenv("DISCORD_WEBHOOK_SECRET")
 	os.Unsetenv("NULANG_WORKLOAD_ID")
 	os.Unsetenv("NULANG_WORKLOAD_SECRET")
+	os.Unsetenv("GITEA_BASE_URL")
+	os.Unsetenv("GITEA_TOKEN")
 
 	cfg, err := Load()
 	if err != nil {
@@ -45,6 +47,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assertEqual(t, cfg.GitHubWebhookSecret, "")
 	assertEqual(t, cfg.NulangWorkloadID, "nulang-cloud")
 	assertEqual(t, cfg.NulangWorkloadSecret, "")
+	assertEqual(t, cfg.GiteaBaseURL, "")
+	assertEqual(t, cfg.GiteaToken, "")
 	assertEqual(t, len(cfg.AllowedOrigins), 1)
 	assertEqual(t, cfg.AllowedOrigins[0], "http://localhost:3000")
 }
@@ -58,6 +62,8 @@ func TestLoad_FromEnv(t *testing.T) {
 	os.Setenv("GITHUB_APP_WEBHOOK_SECRET", "webhook-secret")
 	os.Setenv("NULANG_WORKLOAD_ID", "nulang-ci")
 	os.Setenv("NULANG_WORKLOAD_SECRET", "0123456789abcdef0123456789abcdef")
+	os.Setenv("GITEA_BASE_URL", "https://git.example.test/")
+	os.Setenv("GITEA_TOKEN", "gitea-token")
 	defer func() {
 		os.Unsetenv("JWT_SECRET")
 		os.Unsetenv("PORT")
@@ -70,6 +76,8 @@ func TestLoad_FromEnv(t *testing.T) {
 		os.Unsetenv("DISCORD_WEBHOOK_SECRET")
 		os.Unsetenv("NULANG_WORKLOAD_ID")
 		os.Unsetenv("NULANG_WORKLOAD_SECRET")
+		os.Unsetenv("GITEA_BASE_URL")
+		os.Unsetenv("GITEA_TOKEN")
 	}()
 
 	cfg, err := Load()
@@ -83,6 +91,8 @@ func TestLoad_FromEnv(t *testing.T) {
 	assertEqual(t, cfg.GitHubWebhookSecret, "webhook-secret")
 	assertEqual(t, cfg.NulangWorkloadID, "nulang-ci")
 	assertEqual(t, cfg.NulangWorkloadSecret, "0123456789abcdef0123456789abcdef")
+	assertEqual(t, cfg.GiteaBaseURL, "https://git.example.test")
+	assertEqual(t, cfg.GiteaToken, "gitea-token")
 }
 
 func TestLoad_CustomPort(t *testing.T) {
@@ -158,5 +168,31 @@ func TestLoad_RejectsShortNulangWorkloadSecret(t *testing.T) {
 
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for short NULANG_WORKLOAD_SECRET")
+	}
+}
+
+func TestLoad_RejectsPartialGiteaExecutorConfig(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		token string
+	}{
+		{"url only", "https://git.example.test", ""},
+		{"token only", "", "gitea-token"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setValidJWTSecret(t)
+			os.Setenv("GITEA_BASE_URL", tt.url)
+			os.Setenv("GITEA_TOKEN", tt.token)
+			defer func() {
+				os.Unsetenv("JWT_SECRET")
+				os.Unsetenv("GITEA_BASE_URL")
+				os.Unsetenv("GITEA_TOKEN")
+			}()
+			if _, err := Load(); err == nil {
+				t.Fatal("expected error for partial Gitea executor configuration")
+			}
+		})
 	}
 }
