@@ -209,7 +209,7 @@ func TestExecuteForgeWorkloadPersistsMutationEvidence(t *testing.T) {
 	defer cleanup()
 	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
 	executor := &fakeForgeExecutor{response: forgeexec.Response{
-		Type: "branch",
+		Type:  "branch",
 		Value: forgeexec.BranchRef{Name: "agent/task-1", CommitID: "deadbeef"},
 	}}
 	allowBranch := policies.NewEngine([]policies.Policy{{
