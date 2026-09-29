@@ -811,7 +811,7 @@ func TestNewRouter_NilConfig(t *testing.T) {
 	if router.config == nil {
 		t.Fatal("expected default config when nil passed")
 	}
-	if router.config.DefaultModel != "gpt-4o" {
+	if router.config.DefaultModel != "bifrost/gpt-4o" {
 		t.Errorf("expected default model, got %s", router.config.DefaultModel)
 	}
 }
