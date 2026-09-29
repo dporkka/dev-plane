@@ -19,14 +19,24 @@ import (
 )
 
 type fakeForgeExecutor struct {
-	response forgeexec.Response
-	err      error
-	calls    []forgeexec.Command
+	response        forgeexec.Response
+	err             error
+	calls           []forgeexec.Command
+	reconcileResult forgeexec.ReconcileResult
+	reconcileErr    error
+	reconcileCalls  []forgeexec.Command
 }
+
+func (f *fakeForgeExecutor) Provider() string { return "fake" }
 
 func (f *fakeForgeExecutor) Execute(_ context.Context, command forgeexec.Command) (forgeexec.Response, error) {
 	f.calls = append(f.calls, command)
 	return f.response, f.err
+}
+
+func (f *fakeForgeExecutor) Reconcile(_ context.Context, command forgeexec.Command) (forgeexec.ReconcileResult, error) {
+	f.reconcileCalls = append(f.reconcileCalls, command)
+	return f.reconcileResult, f.reconcileErr
 }
 
 func signedForgeExecuteRequest(t *testing.T, body string) *http.Request {
