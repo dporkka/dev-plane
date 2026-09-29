@@ -143,11 +143,17 @@ the operation is derived by Dev Plane from the command type rather than trusted
 from the caller. Repository scope and agent role are loaded from persisted Dev
 Plane state.
 
-Both endpoints use a dedicated Nulang workload identity plus a timestamped
+The companion `POST /api/v1/internal/forge/reconcile` endpoint accepts the
+same execution body and stable execution `request_id`, but performs only
+provider read-side probes. It never issues the mutating command. A reconciliation
+can prove the mutation was applied, prove it is absent and release the exact
+request for one safe retry, or keep the request ambiguous and non-retryable.
+
+All three endpoints use a dedicated Nulang workload identity plus a timestamped
 HMAC-SHA256 signature covering workload id, timestamp, HTTP method, request URI,
 and the SHA-256 body digest. Authorization is mounted only when
-`NULANG_WORKLOAD_SECRET` is configured. Hosted execution additionally requires
-both `GITEA_BASE_URL` and the server-held `GITEA_TOKEN`.
+`NULANG_WORKLOAD_SECRET` is configured. Hosted execution and reconciliation
+additionally require both `GITEA_BASE_URL` and the server-held `GITEA_TOKEN`.
 
 Dev Plane also applies an independent role allowlist before ordinary policy:
 planners/test runners are read-only; implementers and docs agents may create
@@ -171,6 +177,19 @@ provider failures are marked `uncertain` instead of retried automatically,
 because the remote side effect may have succeeded before the connection failed.
 Authorization and execution use separate replay-ID namespaces so their different
 signed bodies cannot collide.
+
+When policy returns `ask` or `admin_only`, Dev Plane creates one
+`forge_capability` approval keyed by the stable execution `request_id` and
+releases the replay lease before any provider side effect. Repeated pending
+requests reuse that approval. An approved retry reclaims the same execution ID
+and proceeds; rejected or expired approvals become terminal cached denials.
+Concurrent retries converge through the unique `forge_request_id` constraint.
+
+Successful provider mutations persist structured evidence alongside the cached
+response, including provider, repository, operation, command type, head/blob SHA
+where available, pull-request/review identifiers, merge status, and check
+results. Uncertain mutations retain reconciliation evidence rather than being
+blindly replayed.
 
 ## Nulang Cloud runtime provider
 
