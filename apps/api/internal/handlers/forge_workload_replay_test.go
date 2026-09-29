@@ -14,18 +14,29 @@ import (
 type fakeForgeReplayStore struct {
 	result        forgereplay.Result
 	err           error
-	claims        []forgereplay.Request
-	completedID   string
-	completedCode int
-	completedBody []byte
-	completeErr   error
-	uncertainID   string
-	uncertainBody []byte
-	releasedID    string
+	claims            []forgereplay.Request
+	inspects          []forgereplay.Request
+	completedID       string
+	completedCode     int
+	completedBody     []byte
+	completedEvidence []byte
+	completeErr       error
+	uncertainID       string
+	uncertainBody     []byte
+	resolvedID        string
+	retryID           string
+	keptID            string
+	reconcileEvidence []byte
+	releasedID        string
 }
 
 func (f *fakeForgeReplayStore) Claim(_ context.Context, req forgereplay.Request) (forgereplay.Result, error) {
 	f.claims = append(f.claims, req)
+	return f.result, f.err
+}
+
+func (f *fakeForgeReplayStore) Inspect(_ context.Context, req forgereplay.Request) (forgereplay.Result, error) {
+	f.inspects = append(f.inspects, req)
 	return f.result, f.err
 }
 
@@ -34,6 +45,34 @@ func (f *fakeForgeReplayStore) Complete(_ context.Context, requestID string, sta
 	f.completedCode = status
 	f.completedBody = append([]byte(nil), body...)
 	return f.completeErr
+}
+
+func (f *fakeForgeReplayStore) CompleteWithEvidence(_ context.Context, requestID string, status int, body, evidence []byte) error {
+	f.completedID = requestID
+	f.completedCode = status
+	f.completedBody = append([]byte(nil), body...)
+	f.completedEvidence = append([]byte(nil), evidence...)
+	return f.completeErr
+}
+
+func (f *fakeForgeReplayStore) ResolveUncertain(_ context.Context, requestID string, status int, body, evidence []byte) error {
+	f.resolvedID = requestID
+	f.completedCode = status
+	f.completedBody = append([]byte(nil), body...)
+	f.reconcileEvidence = append([]byte(nil), evidence...)
+	return f.completeErr
+}
+
+func (f *fakeForgeReplayStore) RetryUncertain(_ context.Context, requestID string, evidence []byte) error {
+	f.retryID = requestID
+	f.reconcileEvidence = append([]byte(nil), evidence...)
+	return nil
+}
+
+func (f *fakeForgeReplayStore) KeepUncertain(_ context.Context, requestID string, evidence []byte) error {
+	f.keptID = requestID
+	f.reconcileEvidence = append([]byte(nil), evidence...)
+	return nil
 }
 
 func (f *fakeForgeReplayStore) MarkUncertain(_ context.Context, requestID string, detail []byte) error {
