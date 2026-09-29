@@ -298,6 +298,7 @@ CREATE TABLE IF NOT EXISTS approvals (
     responded_at    TIMESTAMPTZ,
     expires_at      TIMESTAMPTZ,
     metadata        JSONB DEFAULT '{}',
+    forge_request_id TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -307,6 +308,9 @@ CREATE INDEX IF NOT EXISTS idx_approvals_agent_run_id ON approvals(agent_run_id)
 CREATE INDEX IF NOT EXISTS idx_approvals_requested_by ON approvals(requested_by);
 CREATE INDEX IF NOT EXISTS idx_approvals_response ON approvals(response);
 CREATE INDEX IF NOT EXISTS idx_approvals_created_at ON approvals(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_approvals_forge_request_id
+    ON approvals(forge_request_id)
+    WHERE forge_request_id IS NOT NULL;
 
 -- =====================================================
 -- 10. policies
