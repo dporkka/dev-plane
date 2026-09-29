@@ -27,12 +27,12 @@ type Config struct {
 	AgentVaultProject    string
 	SecretKeys           string
 	NulangWorkloadID     string
-	NulangWorkloadSecret  string
-	ForgeProvider         string
-	GiteaBaseURL          string
-	GiteaToken            string
-	GitHubForgeBaseURL    string
-	GitHubForgeToken      string
+	NulangWorkloadSecret string
+	ForgeProvider        string
+	GiteaBaseURL         string
+	GiteaToken           string
+	GitHubForgeBaseURL   string
+	GitHubForgeToken     string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -104,12 +104,12 @@ func Load() (*Config, error) {
 		AgentVaultProject:    EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:           EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 		NulangWorkloadID:     EnvOrDefault("NULANG_WORKLOAD_ID", "nulang-cloud"),
-		NulangWorkloadSecret:  nulangWorkloadSecret,
-		ForgeProvider:         forgeProvider,
-		GiteaBaseURL:          giteaBaseURL,
-		GiteaToken:            giteaToken,
-		GitHubForgeBaseURL:    githubForgeBaseURL,
-		GitHubForgeToken:      githubForgeToken,
+		NulangWorkloadSecret: nulangWorkloadSecret,
+		ForgeProvider:        forgeProvider,
+		GiteaBaseURL:         giteaBaseURL,
+		GiteaToken:           giteaToken,
+		GitHubForgeBaseURL:   githubForgeBaseURL,
+		GitHubForgeToken:     githubForgeToken,
 	}, nil
 }
 
