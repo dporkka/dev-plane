@@ -123,7 +123,14 @@ func TestForgeExecuteRouteRequiresWorkloadAndGiteaConfig(t *testing.T) {
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("status = %d, want 401 to prove route is mounted", rec.Code)
+			t.Fatalf("status = %d, want 401 to prove execute route is mounted", rec.Code)
+		}
+
+		reconcileReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/forge/reconcile", strings.NewReader("{}"))
+		reconcileRec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(reconcileRec, reconcileReq)
+		if reconcileRec.Code != http.StatusUnauthorized {
+			t.Fatalf("reconcile status = %d, want 401 to prove route is mounted", reconcileRec.Code)
 		}
 	})
 
@@ -135,6 +142,12 @@ func TestForgeExecuteRouteRequiresWorkloadAndGiteaConfig(t *testing.T) {
 		s.Handler().ServeHTTP(rec, req)
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("status = %d, want 404", rec.Code)
+		}
+		reconcileReq := httptest.NewRequest(http.MethodPost, "/api/v1/internal/forge/reconcile", strings.NewReader("{}"))
+		reconcileRec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(reconcileRec, reconcileReq)
+		if reconcileRec.Code != http.StatusNotFound {
+			t.Fatalf("reconcile status = %d, want 404", reconcileRec.Code)
 		}
 	})
 }
