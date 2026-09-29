@@ -80,9 +80,9 @@ func (g *GitHubExecutor) Reconcile(ctx context.Context, command Command) (Reconc
 		evidence.Source = "reconciliation"
 		evidence.Detail = "command type is not a reconcilable mutation"
 		return ReconcileResult{
-			Status: ReconcileAmbiguous,
+			Status:   ReconcileAmbiguous,
 			Evidence: evidence,
-			Reason: evidence.Detail,
+			Reason:   evidence.Detail,
 		}, nil
 	}
 }
@@ -211,10 +211,10 @@ func (g *GitHubExecutor) createChange(ctx context.Context, command Command) (Res
 		fmt.Sprintf("/repos/%s/%s/pulls", command.Repository.Owner, command.Repository.Name),
 		nil,
 		map[string]any{
-			"head": command.Head,
-			"base": command.Base,
+			"head":  command.Head,
+			"base":  command.Base,
 			"title": command.Title,
-			"body": command.Body,
+			"body":  command.Body,
 		},
 		&out,
 	); err != nil {
@@ -396,9 +396,9 @@ func (g *GitHubExecutor) reconcileWriteFile(ctx context.Context, command Command
 
 func (g *GitHubExecutor) reconcileCreateChange(ctx context.Context, command Command) (ReconcileResult, error) {
 	query := url.Values{
-		"state": []string{"all"},
-		"head": []string{command.Repository.Owner + ":" + command.Head},
-		"base": []string{command.Base},
+		"state":    []string{"all"},
+		"head":     []string{command.Repository.Owner + ":" + command.Head},
+		"base":     []string{command.Base},
 		"per_page": []string{"100"},
 	}
 	status, body, err := g.doRaw(ctx, http.MethodGet,
@@ -458,9 +458,9 @@ func (g *GitHubExecutor) reconcileReviewChange(ctx context.Context, command Comm
 		return ReconcileResult{}, fmt.Errorf("decode GitHub reviews: %w", err)
 	}
 	wantState := map[string]string{
-		"approve": "APPROVED",
+		"approve":         "APPROVED",
 		"request_changes": "CHANGES_REQUESTED",
-		"comment": "COMMENTED",
+		"comment":         "COMMENTED",
 	}[command.Event]
 	evidence := EvidenceFrom(g.Provider(), command, Response{})
 	evidence.Source = "reconciliation"
