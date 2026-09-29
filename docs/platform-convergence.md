@@ -152,8 +152,12 @@ request for one safe retry, or keep the request ambiguous and non-retryable.
 All three endpoints use a dedicated Nulang workload identity plus a timestamped
 HMAC-SHA256 signature covering workload id, timestamp, HTTP method, request URI,
 and the SHA-256 body digest. Authorization is mounted only when
-`NULANG_WORKLOAD_SECRET` is configured. Hosted execution and reconciliation
-additionally require both `GITEA_BASE_URL` and the server-held `GITEA_TOKEN`.
+`NULANG_WORKLOAD_SECRET` is configured. Hosted execution and reconciliation additionally require one configured forge
+provider. Gitea uses `GITEA_BASE_URL` + `GITEA_TOKEN`; GitHub uses the
+server-held `GITHUB_FORGE_TOKEN` and defaults to `https://api.github.com`
+unless `GITHUB_FORGE_BASE_URL` is set. `FORGE_PROVIDER` may be omitted when
+exactly one provider is configured, but is required to disambiguate when both
+credential sets are present.
 
 Dev Plane also applies an independent role allowlist before ordinary policy:
 planners/test runners are read-only; implementers and docs agents may create
@@ -190,6 +194,24 @@ response, including provider, repository, operation, command type, head/blob SHA
 where available, pull-request/review identifiers, merge status, and check
 results. Uncertain mutations retain reconciliation evidence rather than being
 blindly replayed.
+
+### Hosted forge providers
+
+The provider-neutral executor/reconciliation interface currently has Gitea and
+GitHub implementations. Nulang sends the same command vocabulary to either one;
+provider selection is a Dev Plane deployment concern and does not change the
+agent-facing contract.
+
+The GitHub adapter uses the current versioned REST API and keeps the credential
+server-side. Branch creation resolves the source Git ref before creating
+`refs/heads/<branch>`; file writes use the Contents API; pull requests,
+reviews, merges, and check runs map back into the same provider-neutral response
+types used by Gitea.
+
+GitHub uncertain-mutation reconciliation uses read-side provider probes only:
+Git refs for branches, Contents + branch refs for file writes, filtered pull
+request listing for change creation, review listing for reviews, and the merged
+status probe for merges. Ambiguous attribution remains non-retryable.
 
 ## Nulang Cloud runtime provider
 
