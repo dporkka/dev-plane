@@ -42,7 +42,7 @@ func TestExecuteForgeWorkloadDerivesOperationAndExecutesCanonicalRepository(t *t
 	defer cleanup()
 	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
 	executor := &fakeForgeExecutor{response: forgeexec.Response{
-		Type: "file",
+		Type:  "file",
 		Value: forgeexec.FileContent{Path: "README.md", Content: []int{104, 105}, SHA: "abc"},
 	}}
 	h.WithForgeReplayStore(replay).WithForgeExecutor(executor)
