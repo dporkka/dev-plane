@@ -534,14 +534,42 @@ func TestRouter_RegisterProvider(t *testing.T) {
 	}
 }
 
+// TestDefaultConfig_PrefersBifrostForEquivalentModels pins the shared gateway
+// as the canonical routing authority when both gateway and direct providers
+// can satisfy the same request.
+func TestDefaultConfig_PrefersBifrostForEquivalentModels(t *testing.T) {
+	bifrost := &mockProvider{
+		name:      "bifrost",
+		available: true,
+		models:    []ModelInfo{codingModel("shared-coder", "bifrost", 9)},
+	}
+	openai := &mockProvider{
+		name:      "openai",
+		available: true,
+		models:    []ModelInfo{codingModel("direct-coder", "openai", 9)},
+	}
+
+	router := NewRouter(DefaultConfig(), openai, bifrost)
+	model, err := router.SelectModel(context.Background(), TaskTypeCode, DifficultyMedium, LatencyNormal, 0, 0)
+	if err != nil {
+		t.Fatalf("SelectModel() error: %v", err)
+	}
+	if model.Provider != "bifrost" {
+		t.Fatalf("expected Bifrost to be preferred for equivalent models, got %s", model.Provider)
+	}
+}
+
 // TestDefaultConfig verifies default router configuration.
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
 	if config.DefaultModel != "gpt-4o" {
 		t.Errorf("expected default model gpt-4o, got %s", config.DefaultModel)
 	}
-	if config.DefaultProvider != "openai" {
-		t.Errorf("expected default provider openai, got %s", config.DefaultProvider)
+	if config.DefaultProvider != "bifrost" {
+		t.Errorf("expected default provider bifrost, got %s", config.DefaultProvider)
+	}
+	if len(config.ProviderPriority) == 0 || config.ProviderPriority[0] != "bifrost" {
+		t.Errorf("expected bifrost to be first provider priority, got %v", config.ProviderPriority)
 	}
 	if config.MaxCostPer1K != 0.10 {
 		t.Errorf("expected max cost 0.10, got %.4f", config.MaxCostPer1K)
