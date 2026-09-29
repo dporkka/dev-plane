@@ -9,11 +9,11 @@ import (
 
 // ApprovalType constants.
 const (
-	ApprovalTypeSpec        = "spec"
-	ApprovalTypeExecution   = "execution"
-	ApprovalTypePRCreate    = "pr_create"
-	ApprovalTypeDeploy      = "deploy"
-	ApprovalTypeRiskyAction    = "risky_action"
+	ApprovalTypeSpec            = "spec"
+	ApprovalTypeExecution       = "execution"
+	ApprovalTypePRCreate        = "pr_create"
+	ApprovalTypeDeploy          = "deploy"
+	ApprovalTypeRiskyAction     = "risky_action"
 	ApprovalTypeForgeCapability = "forge_capability"
 )
 
