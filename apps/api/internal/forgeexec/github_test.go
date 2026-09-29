@@ -30,12 +30,12 @@ func testGitHub(t *testing.T, handler http.HandlerFunc) (*GitHubExecutor, *[]git
 		}
 		mu.Lock()
 		seen = append(seen, githubSeenRequest{
-			Method: r.Method,
-			Path: r.URL.RequestURI(),
-			Auth: r.Header.Get("Authorization"),
-			Accept: r.Header.Get("Accept"),
+			Method:     r.Method,
+			Path:       r.URL.RequestURI(),
+			Auth:       r.Header.Get("Authorization"),
+			Accept:     r.Header.Get("Accept"),
 			APIVersion: r.Header.Get("X-GitHub-Api-Version"),
-			Body: body,
+			Body:       body,
 		})
 		mu.Unlock()
 		handler(w, r)
@@ -97,7 +97,7 @@ func TestGitHubExecutorWriteFileUsesContentsAPIAndExpectedBlobSHA(t *testing.T) 
 
 	response, err := exec.Execute(context.Background(), Command{
 		Type: "write_file", Repository: repo(), Path: "src/lib.rs", Branch: "agent/task-1",
-		Content: []int{104,101,108,108,111}, Message: "agent: update", ExpectedBlobSHA: strptr("oldsha"),
+		Content: []int{104, 101, 108, 108, 111}, Message: "agent: update", ExpectedBlobSHA: strptr("oldsha"),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -123,9 +123,11 @@ func TestGitHubExecutorCreateChangeRetainsProviderHeadSHA(t *testing.T) {
 	defer cleanup()
 
 	response, err := exec.Execute(context.Background(), Command{
-		Type:"create_change", Repository:repo(), Head:"agent/task-1", Base:"main", Title:"Ship it", Body:"body",
+		Type: "create_change", Repository: repo(), Head: "agent/task-1", Base: "main", Title: "Ship it", Body: "body",
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	change, ok := response.Value.(ChangeRef)
 	if !ok || change.Number != 42 || change.HeadSHA != "deadbeef" || change.Head != "agent/task-1" || change.Base != "main" {
 		t.Fatalf("response = %#v", response)
@@ -142,9 +144,11 @@ func TestGitHubExecutorReviewMapsProviderEventAndCommit(t *testing.T) {
 	defer cleanup()
 	commit := "deadbeef"
 	response, err := exec.Execute(context.Background(), Command{
-		Type:"review_change", Repository:repo(), Number:17, Event:"approve", Body:"looks good", CommitID:&commit,
+		Type: "review_change", Repository: repo(), Number: 17, Event: "approve", Body: "looks good", CommitID: &commit,
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	review, ok := response.Value.(ReviewRef)
 	if !ok || review.ID == nil || *review.ID != 7 {
 		t.Fatalf("response = %#v", response)
@@ -164,13 +168,17 @@ func TestGitHubExecutorMergeUsesExpectedHeadAndSupportedMethod(t *testing.T) {
 	})
 	defer cleanup()
 	response, err := exec.Execute(context.Background(), Command{
-		Type:"merge_change", Repository:repo(), Number:17, Method:"squash", ExpectedHeadSHA:strptr("deadbeef"),
+		Type: "merge_change", Repository: repo(), Number: 17, Method: "squash", ExpectedHeadSHA: strptr("deadbeef"),
 	})
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	merge, ok := response.Value.(MergeResult)
-	if !ok || !merge.Merged { t.Fatalf("response = %#v", response) }
-	got:=(*seen)[0]
-	if got.Body["sha"]!="deadbeef" || got.Body["merge_method"]!="squash" {
+	if !ok || !merge.Merged {
+		t.Fatalf("response = %#v", response)
+	}
+	got := (*seen)[0]
+	if got.Body["sha"] != "deadbeef" || got.Body["merge_method"] != "squash" {
 		t.Fatalf("body = %#v", got.Body)
 	}
 }
@@ -181,12 +189,14 @@ func TestGitHubExecutorRejectsUnsupportedMergeMethodBeforeHTTP(t *testing.T) {
 	})
 	defer cleanup()
 	_, err := exec.Execute(context.Background(), Command{
-		Type:"merge_change", Repository:repo(), Number:17, Method:"fast_forward_only",
+		Type: "merge_change", Repository: repo(), Number: 17, Method: "fast_forward_only",
 	})
 	if err == nil || !strings.Contains(err.Error(), "unsupported GitHub merge method") {
 		t.Fatalf("err = %v", err)
 	}
-	if len(*seen)!=0 { t.Fatalf("requests=%d",len(*seen)) }
+	if len(*seen) != 0 {
+		t.Fatalf("requests=%d", len(*seen))
+	}
 }
 
 func TestGitHubExecutorListChecksMapsCheckRuns(t *testing.T) {
@@ -197,26 +207,32 @@ func TestGitHubExecutorListChecksMapsCheckRuns(t *testing.T) {
 		_, _ = w.Write([]byte(`{"check_runs":[{"id":123,"name":"CI","status":"completed","conclusion":"success","html_url":"https://github.test/check/123"},{"id":124,"name":"Lint","status":"in_progress","conclusion":null,"html_url":"https://github.test/check/124"}]}`))
 	})
 	defer cleanup()
-	ref:="deadbeef"
-	response, err:=exec.Execute(context.Background(), Command{Type:"list_checks",Repository:repo(),Reference:&ref})
-	if err!=nil {t.Fatal(err)}
-	checks,ok:=response.Value.([]CheckRun)
-	if !ok || len(checks)!=2 || checks[0].ID!="123" || checks[0].Context!="CI" || checks[0].State!="success" || checks[1].State!="in_progress" {
+	ref := "deadbeef"
+	response, err := exec.Execute(context.Background(), Command{Type: "list_checks", Repository: repo(), Reference: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checks, ok := response.Value.([]CheckRun)
+	if !ok || len(checks) != 2 || checks[0].ID != "123" || checks[0].Context != "CI" || checks[0].State != "success" || checks[1].State != "in_progress" {
 		t.Fatalf("checks = %#v", response.Value)
 	}
 }
 
 func TestGitHubExecutorReadFileDecodesContentsAPI(t *testing.T) {
 	exec, _, cleanup := testGitHub(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("ref")!="main" { t.Fatalf("ref=%q",r.URL.Query().Get("ref")) }
+		if r.URL.Query().Get("ref") != "main" {
+			t.Fatalf("ref=%q", r.URL.Query().Get("ref"))
+		}
 		_, _ = w.Write([]byte(`{"type":"file","path":"README.md","sha":"blobsha","encoding":"base64","content":"aGVsbG8="}`))
 	})
 	defer cleanup()
-	ref:="main"
-	response,err:=exec.Execute(context.Background(),Command{Type:"read_file",Repository:repo(),Path:"README.md",Reference:&ref})
-	if err!=nil {t.Fatal(err)}
-	file,ok:=response.Value.(FileContent)
-	if !ok || file.SHA!="blobsha" || string([]byte{byte(file.Content[0]),byte(file.Content[1]),byte(file.Content[2]),byte(file.Content[3]),byte(file.Content[4])})!="hello" {
-		t.Fatalf("response=%#v",response)
+	ref := "main"
+	response, err := exec.Execute(context.Background(), Command{Type: "read_file", Repository: repo(), Path: "README.md", Reference: &ref})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, ok := response.Value.(FileContent)
+	if !ok || file.SHA != "blobsha" || string([]byte{byte(file.Content[0]), byte(file.Content[1]), byte(file.Content[2]), byte(file.Content[3]), byte(file.Content[4])}) != "hello" {
+		t.Fatalf("response=%#v", response)
 	}
 }
