@@ -10,6 +10,7 @@ import (
 	agentvaultclient "github.com/ai-dev-control-plane/api/internal/agentvault"
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	"github.com/ai-dev-control-plane/api/internal/workloadauth"
@@ -24,6 +25,13 @@ import (
 // EventPublisher is the subset of the event bus used by HTTP handlers.
 type EventPublisher interface {
 	Publish(subject string, data []byte) error
+}
+
+// ForgeReplayStore is the durable idempotency boundary for signed workload calls.
+type ForgeReplayStore interface {
+	Claim(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
+	Complete(ctx context.Context, requestID string, status int, body []byte) error
+	MarkUncertain(ctx context.Context, requestID string, detail []byte) error
 }
 
 // Handler is the base handler struct that provides access to shared dependencies.
@@ -41,6 +49,7 @@ type Handler struct {
 	deployGateway     deployGateway
 	deployToken       string
 	workloadVerifier  *workloadauth.Verifier
+	forgeReplayStore  ForgeReplayStore
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
@@ -132,6 +141,13 @@ func (h *Handler) WithDeployToken(token string) *Handler {
 // for internal endpoints such as the Nulang forge authorization contract.
 func (h *Handler) WithWorkloadVerifier(verifier *workloadauth.Verifier) *Handler {
 	h.workloadVerifier = verifier
+	return h
+}
+
+// WithForgeReplayStore configures durable request idempotency/replay handling
+// for signed workload endpoints.
+func (h *Handler) WithForgeReplayStore(store ForgeReplayStore) *Handler {
+	h.forgeReplayStore = store
 	return h
 }
 
