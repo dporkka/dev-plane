@@ -200,3 +200,45 @@ func TestExecuteForgeWorkloadExpiredApprovalIsTerminal(t *testing.T) {
 		t.Fatalf("executor calls = %d", len(executor.calls))
 	}
 }
+
+func TestExecuteForgeWorkloadApprovalCreationRaceReusesWinner(t *testing.T) {
+	h, mock, _, cleanup := forgeHandler(t)
+	defer cleanup()
+	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
+	executor := &fakeForgeExecutor{}
+	h.WithForgeReplayStore(replay).WithForgeExecutor(executor)
+
+	mock.ExpectQuery("(?s)SELECT.*FROM agent_runs ar.*JOIN tasks t.*JOIN repositories r.*JOIN projects p.*LEFT JOIN workspaces w").
+		WithArgs("run-1", "task-1").
+		WillReturnRows(forgeContextRows("implementer"))
+	mock.ExpectQuery("SELECT id, response, expires_at FROM approvals WHERE forge_request_id = \\$1").
+		WithArgs("req-approval-00000001").
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("INSERT INTO approvals").
+		WithArgs(sqlmock.AnyArg(), "task-1", "run-1", models.ApprovalTypeForgeCapability,
+			"user-1", sqlmock.AnyArg(), sqlmock.AnyArg(), "req-approval-00000001").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT id, response, expires_at FROM approvals WHERE forge_request_id = \\$1").
+		WithArgs("req-approval-00000001").
+		WillReturnRows(approvalRow("approval-winner", nil, nil))
+
+	rec := httptest.NewRecorder()
+	h.ExecuteForgeWorkload(rec, signedForgeExecuteRequest(t, branchCreateBody()))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["approval_id"] != "approval-winner" {
+		t.Fatalf("approval id = %#v", body["approval_id"])
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("executor calls = %d", len(executor.calls))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
