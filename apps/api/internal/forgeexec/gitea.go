@@ -144,7 +144,7 @@ func (g *GiteaExecutor) writeFile(ctx context.Context, command Command) (Respons
 	}
 	method := http.MethodPost
 	payload := map[string]any{
-		"branch": command.Branch,
+		"branch":  command.Branch,
 		"content": base64.StdEncoding.EncodeToString(content),
 		"message": command.Message,
 	}
@@ -184,10 +184,10 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 		return Response{}, err
 	}
 	var out struct {
-		Number  uint64 `json:"number"`
-		HTMLURL string `json:"html_url"`
-		URL     string `json:"url"`
-		State   string `json:"state"`
+		Number  uint64                      `json:"number"`
+		HTMLURL string                      `json:"html_url"`
+		URL     string                      `json:"url"`
+		State   string                      `json:"state"`
 		Head    struct{ Ref, Label string } `json:"head"`
 		Base    struct{ Ref, Label string } `json:"base"`
 	}
@@ -199,12 +199,20 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 		return Response{}, err
 	}
 	head, base := out.Head.Ref, out.Base.Ref
-	if head == "" { head = out.Head.Label }
-	if base == "" { base = out.Base.Label }
+	if head == "" {
+		head = out.Head.Label
+	}
+	if base == "" {
+		base = out.Base.Label
+	}
 	rawURL := out.HTMLURL
-	if rawURL == "" { rawURL = out.URL }
+	if rawURL == "" {
+		rawURL = out.URL
+	}
 	var resultURL *string
-	if rawURL != "" { resultURL = &rawURL }
+	if rawURL != "" {
+		resultURL = &rawURL
+	}
 	return Response{Type: "change", Value: ChangeRef{
 		Number: out.Number, URL: resultURL, Head: head, Base: base, State: out.State,
 	}}, nil
@@ -212,9 +220,9 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 
 func (g *GiteaExecutor) reviewChange(ctx context.Context, command Command) (Response, error) {
 	event := map[string]string{
-		"approve": "APPROVED",
+		"approve":         "APPROVED",
 		"request_changes": "REQUEST_CHANGES",
-		"comment": "COMMENT",
+		"comment":         "COMMENT",
 	}[command.Event]
 	if event == "" {
 		return Response{}, fmt.Errorf("invalid review event %q", command.Event)
@@ -223,7 +231,9 @@ func (g *GiteaExecutor) reviewChange(ctx context.Context, command Command) (Resp
 	if command.CommitID != nil {
 		payload["commit_id"] = *command.CommitID
 	}
-	var out struct{ ID *uint64 `json:"id"` }
+	var out struct {
+		ID *uint64 `json:"id"`
+	}
 	if err := g.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews", command.Repository.Owner, command.Repository.Name, command.Number),
 		nil, payload, &out); err != nil {
@@ -234,10 +244,10 @@ func (g *GiteaExecutor) reviewChange(ctx context.Context, command Command) (Resp
 
 func (g *GiteaExecutor) mergeChange(ctx context.Context, command Command) (Response, error) {
 	method := map[string]string{
-		"merge": "merge",
-		"rebase": "rebase",
-		"rebase_merge": "rebase-merge",
-		"squash": "squash",
+		"merge":             "merge",
+		"rebase":            "rebase",
+		"rebase_merge":      "rebase-merge",
+		"squash":            "squash",
 		"fast_forward_only": "fast-forward-only",
 	}[command.Method]
 	if method == "" {
@@ -282,7 +292,9 @@ func (g *GiteaExecutor) listChecks(ctx context.Context, command Command) (Respon
 			return Response{}, err
 		}
 		state := item.Status
-		if state == "" { state = item.State }
+		if state == "" {
+			state = item.State
+		}
 		checks = append(checks, CheckRun{ID: id, Context: item.Context, State: state, TargetURL: item.TargetURL})
 	}
 	return Response{Type: "checks", Value: checks}, nil
