@@ -156,8 +156,8 @@ func TestForgeExecutorProviderSelection(t *testing.T) {
 	t.Run("gitea", func(t *testing.T) {
 		cfg := &config.Config{
 			ForgeProvider: "gitea",
-			GiteaBaseURL: "https://git.example.test",
-			GiteaToken: "gitea-token",
+			GiteaBaseURL:  "https://git.example.test",
+			GiteaToken:    "gitea-token",
 		}
 		exec := newForgeExecutor(cfg, &http.Client{})
 		if exec == nil || exec.Provider() != "gitea" {
@@ -167,9 +167,9 @@ func TestForgeExecutorProviderSelection(t *testing.T) {
 
 	t.Run("github", func(t *testing.T) {
 		cfg := &config.Config{
-			ForgeProvider: "github",
+			ForgeProvider:      "github",
 			GitHubForgeBaseURL: "https://api.github.test",
-			GitHubForgeToken: "github-token",
+			GitHubForgeToken:   "github-token",
 		}
 		exec := newForgeExecutor(cfg, &http.Client{})
 		if exec == nil || exec.Provider() != "github" {
@@ -186,14 +186,14 @@ func TestForgeExecutorProviderSelection(t *testing.T) {
 
 func TestForgeExecuteRouteMountsForGitHubProvider(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL: "",
-		JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
-		AllowedOrigins: []string{"http://localhost:3000"},
-		NulangWorkloadID: "nulang-cloud",
+		NATSURL:              "",
+		JWTSecret:            "test-secret-that-is-at-least-thirty-two-bytes",
+		AllowedOrigins:       []string{"http://localhost:3000"},
+		NulangWorkloadID:     "nulang-cloud",
 		NulangWorkloadSecret: "0123456789abcdef0123456789abcdef",
-		ForgeProvider: "github",
-		GitHubForgeBaseURL: "https://api.github.test",
-		GitHubForgeToken: "server-held-token",
+		ForgeProvider:        "github",
+		GitHubForgeBaseURL:   "https://api.github.test",
+		GitHubForgeToken:     "server-held-token",
 	}
 	s := New(cfg, nil, slog.Default())
 	for _, path := range []string{
