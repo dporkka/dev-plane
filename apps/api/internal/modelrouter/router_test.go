@@ -562,8 +562,8 @@ func TestDefaultConfig_PrefersBifrostForEquivalentModels(t *testing.T) {
 // TestDefaultConfig verifies default router configuration.
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
-	if config.DefaultModel != "gpt-4o" {
-		t.Errorf("expected default model gpt-4o, got %s", config.DefaultModel)
+	if config.DefaultModel != "bifrost/gpt-4o" {
+		t.Errorf("expected default model bifrost/gpt-4o, got %s", config.DefaultModel)
 	}
 	if config.DefaultProvider != "bifrost" {
 		t.Errorf("expected default provider bifrost, got %s", config.DefaultProvider)
