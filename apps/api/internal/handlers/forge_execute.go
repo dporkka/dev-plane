@@ -103,13 +103,54 @@ func (h *Handler) ExecuteForgeWorkload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if decision.Effect != policies.EffectAllow {
-		status, code := http.StatusForbidden, "policy_denied"
-		if decision.RequiredApproval {
-			status, code = http.StatusConflict, "approval_required"
+		if !decision.RequiredApproval {
+			h.completeForgeJSON(w, ctx, input.RequestID, http.StatusForbidden,
+				map[string]string{"error": "policy_denied", "reason": decision.Reason})
+			return
 		}
-		h.completeForgeJSON(w, ctx, input.RequestID, status,
-			map[string]string{"error": code, "reason": decision.Reason})
-		return
+
+		approval, approvalErr := h.ensureForgeApproval(
+			ctx, input.RequestID, fctx, operation, input.Command.Type,
+		)
+		if approvalErr != nil {
+			h.releaseForgeClaim(ctx, input.RequestID)
+			respond.Error(w, http.StatusInternalServerError, errors.New("failed to resolve forge approval"))
+			return
+		}
+		switch approval.State {
+		case forgeApprovalApproved:
+			// A human approved this exact request_id. Continue with the same
+			// signed command identity; role/policy denial paths above still fail closed.
+		case forgeApprovalPending:
+			if releaseErr := h.forgeReplayStore.Release(ctx, input.RequestID); releaseErr != nil {
+				respond.Error(w, http.StatusInternalServerError, errors.New("failed to release forge request for approval retry"))
+				return
+			}
+			respond.JSON(w, http.StatusConflict, map[string]string{
+				"error":       "approval_required",
+				"reason":      decision.Reason,
+				"approval_id": approval.ID,
+			})
+			return
+		case forgeApprovalRejected:
+			h.completeForgeJSON(w, ctx, input.RequestID, http.StatusForbidden, map[string]string{
+				"error":       "approval_rejected",
+				"reason":      "forge execution approval was rejected",
+				"approval_id": approval.ID,
+			})
+			return
+		case forgeApprovalExpired:
+			h.completeForgeJSON(w, ctx, input.RequestID, http.StatusForbidden, map[string]string{
+				"error":       "approval_expired",
+				"reason":      "forge execution approval expired before execution",
+				"approval_id": approval.ID,
+			})
+			return
+		default:
+			h.releaseForgeClaim(ctx, input.RequestID)
+			respond.Error(w, http.StatusInternalServerError, errors.New("invalid forge approval state"))
+			return
+		}
 	}
 
 	result, err := h.forgeExecutor.Execute(ctx, input.Command)
