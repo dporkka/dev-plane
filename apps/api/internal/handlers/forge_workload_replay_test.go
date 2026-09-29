@@ -12,8 +12,8 @@ import (
 )
 
 type fakeForgeReplayStore struct {
-	result        forgereplay.Result
-	err           error
+	result            forgereplay.Result
+	err               error
 	claims            []forgereplay.Request
 	inspects          []forgereplay.Request
 	completedID       string
