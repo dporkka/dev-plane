@@ -28,6 +28,8 @@ type Config struct {
 	SecretKeys           string
 	NulangWorkloadID     string
 	NulangWorkloadSecret string
+	GiteaBaseURL         string
+	GiteaToken           string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -40,6 +42,11 @@ func Load() (*Config, error) {
 	nulangWorkloadSecret := EnvOrDefault("NULANG_WORKLOAD_SECRET", "")
 	if nulangWorkloadSecret != "" && len(nulangWorkloadSecret) < 32 {
 		return nil, errors.New("NULANG_WORKLOAD_SECRET must be at least 32 characters when configured")
+	}
+	giteaBaseURL := EnvOrDefault("GITEA_BASE_URL", "")
+	giteaToken := EnvOrDefault("GITEA_TOKEN", "")
+	if (giteaBaseURL == "") != (giteaToken == "") {
+		return nil, errors.New("GITEA_BASE_URL and GITEA_TOKEN must be configured together")
 	}
 
 	return &Config{
@@ -62,6 +69,8 @@ func Load() (*Config, error) {
 		SecretKeys:           EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 		NulangWorkloadID:     EnvOrDefault("NULANG_WORKLOAD_ID", "nulang-cloud"),
 		NulangWorkloadSecret: nulangWorkloadSecret,
+		GiteaBaseURL:         giteaBaseURL,
+		GiteaToken:           giteaToken,
 	}, nil
 }
 
