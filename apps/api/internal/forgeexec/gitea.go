@@ -264,7 +264,7 @@ func (g *GiteaExecutor) reconcileCreateChange(ctx context.Context, command Comma
 		responseURL = &rawURL
 	}
 	response := Response{Type: "change", Value: ChangeRef{
-		Number: out.Number, URL: responseURL, Head: out.Head.Ref, Base: out.Base.Ref, State: out.State,
+		Number: out.Number, URL: responseURL, Head: out.Head.Ref, HeadSHA: out.Head.SHA, Base: out.Base.Ref, State: out.State,
 	}}
 	evidence = EvidenceFrom(g.Provider(), command, response)
 	evidence.Source = "reconciliation"
@@ -479,8 +479,15 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 		HTMLURL string                      `json:"html_url"`
 		URL     string                      `json:"url"`
 		State   string                      `json:"state"`
-		Head    struct{ Ref, Label string } `json:"head"`
-		Base    struct{ Ref, Label string } `json:"base"`
+		Head struct {
+			Ref   string `json:"ref"`
+			Label string `json:"label"`
+			SHA   string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref   string `json:"ref"`
+			Label string `json:"label"`
+		} `json:"base"`
 	}
 	if err := g.doJSON(ctx, http.MethodPost,
 		fmt.Sprintf("/api/v1/repos/%s/%s/pulls", command.Repository.Owner, command.Repository.Name),
@@ -505,7 +512,7 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 		resultURL = &rawURL
 	}
 	return Response{Type: "change", Value: ChangeRef{
-		Number: out.Number, URL: resultURL, Head: head, Base: base, State: out.State,
+		Number: out.Number, URL: resultURL, Head: head, HeadSHA: out.Head.SHA, Base: base, State: out.State,
 	}}, nil
 }
 
