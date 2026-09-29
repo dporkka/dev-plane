@@ -16,6 +16,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/audit"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/config"
+	"github.com/ai-dev-control-plane/api/internal/forgeexec"
 	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/handlers"
 	appmiddleware "github.com/ai-dev-control-plane/api/internal/middleware"
@@ -103,6 +104,13 @@ func (s *Server) routes() {
 	} else {
 		s.logger.Warn("NULANG_WORKLOAD_SECRET not configured; internal forge workload endpoint is disabled")
 	}
+	if s.config.GiteaBaseURL != "" && s.config.GiteaToken != "" {
+		h = h.WithForgeExecutor(forgeexec.NewGiteaExecutor(
+			s.config.GiteaBaseURL,
+			s.config.GiteaToken,
+			&http.Client{Timeout: 15 * time.Second},
+		))
+	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
@@ -151,6 +159,9 @@ func (s *Server) routes() {
 		// dedicated Nulang workload secret is configured.
 		if s.config.NulangWorkloadSecret != "" {
 			r.Post("/internal/forge/authorize", h.AuthorizeForgeWorkload)
+			if s.config.GiteaBaseURL != "" && s.config.GiteaToken != "" {
+				r.Post("/internal/forge/execute", h.ExecuteForgeWorkload)
+			}
 		}
 
 		// Authenticated endpoints
