@@ -19,9 +19,9 @@ type fakeForgeReplayStore struct {
 	completedCode int
 	completedBody []byte
 	completeErr   error
-	uncertainID  string
+	uncertainID   string
 	uncertainBody []byte
-	releasedID   string
+	releasedID    string
 }
 
 func (f *fakeForgeReplayStore) Claim(_ context.Context, req forgereplay.Request) (forgereplay.Result, error) {
