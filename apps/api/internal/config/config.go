@@ -27,9 +27,12 @@ type Config struct {
 	AgentVaultProject    string
 	SecretKeys           string
 	NulangWorkloadID     string
-	NulangWorkloadSecret string
-	GiteaBaseURL         string
-	GiteaToken           string
+	NulangWorkloadSecret  string
+	ForgeProvider         string
+	GiteaBaseURL          string
+	GiteaToken            string
+	GitHubForgeBaseURL    string
+	GitHubForgeToken      string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -43,10 +46,43 @@ func Load() (*Config, error) {
 	if nulangWorkloadSecret != "" && len(nulangWorkloadSecret) < 32 {
 		return nil, errors.New("NULANG_WORKLOAD_SECRET must be at least 32 characters when configured")
 	}
+	forgeProvider := strings.ToLower(EnvOrDefault("FORGE_PROVIDER", ""))
+	if forgeProvider != "" && forgeProvider != "gitea" && forgeProvider != "github" {
+		return nil, errors.New("FORGE_PROVIDER must be one of: gitea, github")
+	}
+
 	giteaBaseURL := EnvOrDefault("GITEA_BASE_URL", "")
 	giteaToken := EnvOrDefault("GITEA_TOKEN", "")
 	if (giteaBaseURL == "") != (giteaToken == "") {
 		return nil, errors.New("GITEA_BASE_URL and GITEA_TOKEN must be configured together")
+	}
+	giteaConfigured := giteaBaseURL != "" && giteaToken != ""
+
+	githubForgeToken := EnvOrDefault("GITHUB_FORGE_TOKEN", "")
+	githubForgeBaseURL := EnvOrDefault("GITHUB_FORGE_BASE_URL", "")
+	if githubForgeBaseURL != "" && githubForgeToken == "" {
+		return nil, errors.New("GITHUB_FORGE_BASE_URL requires GITHUB_FORGE_TOKEN")
+	}
+	githubConfigured := githubForgeToken != ""
+	if githubConfigured && githubForgeBaseURL == "" {
+		githubForgeBaseURL = "https://api.github.com"
+	}
+
+	if forgeProvider == "" {
+		switch {
+		case giteaConfigured && githubConfigured:
+			return nil, errors.New("FORGE_PROVIDER is required when both Gitea and GitHub forge credentials are configured")
+		case giteaConfigured:
+			forgeProvider = "gitea"
+		case githubConfigured:
+			forgeProvider = "github"
+		}
+	}
+	if forgeProvider == "gitea" && !giteaConfigured {
+		return nil, errors.New("FORGE_PROVIDER=gitea requires GITEA_BASE_URL and GITEA_TOKEN")
+	}
+	if forgeProvider == "github" && !githubConfigured {
+		return nil, errors.New("FORGE_PROVIDER=github requires GITHUB_FORGE_TOKEN")
 	}
 
 	return &Config{
@@ -68,9 +104,12 @@ func Load() (*Config, error) {
 		AgentVaultProject:    EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:           EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 		NulangWorkloadID:     EnvOrDefault("NULANG_WORKLOAD_ID", "nulang-cloud"),
-		NulangWorkloadSecret: nulangWorkloadSecret,
-		GiteaBaseURL:         giteaBaseURL,
-		GiteaToken:           giteaToken,
+		NulangWorkloadSecret:  nulangWorkloadSecret,
+		ForgeProvider:         forgeProvider,
+		GiteaBaseURL:          giteaBaseURL,
+		GiteaToken:            giteaToken,
+		GitHubForgeBaseURL:    githubForgeBaseURL,
+		GitHubForgeToken:      githubForgeToken,
 	}, nil
 }
 
