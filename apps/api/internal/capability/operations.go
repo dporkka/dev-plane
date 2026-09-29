@@ -147,10 +147,9 @@ func OperationForForge(operation string) (string, bool) {
 	return op, ok
 }
 
-
 var forgeAgentRoleOperations = map[string]map[string]struct{}{
 	models.AgentRolePlanner: {
-		ForgeOperationRepoRead: {},
+		ForgeOperationRepoRead:  {},
 		ForgeOperationCheckRead: {},
 	},
 	models.AgentRoleImplementer: {
@@ -161,18 +160,18 @@ var forgeAgentRoleOperations = map[string]map[string]struct{}{
 		ForgeOperationCheckRead:    {},
 	},
 	models.AgentRoleReviewer: {
-		ForgeOperationRepoRead:      {},
+		ForgeOperationRepoRead:     {},
 		ForgeOperationChangeReview: {},
-		ForgeOperationCheckRead:     {},
+		ForgeOperationCheckRead:    {},
 	},
 	models.AgentRoleTestRunner: {
 		ForgeOperationRepoRead:  {},
 		ForgeOperationCheckRead: {},
 	},
 	models.AgentRoleSecurity: {
-		ForgeOperationRepoRead:      {},
+		ForgeOperationRepoRead:     {},
 		ForgeOperationChangeReview: {},
-		ForgeOperationCheckRead:     {},
+		ForgeOperationCheckRead:    {},
 	},
 	models.AgentRoleDocs: {
 		ForgeOperationRepoRead:     {},
@@ -182,10 +181,10 @@ var forgeAgentRoleOperations = map[string]map[string]struct{}{
 		ForgeOperationCheckRead:    {},
 	},
 	models.AgentRoleReleaseManager: {
-		ForgeOperationRepoRead:      {},
+		ForgeOperationRepoRead:     {},
 		ForgeOperationChangeReview: {},
 		ForgeOperationChangeMerge:  {},
-		ForgeOperationCheckRead:     {},
+		ForgeOperationCheckRead:    {},
 	},
 }
 
