@@ -293,3 +293,44 @@ func TestCompleteWithEvidenceCachesProviderEvidence(t *testing.T) {
 		t.Fatalf("result = %+v", result)
 	}
 }
+
+func TestInspectMissingDoesNotCreateClaim(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"commit.write"}`)
+
+	if _, err := store.Inspect(ctx, req); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("inspect error = %v, want ErrNotFound", err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateNew {
+		t.Fatalf("claim after missing inspect = %q, want %q", result.State, StateNew)
+	}
+}
+
+func TestInspectReturnsUncertainWithoutReclaiming(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"change.merge"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkUncertain(ctx, req.ID, []byte("timeout")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Inspect(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateUncertain {
+		t.Fatalf("state = %q, want %q", result.State, StateUncertain)
+	}
+}
