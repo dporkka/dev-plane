@@ -134,7 +134,7 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 
 	err = h.db.QueryRowContext(ctx, `
 		SELECT
-			t.id, t.project_id, t.repository_id, t.workspace_id, t.risk_level, t.target_branch,
+			t.id, t.project_id, t.repository_id, t.workspace_id, t.created_by, t.risk_level, t.target_branch,
 			ar.id, ar.workspace_id, ar.agent_role, ar.status,
 			ar.prompt_tokens, ar.completion_tokens, ar.total_cost, ar.started_at, ar.completed_at,
 			r.id, r.project_id, r.owner, r.name, r.full_name, r.default_branch,
@@ -151,7 +151,7 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 		  AND r.deleted_at IS NULL
 		  AND p.deleted_at IS NULL
 	`, input.RunID, input.TaskID).Scan(
-		&task.ID, &task.ProjectID, &task.RepositoryID, &taskWorkspaceID, &task.RiskLevel, &task.TargetBranch,
+		&task.ID, &task.ProjectID, &task.RepositoryID, &taskWorkspaceID, &task.CreatedBy, &task.RiskLevel, &task.TargetBranch,
 		&run.ID, &runWorkspaceID, &run.AgentRole, &run.Status,
 		&run.PromptTokens, &run.CompletionTokens, &run.TotalCost, &startedAt, &completedAt,
 		&repo.ID, &repo.ProjectID, &repo.Owner, &repo.Name, &repo.FullName, &repo.DefaultBranch,
