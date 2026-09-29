@@ -475,11 +475,11 @@ func (g *GiteaExecutor) createChange(ctx context.Context, command Command) (Resp
 		return Response{}, err
 	}
 	var out struct {
-		Number  uint64                      `json:"number"`
-		HTMLURL string                      `json:"html_url"`
-		URL     string                      `json:"url"`
-		State   string                      `json:"state"`
-		Head struct {
+		Number  uint64 `json:"number"`
+		HTMLURL string `json:"html_url"`
+		URL     string `json:"url"`
+		State   string `json:"state"`
+		Head    struct {
 			Ref   string `json:"ref"`
 			Label string `json:"label"`
 			SHA   string `json:"sha"`
