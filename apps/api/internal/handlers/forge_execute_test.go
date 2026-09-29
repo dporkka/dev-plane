@@ -203,3 +203,43 @@ func TestExecuteForgeWorkloadReplaysCompletedResultWithoutProvider(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestExecuteForgeWorkloadPersistsMutationEvidence(t *testing.T) {
+	h, mock, _, cleanup := forgeHandler(t)
+	defer cleanup()
+	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
+	executor := &fakeForgeExecutor{response: forgeexec.Response{
+		Type: "branch",
+		Value: forgeexec.BranchRef{Name: "agent/task-1", CommitID: "deadbeef"},
+	}}
+	allowBranch := policies.NewEngine([]policies.Policy{{
+		Name: "test_allow_branch_create", ResourceType: "git", Action: "create_branch",
+		Effect: policies.EffectAllow, Priority: 100,
+	}})
+	h.WithForgeReplayStore(replay).
+		WithForgeExecutor(executor).
+		WithCapabilityKernel(capability.NewKernel(allowBranch, nil, nil, slog.Default()))
+
+	mock.ExpectQuery("(?s)SELECT.*FROM agent_runs ar.*JOIN tasks t.*JOIN repositories r.*JOIN projects p.*LEFT JOIN workspaces w").
+		WithArgs("run-1", "task-1").
+		WillReturnRows(forgeContextRows("implementer"))
+
+	body := `{"request_id":"req-evidence-0000001","task_id":"task-1","run_id":"run-1","command":{"type":"create_branch","repository":{"owner":"nulang-org","name":"nulang"},"name":"agent/task-1","from":"main"}}`
+	rec := httptest.NewRecorder()
+	h.ExecuteForgeWorkload(rec, signedForgeExecuteRequest(t, body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(replay.completedEvidence) == 0 {
+		t.Fatal("expected provider evidence to be persisted")
+	}
+	var evidence forgeexec.Evidence
+	if err := json.Unmarshal(replay.completedEvidence, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.Provider != "fake" || evidence.Repository != "nulang-org/nulang" ||
+		evidence.Operation != "branch.create" || evidence.HeadSHA != "deadbeef" {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+}
