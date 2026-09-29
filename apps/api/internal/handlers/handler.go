@@ -10,6 +10,7 @@ import (
 	agentvaultclient "github.com/ai-dev-control-plane/api/internal/agentvault"
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/forgeexec"
 	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
@@ -25,6 +26,12 @@ import (
 // EventPublisher is the subset of the event bus used by HTTP handlers.
 type EventPublisher interface {
 	Publish(subject string, data []byte) error
+}
+
+// ForgeExecutor executes an already-authorized provider-neutral forge command.
+// Provider credentials are held by the implementation, never by the workload.
+type ForgeExecutor interface {
+	Execute(ctx context.Context, command forgeexec.Command) (forgeexec.Response, error)
 }
 
 // ForgeReplayStore is the durable idempotency boundary for signed workload calls.
@@ -51,6 +58,7 @@ type Handler struct {
 	deployToken       string
 	workloadVerifier  *workloadauth.Verifier
 	forgeReplayStore  ForgeReplayStore
+	forgeExecutor     ForgeExecutor
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
@@ -149,6 +157,12 @@ func (h *Handler) WithWorkloadVerifier(verifier *workloadauth.Verifier) *Handler
 // for signed workload endpoints.
 func (h *Handler) WithForgeReplayStore(store ForgeReplayStore) *Handler {
 	h.forgeReplayStore = store
+	return h
+}
+
+// WithForgeExecutor configures the control-plane-owned forge provider executor.
+func (h *Handler) WithForgeExecutor(executor ForgeExecutor) *Handler {
+	h.forgeExecutor = executor
 	return h
 }
 
