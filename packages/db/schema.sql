@@ -159,7 +159,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_tasks_project_source_source_id_active
     ON tasks(project_id, source, source_id)
-    WHERE source_id IS NOT NULL AND deleted_at IS NULL;
+    WHERE source = 'web' AND source_id IS NOT NULL AND deleted_at IS NULL;
 
 -- =====================================================
 -- 7. agent_runs
