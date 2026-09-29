@@ -229,8 +229,15 @@ func (h *Handler) completeForgeExecution(
 	w http.ResponseWriter, ctx context.Context, input ForgeExecuteRequest, result forgeexec.Response,
 ) {
 	body, err := json.Marshal(result)
+	var evidenceBody []byte
 	if err == nil {
-		err = h.forgeReplayStore.Complete(ctx, input.RequestID, http.StatusOK, body)
+		evidence := forgeexec.EvidenceFrom(h.forgeExecutor.Provider(), input.Command, result)
+		evidenceBody, err = json.Marshal(evidence)
+	}
+	if err == nil {
+		err = h.forgeReplayStore.CompleteWithEvidence(
+			ctx, input.RequestID, http.StatusOK, body, evidenceBody,
+		)
 	}
 	if err == nil {
 		writeForgeJSONBytes(w, http.StatusOK, body)
@@ -240,7 +247,7 @@ func (h *Handler) completeForgeExecution(
 		h.releaseForgeClaim(ctx, input.RequestID)
 	} else {
 		_ = h.forgeReplayStore.MarkUncertain(ctx, input.RequestID,
-			[]byte(truncateForgeError("provider may have succeeded; response persistence failed", 512)))
+			[]byte(truncateForgeError("provider may have succeeded; response/evidence persistence failed", 512)))
 	}
 	respond.Error(w, http.StatusInternalServerError, errors.New("failed to persist forge execution outcome"))
 }
