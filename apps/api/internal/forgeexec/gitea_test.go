@@ -167,3 +167,47 @@ func TestCommandOperationIsDerivedFromType(t *testing.T) {
 }
 
 func strptr(v string) *string { return &v }
+
+func TestGiteaExecutorCreateChangeRetainsProviderHeadSHA(t *testing.T) {
+	exec, _, cleanup := testGitea(t, 201,
+		`{"number":42,"html_url":"https://git/pr/42","state":"open","head":{"ref":"agent/task-1","sha":"deadbeef"},"base":{"ref":"main"}}`)
+	defer cleanup()
+
+	response, err := exec.Execute(context.Background(), Command{
+		Type: "create_change", Repository: repo(),
+		Head: "agent/task-1", Base: "main", Title: "Ship it", Body: "body",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change, ok := response.Value.(ChangeRef)
+	if !ok {
+		t.Fatalf("response = %#v", response)
+	}
+	if change.HeadSHA != "deadbeef" {
+		t.Fatalf("head sha = %q", change.HeadSHA)
+	}
+
+	evidence := EvidenceFrom("gitea", Command{
+		Type: "create_change", Repository: repo(),
+		Head: "agent/task-1", Base: "main", Title: "Ship it",
+	}, response)
+	if evidence.HeadSHA != "deadbeef" || evidence.ChangeNumber != 42 {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+}
+
+func TestEvidenceFromReviewRetainsReviewedCommit(t *testing.T) {
+	commit := "deadbeef"
+	reviewID := uint64(7)
+	command := Command{
+		Type: "review_change", Repository: repo(), Number: 42,
+		Event: "approve", Body: "looks good", CommitID: &commit,
+	}
+	evidence := EvidenceFrom("gitea", command, Response{
+		Type: "review", Value: ReviewRef{ID: &reviewID},
+	})
+	if evidence.HeadSHA != "deadbeef" || evidence.ReviewID == nil || *evidence.ReviewID != 7 {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+}
