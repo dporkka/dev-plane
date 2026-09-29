@@ -80,10 +80,10 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 		workspaceBranch sql.NullString
 		runtimeProvider sql.NullString
 
-		task    models.Task
-		run     models.AgentRun
-		repo    models.Repository
-		orgID   string
+		task  models.Task
+		run   models.AgentRun
+		repo  models.Repository
+		orgID string
 	)
 
 	err = h.db.QueryRowContext(ctx, `
