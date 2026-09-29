@@ -37,6 +37,10 @@ func (f *fakeForgeReplayStore) MarkUncertain(_ context.Context, _ string, _ []by
 	return nil
 }
 
+func (f *fakeForgeReplayStore) Release(_ context.Context, _ string) error {
+	return nil
+}
+
 func TestAuthorizeForgeWorkloadReplaysCompletedRequestWithoutDatabaseLookup(t *testing.T) {
 	h, mock, _, cleanup := forgeHandler(t)
 	defer cleanup()
@@ -165,5 +169,23 @@ func TestAuthorizeForgeWorkloadFailsClosedWhenDecisionCannotBePersisted(t *testi
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthorizeForgeWorkloadRequiresRequestIDBeforeClaim(t *testing.T) {
+	h, _, _, cleanup := forgeHandler(t)
+	defer cleanup()
+	replay := &fakeForgeReplayStore{result: forgereplay.Result{State: forgereplay.StateNew}}
+	h.WithForgeReplayStore(replay)
+
+	requestBody := `{"task_id":"task-1","run_id":"run-1","operation":"repo.read"}`
+	rec := httptest.NewRecorder()
+	h.AuthorizeForgeWorkload(rec, signedForgeRequest(t, requestBody))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if len(replay.claims) != 0 {
+		t.Fatalf("claims = %d, want 0", len(replay.claims))
 	}
 }
