@@ -90,11 +90,12 @@ type CommitRef struct {
 }
 
 type ChangeRef struct {
-	Number uint64  `json:"number"`
-	URL    *string `json:"url"`
-	Head   string  `json:"head"`
-	Base   string  `json:"base"`
-	State  string  `json:"state"`
+	Number  uint64  `json:"number"`
+	URL     *string `json:"url"`
+	Head    string  `json:"head"`
+	HeadSHA string  `json:"head_sha,omitempty"`
+	Base    string  `json:"base"`
+	State   string  `json:"state"`
 }
 
 type ReviewRef struct {
@@ -223,8 +224,12 @@ func EvidenceFrom(provider string, command Command, response Response) Evidence 
 		evidence.HeadSHA = value.ID
 	case ChangeRef:
 		evidence.ChangeNumber = value.Number
+		evidence.HeadSHA = value.HeadSHA
 	case ReviewRef:
 		evidence.ReviewID = value.ID
+		if command.CommitID != nil {
+			evidence.HeadSHA = *command.CommitID
+		}
 	case MergeResult:
 		merged := value.Merged
 		evidence.Merged = &merged
