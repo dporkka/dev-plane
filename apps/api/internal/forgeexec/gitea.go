@@ -57,6 +57,297 @@ func (g *GiteaExecutor) Execute(ctx context.Context, command Command) (Response,
 	}
 }
 
+func (g *GiteaExecutor) Provider() string {
+	return "gitea"
+}
+
+func (g *GiteaExecutor) Reconcile(ctx context.Context, command Command) (ReconcileResult, error) {
+	if g.baseURL == "" || g.token == "" {
+		return ReconcileResult{}, fmt.Errorf("Gitea executor is not configured")
+	}
+	if err := command.Repository.Validate(); err != nil {
+		return ReconcileResult{}, err
+	}
+	switch command.Type {
+	case "create_branch":
+		return g.reconcileCreateBranch(ctx, command)
+	case "write_file":
+		return g.reconcileWriteFile(ctx, command)
+	case "create_change":
+		return g.reconcileCreateChange(ctx, command)
+	case "review_change":
+		return g.reconcileReviewChange(ctx, command)
+	case "merge_change":
+		return g.reconcileMergeChange(ctx, command)
+	default:
+		evidence := EvidenceFrom(g.Provider(), command, Response{})
+		evidence.Source = "reconciliation"
+		evidence.Detail = "command type is not a reconcilable mutation"
+		return ReconcileResult{
+			Status: ReconcileAmbiguous, Evidence: evidence,
+			Reason: "command type is not a reconcilable mutation",
+		}, nil
+	}
+}
+
+func (g *GiteaExecutor) reconcileCreateBranch(ctx context.Context, command Command) (ReconcileResult, error) {
+	status, body, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/branches/%s",
+			command.Repository.Owner, command.Repository.Name, url.PathEscape(command.Name)),
+		nil, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	evidence := EvidenceFrom(g.Provider(), command, Response{})
+	evidence.Source = "reconciliation"
+	if status == http.StatusNotFound {
+		evidence.Detail = "branch absent"
+		return ReconcileResult{Status: ReconcileNotApplied, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	if status < 200 || status >= 300 {
+		return ReconcileResult{}, fmt.Errorf("Gitea branch probe returned HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var out struct {
+		Name   string `json:"name"`
+		Commit struct {
+			ID  string `json:"id"`
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return ReconcileResult{}, fmt.Errorf("decode Gitea branch probe: %w", err)
+	}
+	head := out.Commit.ID
+	if head == "" {
+		head = out.Commit.SHA
+	}
+	if out.Name == "" || head == "" {
+		return ReconcileResult{}, fmt.Errorf("Gitea branch probe missing name or commit id")
+	}
+	response := Response{Type: "branch", Value: BranchRef{Name: out.Name, CommitID: head}}
+	evidence = EvidenceFrom(g.Provider(), command, response)
+	evidence.Source = "reconciliation"
+	evidence.Detail = "branch exists"
+	return ReconcileResult{Status: ReconcileApplied, Response: &response, Evidence: evidence}, nil
+}
+
+func (g *GiteaExecutor) reconcileWriteFile(ctx context.Context, command Command) (ReconcileResult, error) {
+	if err := validateFilePath(command.Path); err != nil {
+		return ReconcileResult{}, err
+	}
+	query := url.Values{"ref": []string{command.Branch}}
+	status, body, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/contents/%s",
+			command.Repository.Owner, command.Repository.Name, encodePath(command.Path)),
+		query, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	evidence := EvidenceFrom(g.Provider(), command, Response{})
+	evidence.Source = "reconciliation"
+	if status == http.StatusNotFound {
+		evidence.Detail = "file absent at target branch"
+		return ReconcileResult{Status: ReconcileNotApplied, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	if status < 200 || status >= 300 {
+		return ReconcileResult{}, fmt.Errorf("Gitea file probe returned HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var file struct {
+		SHA      string `json:"sha"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &file); err != nil {
+		return ReconcileResult{}, fmt.Errorf("decode Gitea file probe: %w", err)
+	}
+	evidence.BlobSHA = file.SHA
+	observed := []byte(file.Content)
+	if file.Encoding == "" || strings.EqualFold(file.Encoding, "base64") {
+		decoded, err := base64.StdEncoding.DecodeString(stripWhitespace(file.Content))
+		if err != nil {
+			return ReconcileResult{}, fmt.Errorf("decode Gitea reconciled file content: %w", err)
+		}
+		observed = decoded
+	}
+	expected, err := bytesFromInts(command.Content)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	if !bytes.Equal(observed, expected) {
+		evidence.Detail = "target file exists but content differs from requested write"
+		return ReconcileResult{Status: ReconcileAmbiguous, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+
+	branchStatus, branchBody, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/branches/%s",
+			command.Repository.Owner, command.Repository.Name, url.PathEscape(command.Branch)),
+		nil, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	if branchStatus < 200 || branchStatus >= 300 {
+		evidence.Detail = "file matches but branch head could not be proven"
+		return ReconcileResult{Status: ReconcileAmbiguous, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	var branch struct {
+		Commit struct {
+			ID  string `json:"id"`
+			SHA string `json:"sha"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(branchBody, &branch); err != nil {
+		return ReconcileResult{}, fmt.Errorf("decode Gitea branch head: %w", err)
+	}
+	head := branch.Commit.ID
+	if head == "" {
+		head = branch.Commit.SHA
+	}
+	if head == "" {
+		evidence.Detail = "file matches but branch head is missing"
+		return ReconcileResult{Status: ReconcileAmbiguous, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	response := Response{Type: "commit", Value: CommitRef{ID: head}}
+	evidence = EvidenceFrom(g.Provider(), command, response)
+	evidence.Source = "reconciliation"
+	evidence.BlobSHA = file.SHA
+	evidence.Detail = "target file content matches requested write"
+	return ReconcileResult{Status: ReconcileApplied, Response: &response, Evidence: evidence}, nil
+}
+
+func (g *GiteaExecutor) reconcileCreateChange(ctx context.Context, command Command) (ReconcileResult, error) {
+	status, body, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%s/%s",
+			command.Repository.Owner, command.Repository.Name,
+			url.PathEscape(command.Base), url.PathEscape(command.Head)),
+		nil, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	evidence := EvidenceFrom(g.Provider(), command, Response{})
+	evidence.Source = "reconciliation"
+	if status == http.StatusNotFound {
+		evidence.Detail = "pull request absent for base/head pair"
+		return ReconcileResult{Status: ReconcileNotApplied, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	if status < 200 || status >= 300 {
+		return ReconcileResult{}, fmt.Errorf("Gitea pull probe returned HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var out struct {
+		Number  uint64 `json:"number"`
+		Title   string `json:"title"`
+		HTMLURL string `json:"html_url"`
+		URL     string `json:"url"`
+		State   string `json:"state"`
+		Head    struct {
+			Ref string `json:"ref"`
+			SHA string `json:"sha"`
+		} `json:"head"`
+		Base struct {
+			Ref string `json:"ref"`
+		} `json:"base"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		return ReconcileResult{}, fmt.Errorf("decode Gitea pull probe: %w", err)
+	}
+	evidence.ChangeNumber = out.Number
+	evidence.HeadSHA = out.Head.SHA
+	if out.Head.Ref != command.Head || out.Base.Ref != command.Base || out.Title != command.Title {
+		evidence.Detail = "base/head pull request exists but does not exactly match requested change"
+		return ReconcileResult{Status: ReconcileAmbiguous, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	rawURL := out.HTMLURL
+	if rawURL == "" {
+		rawURL = out.URL
+	}
+	var responseURL *string
+	if rawURL != "" {
+		responseURL = &rawURL
+	}
+	response := Response{Type: "change", Value: ChangeRef{
+		Number: out.Number, URL: responseURL, Head: out.Head.Ref, Base: out.Base.Ref, State: out.State,
+	}}
+	evidence = EvidenceFrom(g.Provider(), command, response)
+	evidence.Source = "reconciliation"
+	evidence.HeadSHA = out.Head.SHA
+	evidence.Detail = "pull request matches requested base/head/title"
+	return ReconcileResult{Status: ReconcileApplied, Response: &response, Evidence: evidence}, nil
+}
+
+func (g *GiteaExecutor) reconcileReviewChange(ctx context.Context, command Command) (ReconcileResult, error) {
+	status, body, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/reviews",
+			command.Repository.Owner, command.Repository.Name, command.Number),
+		nil, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	if status < 200 || status >= 300 {
+		return ReconcileResult{}, fmt.Errorf("Gitea review probe returned HTTP %d: %s", status, truncate(string(body), 512))
+	}
+	var reviews []struct {
+		ID       uint64 `json:"id"`
+		Body     string `json:"body"`
+		CommitID string `json:"commit_id"`
+		State    string `json:"state"`
+	}
+	if err := json.Unmarshal(body, &reviews); err != nil {
+		return ReconcileResult{}, fmt.Errorf("decode Gitea reviews: %w", err)
+	}
+	wantState := map[string]string{
+		"approve": "APPROVED", "request_changes": "REQUEST_CHANGES", "comment": "COMMENT",
+	}[command.Event]
+	evidence := EvidenceFrom(g.Provider(), command, Response{})
+	evidence.Source = "reconciliation"
+	var matches []uint64
+	for _, review := range reviews {
+		if review.State != wantState || review.Body != command.Body {
+			continue
+		}
+		if command.CommitID != nil && review.CommitID != *command.CommitID {
+			continue
+		}
+		matches = append(matches, review.ID)
+	}
+	if len(matches) != 1 {
+		evidence.Detail = "review could not be attributed uniquely to the requested mutation"
+		return ReconcileResult{Status: ReconcileAmbiguous, Evidence: evidence, Reason: evidence.Detail}, nil
+	}
+	id := matches[0]
+	response := Response{Type: "review", Value: ReviewRef{ID: &id}}
+	evidence = EvidenceFrom(g.Provider(), command, response)
+	evidence.Source = "reconciliation"
+	evidence.Detail = "exact matching review observed"
+	return ReconcileResult{Status: ReconcileApplied, Response: &response, Evidence: evidence}, nil
+}
+
+func (g *GiteaExecutor) reconcileMergeChange(ctx context.Context, command Command) (ReconcileResult, error) {
+	status, body, err := g.doRaw(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/repos/%s/%s/pulls/%d/merge",
+			command.Repository.Owner, command.Repository.Name, command.Number),
+		nil, nil)
+	if err != nil {
+		return ReconcileResult{}, err
+	}
+	evidence := EvidenceFrom(g.Provider(), command, Response{})
+	evidence.Source = "reconciliation"
+	if command.ExpectedHeadSHA != nil {
+		evidence.HeadSHA = *command.ExpectedHeadSHA
+	}
+	switch status {
+	case http.StatusNoContent:
+		merged := true
+		response := Response{Type: "merge", Value: MergeResult{Merged: true}}
+		evidence.Merged = &merged
+		evidence.Detail = "provider reports pull request merged"
+		return ReconcileResult{Status: ReconcileApplied, Response: &response, Evidence: evidence}, nil
+	case http.StatusNotFound:
+		evidence.Detail = "provider reports pull request not merged"
+		return ReconcileResult{Status: ReconcileNotApplied, Evidence: evidence, Reason: evidence.Detail}, nil
+	default:
+		return ReconcileResult{}, fmt.Errorf("Gitea merge probe returned HTTP %d: %s", status, truncate(string(body), 512))
+	}
+}
+
 func (g *GiteaExecutor) readFile(ctx context.Context, command Command) (Response, error) {
 	if err := validateFilePath(command.Path); err != nil {
 		return Response{}, err
@@ -301,11 +592,28 @@ func (g *GiteaExecutor) listChecks(ctx context.Context, command Command) (Respon
 }
 
 func (g *GiteaExecutor) doJSON(ctx context.Context, method, path string, query url.Values, payload any, out any) error {
+	status, responseBody, err := g.doRaw(ctx, method, path, query, payload)
+	if err != nil {
+		return err
+	}
+	if status < 200 || status >= 300 {
+		return fmt.Errorf("Gitea returned HTTP %d: %s", status, truncate(string(responseBody), 512))
+	}
+	if out == nil || len(bytes.TrimSpace(responseBody)) == 0 {
+		return nil
+	}
+	if err := json.Unmarshal(responseBody, out); err != nil {
+		return fmt.Errorf("decode Gitea response: %w", err)
+	}
+	return nil
+}
+
+func (g *GiteaExecutor) doRaw(ctx context.Context, method, path string, query url.Values, payload any) (int, []byte, error) {
 	var body io.Reader
 	if payload != nil {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
-			return fmt.Errorf("marshal Gitea request: %w", err)
+			return 0, nil, fmt.Errorf("marshal Gitea request: %w", err)
 		}
 		body = bytes.NewReader(encoded)
 	}
@@ -315,7 +623,7 @@ func (g *GiteaExecutor) doJSON(ctx context.Context, method, path string, query u
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
-		return fmt.Errorf("create Gitea request: %w", err)
+		return 0, nil, fmt.Errorf("create Gitea request: %w", err)
 	}
 	req.Header.Set("Authorization", "token "+g.token)
 	req.Header.Set("Accept", "application/json")
@@ -324,23 +632,14 @@ func (g *GiteaExecutor) doJSON(ctx context.Context, method, path string, query u
 	}
 	resp, err := g.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("Gitea transport: %w", err)
+		return 0, nil, fmt.Errorf("Gitea transport: %w", err)
 	}
 	defer resp.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return fmt.Errorf("read Gitea response: %w", err)
+		return 0, nil, fmt.Errorf("read Gitea response: %w", err)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Gitea returned HTTP %d: %s", resp.StatusCode, truncate(string(responseBody), 512))
-	}
-	if out == nil || len(bytes.TrimSpace(responseBody)) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(responseBody, out); err != nil {
-		return fmt.Errorf("decode Gitea response: %w", err)
-	}
-	return nil
+	return resp.StatusCode, responseBody, nil
 }
 
 func encodePath(path string) string {
