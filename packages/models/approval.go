@@ -13,7 +13,8 @@ const (
 	ApprovalTypeExecution   = "execution"
 	ApprovalTypePRCreate    = "pr_create"
 	ApprovalTypeDeploy      = "deploy"
-	ApprovalTypeRiskyAction = "risky_action"
+	ApprovalTypeRiskyAction    = "risky_action"
+	ApprovalTypeForgeCapability = "forge_capability"
 )
 
 // ApprovalResponse constants.
