@@ -173,8 +173,8 @@ func TestLoad_RejectsShortNulangWorkloadSecret(t *testing.T) {
 
 func TestLoad_RejectsPartialGiteaExecutorConfig(t *testing.T) {
 	tests := []struct {
-		name string
-		url  string
+		name  string
+		url   string
 		token string
 	}{
 		{"url only", "https://git.example.test", ""},
