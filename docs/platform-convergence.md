@@ -135,14 +135,19 @@ evaluates authority from its task, agent run, project, repository, workspace,
 approval, budget, sandbox, and audit context. Unknown provider-neutral forge
 operations fail closed.
 
-Hosted authorization uses the opt-in signed endpoint
-`POST /api/v1/internal/forge/authorize`. The request contains only
-`task_id`, `run_id`, and the provider-neutral operation. Repository scope and
-agent role are loaded by Dev Plane from persisted state. Requests use a
-dedicated Nulang workload identity plus a timestamped HMAC-SHA256 signature
-covering workload id, timestamp, HTTP method, request URI, and the SHA-256 body
-digest. The endpoint is not mounted unless `NULANG_WORKLOAD_SECRET` is
-configured.
+Hosted calls use signed workload endpoints. `POST /api/v1/internal/forge/authorize`
+accepts `request_id`, `task_id`, `run_id`, and the provider-neutral
+operation for authorization-only flows. `POST /api/v1/internal/forge/execute`
+accepts `request_id`, task/run identity, and the full provider-neutral command;
+the operation is derived by Dev Plane from the command type rather than trusted
+from the caller. Repository scope and agent role are loaded from persisted Dev
+Plane state.
+
+Both endpoints use a dedicated Nulang workload identity plus a timestamped
+HMAC-SHA256 signature covering workload id, timestamp, HTTP method, request URI,
+and the SHA-256 body digest. Authorization is mounted only when
+`NULANG_WORKLOAD_SECRET` is configured. Hosted execution additionally requires
+both `GITEA_BASE_URL` and the server-held `GITEA_TOKEN`.
 
 Dev Plane also applies an independent role allowlist before ordinary policy:
 planners/test runners are read-only; implementers and docs agents may create
@@ -153,10 +158,19 @@ Merge remains admin-only even for that role.
 Provider credentials, branch publication, pull-request creation/merge, approval
 state, and audit records stay in Dev Plane. Nulang Cloud may provide the runtime
 and durable execution substrate, but it does not become a second policy engine
-or credential store. The current Nulang guarded-backend adapter is transitional:
-it proves dual authorization before a provider call; hosted production should
-ultimately execute provider mutations inside Dev Plane so forge credentials
-never leave the control plane.
+or credential store. Hosted Nulang uses `DevPlaneExecutionBackend`: the local
+`ForgeSession` remains the first least-privilege gate, then Dev Plane performs
+canonical context lookup, role/policy evaluation, and the provider side effect.
+
+Every signed request carries a stable host-derived `request_id`. Dev Plane
+binds it to workload, raw-body hash, task, run, and derived operation in a
+durable replay ledger. Completed identical requests replay the cached response;
+conflicting reuse, in-flight duplicates, and uncertain mutation outcomes fail
+closed. Read-only provider failures may release the claim for retry. Mutation
+provider failures are marked `uncertain` instead of retried automatically,
+because the remote side effect may have succeeded before the connection failed.
+Authorization and execution use separate replay-ID namespaces so their different
+signed bodies cannot collide.
 
 ## Nulang Cloud runtime provider
 
