@@ -9,7 +9,9 @@ import (
 	"net/http"
 
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
@@ -17,6 +19,7 @@ import (
 const maxForgeAuthorizeBody = 64 << 10
 
 type ForgeAuthorizeRequest struct {
+	RequestID string `json:"request_id"`
 	TaskID    string `json:"task_id"`
 	RunID     string `json:"run_id"`
 	Operation string `json:"operation"`
@@ -44,6 +47,10 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusServiceUnavailable, errors.New("workload authentication is not configured"))
 		return
 	}
+	if h.forgeReplayStore == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("forge request replay store is not configured"))
+		return
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxForgeAuthorizeBody+1))
 	if err != nil {
@@ -65,12 +72,50 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 		respond.Error(w, http.StatusBadRequest, errors.New("invalid JSON request"))
 		return
 	}
-	if input.TaskID == "" || input.RunID == "" || input.Operation == "" {
-		respond.Error(w, http.StatusBadRequest, errors.New("task_id, run_id, and operation are required"))
+	if input.RequestID == "" || input.TaskID == "" || input.RunID == "" || input.Operation == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("request_id, task_id, run_id, and operation are required"))
 		return
 	}
 
 	ctx := r.Context()
+	claim, err := h.forgeReplayStore.Claim(ctx, forgereplay.Request{
+		ID:         input.RequestID,
+		WorkloadID: r.Header.Get(workloadauth.HeaderWorkload),
+		TaskID:     input.TaskID,
+		RunID:      input.RunID,
+		Operation:  input.Operation,
+		Body:       body,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, forgereplay.ErrConflict):
+			respond.Error(w, http.StatusConflict, errors.New("request_id is already bound to a different forge request"))
+		case errors.Is(err, forgereplay.ErrInvalidRequest):
+			respond.Error(w, http.StatusBadRequest, err)
+		default:
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("claim forge request: %w", err))
+		}
+		return
+	}
+
+	switch claim.State {
+	case forgereplay.StateReplay:
+		writeForgeJSONBytes(w, claim.ResponseStatus, claim.ResponseBody)
+		return
+	case forgereplay.StateInFlight:
+		respond.Error(w, http.StatusConflict, errors.New("forge request is already in flight"))
+		return
+	case forgereplay.StateUncertain:
+		respond.Error(w, http.StatusConflict, errors.New("forge request outcome is uncertain and requires reconciliation"))
+		return
+	case forgereplay.StateNew:
+		// Continue with canonical context and policy evaluation.
+	default:
+		h.releaseForgeClaim(ctx, input.RequestID)
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("unknown forge replay state %q", claim.State))
+		return
+	}
+
 	var (
 		taskWorkspaceID sql.NullString
 		runWorkspaceID  sql.NullString
@@ -114,9 +159,10 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			respond.Error(w, http.StatusNotFound, errors.New("forge task/run context not found"))
+			h.completeForgeError(w, ctx, input.RequestID, http.StatusNotFound, errors.New("forge task/run context not found"))
 			return
 		}
+		h.releaseForgeClaim(ctx, input.RequestID)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load forge task/run context: %w", err))
 		return
 	}
@@ -164,13 +210,15 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 			"task_id":         task.ID,
 			"run_id":          run.ID,
 			"agent_role":      run.AgentRole,
+			"request_id":      input.RequestID,
 		},
 	})
 	if err != nil {
 		if errors.Is(err, capability.ErrCapabilityUnknown) {
-			respond.Error(w, http.StatusBadRequest, err)
+			h.completeForgeError(w, ctx, input.RequestID, http.StatusBadRequest, err)
 			return
 		}
+		h.releaseForgeClaim(ctx, input.RequestID)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("evaluate forge capability: %w", err))
 		return
 	}
@@ -189,5 +237,42 @@ func (h *Handler) AuthorizeForgeWorkload(w http.ResponseWriter, r *http.Request)
 			DefaultBranch: repo.DefaultBranch,
 		},
 	}
-	respond.JSON(w, http.StatusOK, response)
+	h.completeForgeJSON(w, ctx, input.RequestID, http.StatusOK, response)
+}
+
+func (h *Handler) completeForgeError(w http.ResponseWriter, ctx context.Context, requestID string, status int, err error) {
+	h.completeForgeJSON(w, ctx, requestID, status, map[string]string{"error": err.Error()})
+}
+
+func (h *Handler) completeForgeJSON(w http.ResponseWriter, ctx context.Context, requestID string, status int, payload any) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		h.releaseForgeClaim(ctx, requestID)
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("encode forge response: %w", err))
+		return
+	}
+	if err := h.forgeReplayStore.Complete(ctx, requestID, status, body); err != nil {
+		h.releaseForgeClaim(ctx, requestID)
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("persist forge request outcome: %w", err))
+		return
+	}
+	writeForgeJSONBytes(w, status, body)
+}
+
+func (h *Handler) releaseForgeClaim(ctx context.Context, requestID string) {
+	if h.forgeReplayStore == nil {
+		return
+	}
+	if err := h.forgeReplayStore.Release(ctx, requestID); err != nil && !errors.Is(err, forgereplay.ErrNotFound) {
+		h.logger.WarnContext(ctx, "failed to release forge request claim", "request_id", requestID, "error", err)
+	}
+}
+
+func writeForgeJSONBytes(w http.ResponseWriter, status int, body []byte) {
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
