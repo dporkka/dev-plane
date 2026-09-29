@@ -153,3 +153,25 @@ func TestClaimRejectsWeakRequestID(t *testing.T) {
 		t.Fatalf("error = %v, want ErrInvalidRequest", err)
 	}
 }
+
+func TestReleaseAllowsSafeRetry(t *testing.T) {
+	store, cleanup := testStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	req := request(`{"operation":"repo.read"}`)
+
+	if _, err := store.Claim(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Release(ctx, req.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Claim(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.State != StateNew {
+		t.Fatalf("state = %q, want %q", result.State, StateNew)
+	}
+}
