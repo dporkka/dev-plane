@@ -25,8 +25,7 @@ func openTestDB(t *testing.T) *sql.DB {
 			task_id TEXT NOT NULL,
 			agent_run_id TEXT,
 			attempt INTEGER NOT NULL,
-			accepted BOOLEAN NOT NULL DEFAULT false,
-			first_pass BOOLEAN NOT NULL DEFAULT false,
+			outcome TEXT NOT NULL DEFAULT 'pending',
 			human_interventions INTEGER NOT NULL DEFAULT 0,
 			human_attention_seconds INTEGER NOT NULL DEFAULT 0,
 			wall_clock_seconds INTEGER NOT NULL DEFAULT 0,
@@ -65,8 +64,7 @@ func TestLedgerRecordPersistsTaskOutcome(t *testing.T) {
 		TaskID:                "task-1",
 		AgentRunID:            "run-1",
 		Attempt:               1,
-		Accepted:              true,
-		FirstPass:             true,
+		Outcome:               OutcomeAccepted,
 		HumanInterventions:    1,
 		HumanAttentionSeconds: 120,
 		WallClockSeconds:      600,
@@ -93,8 +91,8 @@ func TestLedgerRecordPersistsTaskOutcome(t *testing.T) {
 	}
 
 	eval := got[0]
-	if !eval.Accepted || !eval.FirstPass {
-		t.Fatalf("persisted outcome = accepted:%v first_pass:%v, want true/true", eval.Accepted, eval.FirstPass)
+	if eval.Outcome != OutcomeAccepted {
+		t.Fatalf("persisted outcome = %q, want %q", eval.Outcome, OutcomeAccepted)
 	}
 	if eval.HumanAttentionSeconds != 120 || eval.TotalTokens != 12_000 {
 		t.Fatalf("persisted metrics = attention:%d tokens:%d", eval.HumanAttentionSeconds, eval.TotalTokens)
@@ -127,8 +125,7 @@ func TestSummarizeMeasuresAcceptedWorkPerHumanAttentionMinute(t *testing.T) {
 		{
 			TaskID:                "task-1",
 			Attempt:               1,
-			Accepted:              true,
-			FirstPass:             true,
+			Outcome:               OutcomeAccepted,
 			HumanAttentionSeconds: 120,
 			TotalCost:             0.40,
 			TotalTokens:           10_000,
@@ -136,7 +133,7 @@ func TestSummarizeMeasuresAcceptedWorkPerHumanAttentionMinute(t *testing.T) {
 		{
 			TaskID:                "task-2",
 			Attempt:               1,
-			Accepted:              false,
+			Outcome:               OutcomeRejected,
 			HumanAttentionSeconds: 60,
 			TotalCost:             0.20,
 			TotalTokens:           5_000,
@@ -144,7 +141,7 @@ func TestSummarizeMeasuresAcceptedWorkPerHumanAttentionMinute(t *testing.T) {
 		{
 			TaskID:                "task-2",
 			Attempt:               2,
-			Accepted:              true,
+			Outcome:               OutcomeAccepted,
 			HumanAttentionSeconds: 60,
 			TotalCost:             0.25,
 			TotalTokens:           6_000,
@@ -184,7 +181,7 @@ func TestSummarizeZeroAttentionDoesNotProduceInfinity(t *testing.T) {
 	summary := Summarize([]Evaluation{{
 		TaskID:   "task-1",
 		Attempt:  1,
-		Accepted: true,
+		Outcome:  OutcomeAccepted,
 	}})
 
 	if summary.AcceptedPerHumanAttentionMinute != 0 {
@@ -194,9 +191,9 @@ func TestSummarizeZeroAttentionDoesNotProduceInfinity(t *testing.T) {
 
 func TestSummarizeByStrategy(t *testing.T) {
 	summaries := SummarizeByStrategy([]Evaluation{
-		{TaskID: "task-1", Attempt: 1, Accepted: true, FirstPass: true, HumanAttentionSeconds: 60, Strategy: "plain-codex"},
-		{TaskID: "task-2", Attempt: 1, Accepted: false, HumanAttentionSeconds: 120, Strategy: "dev-plane"},
-		{TaskID: "task-2", Attempt: 2, Accepted: true, HumanAttentionSeconds: 60, Strategy: "dev-plane"},
+		{TaskID: "task-1", Attempt: 1, Outcome: OutcomeAccepted, HumanAttentionSeconds: 60, Strategy: "plain-codex"},
+		{TaskID: "task-2", Attempt: 1, Outcome: OutcomeRejected, HumanAttentionSeconds: 120, Strategy: "dev-plane"},
+		{TaskID: "task-2", Attempt: 2, Outcome: OutcomeAccepted, HumanAttentionSeconds: 60, Strategy: "dev-plane"},
 	})
 
 	plain := summaries["plain-codex"]
@@ -210,5 +207,38 @@ func TestSummarizeByStrategy(t *testing.T) {
 	}
 	if math.Abs(devPlane.AcceptedPerHumanAttentionMinute-(1.0/3.0)) > 0.000001 {
 		t.Fatalf("dev-plane efficiency = %.6f, want %.6f", devPlane.AcceptedPerHumanAttentionMinute, 1.0/3.0)
+	}
+}
+
+
+func TestSummarizeDoesNotTreatPendingAsRejected(t *testing.T) {
+	summary := Summarize([]Evaluation{
+		{TaskID: "task-pending", Attempt: 1, Outcome: OutcomePending, HumanAttentionSeconds: 30},
+		{TaskID: "task-rejected", Attempt: 1, Outcome: OutcomeRejected, HumanAttentionSeconds: 30},
+	})
+
+	if summary.AcceptedTasks != 0 {
+		t.Fatalf("AcceptedTasks = %d, want 0", summary.AcceptedTasks)
+	}
+	if summary.PendingAttempts != 1 {
+		t.Fatalf("PendingAttempts = %d, want 1", summary.PendingAttempts)
+	}
+	if summary.RejectedAttempts != 1 {
+		t.Fatalf("RejectedAttempts = %d, want 1", summary.RejectedAttempts)
+	}
+}
+
+
+func TestLedgerRecordRejectsUnknownOutcome(t *testing.T) {
+	db := openTestDB(t)
+	ledger := NewLedger(db)
+
+	err := ledger.Record(context.Background(), Evaluation{
+		TaskID:  "task-1",
+		Attempt: 1,
+		Outcome: Outcome("mystery"),
+	})
+	if err == nil {
+		t.Fatal("Record() error = nil, want invalid outcome error")
 	}
 }
