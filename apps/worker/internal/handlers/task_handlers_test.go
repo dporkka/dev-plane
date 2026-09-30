@@ -182,6 +182,41 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	}
 }
 
+func TestHandleTaskApprovedRejectsMalformedAdmissionBeforeSideEffects(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	provider := &fakeRuntimeProvider{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":[]}`)})
+	if err == nil {
+		t.Fatal("HandleTaskApproved() error = nil, want malformed metadata error")
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called before metadata validation: %+v", provider.req)
+	}
+	var taskStatus string
+	var workspaceID sql.NullString
+	if err := db.QueryRow(`SELECT status, workspace_id FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus, &workspaceID); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if taskStatus != "approved" || workspaceID.Valid {
+		t.Fatalf("task status/workspace = %q/%v, want approved/null", taskStatus, workspaceID)
+	}
+	var workspaceCount, runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workspaces`).Scan(&workspaceCount); err != nil {
+		t.Fatalf("query workspace count: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("query run count: %v", err)
+	}
+	if workspaceCount != 0 || runCount != 0 {
+		t.Fatalf("workspace/run counts = %d/%d, want 0/0", workspaceCount, runCount)
+	}
+}
+
 func TestHandleTaskApprovedRepublishesExistingQueuedRun(t *testing.T) {
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
