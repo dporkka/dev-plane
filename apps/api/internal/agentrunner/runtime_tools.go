@@ -40,6 +40,13 @@ func (r *Runner) runtimeProviderForWorkspace(ctx context.Context, workspace *mod
 			}
 			provider = created
 			r.runtimes[providerName] = provider
+		case "nulang-cloud":
+			created, err := runtimes.NewNulangCloudProviderFromEnv()
+			if err != nil {
+				return nil, "", err
+			}
+			provider = created
+			r.runtimes[providerName] = provider
 		default:
 			return nil, "", fmt.Errorf("unsupported workspace runtime provider %q", providerName)
 		}
