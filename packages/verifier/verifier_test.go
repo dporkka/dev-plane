@@ -410,8 +410,8 @@ work:
 		t.Fatalf("len(Evidence.Gates) = %d, want 1", len(result.Evidence.Gates))
 	}
 	gate := result.Evidence.Gates[0]
-	if gate.Kind != VerificationKindBrowser {
-		t.Fatalf("gate.Kind = %q, want %q", gate.Kind, VerificationKindBrowser)
+	if gate.Kind != repoprotocol.VerificationKindBrowser {
+		t.Fatalf("gate.Kind = %q, want %q", gate.Kind, repoprotocol.VerificationKindBrowser)
 	}
 	if !strings.Contains(gate.Output, "playwright passed") || !strings.Contains(gate.Output, "2 passed; console errors: 0") {
 		t.Fatalf("gate.Output = %q, want command and browser report output", gate.Output)
