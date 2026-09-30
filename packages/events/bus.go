@@ -134,7 +134,7 @@ func (b *Bus) Subscribe(subject string, handler nats.MsgHandler) (*nats.Subscrip
 
 // SubscribeQueue creates a queue-subscription for load-balanced consumers.
 func (b *Bus) SubscribeQueue(subject, queue string, handler nats.MsgHandler) (*nats.Subscription, error) {
-	sub, err := b.js.QueueSubscribe(subject, queue, handler, nats.Durable(queue+"-worker"))
+	sub, err := b.js.QueueSubscribe(subject, queue, handler, nats.Durable(queue+"-worker"), nats.ManualAck())
 	if err != nil {
 		return nil, fmt.Errorf("queue subscribe to %q on %q: %w", subject, queue, err)
 	}
