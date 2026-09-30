@@ -4,6 +4,9 @@ ALTER TABLE change_sets
     ADD COLUMN publication_status TEXT NOT NULL DEFAULT 'pending'
     CHECK (publication_status IN ('pending', 'publishing', 'completed', 'blocked'));
 
+ALTER TABLE change_sets ADD COLUMN publication_lease_token TEXT;
+ALTER TABLE change_sets ADD COLUMN publication_lease_until TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS change_set_publications (
     change_set_id   UUID NOT NULL REFERENCES change_sets(id) ON DELETE CASCADE,
     candidate_id    UUID NOT NULL REFERENCES change_candidates(id) ON DELETE CASCADE,
