@@ -60,6 +60,41 @@ type ChangeSetPublicationResponse struct {
 	Members           []ChangeSetPublicationMemberResponse `json:"members"`
 }
 
+func (h *Handler) GetChangeSetPublication(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("change set id is required"))
+		return
+	}
+
+	changeSet, err := h.loadChangeSet(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("change set not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := authz.AuthorizeProject(ctx, h.db, user, changeSet.ProjectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("change set not found"))
+		return
+	}
+
+	members, err := h.loadChangeSetPublicationMembers(ctx, changeSet.ID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, publicationResponse(changeSet.ID, changeSet.PublicationStatus, members))
+}
+
 func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)
