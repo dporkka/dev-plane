@@ -9,6 +9,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/models"
 )
 
@@ -203,13 +204,16 @@ func TestRecordVerifiedPullRequestPersistsCandidateAndEvidenceAtomically(t *test
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("INSERT INTO verification_evidence").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO decision_packets").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").
 		WithArgs(now, pr.TaskID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
+	packet := mustDecisionPacketRecord(t, pr, candidate, evidence)
 	factory := NewFactory(db, nil)
-	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence); err != nil {
+	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence, packet); err != nil {
 		t.Fatalf("recordVerifiedPullRequest() error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -249,12 +253,46 @@ func TestRecordVerifiedPullRequestRejectsTreeMismatchBeforeTransaction(t *testin
 		CompletedAt:       now,
 	}
 
+	packet := mustDecisionPacketRecord(t, pr, candidate, evidence)
 	factory := NewFactory(db, nil)
-	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence); err == nil {
+	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence, packet); err == nil {
 		t.Fatal("recordVerifiedPullRequest() error = nil, want tree mismatch rejection")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unexpected database activity: %v", err)
+	}
+}
+
+func mustDecisionPacketRecord(t *testing.T, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord) decisionPacketRecord {
+	t.Helper()
+	packet, err := decisionpacket.New(decisionpacket.Input{
+		Candidate: decisionpacket.Candidate{
+			ID: candidate.ID, PullRequestID: pr.ID, TaskID: pr.TaskID, RunID: candidate.RunID,
+			RepositoryID: pr.RepoID, CommitSHA: candidate.CommitSHA, TreeHash: candidate.TreeHash, Branch: candidate.Branch,
+		},
+		Task: decisionpacket.TaskSnapshot{Title: "Verified change"},
+		Review: decisionpacket.ReviewSnapshot{RiskLevel: "low", Approvable: true},
+		Verification: decisionpacket.VerificationSnapshot{
+			ContractHash: evidence.ContractHash,
+			EnvironmentDigest: evidence.EnvironmentDigest,
+			RunnerIdentity: evidence.RunnerIdentity,
+			Checks: evidence.Checks,
+		},
+		CreatedAt: candidate.CreatedAt,
+	})
+	if err != nil {
+		t.Fatalf("decisionpacket.New() error: %v", err)
+	}
+	digest, err := packet.Digest()
+	if err != nil {
+		t.Fatalf("packet.Digest() error: %v", err)
+	}
+	data, err := packet.Marshal()
+	if err != nil {
+		t.Fatalf("packet.Marshal() error: %v", err)
+	}
+	return decisionPacketRecord{
+		ID: "packet-1", CandidateID: candidate.ID, Digest: digest, Packet: data, CreatedAt: candidate.CreatedAt,
 	}
 }
 
