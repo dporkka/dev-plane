@@ -2,9 +2,9 @@ package agentrunner
 
 import (
 	"context"
-	"errors"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
