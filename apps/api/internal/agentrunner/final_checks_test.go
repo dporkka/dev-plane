@@ -40,7 +40,9 @@ func TestRunFinalChecksUsesConfiguredPlanAndBindsEvidenceToTree(t *testing.T) {
 	}
 	runner := NewRunner(db, tools.NewWorkspaceTools(nil), policies.NewEngine([]policies.Policy{
 		{Name: "allow_final_checks", ResourceType: "*", Action: "*", Effect: policies.EffectAllow},
-	}), nil, nil, nil).WithRuntimeProvider("docker", provider)
+	}), nil, nil, nil).
+		WithRuntimeProvider("docker", provider).
+		WithCompletionObserver(noopCompletionObserver{})
 
 	workspace := &models.Workspace{
 		ID:               "workspace-1",
@@ -150,4 +152,16 @@ func setupFinalCheckDB(t *testing.T) *sql.DB {
 		t.Fatalf("create project_configs: %v", err)
 	}
 	return db
+}
+
+
+type noopCompletionObserver struct{}
+
+func (noopCompletionObserver) RecordRunCompletion(
+	context.Context,
+	string,
+	string,
+	[]scheduler.Evidence,
+) error {
+	return nil
 }
