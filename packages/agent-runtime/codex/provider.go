@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	defaultApprovalPolicy = "never"
-	defaultSandbox        = "workspace-write"
+	defaultApprovalPolicy = "on-request"
+	defaultSandbox        = "read-only"
 )
 
 // Notification is a raw Codex app-server notification.
