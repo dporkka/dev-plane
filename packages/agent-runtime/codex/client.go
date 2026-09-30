@@ -38,17 +38,17 @@ type StdioClient struct {
 
 	writeMu sync.Mutex
 
-	nextID  atomic.Int64
+	nextID    atomic.Int64
 	pendingMu sync.Mutex
-	pending map[int64]chan rpcResponse
+	pending   map[int64]chan rpcResponse
 
-	subsMu sync.Mutex
+	subsMu  sync.Mutex
 	nextSub uint64
-	subs map[uint64]chan Notification
+	subs    map[uint64]chan Notification
 
 	closeOnce sync.Once
-	closed chan struct{}
-	readErr atomic.Value
+	closed    chan struct{}
+	readErr   atomic.Value
 }
 
 // NewStdioClient starts and initializes Codex app-server.
@@ -91,9 +91,6 @@ func normalizeStdioConfig(config StdioConfig) StdioConfig {
 	if strings.TrimSpace(config.ClientVersion) == "" {
 		config.ClientVersion = "0.1.0"
 	}
-	if !config.ExperimentalAPI {
-		// Dev Plane only uses stable RPCs today, so false is a valid explicit value.
-	}
 	return config
 }
 
@@ -123,7 +120,9 @@ func (c *StdioClient) start(ctx context.Context) error {
 	}
 
 	go c.readLoop()
-	go io.Copy(io.Discard, c.stderr)
+	go func() {
+		_, _ = io.Copy(io.Discard, c.stderr)
+	}()
 
 	var initialize map[string]any
 	if err := c.Call(ctx, "initialize", map[string]any{
