@@ -217,6 +217,41 @@ func TestHandleTaskApprovedRejectsMalformedAdmissionBeforeSideEffects(t *testing
 	}
 }
 
+func TestHandleTaskApprovedSkipsWhenInitialRunAlreadyClaimed(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	if _, err := db.Exec(`UPDATE tasks SET status = 'running' WHERE id = 'task-1'`); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	provider := &fakeRuntimeProvider{}
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
+	if err != nil {
+		t.Fatalf("HandleTaskApproved() error: %v", err)
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called for already-claimed task: %+v", provider.req)
+	}
+	var workspaceCount, runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workspaces`).Scan(&workspaceCount); err != nil {
+		t.Fatalf("query workspace count: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("query run count: %v", err)
+	}
+	if workspaceCount != 0 || runCount != 0 {
+		t.Fatalf("workspace/run counts = %d/%d, want 0/0", workspaceCount, runCount)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("unexpected event published: %q", publisher.subject)
+	}
+}
+
 func TestHandleTaskApprovedRepublishesExistingQueuedRun(t *testing.T) {
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
