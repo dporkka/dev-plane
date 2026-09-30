@@ -33,9 +33,9 @@ const (
 
 // Webhook event subject constants.
 const (
-	WebhookReceived    = "webhooks.received"
-	WebhookProcessed   = "webhooks.processed"
-	WebhookFailed      = "webhooks.failed"
+	WebhookReceived  = "webhooks.received"
+	WebhookProcessed = "webhooks.processed"
+	WebhookFailed    = "webhooks.failed"
 )
 
 // Audit event subject constants.
@@ -64,10 +64,10 @@ const (
 
 // Change Set publication event subject constants.
 const (
-	ChangeSetPublishRequested      = "changesets.publish_requested"
-	ChangeSetPublicationStarted    = "changesets.publication_started"
-	ChangeSetPublicationCompleted  = "changesets.publication_completed"
-	ChangeSetPublicationBlocked    = "changesets.publication_blocked"
+	ChangeSetPublishRequested     = "changesets.publish_requested"
+	ChangeSetPublicationStarted   = "changesets.publication_started"
+	ChangeSetPublicationCompleted = "changesets.publication_completed"
+	ChangeSetPublicationBlocked   = "changesets.publication_blocked"
 )
 
 // ChangeSetPublicationEvent is the payload for coordinated publication events.
@@ -110,22 +110,22 @@ type AgentRunEvent struct {
 
 // AgentStepEvent is the payload for agent step events.
 type AgentStepEvent struct {
-	StepID     string          `json:"step_id"`
-	RunID      string          `json:"run_id"`
-	TaskID     string          `json:"task_id"`
-	StepType   string          `json:"step_type"`
-	Status     string          `json:"status"`
-	Data       json.RawMessage `json:"data,omitempty"`
+	StepID   string          `json:"step_id"`
+	RunID    string          `json:"run_id"`
+	TaskID   string          `json:"task_id"`
+	StepType string          `json:"step_type"`
+	Status   string          `json:"status"`
+	Data     json.RawMessage `json:"data,omitempty"`
 }
 
 // WebhookEvent is the payload for incoming webhook events.
 type WebhookEvent struct {
-	Source      string          `json:"source"` // github, linear, slack, etc.
-	EventType   string          `json:"event_type"`
-	DeliveryID  string          `json:"delivery_id"`
-	RepositoryID string         `json:"repository_id,omitempty"`
-	Payload     json.RawMessage `json:"payload"`
-	Signature   string          `json:"signature,omitempty"`
+	Source       string          `json:"source"` // github, linear, slack, etc.
+	EventType    string          `json:"event_type"`
+	DeliveryID   string          `json:"delivery_id"`
+	RepositoryID string          `json:"repository_id,omitempty"`
+	Payload      json.RawMessage `json:"payload"`
+	Signature    string          `json:"signature,omitempty"`
 }
 
 // AuditEvent is the payload for audit log events.
