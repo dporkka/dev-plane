@@ -146,7 +146,6 @@ func TestTaxonomyContainsStableCategories(t *testing.T) {
 	}
 }
 
-
 func TestDecideAutoRetryAllowsBoundedRetryDisposition(t *testing.T) {
 	classification := Classification{
 		Taxonomy:    TaxonomyVersion,
