@@ -139,7 +139,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 			agent_compute_seconds, total_tokens, total_cost, tests_passed,
 			tests_failed, review_findings, human_change_lines,
 			reverted_within_7d, production_regression, model, provider,
-			prompt_version, skill_version, metadata
+			prompt_version, skill_version, strategy, metadata
 		FROM task_evaluations
 		WHERE task_id = $1
 		ORDER BY attempt ASC
