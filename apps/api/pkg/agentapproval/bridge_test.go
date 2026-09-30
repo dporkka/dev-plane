@@ -117,7 +117,13 @@ func setupBridgeDB(t *testing.T) *sql.DB {
 			created_by TEXT NOT NULL,
 			deleted_at DATETIME
 		);
-		CREATE TABLE agent_runs (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\ttask_id TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL,\n\t\t\terror_message TEXT,\n\t\t\tupdated_at DATETIME\n\t\t);
+		CREATE TABLE agent_runs (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			error_message TEXT,
+			updated_at DATETIME
+		);
 		CREATE TABLE approvals (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
