@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/nats-io/nats.go"
 )
@@ -64,5 +63,4 @@ func TestRunSuspensionDetectionRejectsOrdinaryErrors(t *testing.T) {
 	if !isRunSuspension(suspendedRunTestError{}) {
 		t.Fatal("suspension error was not detected")
 	}
-	_ = time.Second
 }
