@@ -73,7 +73,7 @@ func TestMergePullRequest(t *testing.T) {
 	defer cleanup()
 
 	fakeForge := &fakeForgeMergeProvider{result: &forge.MergeResult{Merged: true, Revision: "abc123"}}
-	h = h.WithForgeProvider(fakeForge).WithForgeCredential("forge-token")
+	h = h.WithForgeProvider(fakeForge)
 
 	pub := &fakeEventPublisher{}
 	h = h.WithEventPublisher(pub)
