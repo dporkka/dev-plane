@@ -188,9 +188,8 @@ func (s *Supervisor) supervise(
 		select {
 		case <-ctx.Done():
 			err := ctx.Err()
-			if !signaled {
-				signal(err)
-			}
+			s.failRun(context.Background(), run, err)
+			signal(err)
 			return
 		case streamErr, ok := <-errorsCh:
 			if !ok {
