@@ -1,8 +1,10 @@
-# Platform Convergence
+# Maintainer Portfolio Integration Example
 
-Dev Plane is the canonical software-development execution plane for David's product portfolio. Product repositories should consume it through APIs/SDKs rather than grow independent copies of repository intelligence, coding-agent runners, sandbox policy, approval workflows, security review, and PR delivery.
+This document describes one maintainer's deployment topology and dogfooding strategy. It is **not** Dev Plane's canonical product architecture. AgentVault, Nulang Cloud, Bifrost, API Factory, Adacavo, and the other named systems below are optional examples; none is required to use or extend Dev Plane.
 
-## Responsibility split
+In this deployment, Dev Plane is used as the canonical software-development execution plane across several product repositories. Those repositories consume it through APIs/SDKs rather than growing independent copies of repository intelligence, coding-agent runners, sandbox policy, approval workflows, security review, and PR delivery.
+
+## Example responsibility split
 
 | Layer | Canonical owner | Responsibility |
 | --- | --- | --- |
@@ -12,9 +14,9 @@ Dev Plane is the canonical software-development execution plane for David's prod
 | Model routing | Bifrost / shared gateway | Provider routing, cost controls, caching, usage telemetry |
 | Product/domain agents | Product repository | Domain-specific user-facing agents and workflows only |
 
-## Integration rule
+## Portfolio integration rule
 
-Before adding reusable development-agent infrastructure to Adacavo, API Factory, Websyt, Apex, or another product repo, first determine whether the capability belongs in Dev Plane. A product-specific adapter is preferred over a second implementation.
+For this maintainer portfolio, before adding reusable development-agent infrastructure to a product repository, first determine whether the capability is provider-neutral enough to belong in Dev Plane. Product-specific behavior stays in the product, and a product-specific adapter is preferred over contaminating Dev Plane core with portfolio assumptions.
 
 Examples that belong in Dev Plane:
 
