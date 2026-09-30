@@ -257,7 +257,7 @@ func (p *Provider) streamTurn(
 	defer cancel()
 
 	sequence := int64(1)
-	out <- agentruntime.Event{
+	if !sendEvent(ctx, out, agentruntime.Event{
 		Sequence:       sequence,
 		Type:           agentruntime.EventTypeTurnStarted,
 		ThreadID:       threadID,
@@ -265,6 +265,8 @@ func (p *Provider) streamTurn(
 		ProviderTurnID: started.ID,
 		Status:         agentruntime.TurnStatusRunning,
 		OccurredAt:     unixSeconds(started.StartedAt, time.Now().UTC()),
+	}) {
+		return
 	}
 	sequence++
 
@@ -282,11 +284,22 @@ func (p *Provider) streamTurn(
 			}
 			event.Sequence = sequence
 			sequence++
-			out <- event
+			if !sendEvent(ctx, out, event) {
+				return
+			}
 			if terminal {
 				return
 			}
 		}
+	}
+}
+
+func sendEvent(ctx context.Context, out chan<- agentruntime.Event, event agentruntime.Event) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case out <- event:
+		return true
 	}
 }
 
