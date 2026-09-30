@@ -48,11 +48,17 @@ func (f *fakeRuntime) ExecuteCommand(_ context.Context, _ string, cmd runtimes.C
 }
 
 type fakeStore struct {
-	bundles []repoprotocol.EvidenceBundle
+	bundles   []repoprotocol.EvidenceBundle
+	workItems []repoprotocol.WorkItem
 }
 
 func (s *fakeStore) PutEvidenceBundle(_ context.Context, bundle repoprotocol.EvidenceBundle) error {
 	s.bundles = append(s.bundles, bundle)
+	return nil
+}
+
+func (s *fakeStore) PutWorkItem(_ context.Context, item repoprotocol.WorkItem) error {
+	s.workItems = append(s.workItems, item)
 	return nil
 }
 
@@ -259,5 +265,96 @@ func TestVerifyRejectsUnknownWorkItemGate(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "unknown required gate") {
 		t.Fatalf("Verify() error = %v, want unknown gate error", err)
+	}
+}
+
+func TestVerifyAdvancesDurableWorkToReviewingWhenReservedGatesRemain(t *testing.T) {
+	runtime := &fakeRuntime{
+		config:        verifierConfig(),
+		headResponses: []string{"head456", "head456", "head456"},
+		results: map[string]*runtimes.CommandResult{
+			"make verify-changed": {ExitCode: 0},
+			"make ci":             {ExitCode: 0},
+		},
+		errors: map[string]error{},
+	}
+	store := &fakeStore{}
+
+	result, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID:     "session-1",
+		WorkItem:      verifyingWorkItem(),
+		CandidateHead: "head456",
+		ChangedPaths:  []string{"auth/session.go"},
+	})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.NextState != repoprotocol.WorkReviewing {
+		t.Fatalf("NextState = %s, want %s", result.NextState, repoprotocol.WorkReviewing)
+	}
+	if len(store.workItems) != 1 || store.workItems[0].State != repoprotocol.WorkReviewing {
+		t.Fatalf("persisted work items = %#v", store.workItems)
+	}
+}
+
+func TestVerifyAdvancesDurableWorkToReadyToLandWhenNoReservedGatesRemain(t *testing.T) {
+	runtime := &fakeRuntime{
+		config: []byte(`version: 1
+verification:
+  changed:
+    command: make verify-changed
+work:
+  isolation: worktree
+  max_parallel_cost: 1
+`),
+		headResponses: []string{"head456", "head456"},
+		results: map[string]*runtimes.CommandResult{
+			"make verify-changed": {ExitCode: 0},
+		},
+		errors: map[string]error{},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"changed"}
+
+	result, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID:     "session-1",
+		WorkItem:      item,
+		CandidateHead: "head456",
+	})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if result.NextState != repoprotocol.WorkReadyToLand {
+		t.Fatalf("NextState = %s, want %s", result.NextState, repoprotocol.WorkReadyToLand)
+	}
+	if len(store.workItems) != 1 || store.workItems[0].State != repoprotocol.WorkReadyToLand {
+		t.Fatalf("persisted work items = %#v", store.workItems)
+	}
+}
+
+func TestVerifyDoesNotAdvanceWorkWhenExecutableGateFails(t *testing.T) {
+	runtime := &fakeRuntime{
+		config:        verifierConfig(),
+		headResponses: []string{"head456", "head456"},
+		results: map[string]*runtimes.CommandResult{
+			"make verify-changed": {ExitCode: 1},
+		},
+		errors: map[string]error{},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"changed"}
+
+	_, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID:     "session-1",
+		WorkItem:      item,
+		CandidateHead: "head456",
+	})
+	if err == nil {
+		t.Fatal("Verify() error = nil, want gate failure")
+	}
+	if len(store.workItems) != 0 {
+		t.Fatalf("failed verification advanced work: %#v", store.workItems)
 	}
 }
