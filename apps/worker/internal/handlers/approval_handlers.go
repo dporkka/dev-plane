@@ -17,6 +17,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	dbpkg "github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/prfactory"
@@ -211,10 +212,16 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 		args = []any{failureMessage, now, runID}
 	}
 	_, err = h.db.Exec(`
-		UPDATE agent_runs SET status = 'failed', outcome = 'failed', error_message = $1, updated_at = $2
+		UPDATE agent_runs
+		SET status = CASE WHEN status = 'paused' THEN 'failed' ELSE status END,
+		    state_version = CASE WHEN status = 'paused' THEN state_version + 1 ELSE state_version END,
+		    outcome = 'failed',
+		    error_message = $1,
+		    completed_at = CASE WHEN status = 'paused' THEN $2 ELSE completed_at END,
+		    updated_at = $2
 		WHERE `+runPredicate, args...)
 	if err != nil {
-		h.logger.Warn("failed to update agent run status", "error", err)
+		h.logger.Warn("failed to update agent run outcome after approval rejection", "error", err)
 	}
 
 	h.logger.Info("task marked as failed due to approval rejection",
@@ -254,21 +261,17 @@ func (h *ApprovalHandler) resumePausedRun(ctx context.Context, approvalID, taskI
 	}
 
 	now := time.Now().UTC()
-	result, err := h.db.ExecContext(ctx, `
-		UPDATE agent_runs
-		SET status = 'queued', error_message = NULL, updated_at = $1
-		WHERE id = $2 AND task_id = $3 AND status = 'paused'
-	`, now, runID, taskID)
+	transition, err := dbpkg.TransitionAgentRun(ctx, h.db, dbpkg.AgentRunTransition{
+		RunID:      runID,
+		ToStatus:   models.AgentRunStatusQueued,
+		ClearError: true,
+	})
+	if errors.Is(err, dbpkg.ErrInvalidTransition) || errors.Is(err, dbpkg.ErrStaleRunState) || errors.Is(err, dbpkg.ErrRunNotFound) {
+		h.logger.Info("approval did not match a resumable paused run", "approval_id", approvalID, "run_id", runID, "task_id", taskID, "error", err)
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("queue paused run %s: %w", runID, err)
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("check queued paused run %s: %w", runID, err)
-	}
-	if rows == 0 {
-		h.logger.Info("approval did not match a paused run to resume", "approval_id", approvalID, "run_id", runID, "task_id", taskID)
-		return nil
 	}
 
 	_, err = h.db.ExecContext(ctx, `
@@ -283,7 +286,8 @@ func (h *ApprovalHandler) resumePausedRun(ctx context.Context, approvalID, taskI
 		payload := map[string]any{
 			"run_id":      runID,
 			"task_id":     taskID,
-			"status":      models.AgentRunStatusQueued,
+			"status":        models.AgentRunStatusQueued,
+			"state_version": transition.StateVersion,
 			"action":      "approval_resumed",
 			"approval_id": approvalID,
 		}
