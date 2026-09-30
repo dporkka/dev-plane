@@ -1,12 +1,14 @@
 "use client";
 
 import { Loading } from "@/components/common/Loading";
+import { ReadinessEvidenceCard } from "@/components/common/ReadinessEvidenceCard";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { CostBadge } from "@/components/run/CostBadge";
 import { RunTimeline } from "@/components/run/RunTimeline";
 import { Terminal } from "@/components/run/Terminal";
 import { Card } from "@/components/ui/card";
 import { type SSELike, api } from "@/lib/api";
+import { getAdmissionEvidence } from "@/lib/readiness-evidence";
 import type { AgentRun, AgentStep } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -216,6 +218,39 @@ export default function RunDetailPage() {
     );
   }
 
+  const admissionEvidence = getAdmissionEvidence(run.metadata);
+  const admissionContext = admissionEvidence
+    ? [
+        ...(admissionEvidence.retryOriginalRunId
+          ? [
+              {
+                label: "Retry of",
+                value: admissionEvidence.retryOriginalRunId,
+              },
+            ]
+          : []),
+        ...(admissionEvidence.handoffFromRunId
+          ? [
+              {
+                label: "Handoff from run",
+                value: admissionEvidence.handoffFromRunId,
+              },
+            ]
+          : []),
+        ...(admissionEvidence.handoffFromAgent
+          ? [
+              {
+                label: "Handoff from agent",
+                value: admissionEvidence.handoffFromAgent,
+              },
+            ]
+          : []),
+        ...(admissionEvidence.trigger
+          ? [{ label: "Trigger", value: admissionEvidence.trigger }]
+          : []),
+      ]
+    : [];
+
   const Icon = roleIcons[run.agent_role || "implementer"] || Bot;
   const mins = Math.floor(elapsedSeconds / 60);
   const secs = elapsedSeconds % 60;
@@ -344,6 +379,20 @@ export default function RunDetailPage() {
           <div className="text-white font-medium capitalize">{run?.status}</div>
         </Card>
       </div>
+
+      {admissionEvidence && (
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-3">
+            Admission Evidence
+          </h2>
+          <ReadinessEvidenceCard
+            title="Run Admission"
+            report={admissionEvidence.readiness}
+            policy={admissionEvidence.policy}
+            context={admissionContext}
+          />
+        </div>
+      )}
 
       {/* Connection status */}
       {connectionStatus === "disconnected" && isRunning && (
