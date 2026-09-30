@@ -84,6 +84,17 @@ func (f *fakeRPC) call(method string) (rpcCall, bool) {
 	return rpcCall{}, false
 }
 
+func TestProviderDefaultsFailClosedUntilApprovalRoutingExists(t *testing.T) {
+	provider := NewProvider(newFakeRPC(), Config{})
+
+	if provider.config.ApprovalPolicy != "on-request" {
+		t.Fatalf("default approval policy = %q, want on-request", provider.config.ApprovalPolicy)
+	}
+	if provider.config.Sandbox != "read-only" {
+		t.Fatalf("default sandbox = %q, want read-only", provider.config.Sandbox)
+	}
+}
+
 func TestProviderCapabilities(t *testing.T) {
 	provider := NewProvider(newFakeRPC(), Config{})
 
