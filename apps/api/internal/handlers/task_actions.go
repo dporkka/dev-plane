@@ -202,12 +202,42 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	runID := uuid.New().String()
 
-	// Create the agent run record
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	claimResult, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, $1), updated_at = $1
+		WHERE id = $2 AND status = 'approved' AND deleted_at IS NULL
+	`, now, taskID)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	claimed, err := claimResult.RowsAffected()
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if claimed != 1 {
+		respond.JSON(w, http.StatusConflict, map[string]string{"error": "initial run already claimed"})
+		return
+	}
+
 	workspaceArg := any(nil)
 	if task.WorkspaceID != nil {
 		workspaceArg = *task.WorkspaceID
 	}
-	_, err = h.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
 	`, runID, taskID, workspaceArg, string(admissionMetadata), now)
@@ -215,15 +245,11 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	// Update task status to running
-	_, err = h.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'running', started_at = $1, updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, taskID)
-	if err != nil {
-		h.logger.Warn("failed to update task status to running", "error", err)
+	if err := tx.Commit(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
+	committed = true
 
 	// Publish event to NATS if event bus is available
 	if h.eventBus != nil {
