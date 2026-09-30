@@ -56,6 +56,18 @@ func newMergeRequestWithRole(prID, body, role string) *http.Request {
 	return req
 }
 
+func expectVerifiedCandidateEvidence(mock sqlmock.Sqlmock, prID, commitSHA, treeHash string, completedAt time.Time) {
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at",
+		}).AddRow(
+			commitSHA, treeHash, treeHash, "contract-a",
+			"env-a", "runtime:runner-1", completedAt,
+		))
+}
+
 func TestMergePullRequest(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
@@ -83,6 +95,7 @@ func TestMergePullRequest(t *testing.T) {
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
 			now, now, "owner", "repo", "pr_created",
 		))
+	expectVerifiedCandidateEvidence(mock, prID, "candidate-sha", "tree-a", now)
 	mock.ExpectExec("UPDATE pull_requests SET state").
 		WithArgs(sqlmock.AnyArg(), prID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -103,9 +116,96 @@ func TestMergePullRequest(t *testing.T) {
 	if fakeGH.calls[0].Method != "squash" {
 		t.Errorf("merge method = %q, want squash", fakeGH.calls[0].Method)
 	}
+	if fakeGH.calls[0].SHA != "candidate-sha" {
+		t.Errorf("merge sha = %q, want verified candidate sha", fakeGH.calls[0].SHA)
+	}
 
 	if pub.subject != events.PRMerged {
 		t.Errorf("published subject = %q, want %q", pub.subject, events.PRMerged)
+	}
+}
+
+func TestMergePullRequest_BlocksMissingVerificationEvidence(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 when verification evidence is missing", len(fakeGH.calls))
+	}
+}
+
+func TestMergePullRequest_BlocksTreeMismatch(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at",
+		}).AddRow(
+			"candidate-sha", "tree-current", "tree-verified", "contract-a",
+			"env-a", "runtime:runner-1", now,
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 for stale evidence", len(fakeGH.calls))
 	}
 }
 
