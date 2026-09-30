@@ -6,6 +6,7 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
 	github.com/ai-dev-control-plane/crypto v0.0.0
 	github.com/ai-dev-control-plane/events v0.0.0
+	github.com/ai-dev-control-plane/execution v0.0.0
 	github.com/ai-dev-control-plane/gateway v0.0.0
 	github.com/ai-dev-control-plane/models v0.0.0
 	github.com/ai-dev-control-plane/policies v0.0.0
@@ -52,6 +53,7 @@ replace (
 	github.com/ai-dev-control-plane/crypto => ../../packages/crypto
 	github.com/ai-dev-control-plane/db => ../../packages/db
 	github.com/ai-dev-control-plane/events => ../../packages/events
+	github.com/ai-dev-control-plane/execution => ../../packages/execution
 	github.com/ai-dev-control-plane/gateway => ../../packages/gateway
 	github.com/ai-dev-control-plane/models => ../../packages/models
 	github.com/ai-dev-control-plane/policies => ../../packages/policies
