@@ -1,6 +1,9 @@
 package readiness
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestAssessTaskReadyWithBoundedVerifiedSpec(t *testing.T) {
 	report := AssessTask(TaskAssessmentInput{
@@ -90,5 +93,31 @@ func TestAssessTaskBlocksCriticalRiskWithoutApproval(t *testing.T) {
 	})
 	if got := findCheck(t, report, "risk_controls").Status; got != StatusBlocked {
 		t.Fatalf("risk_controls status = %q, want %q", got, StatusBlocked)
+	}
+}
+
+
+func TestBuildVerificationPlanUsesConfiguredSecondaryChecks(t *testing.T) {
+	plan := BuildVerificationPlan(
+		"go test ./...",
+		"go vet ./...",
+		"   ",
+		"go build ./...",
+	)
+	want := []VerificationStep{
+		{Evidence: "tests", Command: "go test ./..."},
+		{Evidence: "lint", Command: "go vet ./..."},
+		{Evidence: "build", Command: "go build ./..."},
+	}
+	if !reflect.DeepEqual(plan, want) {
+		t.Fatalf("plan = %#v, want %#v", plan, want)
+	}
+}
+
+func TestBuildVerificationPlanAlwaysRequiresTests(t *testing.T) {
+	plan := BuildVerificationPlan("", "", "", "")
+	want := []VerificationStep{{Evidence: "tests"}}
+	if !reflect.DeepEqual(plan, want) {
+		t.Fatalf("plan = %#v, want %#v", plan, want)
 	}
 }
