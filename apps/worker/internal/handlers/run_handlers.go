@@ -223,7 +223,7 @@ func (h *RunHandler) scheduleAutomaticRetry(
 	event events.AgentRunEvent,
 	classification runfailure.Classification,
 ) (bool, string, error) {
-	if h.db == nil || strings.TrimSpace(event.RunID) == "" {
+	if h.db == nil || h.eventBus == nil || strings.TrimSpace(event.RunID) == "" {
 		return false, "", nil
 	}
 
