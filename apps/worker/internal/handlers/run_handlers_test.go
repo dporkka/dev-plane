@@ -1263,7 +1263,7 @@ func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
-	if _, err := db.Exec(\`
+	if _, err := db.Exec(`
 		INSERT INTO repositories (id, clone_url, default_branch)
 		VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
 		INSERT INTO workspaces (
@@ -1276,7 +1276,7 @@ func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
 		);
 		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
 		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
-	\`); err != nil {
+	`); err != nil {
 		t.Fatalf("seed fresh retry fixture: %v", err)
 	}
 
@@ -1331,12 +1331,12 @@ func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
 	}
 
 	var retryRunID, retryWorkspaceID, retryMetadata string
-	if err := db.QueryRow(\`
+	if err := db.QueryRow(`
 		SELECT id, workspace_id, metadata
 		FROM agent_runs
 		WHERE id <> 'run-1'
 		LIMIT 1
-	\`).Scan(&retryRunID, &retryWorkspaceID, &retryMetadata); err != nil {
+	`).Scan(&retryRunID, &retryWorkspaceID, &retryMetadata); err != nil {
 		t.Fatalf("query fresh retry run: %v", err)
 	}
 	if retryWorkspaceID == "" || retryWorkspaceID == "workspace-1" {
@@ -1344,7 +1344,7 @@ func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
 	}
 
 	var taskWorkspaceID, taskStatus string
-	if err := db.QueryRow(\`SELECT workspace_id, status FROM tasks WHERE id = 'task-1'\`).Scan(&taskWorkspaceID, &taskStatus); err != nil {
+	if err := db.QueryRow(`SELECT workspace_id, status FROM tasks WHERE id = 'task-1'`).Scan(&taskWorkspaceID, &taskStatus); err != nil {
 		t.Fatalf("query task workspace: %v", err)
 	}
 	if taskWorkspaceID != retryWorkspaceID || taskStatus != "running" {
