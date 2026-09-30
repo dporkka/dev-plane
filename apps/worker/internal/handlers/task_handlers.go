@@ -89,6 +89,11 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
+	runMetadata, err := approvedTaskRunMetadata(event.Data)
+	if err != nil {
+		return err
+	}
+
 	// Load task details
 	var task struct {
 		ID            string
@@ -151,19 +156,6 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 	}
 
 	// Create agent run and preserve the approval-time admission evidence.
-	runMetadata := "{}"
-	if len(event.Data) > 0 && string(event.Data) != "null" {
-		var metadata map[string]any
-		if err := json.Unmarshal(event.Data, &metadata); err != nil {
-			return fmt.Errorf("decode approved task metadata: %w", err)
-		}
-		normalized, err := json.Marshal(metadata)
-		if err != nil {
-			return fmt.Errorf("encode approved task metadata: %w", err)
-		}
-		runMetadata = string(normalized)
-	}
-
 	runID := uuid.New().String()
 	_, err = h.db.Exec(`
 		INSERT INTO agent_runs (
@@ -263,6 +255,21 @@ func shortID(id string) string {
 		return id
 	}
 	return id[:8]
+}
+
+func approvedTaskRunMetadata(data json.RawMessage) (string, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return "{}", nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("decode approved task metadata: %w", err)
+	}
+	normalized, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode approved task metadata: %w", err)
+	}
+	return string(normalized), nil
 }
 
 func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID string) (bool, error) {
