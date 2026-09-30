@@ -148,7 +148,6 @@ func createFailureProjectConfigTable(t *testing.T, db interface {
 	}
 }
 
-
 func TestBuildFailedRunEventUsesCanonicalEnvelope(t *testing.T) {
 	db := setupRunnerOrchestrationDB(t)
 	defer db.Close()
