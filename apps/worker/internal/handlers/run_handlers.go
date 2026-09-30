@@ -191,8 +191,10 @@ type completedRunContext struct {
 	TaskID      string
 	WorkspaceID *string
 	AgentRole   string
-	Model       string
-	Provider    string
+	Model             string
+	Provider          string
+	Attempt           int
+	ExecutionSnapshot models.ExecutionSnapshot
 }
 
 type pendingHandoff struct {
@@ -242,12 +244,30 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if run.WorkspaceID != nil {
 		workspaceArg = *run.WorkspaceID
 	}
+	snapshot := run.ExecutionSnapshot
+	if snapshot.RecipeVersion == "" {
+		snapshot.RecipeVersion = "agent-run/v1"
+	}
+	snapshot.AgentProfileVersion = handoff.ToAgent + "/v1"
+	snapshot.ModelRoute = run.Provider + "/" + run.Model
+	if snapshot.VerificationProfile == "" {
+		snapshot.VerificationProfile = "project/default"
+	}
+	snapshotDigest, err := snapshot.Digest()
+	if err != nil {
+		return false, "", "", fmt.Errorf("digest follow-on execution snapshot: %w", err)
+	}
+	snapshotJSON, err := json.Marshal(snapshot)
+	if err != nil {
+		return false, "", "", fmt.Errorf("marshal follow-on execution snapshot: %w", err)
+	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO agent_runs (
-			id, task_id, workspace_id, agent_role, model, provider,
-			status, total_cost, metadata, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
-	`, nextRunID, run.TaskID, workspaceArg, handoff.ToAgent, run.Model, run.Provider, string(metadata), now)
+			id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider,
+			status, execution_snapshot, execution_snapshot_digest, total_cost, metadata, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9, $10, 0.0, $11, $12, $12)
+	`, nextRunID, run.TaskID, run.RunID, workspaceArg, run.Attempt+1, handoff.ToAgent, run.Model, run.Provider,
+		string(snapshotJSON), snapshotDigest, string(metadata), now)
 	if err != nil {
 		return false, "", "", fmt.Errorf("create follow-on agent run: %w", err)
 	}
@@ -289,6 +309,8 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 			"action":             "mailbox_handoff",
 			"handoff_message_id": handoff.ID,
 			"previous_run_id":    run.RunID,
+			"parent_run_id":      run.RunID,
+			"attempt":            run.Attempt + 1,
 		}
 		data, _ := json.Marshal(payload)
 		if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
@@ -300,13 +322,15 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 }
 
 func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.AgentRunEvent) (*completedRunContext, error) {
-	var workspaceID, model, provider sql.NullString
+	var workspaceID, model, provider, executionSnapshot sql.NullString
 	run := &completedRunContext{RunID: event.RunID}
 	err := h.db.QueryRowContext(ctx, `
-		SELECT task_id, workspace_id, agent_role, model, provider
+		SELECT task_id, workspace_id, agent_role, model, provider, attempt, execution_snapshot
 		FROM agent_runs
 		WHERE id = $1
-	`, event.RunID).Scan(&run.TaskID, &workspaceID, &run.AgentRole, &model, &provider)
+	`, event.RunID).Scan(
+		&run.TaskID, &workspaceID, &run.AgentRole, &model, &provider, &run.Attempt, &executionSnapshot,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("completed run %s not found", event.RunID)
@@ -318,6 +342,14 @@ func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.A
 	}
 	if workspaceID.Valid {
 		run.WorkspaceID = &workspaceID.String
+	}
+	if run.Attempt < 1 {
+		run.Attempt = 1
+	}
+	if executionSnapshot.Valid && strings.TrimSpace(executionSnapshot.String) != "" {
+		if err := json.Unmarshal([]byte(executionSnapshot.String), &run.ExecutionSnapshot); err != nil {
+			return nil, fmt.Errorf("decode execution snapshot: %w", err)
+		}
 	}
 	run.Model = "gpt-4o"
 	if model.Valid && strings.TrimSpace(model.String) != "" {
