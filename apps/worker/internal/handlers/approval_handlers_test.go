@@ -85,7 +85,7 @@ func TestHandleApprovalApprovedResumesPausedRiskyActionRun(t *testing.T) {
 
 	var runStatus string
 	var errorMessage sql.NullString
-	if err := db.QueryRow(`SELECT status, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &errorMessage); err != nil {
+	if err := db.QueryRow(`SELECT status, outcome, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &outcome, &errorMessage); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
 	if runStatus != models.AgentRunStatusQueued {
@@ -212,12 +212,15 @@ func TestHandleApprovalRejectedFailsTaskAndCompletedRun(t *testing.T) {
 		t.Fatalf("task status = %q, want failed", taskStatus)
 	}
 
-	var runStatus, errorMessage string
-	if err := db.QueryRow(`SELECT status, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &errorMessage); err != nil {
+	var runStatus, outcome, errorMessage string
+	if err := db.QueryRow(`SELECT status, outcome, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &outcome, &errorMessage); err != nil {
 		t.Fatalf("query run status: %v", err)
 	}
 	if runStatus != "failed" {
 		t.Fatalf("run status = %q, want failed", runStatus)
+	}
+	if outcome != string(models.OutcomeFailed) {
+		t.Fatalf("run outcome = %q, want failed", outcome)
 	}
 	if !strings.Contains(errorMessage, "needs changes") {
 		t.Fatalf("error_message = %q, want rejection note", errorMessage)
@@ -243,7 +246,7 @@ func TestHandleApprovalRejectedFailsPausedRunByID(t *testing.T) {
 		t.Fatalf("HandleApprovalRejected() error: %v", err)
 	}
 
-	var taskStatus, runStatus, errorMessage string
+	var taskStatus, runStatus, outcome, errorMessage string
 	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
 		t.Fatalf("query task status: %v", err)
 	}
@@ -252,6 +255,9 @@ func TestHandleApprovalRejectedFailsPausedRunByID(t *testing.T) {
 	}
 	if taskStatus != "failed" || runStatus != models.AgentRunStatusFailed {
 		t.Fatalf("task/run status = %q/%q, want failed/failed", taskStatus, runStatus)
+	}
+	if outcome != string(models.OutcomeFailed) {
+		t.Fatalf("run outcome = %q, want failed", outcome)
 	}
 	if !strings.Contains(errorMessage, "too risky") {
 		t.Fatalf("error_message = %q, want rejection note", errorMessage)
@@ -305,6 +311,7 @@ func setupApprovalHandlerDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
 			status TEXT NOT NULL,
+			outcome TEXT,
 			error_message TEXT,
 			updated_at DATETIME
 		);
