@@ -365,7 +365,6 @@ func TestVerifyDoesNotAdvanceWorkWhenExecutableGateFails(t *testing.T) {
 	}
 }
 
-
 func TestVerifyExecutesBrowserProfileAndPersistsHashedArtifacts(t *testing.T) {
 	command := "pnpm exec playwright test tests/e2e/checkout.spec.ts"
 	screenshot := []byte("fake-png")
@@ -385,7 +384,7 @@ work:
   max_parallel_cost: 1
 `),
 		files: map[string][]byte{
-			"artifacts/browser/report.txt":  []byte("2 passed; console errors: 0"),
+			"artifacts/browser/report.txt":   []byte("2 passed; console errors: 0"),
 			"artifacts/browser/checkout.png": screenshot,
 		},
 		headResponses: []string{"head456", "head456"},
