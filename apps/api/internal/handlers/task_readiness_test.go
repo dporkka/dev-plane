@@ -110,3 +110,43 @@ func TestGetTaskReadinessReportsMissingSpecAsBlocked(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
+
+func TestGetTaskReadinessRejectsMalformedSpecEvidence(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT repository_id, risk_level FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"repository_id", "risk_level"}).AddRow("repo-1", "low"))
+	mock.ExpectQuery("SELECT implementation_plan, files_to_change, files_to_create, acceptance_criteria").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"implementation_plan", "files_to_change", "files_to_create", "acceptance_criteria",
+			"test_plan", "rollback_plan", "required_approvals",
+		}).AddRow(
+			`["edit handler"]`,
+			`["apps/api/handler.go"]`,
+			`[]`,
+			`{malformed`,
+			"go test ./...",
+			"",
+			`[]`,
+		))
+
+	req := httptest.NewRequest(http.MethodGet, "/tasks/"+taskID+"/readiness", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.GetTaskReadiness(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusInternalServerError, rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
