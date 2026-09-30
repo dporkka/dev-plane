@@ -179,3 +179,20 @@ func TestLoad_GiteaForgeConfig(t *testing.T) {
 	assertEqual(t, cfg.GiteaUsername, "alice")
 	assertEqual(t, cfg.GiteaDraftTitlePrefix, "[Draft]")
 }
+
+func TestLoad_ForgeCredentialsPreserveTrailingSlash(t *testing.T) {
+	setValidJWTSecret(t)
+	t.Setenv("GITHUB_TOKEN", " github-secret/ ")
+	t.Setenv("GITEA_TOKEN", " gitea-secret/ ")
+	t.Setenv("GITEA_USERNAME", " alice/ ")
+	t.Setenv("GITEA_URL", " https://code.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	assertEqual(t, cfg.GitHubToken, "github-secret/")
+	assertEqual(t, cfg.GiteaToken, "gitea-secret/")
+	assertEqual(t, cfg.GiteaUsername, "alice/")
+	assertEqual(t, cfg.GiteaURL, "https://code.example.com")
+}
