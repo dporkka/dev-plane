@@ -14,7 +14,7 @@ import (
 )
 
 var agentRunCols = []string{
-	"id", "task_id", "parent_run_id", "workspace_id", "attempt", "agent_role", "model", "provider", "status",
+	"id", "task_id", "parent_run_id", "workspace_id", "attempt", "agent_role", "model", "provider", "status", "state_version",
 	"outcome", "execution_snapshot", "execution_snapshot_digest",
 	"started_at", "completed_at", "prompt_tokens", "completion_tokens",
 	"total_cost", "error_message", "summary", "metadata", "created_at", "updated_at",
@@ -22,7 +22,7 @@ var agentRunCols = []string{
 
 func agentRunRow(id, taskID, role, status string, createdAt time.Time) *sqlmock.Rows {
 	return sqlmock.NewRows(agentRunCols).
-		AddRow(id, taskID, nil, nil, 1, role, nil, nil, status,
+		AddRow(id, taskID, nil, nil, 1, role, nil, nil, status, 1,
 			"passed", "{}", "sha256:test",
 			nil, nil, 0, 0,
 			0.0, nil, nil, nil, createdAt, createdAt)
@@ -37,11 +37,11 @@ func TestListAgentRuns(t *testing.T) {
 
 	expectAuthorizeTask(mock, taskID)
 	rows := sqlmock.NewRows(agentRunCols).
-		AddRow("run-1", taskID, nil, nil, 1, "implementer", nil, nil, "completed",
+		AddRow("run-1", taskID, nil, nil, 1, "implementer", nil, nil, "completed", 3,
 			"passed", "{}", "sha256:run-1",
 			nil, nil, 100, 50,
 			0.05, nil, nil, nil, now, now).
-		AddRow("run-2", taskID, "run-1", nil, 2, "reviewer", nil, nil, "running",
+		AddRow("run-2", taskID, "run-1", nil, 2, "reviewer", nil, nil, "running", 2,
 			nil, "{}", "sha256:run-2",
 			nil, nil, 0, 0,
 			0.0, nil, nil, nil, now, now)
