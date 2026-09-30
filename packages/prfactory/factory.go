@@ -590,9 +590,7 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 	return &ws, nil
 }
 
-// getRepoNamespaceName extracts a forge namespace and repository name from the
-// canonical full_name. Splitting on the final slash supports nested namespaces
-// such as GitLab groups/subgroups while preserving GitHub owner/name semantics.
+// getRepoNamespaceName resolves the repository's canonical forge identity.
 func (f *Factory) getRepoNamespaceName(ctx context.Context, repoID string) (namespace, name string, err error) {
 	var fullName string
 	err = f.db.QueryRowContext(ctx, `
@@ -602,10 +600,9 @@ func (f *Factory) getRepoNamespaceName(ctx context.Context, repoID string) (name
 		return "", "", fmt.Errorf("get repository: %w", err)
 	}
 
-	fullName = strings.TrimSpace(fullName)
-	separator := strings.LastIndex(fullName, "/")
-	if separator <= 0 || separator == len(fullName)-1 {
-		return "", "", fmt.Errorf("invalid repository full_name: %s", fullName)
+	repository, err := forge.ParseRepositoryFullName(fullName)
+	if err != nil {
+		return "", "", err
 	}
-	return fullName[:separator], fullName[separator+1:], nil
+	return repository.Namespace, repository.Name, nil
 }
