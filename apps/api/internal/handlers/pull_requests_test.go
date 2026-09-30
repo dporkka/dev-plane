@@ -66,12 +66,17 @@ func expectVerifiedCandidateEvidence(t *testing.T, mock sqlmock.Sqlmock, prID, c
 		WillReturnRows(sqlmock.NewRows([]string{
 			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
 			"environment_digest", "runner_identity", "completed_at", "candidate_id",
-			"packet_digest", "packet",
+			"packet_digest", "packet", "project_id",
 		}).AddRow(
 			commitSHA, treeHash, treeHash, "contract-a",
 			"env-a", "runtime:runner-1", completedAt, "candidate-1",
-			digest, packet,
+			digest, packet, "project-1",
 		))
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state", "depends_on_candidate_id",
+		}).AddRow("candidate-1", prID, "repo-1", commitSHA, treeHash, "open", nil))
 }
 
 func decisionPacketFixture(t *testing.T, prID, commitSHA, treeHash string, createdAt time.Time) (string, string) {
@@ -296,10 +301,10 @@ func TestMergePullRequest_BlocksTreeMismatch(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
 			"environment_digest", "runner_identity", "completed_at", "candidate_id",
-			"packet_digest", "packet",
+			"packet_digest", "packet", "project_id",
 		}).AddRow(
 			"candidate-sha", "tree-current", "tree-verified", "contract-a",
-			"env-a", "runtime:runner-1", now, "candidate-1", digest, packet,
+			"env-a", "runtime:runner-1", now, "candidate-1", digest, packet, "project-1",
 		))
 
 	rec := httptest.NewRecorder()
@@ -343,10 +348,10 @@ func TestMergePullRequest_BlocksDecisionPacketDigestMismatch(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
 			"environment_digest", "runner_identity", "completed_at", "candidate_id",
-			"packet_digest", "packet",
+			"packet_digest", "packet", "project_id",
 		}).AddRow(
 			"candidate-sha", "tree-a", "tree-a", "contract-a",
-			"env-a", "runtime:runner-1", now, "candidate-1", "tampered-digest", packet,
+			"env-a", "runtime:runner-1", now, "candidate-1", "tampered-digest", packet, "project-1",
 		))
 
 	rec := httptest.NewRecorder()
