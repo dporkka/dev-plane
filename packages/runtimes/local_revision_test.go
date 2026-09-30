@@ -10,6 +10,7 @@ import (
 )
 
 func TestLocalProviderCreateWorkspacePinsRequestedRevision(t *testing.T) {
+	t.Setenv("WORKSPACE_TMPFS_DISABLE", "1")
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not available")
 	}
