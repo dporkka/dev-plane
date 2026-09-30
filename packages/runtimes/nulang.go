@@ -127,6 +127,5 @@ func (p *NulangCloudProvider) GetUsage(ctx context.Context, sessionID string) (*
 	return &usage, nil
 }
 
-
 var _ Provider = (*NulangCloudProvider)(nil)
 var _ UsageProvider = (*NulangCloudProvider)(nil)
