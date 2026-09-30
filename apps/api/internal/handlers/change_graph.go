@@ -192,6 +192,14 @@ func (h *Handler) GetPullRequestChangeGraph(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func (h *Handler) candidateDependencyBlockers(ctx context.Context, projectID, candidateID string) ([]string, error) {
+	graph, states, _, err := h.loadProjectChangeGraph(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return changegraph.Blockers(graph, candidateID, states)
+}
+
 func (h *Handler) loadCandidateContextByPR(ctx context.Context, pullRequestID string) (*candidateContext, error) {
 	var candidate candidateContext
 	err := h.db.QueryRowContext(ctx, `
