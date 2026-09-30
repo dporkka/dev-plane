@@ -150,14 +150,27 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return fmt.Errorf("update task with workspace: %w", err)
 	}
 
-	// Create agent run
+	// Create agent run and preserve the approval-time admission evidence.
+	runMetadata := "{}"
+	if len(event.Data) > 0 && string(event.Data) != "null" {
+		var metadata map[string]any
+		if err := json.Unmarshal(event.Data, &metadata); err != nil {
+			return fmt.Errorf("decode approved task metadata: %w", err)
+		}
+		normalized, err := json.Marshal(metadata)
+		if err != nil {
+			return fmt.Errorf("encode approved task metadata: %w", err)
+		}
+		runMetadata = string(normalized)
+	}
+
 	runID := uuid.New().String()
 	_, err = h.db.Exec(`
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
 			status, total_cost, metadata, created_at, updated_at
-		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, task.ID, workspaceID, now)
+		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
+	`, runID, task.ID, workspaceID, runMetadata, now)
 	if err != nil {
 		return fmt.Errorf("create agent run: %w", err)
 	}
