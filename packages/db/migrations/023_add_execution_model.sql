@@ -9,6 +9,9 @@ ALTER TABLE agent_runs ADD COLUMN execution_snapshot_digest TEXT;
 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent_run_id ON agent_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_outcome ON agent_runs(outcome);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_attempt ON agent_runs(task_id, attempt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_parent_attempt_role
+    ON agent_runs(parent_run_id, attempt, agent_role)
+    WHERE parent_run_id IS NOT NULL;
 
 ALTER TABLE agent_steps ADD COLUMN outcome TEXT;
 ALTER TABLE agent_steps ADD COLUMN input JSONB;
@@ -28,6 +31,7 @@ ALTER TABLE agent_steps DROP COLUMN output;
 ALTER TABLE agent_steps DROP COLUMN input;
 ALTER TABLE agent_steps DROP COLUMN outcome;
 
+DROP INDEX IF EXISTS idx_agent_runs_parent_attempt_role;
 DROP INDEX IF EXISTS idx_agent_runs_task_attempt;
 DROP INDEX IF EXISTS idx_agent_runs_outcome;
 DROP INDEX IF EXISTS idx_agent_runs_parent_run_id;
