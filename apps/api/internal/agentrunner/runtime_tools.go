@@ -2,7 +2,10 @@ package agentrunner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -448,7 +451,14 @@ func runtimeRunVerificationContract(ctx context.Context, provider runtimes.Provi
 		return nil, err
 	}
 
+	startedAt := time.Now().UTC()
+	treeHash, err := runtimeWorkingTreeHash(ctx, provider, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("capture verification tree: %w", err)
+	}
+
 	results := make([]runtimeVerificationCheckResult, 0, len(contract.Checks))
+	evidenceChecks := make([]verification.CheckResult, 0, len(contract.Checks))
 	failed := 0
 	requiredFailed := false
 	totalDurationMs := 0
@@ -492,6 +502,11 @@ func runtimeRunVerificationContract(ctx context.Context, provider runtimes.Provi
 			DurationMs: durationMs,
 			Output:     output,
 		})
+		evidenceChecks = append(evidenceChecks, verification.CheckResult{
+			ID:       check.ID,
+			Passed:   passed,
+			ExitCode: result.ExitCode,
+		})
 
 		if output != "" {
 			if combinedOutput.Len() > 0 {
@@ -504,22 +519,77 @@ func runtimeRunVerificationContract(ctx context.Context, provider runtimes.Provi
 		}
 	}
 
+	verifiedTreeHash, err := runtimeWorkingTreeHash(ctx, provider, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("recapture verification tree: %w", err)
+	}
+	if verifiedTreeHash != treeHash {
+		return nil, fmt.Errorf("workspace changed during verification: tree %s became %s", treeHash, verifiedTreeHash)
+	}
+
+	completedAt := time.Now().UTC()
+	runnerIdentity := "runtime:" + sessionID
+	environmentSum := sha256.Sum256([]byte(runnerIdentity))
+	environmentDigest := hex.EncodeToString(environmentSum[:])
+
+	if !requiredFailed {
+		if _, err := verification.NewEvidence(verification.EvidenceInput{
+			TreeHash:          treeHash,
+			Contract:          contract,
+			EnvironmentDigest: environmentDigest,
+			RunnerIdentity:    runnerIdentity,
+			Checks:            evidenceChecks,
+			StartedAt:         startedAt,
+			CompletedAt:       completedAt,
+		}); err != nil {
+			return nil, fmt.Errorf("build verification evidence: %w", err)
+		}
+	}
+
 	exitCode := 0
 	if requiredFailed {
 		exitCode = 1
 	}
 	return json.Marshal(map[string]any{
-		"passed":          !requiredFailed,
-		"total":           len(results),
-		"failed":          failed,
-		"skipped":         0,
-		"duration_ms":     totalDurationMs,
-		"output":          combinedOutput.String(),
-		"exit_code":       exitCode,
-		"contract_hash":   contractHash,
-		"source":          "verification_contract",
-		"checks":          results,
+		"passed":             !requiredFailed,
+		"total":              len(results),
+		"failed":             failed,
+		"skipped":            0,
+		"duration_ms":        totalDurationMs,
+		"output":             combinedOutput.String(),
+		"exit_code":          exitCode,
+		"contract_hash":      contractHash,
+		"tree_hash":          treeHash,
+		"environment_digest": environmentDigest,
+		"runner_identity":    runnerIdentity,
+		"started_at":         startedAt,
+		"completed_at":       completedAt,
+		"source":             "verification_contract",
+		"checks":             results,
 	})
+}
+
+func runtimeWorkingTreeHash(ctx context.Context, provider runtimes.Provider, sessionID string) (string, error) {
+	const command = `tmp=$(mktemp); rm -f "$tmp"; trap 'rm -f "$tmp"' EXIT; GIT_INDEX_FILE="$tmp" git read-tree HEAD >/dev/null && GIT_INDEX_FILE="$tmp" git add -A >/dev/null && GIT_INDEX_FILE="$tmp" git write-tree`
+	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Command:     command,
+		Timeout:     30 * time.Second,
+		UnsafeShell: true,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result == nil || result.ExitCode != 0 {
+		if result == nil {
+			return "", errors.New("working-tree hash command returned no result")
+		}
+		return "", fmt.Errorf("working-tree hash failed: %s", strings.TrimSpace(result.Stdout+result.Stderr))
+	}
+	treeHash := strings.TrimSpace(result.Stdout)
+	if treeHash == "" {
+		return "", errors.New("working-tree hash is empty")
+	}
+	return treeHash, nil
 }
 
 func runtimeDetectProjectShape(ctx context.Context, provider runtimes.Provider, sessionID string) (string, string) {
