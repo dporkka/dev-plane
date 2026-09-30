@@ -325,13 +325,8 @@ func (c *StdioClient) readLoop() {
 
 func (c *StdioClient) broadcast(notification Notification) {
 	c.subsMu.Lock()
-	channels := make([]chan Notification, 0, len(c.subs))
+	defer c.subsMu.Unlock()
 	for _, ch := range c.subs {
-		channels = append(channels, ch)
-	}
-	c.subsMu.Unlock()
-
-	for _, ch := range channels {
 		select {
 		case <-c.closed:
 			return
