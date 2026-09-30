@@ -281,7 +281,7 @@ func (h *Handler) CancelAgentRun(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'cancelled', outcome = 'cancelled', completed_at = $1, updated_at = $1
+		SET status = 'cancelled', outcome = 'cancelled', state_version = state_version + 1, completed_at = $1, updated_at = $1
 		WHERE id = $2 AND status IN ('pending', 'running')
 	`, now, id)
 	if err != nil {
