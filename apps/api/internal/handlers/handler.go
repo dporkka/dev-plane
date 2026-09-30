@@ -7,11 +7,11 @@ import (
 	"log/slog"
 	"net/http"
 
-	agentvaultclient "github.com/ai-dev-control-plane/api/internal/agentvault"
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	"github.com/ai-dev-control-plane/activity"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
@@ -29,9 +29,9 @@ type EventPublisher interface {
 type Handler struct {
 	db                *sql.DB
 	logger            *slog.Logger
-	eventBus          EventPublisher
-	agentVault        *agentvaultclient.Client
-	agentVaultProject string
+	eventBus         EventPublisher
+	activitySink      activity.Sink
+	activityProject   string
 	capabilityKernel  *capability.Kernel
 	runtimeProviders  map[string]runtimes.Provider
 	secretManager     *secrets.Manager
@@ -73,10 +73,10 @@ func (h *Handler) WithEventPublisher(pub EventPublisher) *Handler {
 	return h
 }
 
-// WithAgentVault enables optional durable event logging to AgentVault.
-func (h *Handler) WithAgentVault(client *agentvaultclient.Client, project string) *Handler {
-	h.agentVault = client
-	h.agentVaultProject = project
+// WithActivitySink configures an optional provider-neutral lifecycle event sink.
+func (h *Handler) WithActivitySink(sink activity.Sink, project string) *Handler {
+	h.activitySink = sink
+	h.activityProject = project
 	return h
 }
 
