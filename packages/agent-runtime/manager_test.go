@@ -247,8 +247,12 @@ func TestManagerResumeThreadUsesDurableProviderIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager() error = %v", err)
 	}
-	if _, err := manager.ResumeThread(context.Background(), "thread-local"); err != nil {
+	resumed, err := manager.ResumeThread(context.Background(), "thread-local")
+	if err != nil {
 		t.Fatalf("ResumeThread() error = %v", err)
+	}
+	if resumed.CreatedAt.IsZero() || resumed.UpdatedAt.IsZero() {
+		t.Fatalf("resumed thread timestamps should be populated: %#v", resumed)
 	}
 
 	if provider.lastResume.ThreadID != "thread-local" {
