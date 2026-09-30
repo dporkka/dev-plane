@@ -58,8 +58,13 @@ func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) 
 		return nil, fmt.Errorf("git clone: %w (output: %s)", err, string(out))
 	}
 
-	// Create worktree
-	wtCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "worktree", "add", "-B", req.Branch, worktreePath, req.BaseBranch)
+	// Create the task branch from the requested immutable revision when one is
+	// supplied; otherwise preserve the existing branch-based behavior.
+	base := req.Revision
+	if base == "" {
+		base = req.BaseBranch
+	}
+	wtCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "worktree", "add", "-B", req.Branch, worktreePath, base)
 	if out, err := wtCmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("git worktree add: %w (output: %s)", err, string(out))
 	}
