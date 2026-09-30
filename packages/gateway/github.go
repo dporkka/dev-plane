@@ -34,19 +34,19 @@ type GitHubUser struct {
 
 // GitHubRepo represents a GitHub repository.
 type GitHubRepo struct {
-	ID          int64     `json:"id"`
-	Name        string    `json:"name"`
-	FullName    string    `json:"full_name"`
-	Description string    `json:"description"`
-	Private     bool      `json:"private"`
-	CloneURL    string    `json:"clone_url"`
-	SSHURL      string    `json:"ssh_url"`
-	HTMLURL     string    `json:"html_url"`
-	DefaultBranch string  `json:"default_branch"`
-	Language    string    `json:"language"`
-	Stargazers  int       `json:"stargazers_count"`
-	PushedAt    time.Time `json:"pushed_at"`
-	Permissions struct {
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	FullName      string    `json:"full_name"`
+	Description   string    `json:"description"`
+	Private       bool      `json:"private"`
+	CloneURL      string    `json:"clone_url"`
+	SSHURL        string    `json:"ssh_url"`
+	HTMLURL       string    `json:"html_url"`
+	DefaultBranch string    `json:"default_branch"`
+	Language      string    `json:"language"`
+	Stargazers    int       `json:"stargazers_count"`
+	PushedAt      time.Time `json:"pushed_at"`
+	Permissions   struct {
 		Admin bool `json:"admin"`
 		Push  bool `json:"push"`
 		Pull  bool `json:"pull"`
@@ -55,16 +55,16 @@ type GitHubRepo struct {
 
 // GitHubPR represents a GitHub pull request.
 type GitHubPR struct {
-	ID        int64     `json:"id"`
-	Number    int       `json:"number"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
+	ID             int64      `json:"id"`
+	Number         int        `json:"number"`
+	Title          string     `json:"title"`
+	Body           string     `json:"body"`
 	State          string     `json:"state"`
 	HTMLURL        string     `json:"html_url"`
 	Merged         bool       `json:"merged"`
 	MergeCommitSHA string     `json:"merge_commit_sha"`
 	MergedAt       *time.Time `json:"merged_at,omitempty"`
-	Head      struct {
+	Head           struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
 	} `json:"head"`
@@ -131,8 +131,8 @@ func NewGitHubGateway(clientID, clientSecret string) *GitHubGateway {
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Endpoint: oauth2.Endpoint{
-			AuthURL:   "https://github.com/login/oauth/authorize",
-			TokenURL:  "https://github.com/login/oauth/access_token",
+			AuthURL:  "https://github.com/login/oauth/authorize",
+			TokenURL: "https://github.com/login/oauth/access_token",
 		},
 		Scopes: []string{"repo", "read:org", "user:email"},
 	}
@@ -274,9 +274,9 @@ func (g *GitHubGateway) MergePR(ctx context.Context, token *oauth2.Token, owner,
 func (g *GitHubGateway) CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*Deployment, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBaseURL, owner, name)
 	payload := map[string]any{
-		"ref":         ref,
-		"environment": environment,
-		"auto_merge":  false,
+		"ref":               ref,
+		"environment":       environment,
+		"auto_merge":        false,
 		"required_contexts": []string{},
 	}
 	body, err := json.Marshal(payload)
