@@ -117,10 +117,7 @@ func setupBridgeDB(t *testing.T) *sql.DB {
 			created_by TEXT NOT NULL,
 			deleted_at DATETIME
 		);
-		CREATE TABLE agent_runs (
-			id TEXT PRIMARY KEY,
-			task_id TEXT NOT NULL
-		);
+		CREATE TABLE agent_runs (\n\t\t\tid TEXT PRIMARY KEY,\n\t\t\ttask_id TEXT NOT NULL,\n\t\t\tstatus TEXT NOT NULL,\n\t\t\terror_message TEXT,\n\t\t\tupdated_at DATETIME\n\t\t);
 		CREATE TABLE approvals (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
@@ -133,7 +130,7 @@ func setupBridgeDB(t *testing.T) *sql.DB {
 			updated_at DATETIME NOT NULL
 		);
 		INSERT INTO tasks (id, created_by) VALUES ('task-1', 'user-1');
-		INSERT INTO agent_runs (id, task_id) VALUES ('run-1', 'task-1');
+		INSERT INTO agent_runs (id, task_id, status) VALUES ('run-1', 'task-1', 'running');
 	`)
 	if err != nil {
 		_ = db.Close()
