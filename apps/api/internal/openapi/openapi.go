@@ -782,6 +782,69 @@ func buildComponents() Components {
 					"approved": {Type: "boolean", Nullable: true},
 				},
 			},
+			"CreateChangeSetRequest": {
+				Type:     "object",
+				Required: []string{"name"},
+				Properties: map[string]*Schema{
+					"name":        {Type: "string"},
+					"description": {Type: "string", Nullable: true},
+				},
+			},
+			"AddChangeSetCandidateRequest": {
+				Type:     "object",
+				Required: []string{"pull_request_id"},
+				Properties: map[string]*Schema{
+					"pull_request_id": {Type: "string"},
+				},
+			},
+			"ChangeSet": {
+				Type:     "object",
+				Required: []string{"id", "project_id", "name", "status", "created_by", "created_at", "updated_at"},
+				Properties: map[string]*Schema{
+					"id":                   {Type: "string"},
+					"project_id":           {Type: "string"},
+					"name":                 {Type: "string"},
+					"description":          {Type: "string", Nullable: true},
+					"status":               {Type: "string", Enum: []interface{}{"draft", "authorized", "completed", "cancelled"}},
+					"publication_digest":   {Type: "string", Nullable: true},
+					"publication_manifest": {Type: "object", Nullable: true},
+					"authorized_at":        {Type: "string", Format: "date-time", Nullable: true},
+					"authorized_by":        {Type: "string", Nullable: true},
+					"created_by":           {Type: "string"},
+					"created_at":           {Type: "string", Format: "date-time"},
+					"updated_at":           {Type: "string", Format: "date-time"},
+				},
+			},
+			"ChangeSetMember": {
+				Type:     "object",
+				Required: []string{"id", "commit_sha", "tree_hash", "decision_digest", "approvable"},
+				Properties: map[string]*Schema{
+					"id":              {Type: "string"},
+					"commit_sha":      {Type: "string"},
+					"tree_hash":       {Type: "string"},
+					"decision_digest": {Type: "string"},
+					"approvable":      {Type: "boolean"},
+				},
+			},
+			"ChangeSetBlocker": {
+				Type:     "object",
+				Required: []string{"candidate_id", "reason"},
+				Properties: map[string]*Schema{
+					"candidate_id": {Type: "string"},
+					"reason":       {Type: "string"},
+				},
+			},
+			"ChangeSetStatusResponse": {
+				Type:     "object",
+				Required: []string{"change_set", "members", "ready", "publication_order"},
+				Properties: map[string]*Schema{
+					"change_set":        {Ref: "#/components/schemas/ChangeSet"},
+					"members":           {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetMember"}},
+					"ready":             {Type: "boolean"},
+					"blockers":          {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetBlocker"}},
+					"publication_order": {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
 			"ChangeGraphNode": {
 				Type:     "object",
 				Required: []string{"candidate_id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state"},
@@ -1950,6 +2013,95 @@ func buildPaths() map[string]PathItem {
 				"200": {Description: "List of pending approvals", Content: map[string]MediaType{
 					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/Approval"}}},
 				}},
+			},
+		},
+	}
+
+	// Change Sets
+	paths["/api/v1/projects/{projectID}/change-sets"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Create change set",
+			Description: "Creates a draft coordinated publication unit for verified candidates in a project.",
+			OperationID: "createChangeSet",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "projectID", In: "path", Required: true, Description: "Project ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/CreateChangeSetRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Draft change set created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSet"}},
+				}},
+				"400": {Description: "Invalid request"},
+				"404": {Description: "Project not found"},
+			},
+		},
+	}
+	paths["/api/v1/change-sets/{id}"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Get change set readiness",
+			Description: "Returns the current aggregate authority state, external blockers, and deterministic internal publication order.",
+			OperationID: "getChangeSet",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Change set readiness", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetStatusResponse"}},
+				}},
+				"404": {Description: "Change set not found"},
+				"409": {Description: "Stored candidate authority or graph is invalid"},
+			},
+		},
+	}
+	paths["/api/v1/change-sets/{id}/candidates"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Add candidate to change set",
+			Description: "Adds an open verified pull-request candidate to a draft change set. Membership becomes immutable after publication authorization.",
+			OperationID: "addChangeSetCandidate",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/AddChangeSetCandidateRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Candidate added"},
+				"400": {Description: "Invalid request"},
+				"404": {Description: "Change set or pull request not found"},
+				"409": {Description: "Membership is immutable or candidate is not eligible"},
+			},
+		},
+	}
+	paths["/api/v1/change-sets/{id}/authorize-publication"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Authorize change set publication",
+			Description: "Seals a ready change set by storing a canonical digest over member identities and dependency topology. This authorizes later per-candidate merges; it does not claim atomic multi-repository publication.",
+			OperationID: "authorizeChangeSetPublication",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Publication authorized", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetStatusResponse"}},
+				}},
+				"404": {Description: "Change set not found"},
+				"409": {Description: "Change set is blocked or authority is invalid"},
 			},
 		},
 	}
