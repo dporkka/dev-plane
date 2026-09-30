@@ -14,7 +14,7 @@ func TestMemoryProviderContract(t *testing.T) {
 		return contracttest.Fixture{
 			Provider:   forgetest.NewProvider(),
 			Credential: forge.Credential{Token: "test-token"},
-			Repository: forge.Repository{Owner: "acme", Name: "widget"},
+			Repository: forge.Repository{Namespace: "acme", Name: "widget"},
 		}
 	})
 }
@@ -25,7 +25,7 @@ func TestMemoryProviderRejectsInvalidMergeMethod(t *testing.T) {
 	_, err := provider.MergeChange(
 		t.Context(),
 		forge.Credential{Token: "test-token"},
-		forge.Repository{Owner: "acme", Name: "widget"},
+		forge.Repository{Namespace: "acme", Name: "widget"},
 		1,
 		forge.MergeChangeRequest{Method: forge.MergeMethod("octopus")},
 	)
