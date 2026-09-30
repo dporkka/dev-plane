@@ -58,6 +58,7 @@ func TestEvidenceFreshForExactCandidateAndVerificationInputs(t *testing.T) {
 		RunnerIdentity:    "runner-1",
 		Checks: []CheckResult{
 			{ID: "unit", Passed: true, ExitCode: 0},
+			{ID: "lint", Passed: true, ExitCode: 0},
 		},
 		StartedAt:   started,
 		CompletedAt: completed,
@@ -85,7 +86,10 @@ func TestEvidenceBecomesStaleWhenTreeContractOrEnvironmentChanges(t *testing.T) 
 		Contract:          contract,
 		EnvironmentDigest: "env-a",
 		RunnerIdentity:    "runner-1",
-		Checks:            []CheckResult{{ID: "unit", Passed: true}},
+		Checks: []CheckResult{
+			{ID: "unit", Passed: true},
+			{ID: "lint", Passed: true},
+		},
 		StartedAt:         time.Now().UTC(),
 		CompletedAt:       time.Now().UTC().Add(time.Second),
 	})
