@@ -49,7 +49,7 @@ func TestManagerEventSinkRunsAfterPersistenceBeforeDelivery(t *testing.T) {
 	}
 	stream, err := manager.RunTurn(context.Background(), RunTurnRequest{
 		ThreadID: thread.ID,
-		Input: TurnInput{Text: "test"},
+		Input:    TurnInput{Text: "test"},
 	})
 	if err != nil {
 		t.Fatalf("RunTurn() error = %v", err)
@@ -84,7 +84,7 @@ func TestManagerEventSinkFailureStopsDelivery(t *testing.T) {
 	}
 	stream, err := manager.RunTurn(context.Background(), RunTurnRequest{
 		ThreadID: thread.ID,
-		Input: TurnInput{Text: "test"},
+		Input:    TurnInput{Text: "test"},
 	})
 	if err != nil {
 		t.Fatalf("RunTurn() error = %v", err)
