@@ -8,18 +8,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/changeset"
+	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 )
 
