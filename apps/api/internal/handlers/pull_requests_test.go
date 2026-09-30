@@ -50,6 +50,21 @@ func (f *fakeForgeMergeProvider) MergeChange(_ context.Context, credential forge
 
 var _ forge.Provider = (*fakeForgeMergeProvider)(nil)
 
+type fakePullRequestCreator struct {
+	taskID string
+	result *models.PullRequest
+	err    error
+}
+
+func (f *fakePullRequestCreator) CreatePullRequest(_ context.Context, taskID string) (*models.PullRequest, error) {
+	f.taskID = taskID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.result, nil
+}
+
+
 func newMergeRequest(prID string, body string) *http.Request {
 	return newMergeRequestWithRole(prID, body, models.RoleOwner)
 }
@@ -67,6 +82,60 @@ func newMergeRequestWithRole(prID, body, role string) *http.Request {
 	rctx.URLParams.Add("id", prID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	return req
+}
+
+func TestCreatePullRequestUsesConfiguredCreator(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	now := time.Now().UTC()
+	creator := &fakePullRequestCreator{result: &models.PullRequest{
+		ID:         "pr-1",
+		TaskID:     taskID,
+		RepoID:     "repo-1",
+		Number:     7,
+		Title:      "change",
+		Branch:     "feature/test",
+		BaseBranch: "main",
+		URL:        "https://forge.example/acme/repo/changes/7",
+		State:      models.PRStateOpen,
+		CreatedBy:  testUserID,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}}
+	h = h.WithPullRequestCreator(creator)
+
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, repository_id, target_branch").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "repository_id", "target_branch"}).
+			AddRow("reviewing", "repo-1", "main"))
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/pull-request", strings.NewReader(`{"approved":true}`))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID,
+		OrgID:  testOrgID,
+		Email:  "test@example.com",
+		Role:   models.RoleOwner,
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	h.CreatePullRequest(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	if creator.taskID != taskID {
+		t.Fatalf("creator task id = %q, want %q", creator.taskID, taskID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMergePullRequest(t *testing.T) {
