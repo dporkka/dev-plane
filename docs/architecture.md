@@ -232,6 +232,7 @@ projects --< budgets
 | `RUNS` | `runs.>`, `review.>`, `approval.>`, `pr.>` | Work queue |
 | `WEBHOOKS` | `webhooks.>` | Work queue |
 | `AUDIT` | `audit.>` | Work queue |
+| `CHANGESETS` | `changesets.*` | Work queue |
 
 ### Event Flow
 
