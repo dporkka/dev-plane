@@ -1,5 +1,6 @@
 "use client";
 import { Loading } from "@/components/common/Loading";
+import { ReadinessEvidenceCard } from "@/components/common/ReadinessEvidenceCard";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
 import { CostBadge } from "@/components/run/CostBadge";
@@ -8,7 +9,7 @@ import { TaskSpecPreview } from "@/components/task/TaskSpecPreview";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import type { TaskSpec } from "@/lib/types";
+import type { ReadinessReport, TaskSpec } from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -65,6 +66,12 @@ export default function TaskDetailPage() {
     queryFn: () => api.getTask(taskId),
   });
 
+  const { data: readiness } = useQuery<ReadinessReport>({
+    queryKey: ["task-readiness", taskId],
+    queryFn: () => api.getTaskReadiness(taskId),
+    enabled: !!taskId && !!task && task.status !== "backlog",
+  });
+
   const { data: runs } = useQuery({
     queryKey: ["runs", taskId],
     queryFn: () => api.listRuns(taskId),
@@ -88,6 +95,7 @@ export default function TaskDetailPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["task", taskId] });
       queryClient.invalidateQueries({ queryKey: ["spec", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["task-readiness", taskId] });
     },
   });
 
@@ -212,6 +220,15 @@ export default function TaskDetailPage() {
             Specification
           </h2>
           <TaskSpecPreview taskId={taskId} spec={spec} />
+        </div>
+      )}
+
+      {readiness && (
+        <div>
+          <h2 className="text-lg font-semibold text-white mb-3">
+            Execution Readiness
+          </h2>
+          <ReadinessEvidenceCard report={readiness} />
         </div>
       )}
 
