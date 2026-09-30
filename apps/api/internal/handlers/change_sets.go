@@ -467,7 +467,7 @@ func (h *Handler) loadChangeSetMembers(ctx context.Context, changeSetID string) 
 		       dp.digest, dp.packet, pr.state
 		FROM change_set_candidates csc
 		JOIN change_candidates c ON c.id = csc.candidate_id
-		JOIN decision_packets dp ON dp.candidate_id = c.id
+		LEFT JOIN decision_packets dp ON dp.candidate_id = c.id
 		JOIN pull_requests pr ON pr.id = c.pull_request_id
 		WHERE csc.change_set_id = $1
 		ORDER BY c.id ASC
@@ -479,16 +479,26 @@ func (h *Handler) loadChangeSetMembers(ctx context.Context, changeSetID string) 
 
 	members := make([]changeset.Member, 0)
 	for rows.Next() {
-		var candidateID, pullRequestID, repositoryID, commitSHA, treeHash, storedDigest, rawPacket, state string
+		var candidateID, pullRequestID, repositoryID, commitSHA, treeHash, state string
+		var storedDigest, rawPacket sql.NullString
 		if err := rows.Scan(
 			&candidateID, &pullRequestID, &repositoryID, &commitSHA, &treeHash,
 			&storedDigest, &rawPacket, &state,
 		); err != nil {
 			return nil, err
 		}
+		if !storedDigest.Valid || strings.TrimSpace(storedDigest.String) == "" ||
+			!rawPacket.Valid || strings.TrimSpace(rawPacket.String) == "" {
+			members = append(members, changeset.Member{
+				ID:        candidateID,
+				CommitSHA: commitSHA,
+				TreeHash:  treeHash,
+			})
+			continue
+		}
 
 		var packet decisionpacket.Packet
-		if err := json.Unmarshal([]byte(rawPacket), &packet); err != nil {
+		if err := json.Unmarshal([]byte(rawPacket.String), &packet); err != nil {
 			return nil, fmt.Errorf("decode decision packet for candidate %s: %w", candidateID, err)
 		}
 		if err := packet.Validate(); err != nil {
@@ -498,7 +508,7 @@ func (h *Handler) loadChangeSetMembers(ctx context.Context, changeSetID string) 
 		if err != nil {
 			return nil, fmt.Errorf("digest decision packet for candidate %s: %w", candidateID, err)
 		}
-		if digest != storedDigest ||
+		if digest != storedDigest.String ||
 			packet.Candidate.ID != candidateID ||
 			packet.Candidate.PullRequestID != pullRequestID ||
 			packet.Candidate.RepositoryID != repositoryID ||
@@ -510,7 +520,7 @@ func (h *Handler) loadChangeSetMembers(ctx context.Context, changeSetID string) 
 			ID:             candidateID,
 			CommitSHA:      commitSHA,
 			TreeHash:       treeHash,
-			DecisionDigest: storedDigest,
+			DecisionDigest: storedDigest.String,
 			Approvable:     packet.Review.Approvable,
 		})
 	}
