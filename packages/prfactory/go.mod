@@ -7,6 +7,7 @@ module github.com/ai-dev-control-plane/prfactory
 go 1.25.11
 
 require (
+	github.com/ai-dev-control-plane/decisionpacket v0.0.0
 	github.com/ai-dev-control-plane/gateway v0.0.0
 	github.com/ai-dev-control-plane/models v0.0.0
 	github.com/ai-dev-control-plane/reviewer v0.0.0
@@ -21,6 +22,7 @@ require (
 require github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
 
 replace (
+	github.com/ai-dev-control-plane/decisionpacket => ../decisionpacket
 	github.com/ai-dev-control-plane/gateway => ../gateway
 	github.com/ai-dev-control-plane/models => ../models
 	github.com/ai-dev-control-plane/reviewer => ../reviewer

@@ -7,8 +7,8 @@ package prfactory
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
@@ -162,9 +163,33 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
+	var candidate *verifiedCandidateRecord
+	var evidence *verificationEvidenceRecord
 	if workspacePath != "" {
 		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
 			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
+		}
+
+		commitSHA, treeHash, identityErr := gitCandidateIdentity(ctx, workspacePath)
+		if identityErr != nil {
+			f.logger.Warn("pull request will be unverified because candidate identity could not be captured",
+				"task_id", taskID, "run_id", run.ID, "error", identityErr)
+		} else if loadedEvidence, evidenceErr := f.loadLatestVerificationEvidence(ctx, run.ID, treeHash); evidenceErr != nil {
+			f.logger.Warn("pull request will be unverified because exact-tree evidence is unavailable",
+				"task_id", taskID, "run_id", run.ID, "tree_hash", treeHash, "error", evidenceErr)
+		} else {
+			candidate = &verifiedCandidateRecord{
+				ID:            uuid.New().String(),
+				TaskID:        taskID,
+				RunID:         run.ID,
+				WorkspaceID:   run.WorkspaceID,
+				RepositoryID:  task.RepositoryID,
+				CommitSHA:     commitSHA,
+				TreeHash:      treeHash,
+				Branch:        workspaceBranch,
+				CreatedAt:     time.Now().UTC(),
+			}
+			evidence = loadedEvidence
 		}
 	}
 
@@ -193,18 +218,19 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		UpdatedAt:  time.Now().UTC(),
 	}
 
-	if err := f.createPRRecord(ctx, pr); err != nil {
-		return nil, fmt.Errorf("save PR record: %w", err)
-	}
-
-	// 9. Update task status to pr_created
-	now := time.Now().UTC()
-	_, err = f.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'pr_created', updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, taskID)
-	if err != nil {
-		f.logger.Warn("failed to update task status to pr_created", "error", err)
+	if candidate != nil && evidence != nil {
+		candidate.PullRequestID = pr.ID
+		evidence.ID = uuid.New().String()
+		evidence.CandidateID = candidate.ID
+		packet, err := buildDecisionPacket(task, report, pr, *candidate, evidence)
+		if err != nil {
+			return nil, fmt.Errorf("build decision packet: %w", err)
+		}
+		if err := f.recordVerifiedPullRequest(ctx, pr, *candidate, evidence, packet); err != nil {
+			return nil, fmt.Errorf("save verified pull request: %w", err)
+		}
+	} else if err := f.recordPullRequest(ctx, pr); err != nil {
+		return nil, fmt.Errorf("save pull request: %w", err)
 	}
 
 	f.logger.Info("pull request created",
@@ -342,22 +368,335 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 	return b.String()
 }
 
-// createPRRecord saves PR metadata to DB.
-func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) error {
+type verifiedCandidateRecord struct {
+	ID            string
+	PullRequestID string
+	TaskID        string
+	RunID         string
+	WorkspaceID   *string
+	RepositoryID  string
+	CommitSHA     string
+	TreeHash      string
+	Branch        string
+	CreatedAt     time.Time
+}
+
+type verificationEvidenceRecord struct {
+	ID                string
+	CandidateID       string
+	TreeHash          string
+	ContractHash      string
+	EnvironmentDigest string
+	RunnerIdentity    string
+	Checks            json.RawMessage
+	StartedAt         time.Time
+	CompletedAt       time.Time
+}
+
+type decisionPacketRecord struct {
+	ID          string
+	CandidateID string
+	Digest      string
+	Packet      json.RawMessage
+	CreatedAt   time.Time
+}
+
+func buildDecisionPacket(task *models.Task, report *reviewer.ReviewReport, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord) (decisionPacketRecord, error) {
+	if task == nil || report == nil || pr == nil || evidence == nil {
+		return decisionPacketRecord{}, errors.New("decision packet inputs are required")
+	}
+	findings, err := json.Marshal(report.Findings)
+	if err != nil {
+		return decisionPacketRecord{}, fmt.Errorf("marshal review findings: %w", err)
+	}
+	diffSummary, err := json.Marshal(report.DiffSummary)
+	if err != nil {
+		return decisionPacketRecord{}, fmt.Errorf("marshal diff summary: %w", err)
+	}
+	description := ""
+	if task.Description != nil {
+		description = *task.Description
+	}
+	packet, err := decisionpacket.New(decisionpacket.Input{
+		Candidate: decisionpacket.Candidate{
+			ID:            candidate.ID,
+			PullRequestID: pr.ID,
+			TaskID:        pr.TaskID,
+			RunID:         candidate.RunID,
+			RepositoryID:  pr.RepoID,
+			CommitSHA:     candidate.CommitSHA,
+			TreeHash:      candidate.TreeHash,
+			Branch:        candidate.Branch,
+		},
+		Task: decisionpacket.TaskSnapshot{
+			Title:                task.Title,
+			Description:          description,
+			AcceptanceCriteria:   task.AcceptanceCriteria,
+			ApprovalRequirements: task.ApprovalRequirements,
+		},
+		Review: decisionpacket.ReviewSnapshot{
+			Summary:       report.Summary,
+			RiskLevel:     report.RiskLevel,
+			Approvable:    report.Approvable,
+			TestCoverage:  report.TestCoverage,
+			SecurityNotes: report.SecurityNotes,
+			Findings:      findings,
+			DiffSummary:   diffSummary,
+		},
+		Verification: decisionpacket.VerificationSnapshot{
+			ContractHash:      evidence.ContractHash,
+			EnvironmentDigest: evidence.EnvironmentDigest,
+			RunnerIdentity:    evidence.RunnerIdentity,
+			Checks:            evidence.Checks,
+		},
+		CreatedAt: candidate.CreatedAt,
+	})
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	digest, err := packet.Digest()
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	data, err := packet.Marshal()
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	return decisionPacketRecord{
+		ID:          uuid.New().String(),
+		CandidateID: candidate.ID,
+		Digest:      digest,
+		Packet:      data,
+		CreatedAt:   candidate.CreatedAt,
+	}, nil
+}
+
+func (f *Factory) loadLatestVerificationEvidence(ctx context.Context, runID, candidateTreeHash string) (*verificationEvidenceRecord, error) {
+	rows, err := f.db.QueryContext(ctx, `
+		SELECT tool_output
+		FROM agent_steps
+		WHERE agent_run_id = $1
+		  AND tool_name = 'run_tests'
+		  AND status = 'completed'
+		ORDER BY step_number DESC
+	`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scan verification tool output: %w", err)
+		}
+
+		var output struct {
+			Source            string          `json:"source"`
+			Passed            bool            `json:"passed"`
+			TreeHash          string          `json:"tree_hash"`
+			ContractHash      string          `json:"contract_hash"`
+			EnvironmentDigest string          `json:"environment_digest"`
+			RunnerIdentity    string          `json:"runner_identity"`
+			Checks            json.RawMessage `json:"checks"`
+			StartedAt         time.Time       `json:"started_at"`
+			CompletedAt       time.Time       `json:"completed_at"`
+		}
+		if err := json.Unmarshal([]byte(raw), &output); err != nil {
+			continue
+		}
+		if output.Source != "verification_contract" || !output.Passed {
+			continue
+		}
+		if strings.TrimSpace(output.TreeHash) == "" || output.TreeHash != candidateTreeHash {
+			continue
+		}
+		if strings.TrimSpace(output.ContractHash) == "" {
+			continue
+		}
+		if strings.TrimSpace(output.EnvironmentDigest) == "" || strings.TrimSpace(output.RunnerIdentity) == "" {
+			continue
+		}
+		if output.StartedAt.IsZero() || output.CompletedAt.IsZero() || output.CompletedAt.Before(output.StartedAt) {
+			continue
+		}
+		if len(output.Checks) == 0 || string(output.Checks) == "null" {
+			continue
+		}
+
+		return &verificationEvidenceRecord{
+			TreeHash:          output.TreeHash,
+			ContractHash:      output.ContractHash,
+			EnvironmentDigest: output.EnvironmentDigest,
+			RunnerIdentity:    output.RunnerIdentity,
+			Checks:            append(json.RawMessage(nil), output.Checks...),
+			StartedAt:         output.StartedAt,
+			CompletedAt:       output.CompletedAt,
+		}, nil
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate verification tool outputs: %w", err)
+	}
+	return nil, sql.ErrNoRows
+}
+
+func gitCandidateIdentity(ctx context.Context, workspacePath string) (string, string, error) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", "", fmt.Errorf("workspace path is required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse", "HEAD", "HEAD^{tree}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("git rev-parse candidate identity: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Fields(string(out))
+	if len(lines) != 2 || strings.TrimSpace(lines[0]) == "" || strings.TrimSpace(lines[1]) == "" {
+		return "", "", fmt.Errorf("unexpected candidate identity output %q", strings.TrimSpace(string(out)))
+	}
+	return lines[0], lines[1], nil
+}
+
+func (f *Factory) recordPullRequest(ctx context.Context, pr *models.PullRequest) error {
 	if err := pr.Validate(); err != nil {
 		return fmt.Errorf("validate PR: %w", err)
 	}
 
-	_, err := f.db.ExecContext(ctx, `
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin PR transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO pull_requests (
 			id, task_id, run_id, repository_id, number, title, body,
 			branch, base_branch, url, state, draft, created_by, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`, pr.ID, pr.TaskID, pr.RunID, pr.RepoID, pr.Number, pr.Title, pr.Body,
 		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt, pr.UpdatedAt,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("insert pull request: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pr_created', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, pr.UpdatedAt, pr.TaskID)
+	if err != nil {
+		return fmt.Errorf("update task status: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check task status update: %w", err)
+	} else if rows == 0 {
+		return fmt.Errorf("task %s was not updated to pr_created", pr.TaskID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit PR transaction: %w", err)
+	}
+	return nil
+}
+
+func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord, packet decisionPacketRecord) error {
+	if err := pr.Validate(); err != nil {
+		return fmt.Errorf("validate PR: %w", err)
+	}
+	if evidence == nil {
+		return fmt.Errorf("verification evidence is required")
+	}
+	if candidate.PullRequestID != pr.ID || evidence.CandidateID != candidate.ID {
+		return fmt.Errorf("candidate/evidence relationship is inconsistent")
+	}
+	if candidate.TreeHash != evidence.TreeHash {
+		return fmt.Errorf("candidate tree does not match verification evidence")
+	}
+	if packet.CandidateID != candidate.ID || strings.TrimSpace(packet.ID) == "" {
+		return fmt.Errorf("decision packet relationship is inconsistent")
+	}
+	var decision decisionpacket.Packet
+	if err := json.Unmarshal(packet.Packet, &decision); err != nil {
+		return fmt.Errorf("decode decision packet: %w", err)
+	}
+	if err := decision.Validate(); err != nil {
+		return fmt.Errorf("validate decision packet: %w", err)
+	}
+	if decision.Candidate.ID != candidate.ID || decision.Candidate.CommitSHA != candidate.CommitSHA || decision.Candidate.TreeHash != candidate.TreeHash {
+		return fmt.Errorf("decision packet candidate identity is stale")
+	}
+	digest, err := decision.Digest()
+	if err != nil {
+		return fmt.Errorf("digest decision packet: %w", err)
+	}
+	if digest != packet.Digest {
+		return fmt.Errorf("decision packet digest mismatch")
+	}
+
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin verified PR transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO pull_requests (
+			id, task_id, run_id, repository_id, number, title, body,
+			branch, base_branch, url, state, draft, created_by, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+	`, pr.ID, pr.TaskID, pr.RunID, pr.RepoID, pr.Number, pr.Title, pr.Body,
+		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt, pr.UpdatedAt,
+	); err != nil {
+		return fmt.Errorf("insert pull request: %w", err)
+	}
+
+	workspaceID := any(nil)
+	if candidate.WorkspaceID != nil {
+		workspaceID = *candidate.WorkspaceID
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO change_candidates (
+			id, pull_request_id, task_id, run_id, workspace_id, repository_id,
+			commit_sha, tree_hash, branch, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, candidate.ID, candidate.PullRequestID, candidate.TaskID, candidate.RunID, workspaceID,
+		candidate.RepositoryID, candidate.CommitSHA, candidate.TreeHash, candidate.Branch, candidate.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("insert change candidate: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO verification_evidence (
+			id, candidate_id, tree_hash, contract_hash, environment_digest,
+			runner_identity, checks, started_at, completed_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, evidence.ID, evidence.CandidateID, evidence.TreeHash, evidence.ContractHash,
+		evidence.EnvironmentDigest, evidence.RunnerIdentity, string(evidence.Checks),
+		evidence.StartedAt, evidence.CompletedAt, candidate.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("insert verification evidence: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO decision_packets (id, candidate_id, digest, packet, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, packet.ID, packet.CandidateID, packet.Digest, string(packet.Packet), packet.CreatedAt); err != nil {
+		return fmt.Errorf("insert decision packet: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pr_created', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, candidate.CreatedAt, pr.TaskID)
+	if err != nil {
+		return fmt.Errorf("update task status: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check task status update: %w", err)
+	} else if rows == 0 {
+		return fmt.Errorf("task %s was not updated to pr_created", pr.TaskID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit verified PR transaction: %w", err)
 	}
 	return nil
 }

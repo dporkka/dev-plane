@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 
@@ -82,6 +83,164 @@ func TestRuntimeRunTestsDetectsCommandThroughProvider(t *testing.T) {
 	}
 	if decoded["passed"] != true {
 		t.Fatalf("passed = %v, want true", decoded["passed"])
+	}
+}
+
+func TestRuntimeRunTestsExplicitCommandOverridesVerificationContract(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"contract","command":"go test ./...","required":true}
+				]
+			}`),
+		},
+		commandResult: &runtimes.CommandResult{ExitCode: 0},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{"command":"go test ./internal/...", "timeout":45}`))
+	if err != nil {
+		t.Fatalf("runtimeRunTests() error: %v", err)
+	}
+	if len(provider.commands) != 1 {
+		t.Fatalf("commands = %#v, want one explicit command", provider.commands)
+	}
+	if provider.commands[0].Command != "go test ./internal/..." {
+		t.Fatalf("command = %q, want explicit command", provider.commands[0].Command)
+	}
+	if provider.commands[0].Timeout.String() != "45s" {
+		t.Fatalf("timeout = %s, want 45s", provider.commands[0].Timeout)
+	}
+}
+
+func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
+	sessionID := "runtime-1"
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"unit","command":"go test ./...","required":true,"timeout_seconds":120},
+					{"id":"lint","command":"go vet ./...","required":true,"timeout_seconds":60}
+				]
+			}`),
+		},
+		commandResults: []*runtimes.CommandResult{
+			{Stdout: "tree-a\n", ExitCode: 0},
+			{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
+			{Stdout: "", ExitCode: 0},
+			{Stdout: "tree-a\n", ExitCode: 0},
+		},
+	}
+	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithRuntimeProvider("docker", provider)
+
+	workspace := &models.Workspace{
+		ID:               "ws-1",
+		RuntimeProvider:  "docker",
+		RuntimeSessionID: &sessionID,
+		Status:           models.WorkspaceStatusReady,
+	}
+	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", Title: "verify"}
+
+	output, err := runner.executeTool(context.Background(), run, task, workspace, "", "run_tests", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("executeTool() error: %v", err)
+	}
+	if len(provider.commands) != 4 {
+		t.Fatalf("commands = %#v, want tree identity + 2 contract checks + tree identity", provider.commands)
+	}
+	if !strings.Contains(provider.commands[0].Command, "git write-tree") {
+		t.Fatalf("first command = %q, want working-tree hash", provider.commands[0].Command)
+	}
+	if provider.commands[1].Command != "go test ./..." || provider.commands[1].Timeout.String() != "2m0s" {
+		t.Fatalf("second command = %#v, want contract unit check", provider.commands[1])
+	}
+	if provider.commands[2].Command != "go vet ./..." || provider.commands[2].Timeout.String() != "1m0s" {
+		t.Fatalf("third command = %#v, want contract lint check", provider.commands[2])
+	}
+	if !strings.Contains(provider.commands[3].Command, "git write-tree") {
+		t.Fatalf("fourth command = %q, want post-verification working-tree hash", provider.commands[3].Command)
+	}
+
+	var decoded struct {
+		Passed            bool      `json:"passed"`
+		Failed            int       `json:"failed"`
+		ContractHash      string    `json:"contract_hash"`
+		TreeHash          string    `json:"tree_hash"`
+		EnvironmentDigest string    `json:"environment_digest"`
+		RunnerIdentity    string    `json:"runner_identity"`
+		StartedAt         time.Time `json:"started_at"`
+		CompletedAt       time.Time `json:"completed_at"`
+		Checks            []struct {
+			ID     string `json:"id"`
+			Passed bool   `json:"passed"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !decoded.Passed || decoded.Failed != 0 {
+		t.Fatalf("verification result = %#v, want all checks passing", decoded)
+	}
+	if decoded.ContractHash == "" {
+		t.Fatal("contract_hash is empty")
+	}
+	if decoded.TreeHash != "tree-a" {
+		t.Fatalf("tree_hash = %q, want tree-a", decoded.TreeHash)
+	}
+	if decoded.EnvironmentDigest == "" {
+		t.Fatal("environment_digest is empty")
+	}
+	if decoded.RunnerIdentity != "runtime:runtime-1" {
+		t.Fatalf("runner_identity = %q, want runtime:runtime-1", decoded.RunnerIdentity)
+	}
+	if decoded.StartedAt.IsZero() || decoded.CompletedAt.IsZero() || decoded.CompletedAt.Before(decoded.StartedAt) {
+		t.Fatalf("verification timestamps = %s..%s", decoded.StartedAt, decoded.CompletedAt)
+	}
+	if len(decoded.Checks) != 2 || decoded.Checks[0].ID != "unit" || decoded.Checks[1].ID != "lint" {
+		t.Fatalf("checks = %#v, want unit and lint", decoded.Checks)
+	}
+}
+
+func TestRuntimeRunTestsRejectsWorkspaceMutationDuringVerification(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"unit","command":"go test ./...","required":true}
+				]
+			}`),
+		},
+		commandResults: []*runtimes.CommandResult{
+			{Stdout: "tree-before\n", ExitCode: 0},
+			{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
+			{Stdout: "tree-after\n", ExitCode: 0},
+		},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "workspace changed during verification") {
+		t.Fatalf("runtimeRunTests() error = %v, want workspace mutation error", err)
+	}
+}
+
+func TestRuntimeRunTestsFailsClosedOnInvalidVerificationContract(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{"version":1,"unknown":true}`),
+		},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "verification contract") {
+		t.Fatalf("runtimeRunTests() error = %v, want verification contract error", err)
+	}
+	if len(provider.commands) != 0 {
+		t.Fatalf("commands = %#v, want no commands for invalid contract", provider.commands)
 	}
 }
 
@@ -187,7 +346,8 @@ type fakeRuntimeProvider struct {
 	readSession   string
 	readPath      string
 	commands      []runtimes.Command
-	commandResult *runtimes.CommandResult
+	commandResult  *runtimes.CommandResult
+	commandResults []*runtimes.CommandResult
 }
 
 func setupAgentAuditDB(t *testing.T) *sql.DB {
@@ -232,6 +392,11 @@ func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID st
 
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
 	p.commands = append(p.commands, cmd)
+	if len(p.commandResults) > 0 {
+		result := p.commandResults[0]
+		p.commandResults = p.commandResults[1:]
+		return result, nil
+	}
 	if p.commandResult != nil {
 		return p.commandResult, nil
 	}

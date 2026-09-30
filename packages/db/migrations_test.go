@@ -29,6 +29,8 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"approvals",
 		"audit_logs",
 		"budgets",
+		"change_candidates",
+		"decision_packets",
 		"deployments",
 		"detection_results",
 		"integrations",
@@ -45,6 +47,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"task_specs",
 		"tasks",
 		"users",
+		"verification_evidence",
 		"workspaces",
 	} {
 		var name string
