@@ -32,7 +32,8 @@ func TestDefaultStreamConfigs(t *testing.T) {
 		StreamAgents:   nats.WorkQueuePolicy,
 		StreamRuns:     nats.WorkQueuePolicy,
 		StreamWebhooks: nats.WorkQueuePolicy,
-		StreamAudit:    nats.WorkQueuePolicy,
+		StreamAudit:      nats.WorkQueuePolicy,
+		StreamChangeSets: nats.WorkQueuePolicy,
 	}
 	for stream, want := range expectedRetention {
 		cfg, ok := byName[stream]
@@ -49,7 +50,8 @@ func TestDefaultStreamConfigs(t *testing.T) {
 		StreamAgents:   {"agents.>"},
 		StreamRuns:     {"runs.*", "review.*", "approval.*", "pr.*"},
 		StreamWebhooks: {"webhooks.*"},
-		StreamAudit:    {"audit.>"},
+		StreamAudit:      {"audit.>"},
+		StreamChangeSets: {"changesets.*"},
 	}
 	for stream, subjects := range expected {
 		cfg, ok := byName[stream]
@@ -91,6 +93,10 @@ func TestEventSubjectsAreCoveredByConfiguredStreams(t *testing.T) {
 		ApprovalApproved,
 		ApprovalRejected,
 		PRCreated,
+		ChangeSetPublishRequested,
+		ChangeSetPublicationStarted,
+		ChangeSetPublicationCompleted,
+		ChangeSetPublicationBlocked,
 	}
 
 	for _, subject := range subjects {
