@@ -363,6 +363,8 @@ CREATE TABLE IF NOT EXISTS change_sets (
                             CHECK (status IN ('draft', 'authorized', 'completed', 'cancelled')),
     publication_status      TEXT NOT NULL DEFAULT 'pending'
                             CHECK (publication_status IN ('pending', 'publishing', 'completed', 'blocked')),
+    publication_lease_token TEXT,
+    publication_lease_until TIMESTAMPTZ,
     publication_digest      TEXT,
     publication_manifest    JSONB,
     authorized_at           TIMESTAMPTZ,
