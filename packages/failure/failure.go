@@ -2,6 +2,8 @@ package failure
 
 import "strings"
 
+const TaxonomyVersion = "run-failure-v1"
+
 type Category string
 
 const (
@@ -36,6 +38,7 @@ type Signal struct {
 }
 
 type Classification struct {
+	Taxonomy    string      `json:"taxonomy"`
 	Category    Category    `json:"category"`
 	Retryable   bool        `json:"retryable"`
 	Disposition Disposition `json:"disposition"`
@@ -146,6 +149,7 @@ func Classify(signal Signal) Classification {
 
 func classification(category Category, retryable bool, disposition Disposition, stage, source string) Classification {
 	return Classification{
+		Taxonomy:    TaxonomyVersion,
 		Category:    category,
 		Retryable:   retryable,
 		Disposition: disposition,
