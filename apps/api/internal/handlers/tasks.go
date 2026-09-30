@@ -219,7 +219,7 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logAgentVaultEvent(ctx, taskCreatedEvent(task, "web"))
+	h.logActivityEvent(ctx, taskCreatedEvent(task, "web"))
 
 	respond.JSON(w, http.StatusCreated, task)
 }
