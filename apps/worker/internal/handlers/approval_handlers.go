@@ -211,7 +211,7 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 		args = []any{failureMessage, now, runID}
 	}
 	_, err = h.db.Exec(`
-		UPDATE agent_runs SET status = 'failed', error_message = $1, updated_at = $2
+		UPDATE agent_runs SET status = 'failed', outcome = 'failed', error_message = $1, updated_at = $2
 		WHERE `+runPredicate, args...)
 	if err != nil {
 		h.logger.Warn("failed to update agent run status", "error", err)
