@@ -1062,3 +1062,38 @@ func failedRunMessage(t *testing.T, runID, taskID string, classification runfail
 	}
 	return &nats.Msg{Data: event}
 }
+
+
+func TestHandleRunFailedAutomaticRetryIsIdempotentAcrossRedelivery(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	classification := runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	}
+
+	for i := 0; i < 2; i++ {
+		if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+			t.Fatalf("HandleRunFailed() delivery %d error: %v", i+1, err)
+		}
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&count); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("run count = %d, want original + one deterministic retry", count)
+	}
+}
