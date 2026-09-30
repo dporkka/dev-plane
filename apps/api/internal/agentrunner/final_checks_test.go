@@ -111,7 +111,9 @@ func TestRunFinalChecksRejectsWorkspaceMutationDuringVerification(t *testing.T) 
 	}
 	runner := NewRunner(db, tools.NewWorkspaceTools(nil), policies.NewEngine([]policies.Policy{
 		{Name: "allow_final_checks", ResourceType: "*", Action: "*", Effect: policies.EffectAllow},
-	}), nil, nil, nil).WithRuntimeProvider("docker", provider)
+	}), nil, nil, nil).
+		WithRuntimeProvider("docker", provider).
+		WithCompletionObserver(noopCompletionObserver{})
 
 	workspace := &models.Workspace{
 		ID:               "workspace-1",
