@@ -200,14 +200,14 @@ func (s *Service) Merge(ctx context.Context, actor Actor, req Request) (*models.
 	}
 
 	var (
-		pr          models.PullRequest
-		taskID      string
-		runID       sql.NullString
-		mergedAt    sql.NullTime
-		repoOwner   string
-		repoName    string
-		taskStatus  string
-		projectOrg  string
+		pr         models.PullRequest
+		taskID     string
+		runID      sql.NullString
+		mergedAt   sql.NullTime
+		repoOwner  string
+		repoName   string
+		taskStatus string
+		projectOrg string
 	)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
