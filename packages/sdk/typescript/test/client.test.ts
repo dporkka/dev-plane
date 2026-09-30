@@ -57,6 +57,14 @@ describe('DevPlaneClient', () => {
     assert.equal(state.input, 'http://api.test/api/v1/projects/proj-1/tasks?status=running');
   });
 
+  test('gets deterministic task readiness evidence', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
+    await client.getTaskReadiness('task-1');
+
+    assert.equal(state.input, 'http://api.test/api/v1/tasks/task-1/readiness');
+    assert.equal(state.init?.method, undefined);
+  });
+
   test('serializes request bodies', async () => {
     const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
     await client.createTask('proj-1', {
