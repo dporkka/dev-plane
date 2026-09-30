@@ -6,19 +6,20 @@ import (
 	"testing"
 )
 
-type recordingRuntimeEventSink struct {
+type runtimeSinkObservation struct {
 	threadID string
 	event    Event
-	err      error
-	entered  chan Event
-	release  chan struct{}
+}
+
+type recordingRuntimeEventSink struct {
+	err     error
+	entered chan runtimeSinkObservation
+	release chan struct{}
 }
 
 func (s *recordingRuntimeEventSink) HandleEvent(_ context.Context, thread Thread, event Event) error {
-	s.threadID = thread.ID
-	s.event = event
 	if s.entered != nil {
-		s.entered <- event
+		s.entered <- runtimeSinkObservation{threadID: thread.ID, event: event}
 	}
 	if s.release != nil {
 		<-s.release
@@ -34,7 +35,7 @@ func TestManagerEventSinkRunsAfterPersistenceBeforeDelivery(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 	sink := &recordingRuntimeEventSink{
-		entered: make(chan Event, 1),
+		entered: make(chan runtimeSinkObservation, 1),
 		release: make(chan struct{}),
 	}
 	manager, err := NewManager(registry, store)
@@ -54,14 +55,14 @@ func TestManagerEventSinkRunsAfterPersistenceBeforeDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	sinkEvent := <-sink.entered
-	if _, err := store.GetTurn(context.Background(), sinkEvent.TurnID); err != nil {
+	observation := <-sink.entered
+	if _, err := store.GetTurn(context.Background(), observation.event.TurnID); err != nil {
 		t.Fatalf("event reached sink before durable turn persistence: %v", err)
 	}
 	close(sink.release)
 	event := <-stream.Events
-	if sink.threadID != thread.ID || sinkEvent.Type != event.Type {
-		t.Fatalf("sink = thread:%q event:%q, delivered:%q", sink.threadID, sinkEvent.Type, event.Type)
+	if observation.threadID != thread.ID || observation.event.Type != event.Type {
+		t.Fatalf("sink = thread:%q event:%q, delivered:%q", observation.threadID, observation.event.Type, event.Type)
 	}
 }
 
