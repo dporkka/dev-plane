@@ -100,6 +100,16 @@ func (e *Executor) ExecuteRun(ctx context.Context, runID string) error {
 	return e.runner.Run(ctx, runID)
 }
 
+// VerifyRunCompletion executes the canonical revision-bound completion authority
+// without changing the run lifecycle status.
+func (e *Executor) VerifyRunCompletion(ctx context.Context, runID string) error {
+	if e == nil || e.runner == nil {
+		return errors.New("agent executor is not configured")
+	}
+	_, err := e.runner.VerifyRunCompletion(ctx, runID)
+	return err
+}
+
 // CheckRunStart evaluates budget admission before a queued run enters the running set.
 func (e *Executor) CheckRunStart(ctx context.Context, runID string) (bool, string, error) {
 	if e == nil || e.runner == nil {
