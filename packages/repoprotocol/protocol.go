@@ -71,9 +71,23 @@ type Commands struct {
 	Logs   string `json:"logs,omitempty" yaml:"logs,omitempty"`
 }
 
+type VerificationKind string
+
+const (
+	VerificationKindCommand VerificationKind = "command"
+	VerificationKindBrowser VerificationKind = "browser"
+)
+
+type BrowserVerificationProfile struct {
+	Command       string   `json:"command" yaml:"command"`
+	ReportPath    string   `json:"report_path,omitempty" yaml:"report_path,omitempty"`
+	ArtifactPaths []string `json:"artifact_paths,omitempty" yaml:"artifact_paths,omitempty"`
+}
+
 type VerificationProfile struct {
-	Command        string `json:"command" yaml:"command"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
+	Command        string                      `json:"command,omitempty" yaml:"command,omitempty"`
+	TimeoutSeconds int                         `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
+	Browser        *BrowserVerificationProfile `json:"browser,omitempty" yaml:"browser,omitempty"`
 }
 
 type WorkConfig struct {
@@ -93,11 +107,19 @@ type RiskRule struct {
 	Requires []string  `json:"requires,omitempty" yaml:"requires,omitempty"`
 }
 
+type EvidenceArtifact struct {
+	Path      string `json:"path"`
+	SHA256    string `json:"sha256"`
+	SizeBytes int64  `json:"size_bytes"`
+}
+
 type GateEvidence struct {
-	Name    string     `json:"name"`
-	Status  GateStatus `json:"status"`
-	Command string     `json:"command,omitempty"`
-	Output  string     `json:"output,omitempty"`
+	Name      string             `json:"name"`
+	Kind      VerificationKind   `json:"kind,omitempty"`
+	Status    GateStatus         `json:"status"`
+	Command   string             `json:"command,omitempty"`
+	Output    string             `json:"output,omitempty"`
+	Artifacts []EvidenceArtifact `json:"artifacts,omitempty"`
 }
 
 type EvidenceBundle struct {
@@ -137,11 +159,28 @@ func (c Config) Validate() error {
 		if name == "" {
 			return errors.New("verification profile name is required")
 		}
-		if strings.TrimSpace(profile.Command) == "" {
-			return fmt.Errorf("verification profile %q requires a command", name)
+		hasCommand := strings.TrimSpace(profile.Command) != ""
+		hasBrowser := profile.Browser != nil
+		if hasCommand == hasBrowser {
+			return fmt.Errorf("verification profile %q requires exactly one of command or browser", name)
 		}
 		if profile.TimeoutSeconds < 0 {
 			return fmt.Errorf("verification profile %q timeout_seconds cannot be negative", name)
+		}
+		if profile.Browser != nil {
+			if strings.TrimSpace(profile.Browser.Command) == "" {
+				return fmt.Errorf("verification profile %q browser requires a command", name)
+			}
+			if reportPath := strings.TrimSpace(profile.Browser.ReportPath); reportPath != "" {
+				if _, err := normalizeRepositoryPath(reportPath); err != nil {
+					return fmt.Errorf("verification profile %q browser report_path %q: %w", name, reportPath, err)
+				}
+			}
+			for _, artifactPath := range profile.Browser.ArtifactPaths {
+				if _, err := normalizeRepositoryPath(artifactPath); err != nil {
+					return fmt.Errorf("verification profile %q browser artifact path %q: %w", name, artifactPath, err)
+				}
+			}
 		}
 	}
 
