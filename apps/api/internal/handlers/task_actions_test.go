@@ -431,7 +431,6 @@ func TestRetryRun_TaskNotRetryable(t *testing.T) {
 	}
 }
 
-
 type admissionMetadataMatcher struct{}
 
 func (admissionMetadataMatcher) Match(value driver.Value) bool {
@@ -521,7 +520,6 @@ func TestStartRunBlockedByTaskReadiness(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
-
 
 type retryAdmissionMetadataMatcher struct {
 	originalRunID string
