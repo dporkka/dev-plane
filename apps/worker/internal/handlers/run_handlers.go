@@ -295,11 +295,13 @@ func (h *RunHandler) scheduleAutomaticRetry(
 	}
 	created := rows > 0
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE tasks SET status = 'running', updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, run.TaskID); err != nil {
-		return false, "", fmt.Errorf("update task for automatic retry: %w", err)
+	if created {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE tasks SET status = 'running', updated_at = $1
+			WHERE id = $2 AND deleted_at IS NULL
+		`, now, run.TaskID); err != nil {
+			return false, "", fmt.Errorf("update task for automatic retry: %w", err)
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, "", fmt.Errorf("commit automatic retry: %w", err)
