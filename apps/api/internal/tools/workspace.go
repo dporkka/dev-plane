@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/ai-dev-control-plane/repo-manifest"
 )
 
 // WorkspaceTools provides real implementations of agent tools.
@@ -504,8 +506,13 @@ func (t *WorkspaceTools) RunTests(ctx context.Context, workspacePath string, inp
 	}
 
 	testCommand := req.Command
+	manifestTimeout := 0
 	if testCommand == "" {
-		testCommand = detectTestCommand(workspacePath)
+		var err error
+		testCommand, manifestTimeout, err = detectTestConfig(workspacePath)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// Validate command against denylist
@@ -514,6 +521,9 @@ func (t *WorkspaceTools) RunTests(ctx context.Context, workspacePath string, inp
 	}
 
 	timeoutSec := req.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = manifestTimeout
+	}
 	if timeoutSec <= 0 {
 		timeoutSec = 300
 	}
@@ -944,28 +954,45 @@ func parseTestCounts(output string) (total, failed, skipped int) {
 
 // detectTestCommand determines the test command for a project.
 func detectTestCommand(workspacePath string) string {
+	command, _, err := detectTestConfig(workspacePath)
+	if err != nil {
+		return "echo 'Invalid dev-plane.json'"
+	}
+	return command
+}
+
+func detectTestConfig(workspacePath string) (string, int, error) {
+	manifest, err := repomanifest.Load(workspacePath)
+	if err == nil {
+		if manifest.Commands.Test != nil {
+			return manifest.Commands.Test.Run, manifest.Commands.Test.TimeoutSeconds, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", 0, fmt.Errorf("load repository manifest: %w", err)
+	}
+
 	if _, err := os.Stat(filepath.Join(workspacePath, "go.mod")); err == nil {
-		return "go test ./..."
+		return "go test ./...", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "package.json")); err == nil {
-		return "npm test"
+		return "npm test", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "Cargo.toml")); err == nil {
-		return "cargo test"
+		return "cargo test", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "requirements.txt")); err == nil {
-		return "python -m pytest"
+		return "python -m pytest", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "pyproject.toml")); err == nil {
-		return "pytest"
+		return "pytest", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "pom.xml")); err == nil {
-		return "mvn test"
+		return "mvn test", 0, nil
 	}
 	if _, err := os.Stat(filepath.Join(workspacePath, "build.gradle")); err == nil {
-		return "./gradlew test"
+		return "./gradlew test", 0, nil
 	}
-	return "echo 'No test command detected'"
+	return "echo 'No test command detected'", 0, nil
 }
 
 // truncateString truncates a string to maxLen, appending ... if truncated.

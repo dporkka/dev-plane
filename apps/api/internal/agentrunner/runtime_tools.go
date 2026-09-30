@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/repo-manifest"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
@@ -390,13 +391,21 @@ func runtimeRunTests(ctx context.Context, provider runtimes.Provider, sessionID 
 		return nil, fmt.Errorf("invalid input for run_tests: %w", err)
 	}
 	testCommand := req.Command
+	manifestTimeout := 0
 	if testCommand == "" {
-		testCommand = runtimeDetectTestCommand(ctx, provider, sessionID)
+		var err error
+		testCommand, manifestTimeout, err = runtimeDetectTestConfig(ctx, provider, sessionID)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := rejectDangerousRuntimeCommand(testCommand); err != nil {
 		return nil, err
 	}
 	timeoutSec := req.Timeout
+	if timeoutSec <= 0 {
+		timeoutSec = manifestTimeout
+	}
 	if timeoutSec <= 0 {
 		timeoutSec = 300
 	}
@@ -451,6 +460,24 @@ func runtimeDetectProjectShape(ctx context.Context, provider runtimes.Provider, 
 }
 
 func runtimeDetectTestCommand(ctx context.Context, provider runtimes.Provider, sessionID string) string {
+	command, _, err := runtimeDetectTestConfig(ctx, provider, sessionID)
+	if err != nil {
+		return "echo 'Invalid dev-plane.json'"
+	}
+	return command
+}
+
+func runtimeDetectTestConfig(ctx context.Context, provider runtimes.Provider, sessionID string) (string, int, error) {
+	if data, err := provider.ReadFile(ctx, sessionID, repomanifest.Filename); err == nil {
+		manifest, err := repomanifest.Parse(data)
+		if err != nil {
+			return "", 0, fmt.Errorf("load repository manifest: %w", err)
+		}
+		if manifest.Commands.Test != nil {
+			return manifest.Commands.Test.Run, manifest.Commands.Test.TimeoutSeconds, nil
+		}
+	}
+
 	for _, candidate := range []struct {
 		file    string
 		command string
@@ -464,10 +491,10 @@ func runtimeDetectTestCommand(ctx context.Context, provider runtimes.Provider, s
 		{"build.gradle", "./gradlew test"},
 	} {
 		if _, err := provider.ReadFile(ctx, sessionID, candidate.file); err == nil {
-			return candidate.command
+			return candidate.command, 0, nil
 		}
 	}
-	return "echo 'No test command detected'"
+	return "echo 'No test command detected'", 0, nil
 }
 
 func runtimeExtractFilesFromPatch(patch string) []string {
