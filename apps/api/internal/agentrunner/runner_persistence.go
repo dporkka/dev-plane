@@ -12,6 +12,7 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 )
+
 func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.AgentStep {
 	if r.db == nil || strings.TrimSpace(runID) == "" {
 		return nil
