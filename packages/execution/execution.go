@@ -27,6 +27,7 @@ var (
 	ErrActivationMismatch  = errors.New("execution activation mismatch")
 	ErrStaleEpoch          = errors.New("stale execution epoch")
 	ErrInvalidEffect       = errors.New("invalid effect")
+	ErrIntentConflict      = errors.New("conflicting effect intent")
 	ErrReceiptMismatch     = errors.New("effect receipt does not match intent")
 	ErrReceiptConflict     = errors.New("conflicting effect receipt")
 )
@@ -241,6 +242,19 @@ func (i EffectIntent) Validate() error {
 		return fmt.Errorf("%w: operation id mismatch", ErrInvalidEffect)
 	}
 	return nil
+}
+
+func MergeIntent(existing, incoming EffectIntent) (EffectIntent, error) {
+	if err := existing.Validate(); err != nil {
+		return EffectIntent{}, err
+	}
+	if err := incoming.Validate(); err != nil {
+		return EffectIntent{}, err
+	}
+	if existing == incoming {
+		return existing, nil
+	}
+	return EffectIntent{}, ErrIntentConflict
 }
 
 func (i EffectIntent) AuthorizeAgainst(current Activation) error {
