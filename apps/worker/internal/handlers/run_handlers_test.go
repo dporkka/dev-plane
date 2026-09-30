@@ -1099,7 +1099,6 @@ func TestHandleRunFailedAutomaticRetryIsIdempotentAcrossRedelivery(t *testing.T)
 	}
 }
 
-
 func TestHandleRunFailedRetriesDispatchAfterPublishFailure(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
@@ -1156,7 +1155,6 @@ func TestHandleRunFailedRetriesDispatchAfterPublishFailure(t *testing.T) {
 		t.Fatalf("retry metadata = %s, want dispatch_published=true", metadata)
 	}
 }
-
 
 func TestHandleRunFailedDoesNotAutoRetryWithoutEventPublisher(t *testing.T) {
 	db := setupRunHandlerDB(t)
