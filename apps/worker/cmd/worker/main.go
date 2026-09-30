@@ -162,7 +162,8 @@ func main() {
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
-		WithReviewer(reviewService)
+		WithReviewer(reviewService).
+		WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
