@@ -15,6 +15,7 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/changegraph"
 	"github.com/ai-dev-control-plane/changeset"
 	"github.com/ai-dev-control-plane/decisionpacket"
 )
