@@ -76,7 +76,7 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 		return RunAdmissionDecision{Allowed: true}, nil
 	}
 
-	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
+	candidate, err := a.loadCandidate(ctx, runID, taskID)
 	if err != nil {
 		return RunAdmissionDecision{}, err
 	}
@@ -86,6 +86,10 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 		return decision, nil
 	}
 
+	config, err := a.resolveSchedulerConfig(ctx, taskID, candidate.Metadata)
+	if err != nil {
+		return RunAdmissionDecision{}, err
+	}
 	if config != nil {
 		for _, dependency := range config.DependsOn {
 			var status string
@@ -235,7 +239,7 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 	return nil
 }
 
-func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, *schedulerConfig, error) {
+func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, error) {
 	var row schedulerTaskRow
 	var runStatus string
 	err := a.db.QueryRowContext(ctx, `
@@ -246,16 +250,12 @@ func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID st
 		WHERE ar.id = $1 AND t.id = $2 AND t.deleted_at IS NULL
 	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus, &row.RunMetadata)
 	if err != nil {
-		return row, nil, fmt.Errorf("load scheduler candidate: %w", err)
+		return row, fmt.Errorf("load scheduler candidate: %w", err)
 	}
 	if runStatus != "queued" && runStatus != "admitting" {
-		return row, nil, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
+		return row, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
 	}
-	config, err := a.resolveSchedulerConfig(ctx, taskID, row.Metadata)
-	if err != nil {
-		return row, nil, err
-	}
-	return row, config, nil
+	return row, nil
 }
 
 type persistedAdmissionMetadata struct {
