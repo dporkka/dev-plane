@@ -14,7 +14,8 @@ const (
 	StreamAgents   = "AGENTS"
 	StreamRuns     = "RUNS"
 	StreamWebhooks = "WEBHOOKS"
-	StreamAudit    = "AUDIT"
+	StreamAudit      = "AUDIT"
+	StreamChangeSets = "CHANGESETS"
 )
 
 // Bus wraps a NATS connection and JetStream context to provide
@@ -74,6 +75,12 @@ func DefaultStreamConfigs() []nats.StreamConfig {
 		{
 			Name:      StreamAudit,
 			Subjects:  []string{"audit.>"},
+			Storage:   nats.FileStorage,
+			Retention: nats.WorkQueuePolicy,
+		},
+		{
+			Name:      StreamChangeSets,
+			Subjects:  []string{"changesets.*"},
 			Storage:   nats.FileStorage,
 			Retention: nats.WorkQueuePolicy,
 		},
