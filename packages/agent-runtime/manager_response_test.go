@@ -46,10 +46,10 @@ func TestManagerRespondApprovalResumesPausedTurn(t *testing.T) {
 
 	err = manager.RespondApproval(context.Background(), ApprovalResponse{
 		ThreadID: thread.ID,
-		TurnID: turn.ID,
-		ItemID: item.ID,
+		TurnID:   turn.ID,
+		ItemID:   item.ID,
 		Decision: ApprovalDecisionApproved,
-		Note: "approved by owner",
+		Note:     "approved by owner",
 	})
 	if err != nil {
 		t.Fatalf("RespondApproval() error = %v", err)
@@ -95,8 +95,8 @@ func TestManagerRespondApprovalDenialCancelsApprovalItemAndResumesProvider(t *te
 
 	err = manager.RespondApproval(context.Background(), ApprovalResponse{
 		ThreadID: thread.ID,
-		TurnID: turn.ID,
-		ItemID: item.ID,
+		TurnID:   turn.ID,
+		ItemID:   item.ID,
 		Decision: ApprovalDecisionDenied,
 	})
 	if err != nil {
