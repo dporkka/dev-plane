@@ -619,4 +619,3 @@ func TestMergePullRequest_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want 404", rec.Code)
 	}
 }
- 
