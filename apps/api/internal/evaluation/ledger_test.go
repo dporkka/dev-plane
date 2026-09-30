@@ -179,9 +179,9 @@ func TestSummarizeMeasuresAcceptedWorkPerHumanAttentionMinute(t *testing.T) {
 
 func TestSummarizeZeroAttentionDoesNotProduceInfinity(t *testing.T) {
 	summary := Summarize([]Evaluation{{
-		TaskID:   "task-1",
-		Attempt:  1,
-		Outcome:  OutcomeAccepted,
+		TaskID:  "task-1",
+		Attempt: 1,
+		Outcome: OutcomeAccepted,
 	}})
 
 	if summary.AcceptedPerHumanAttentionMinute != 0 {
@@ -210,7 +210,6 @@ func TestSummarizeByStrategy(t *testing.T) {
 	}
 }
 
-
 func TestSummarizeDoesNotTreatPendingAsRejected(t *testing.T) {
 	summary := Summarize([]Evaluation{
 		{TaskID: "task-pending", Attempt: 1, Outcome: OutcomePending, HumanAttentionSeconds: 30},
@@ -227,7 +226,6 @@ func TestSummarizeDoesNotTreatPendingAsRejected(t *testing.T) {
 		t.Fatalf("RejectedAttempts = %d, want 1", summary.RejectedAttempts)
 	}
 }
-
 
 func TestLedgerRecordRejectsUnknownOutcome(t *testing.T) {
 	db := openTestDB(t)
