@@ -85,7 +85,7 @@ func TestHandleApprovalApprovedResumesPausedRiskyActionRun(t *testing.T) {
 
 	var runStatus string
 	var errorMessage sql.NullString
-	if err := db.QueryRow(`SELECT status, outcome, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &outcome, &errorMessage); err != nil {
+	if err := db.QueryRow(`SELECT status, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &errorMessage); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
 	if runStatus != models.AgentRunStatusQueued {
