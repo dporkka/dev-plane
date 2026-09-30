@@ -32,9 +32,18 @@ type WorkspaceRequest struct {
 	Base           string
 }
 
+// Publisher publishes a local source-control ref to a configured remote.
+type Publisher interface {
+	Publish(ctx context.Context, req PublishRequest) error
+}
+
+// PublishRequest describes publishing one local ref to a named remote.
+// Remote defaults to "origin" when omitted. Authentication belongs in Env or
+// in a Publisher wrapper; credentials must never be embedded in repository URLs.
 type PublishRequest struct {
 	WorkspacePath string
 	Ref           string
+	Remote        string
 	Env           map[string]string
 }
 
