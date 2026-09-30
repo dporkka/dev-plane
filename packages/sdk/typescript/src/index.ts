@@ -47,6 +47,7 @@ import type {
   StopServiceRequest,
   StopServiceResponse,
   Task,
+  TaskExecutionEvidenceResponse,
   TaskSpec,
   UpdateIntegrationPayload,
   UpdateTaskRequest,
@@ -373,6 +374,12 @@ export class DevPlaneClient {
 
   getRun(id: string) {
     return this.request<AgentRun>(`/api/v1/runs/${id}`);
+  }
+
+  getTaskExecutionEvidence(taskId: string) {
+    return this.request<TaskExecutionEvidenceResponse>(
+      `/api/v1/tasks/${taskId}/execution-evidence`,
+    );
   }
 
   getRunSteps(id: string) {
