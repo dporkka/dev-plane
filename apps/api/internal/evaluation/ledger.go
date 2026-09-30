@@ -11,13 +11,20 @@ import (
 	"github.com/google/uuid"
 )
 
+type Outcome string
+
+const (
+	OutcomePending  Outcome = "pending"
+	OutcomeAccepted Outcome = "accepted"
+	OutcomeRejected Outcome = "rejected"
+)
+
 type Evaluation struct {
 	ID                    string
 	TaskID                string
 	AgentRunID            string
 	Attempt               int
-	Accepted              bool
-	FirstPass             bool
+	Outcome               Outcome
 	HumanInterventions    int
 	HumanAttentionSeconds int
 	WallClockSeconds      int
@@ -55,6 +62,8 @@ type Summary struct {
 	HumanChangeLines                int
 	RevertedWithin7d                int
 	ProductionRegressions           int
+	PendingAttempts                 int
+	RejectedAttempts                int
 	AcceptedPerHumanAttentionMinute float64
 }
 
@@ -70,6 +79,9 @@ func (l *Ledger) Record(ctx context.Context, evaluation Evaluation) error {
 	if l == nil || l.db == nil {
 		return errors.New("evaluation ledger database is required")
 	}
+	if evaluation.Outcome == "" {
+		evaluation.Outcome = OutcomePending
+	}
 	if err := validateEvaluation(evaluation); err != nil {
 		return err
 	}
@@ -82,23 +94,22 @@ func (l *Ledger) Record(ctx context.Context, evaluation Evaluation) error {
 
 	_, err := l.db.ExecContext(ctx, `
 		INSERT INTO task_evaluations (
-			id, task_id, agent_run_id, attempt, accepted, first_pass,
+			id, task_id, agent_run_id, attempt, outcome,
 			human_interventions, human_attention_seconds, wall_clock_seconds,
 			agent_compute_seconds, total_tokens, total_cost, tests_passed,
 			tests_failed, review_findings, human_change_lines,
 			reverted_within_7d, production_regression, model, provider,
 			prompt_version, skill_version, strategy, metadata
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			$14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+			$13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23
 		)
 	`,
 		evaluation.ID,
 		evaluation.TaskID,
 		nullableString(evaluation.AgentRunID),
 		evaluation.Attempt,
-		evaluation.Accepted,
-		evaluation.FirstPass,
+		evaluation.Outcome,
 		evaluation.HumanInterventions,
 		evaluation.HumanAttentionSeconds,
 		evaluation.WallClockSeconds,
@@ -134,7 +145,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 
 	rows, err := l.db.QueryContext(ctx, `
 		SELECT
-			id, task_id, agent_run_id, attempt, accepted, first_pass,
+			id, task_id, agent_run_id, attempt, outcome,
 			human_interventions, human_attention_seconds, wall_clock_seconds,
 			agent_compute_seconds, total_tokens, total_cost, tests_passed,
 			tests_failed, review_findings, human_change_lines,
@@ -159,8 +170,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 			&evaluation.TaskID,
 			&agentRunID,
 			&evaluation.Attempt,
-			&evaluation.Accepted,
-			&evaluation.FirstPass,
+			&evaluation.Outcome,
 			&evaluation.HumanInterventions,
 			&evaluation.HumanAttentionSeconds,
 			&evaluation.WallClockSeconds,
@@ -207,10 +217,10 @@ func Summarize(evaluations []Evaluation) Summary {
 	for _, evaluation := range evaluations {
 		if evaluation.TaskID != "" {
 			seenTasks[evaluation.TaskID] = struct{}{}
-			if evaluation.Accepted {
+			if evaluation.Outcome == OutcomeAccepted {
 				acceptedTasks[evaluation.TaskID] = struct{}{}
 			}
-			if evaluation.Accepted && evaluation.FirstPass && evaluation.Attempt == 1 {
+			if evaluation.Outcome == OutcomeAccepted && evaluation.Attempt == 1 {
 				firstPassAccepted[evaluation.TaskID] = struct{}{}
 			}
 		}
@@ -231,6 +241,12 @@ func Summarize(evaluations []Evaluation) Summary {
 		}
 		if evaluation.ProductionRegression {
 			summary.ProductionRegressions++
+		}
+		switch evaluation.Outcome {
+		case OutcomePending:
+			summary.PendingAttempts++
+		case OutcomeRejected:
+			summary.RejectedAttempts++
 		}
 	}
 
@@ -270,6 +286,11 @@ func validateEvaluation(evaluation Evaluation) error {
 	}
 	if evaluation.Attempt < 1 {
 		return errors.New("attempt must be at least 1")
+	}
+	switch evaluation.Outcome {
+	case OutcomePending, OutcomeAccepted, OutcomeRejected:
+	default:
+		return fmt.Errorf("invalid outcome %q", evaluation.Outcome)
 	}
 
 	metrics := map[string]int{
