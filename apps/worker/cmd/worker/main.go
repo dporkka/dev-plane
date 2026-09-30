@@ -143,7 +143,10 @@ func main() {
 
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
-	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
+	capsuleStore := db.NewTaskCapsuleSQLStore(database.DB)
+	runExecutor := agentexecutor.New(database.DB, eventBus, logger).
+		WithRuntimeProvider(runtimeProviderName, runtimeProvider).
+		WithCompletionObserver(handlers.NewTaskCapsuleCompletionObserver(capsuleStore))
 	reviewService := reviewer.NewReviewer(database.DB, logger)
 	schedulerAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
 		MaxParallel: *schedulerMaxParallel,
@@ -153,7 +156,7 @@ func main() {
 	runAdmission := handlers.NewCapsulePersistingRunAdmission(
 		schedulerAdmission,
 		schedulerAdmission,
-		db.NewTaskCapsuleSQLStore(database.DB),
+		capsuleStore,
 		nil,
 	)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
