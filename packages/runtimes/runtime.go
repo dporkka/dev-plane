@@ -84,16 +84,16 @@ type UsageProvider interface {
 
 // CreateRequest contains parameters for creating a new workspace session.
 type CreateRequest struct {
-	RepositoryID  string              `json:"repository_id"`
-	CloneURL      string              `json:"clone_url"`
-	Branch        string              `json:"branch"`
-	BaseBranch    string              `json:"base_branch"`
-	WorktreeName  string              `json:"worktree_name"`
-	Env           map[string]string   `json:"env,omitempty"`
-	Limits        ResourceLimits      `json:"limits,omitempty"`
-	Capabilities  RuntimeCapabilities `json:"capabilities,omitempty"`
-	Metadata      map[string]string   `json:"metadata,omitempty"`
-	IdempotencyKey string             `json:"idempotency_key,omitempty"`
+	RepositoryID   string              `json:"repository_id"`
+	CloneURL       string              `json:"clone_url"`
+	Branch         string              `json:"branch"`
+	BaseBranch     string              `json:"base_branch"`
+	WorktreeName   string              `json:"worktree_name"`
+	Env            map[string]string   `json:"env,omitempty"`
+	Limits         ResourceLimits      `json:"limits,omitempty"`
+	Capabilities   RuntimeCapabilities `json:"capabilities,omitempty"`
+	Metadata       map[string]string   `json:"metadata,omitempty"`
+	IdempotencyKey string              `json:"idempotency_key,omitempty"`
 }
 
 // Session represents an active workspace runtime session.
