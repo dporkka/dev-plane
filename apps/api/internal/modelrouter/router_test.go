@@ -3,6 +3,7 @@ package modelrouter
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -942,4 +943,76 @@ func containsStr(slice []string, s string) bool {
 		}
 	}
 	return false
+}
+
+
+func TestSemanticRoutePolicyDefaults(t *testing.T) {
+	tests := []struct {
+		route      string
+		taskType   string
+		difficulty string
+		latency    string
+	}{
+		{RouteCheapClassification, TaskTypeSimple, DifficultyEasy, LatencyFast},
+		{RouteCodingFast, TaskTypeCode, DifficultyMedium, LatencyFast},
+		{RouteCodingDeep, TaskTypeCode, DifficultyHard, LatencySlowOK},
+		{RouteReasoningHigh, TaskTypeArchitecture, DifficultyExpert, LatencySlowOK},
+		{RouteSecurityReview, TaskTypeReview, DifficultyHard, LatencyNormal},
+	}
+
+	for _, tt := range tests {
+		policy, ok := SemanticRoutePolicy(tt.route)
+		if !ok {
+			t.Fatalf("SemanticRoutePolicy(%q) not found", tt.route)
+		}
+		if policy.TaskType != tt.taskType || policy.Difficulty != tt.difficulty || policy.LatencyReq != tt.latency {
+			t.Fatalf("SemanticRoutePolicy(%q) = %#v", tt.route, policy)
+		}
+	}
+}
+
+func TestRouterRouteCallUsesSemanticRouteWithoutConcreteModel(t *testing.T) {
+	provider := &mockProvider{
+		name:      "bifrost",
+		available: true,
+		models: []ModelInfo{
+			{Name: "gateway-fast", Provider: "bifrost", MaxContext: 128000, CodingStrength: 8, ReasoningStrength: 8, LatencyMs: 300, CostPer1KOutput: 0.001},
+			{Name: "gateway-deep", Provider: "bifrost", MaxContext: 200000, CodingStrength: 10, ReasoningStrength: 10, LatencyMs: 4000, CostPer1KOutput: 0.02},
+		},
+	}
+	router := NewRouter(&Config{
+		DefaultModel:     "gateway-fast",
+		DefaultProvider:  "bifrost",
+		MaxCostPer1K:     1,
+		ProviderPriority: []string{"bifrost"},
+	}, provider)
+
+	result, err := router.RouteCall(context.Background(), CallRequest{
+		Route:    RouteCodingDeep,
+		Messages: []Message{{Role: "user", Content: "implement this"}},
+	})
+	if err != nil {
+		t.Fatalf("RouteCall() error = %v", err)
+	}
+	if result.Model != "gateway-deep" {
+		t.Fatalf("result.Model = %q, want gateway-deep", result.Model)
+	}
+	if provider.lastReq.Route != RouteCodingDeep {
+		t.Fatalf("provider lastReq.Route = %q", provider.lastReq.Route)
+	}
+	if provider.lastReq.PreferredModel == "" {
+		t.Fatal("router must still resolve a concrete model for direct providers")
+	}
+}
+
+func TestRouterRouteCallRejectsUnknownSemanticRoute(t *testing.T) {
+	router := NewRouter(DefaultConfig())
+
+	_, err := router.RouteCall(context.Background(), CallRequest{
+		Route:    "does-not-exist",
+		Messages: []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown semantic route") {
+		t.Fatalf("RouteCall() error = %v, want unknown semantic route", err)
+	}
 }
