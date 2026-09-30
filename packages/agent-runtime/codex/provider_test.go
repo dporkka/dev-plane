@@ -352,6 +352,17 @@ func TestInterruptSteerAndCompactMapToCodexMethods(t *testing.T) {
 	}
 }
 
+
+func TestSendEventReturnsWhenContextIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	out := make(chan agentruntime.Event)
+	if sendEvent(ctx, out, agentruntime.Event{}) {
+		t.Fatal("sendEvent() = true, want false for cancelled context")
+	}
+}
+
 func TestProviderRejectsInvalidRawInput(t *testing.T) {
 	rpc := newFakeRPC()
 	provider := NewProvider(rpc, Config{})
