@@ -279,15 +279,21 @@ func (h *RunHandler) scheduleAutomaticRetry(
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
+	result, err := tx.ExecContext(ctx, `
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
 			status, total_cost, metadata, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
 		ON CONFLICT(id) DO NOTHING
-	`, retryRunID, run.TaskID, workspaceArg, run.AgentRole, run.Model, run.Provider, string(metadata), now); err != nil {
+	`, retryRunID, run.TaskID, workspaceArg, run.AgentRole, run.Model, run.Provider, string(metadata), now)
+	if err != nil {
 		return false, "", fmt.Errorf("create automatic retry run: %w", err)
 	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, "", fmt.Errorf("check automatic retry creation: %w", err)
+	}
+	created := rows > 0
 
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'running', updated_at = $1
@@ -297,6 +303,10 @@ func (h *RunHandler) scheduleAutomaticRetry(
 	}
 	if err := tx.Commit(); err != nil {
 		return false, "", fmt.Errorf("commit automatic retry: %w", err)
+	}
+
+	if !created {
+		return true, retryRunID, nil
 	}
 
 	if h.eventBus != nil {
