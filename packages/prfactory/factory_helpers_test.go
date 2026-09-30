@@ -2,8 +2,6 @@ package prfactory
 
 import (
 	"context"
-	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -12,6 +10,7 @@ import (
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 func ptr(s string) *string {
@@ -117,44 +116,51 @@ func TestBuildPRBody_HighRisk(t *testing.T) {
 	}
 }
 
-func TestConfigureGitAskPass(t *testing.T) {
-	cmd := &exec.Cmd{}
-	cleanup, err := configureGitAskPass(cmd, "secret-token")
-	if err != nil {
-		t.Fatalf("configureGitAskPass: %v", err)
-	}
-	defer cleanup()
+type fakeBranchPublisher struct {
+	request vcs.PublishRequest
+	err     error
+}
 
-	script := getEnv(cmd, "GIT_ASKPASS")
-	if script == "" {
-		t.Fatal("GIT_ASKPASS not set")
-	}
-	if _, err := os.Stat(script); err != nil {
-		t.Fatalf("askpass script missing: %v", err)
-	}
-	if getEnv(cmd, "GITHUB_TOKEN") != "secret-token" {
-		t.Errorf("GITHUB_TOKEN = %q, want secret-token", getEnv(cmd, "GITHUB_TOKEN"))
+func (f *fakeBranchPublisher) Publish(_ context.Context, req vcs.PublishRequest) error {
+	f.request = req
+	return f.err
+}
+
+func TestPublishBranchDelegatesToConfiguredPublisher(t *testing.T) {
+	publisher := &fakeBranchPublisher{}
+	factory := NewFactory(nil, nil).
+		WithBranchPublisher(publisher).
+		WithBranchRemote("upstream")
+
+	if err := factory.publishBranch(context.Background(), "/tmp/workspace", "agent/task-42"); err != nil {
+		t.Fatalf("publishBranch: %v", err)
 	}
 
-	content, err := os.ReadFile(script)
-	if err != nil {
-		t.Fatalf("read script: %v", err)
+	if publisher.request.WorkspacePath != "/tmp/workspace" {
+		t.Fatalf("workspace = %q", publisher.request.WorkspacePath)
 	}
-	if !strings.Contains(string(content), "x-access-token") {
-		t.Errorf("script missing username helper: %s", content)
+	if publisher.request.Ref != "agent/task-42" {
+		t.Fatalf("ref = %q", publisher.request.Ref)
+	}
+	if publisher.request.Remote != "upstream" {
+		t.Fatalf("remote = %q, want upstream", publisher.request.Remote)
 	}
 }
 
-func TestConfigureGitAskPass_NoToken(t *testing.T) {
-	cmd := &exec.Cmd{}
-	cleanup, err := configureGitAskPass(cmd, "")
-	if err != nil {
-		t.Fatalf("configureGitAskPass: %v", err)
-	}
-	defer cleanup()
+func TestPublishBranchRequiresPublisher(t *testing.T) {
+	factory := NewFactory(nil, nil)
+	factory.branchPublisher = nil
 
-	if getEnv(cmd, "GIT_ASKPASS") != "" {
-		t.Error("expected no GIT_ASKPASS when token is empty")
+	err := factory.publishBranch(context.Background(), "/tmp/workspace", "agent/task-42")
+	if err == nil || !strings.Contains(err.Error(), "branch publisher") {
+		t.Fatalf("error = %v, want branch publisher validation", err)
+	}
+}
+
+func TestWithBranchRemoteRejectsBlankByKeepingDefault(t *testing.T) {
+	factory := NewFactory(nil, nil).WithBranchRemote("   ")
+	if factory.branchRemote != "origin" {
+		t.Fatalf("branch remote = %q, want origin", factory.branchRemote)
 	}
 }
 
@@ -208,6 +214,9 @@ func TestWithGitHubCompatibilityShims(t *testing.T) {
 	}
 	if factory.forgeCredential.Token != "token" {
 		t.Errorf("forge token = %q, want token", factory.forgeCredential.Token)
+	}
+	if factory.branchPublisher == nil {
+		t.Error("expected GitHub compatibility token to configure branch publisher")
 	}
 }
 
@@ -275,12 +284,3 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 	}
 }
 
-func getEnv(cmd *exec.Cmd, key string) string {
-	prefix := key + "="
-	for _, e := range cmd.Env {
-		if strings.HasPrefix(e, prefix) {
-			return strings.TrimPrefix(e, prefix)
-		}
-	}
-	return ""
-}
