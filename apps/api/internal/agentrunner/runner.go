@@ -372,8 +372,8 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	now := time.Now().UTC()
 	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
 
-	// Publish run.completed event
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
+	// Publish run.completed event with revision-bound verification evidence.
+	completedPayload := map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
@@ -381,16 +381,10 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"steps":      state.ToolCalls,
 		"summary":    summary,
 		"timestamp":  now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
+		"data":       testResults,
+	}
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), completedPayload)
+	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, completedPayload)
 
 	r.logger.Info("agent run completed", "run_id", runID, "steps", state.ToolCalls, "duration_ms", time.Since(startTime).Milliseconds())
 
