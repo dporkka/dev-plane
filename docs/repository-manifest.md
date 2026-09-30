@@ -83,9 +83,9 @@ dev-plane check --changed --dry-run --json
 
 A component's `depends_on` list points from a consumer to the components it depends on. Therefore, a change to a dependency also validates all transitive consumers.
 
-Component path patterns are repository-relative. Schema v1 supports exact or ordinary `path.Match` patterns plus a trailing `/**` prefix form for recursive directories.
+Component path patterns are repository-relative. Schema v1 supports exact or ordinary `path.Match` patterns plus a trailing `/**` form with a literal directory prefix for recursive directories. Malformed glob syntax is rejected.
 
-If a changed file maps to no component, Dev Plane uses `validation.fallback_checks`. This is intentionally conservative: an incomplete component graph must cost extra validation, not silently skip it. When `fallback_checks` is omitted, every declared top-level validation command is used.
+If a changed file maps to no component, Dev Plane uses `validation.fallback_checks`. This is intentionally conservative: an incomplete component graph must cost extra validation, not silently skip it. When `fallback_checks` is omitted, every declared top-level validation command is used. Any manifest that declares components must therefore expose at least one top-level `lint`, `typecheck`, `test`, or `build` command so a conservative fallback always exists.
 
 Components with no scoped checks also fall back to repository-wide checks.
 
