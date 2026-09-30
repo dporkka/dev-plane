@@ -21,7 +21,7 @@ type serverResponse struct {
 
 func newFakeServerRequestRPC() *fakeServerRequestRPC {
 	return &fakeServerRequestRPC{
-		fakeRPC: newFakeRPC(),
+		fakeRPC:  newFakeRPC(),
 		requests: make(chan ServerRequest, 4),
 	}
 }
@@ -49,7 +49,7 @@ func TestApprovalCapAdvertisedOnlyWhenTransportSupportsServerRequests(t *testing
 
 func TestMapCommandApprovalRequestToPausedApprovalItem(t *testing.T) {
 	request := ServerRequest{
-		ID: json.RawMessage(`17`),
+		ID:     json.RawMessage(`17`),
 		Method: "item/commandExecution/requestApproval",
 		Params: json.RawMessage(`{
 			"threadId":"native-thread",
@@ -83,8 +83,8 @@ func TestRespondApprovalMapsDecisionBackToCodex(t *testing.T) {
 
 	err := provider.RespondApproval(context.Background(), agentruntime.ApprovalResponse{
 		ThreadID: "thread-1",
-		TurnID: "native-turn",
-		ItemID: "command-1",
+		TurnID:   "native-turn",
+		ItemID:   "command-1",
 		Decision: agentruntime.ApprovalDecisionApproved,
 	})
 	if err != nil {
@@ -101,7 +101,7 @@ func TestRespondApprovalMapsDecisionBackToCodex(t *testing.T) {
 
 func TestUnsupportedServerRequestFailsClosed(t *testing.T) {
 	request := ServerRequest{
-		ID: json.RawMessage(`18`),
+		ID:     json.RawMessage(`18`),
 		Method: "item/permissions/requestApproval",
 		Params: json.RawMessage(`{"threadId":"native-thread","turnId":"native-turn","itemId":"permission-1"}`),
 	}
