@@ -12,12 +12,47 @@ import (
 const (
 	AgentRunStatusPending   = "pending"
 	AgentRunStatusQueued    = "queued"
+	AgentRunStatusAdmitting = "admitting"
 	AgentRunStatusRunning   = "running"
 	AgentRunStatusPaused    = "paused"
 	AgentRunStatusCompleted = "completed"
 	AgentRunStatusFailed    = "failed"
 	AgentRunStatusCancelled = "cancelled"
 )
+
+// CanTransitionAgentRunStatus reports whether a lifecycle transition is allowed.
+// Terminal states are immutable. Scheduler admission is modeled explicitly because
+// queued runs may be temporarily claimed and released before execution.
+func CanTransitionAgentRunStatus(from, to string) bool {
+	switch from {
+	case AgentRunStatusPending:
+		return to == AgentRunStatusQueued ||
+			to == AgentRunStatusRunning ||
+			to == AgentRunStatusFailed ||
+			to == AgentRunStatusCancelled
+	case AgentRunStatusQueued:
+		return to == AgentRunStatusAdmitting ||
+			to == AgentRunStatusRunning ||
+			to == AgentRunStatusFailed ||
+			to == AgentRunStatusCancelled
+	case AgentRunStatusAdmitting:
+		return to == AgentRunStatusQueued ||
+			to == AgentRunStatusRunning ||
+			to == AgentRunStatusFailed ||
+			to == AgentRunStatusCancelled
+	case AgentRunStatusRunning:
+		return to == AgentRunStatusPaused ||
+			to == AgentRunStatusCompleted ||
+			to == AgentRunStatusFailed ||
+			to == AgentRunStatusCancelled
+	case AgentRunStatusPaused:
+		return to == AgentRunStatusQueued ||
+			to == AgentRunStatusFailed ||
+			to == AgentRunStatusCancelled
+	default:
+		return false
+	}
+}
 
 // Outcome is the terminal semantic result of a run or step. It is intentionally
 // separate from lifecycle status so infrastructure errors and negative business
@@ -109,6 +144,7 @@ type AgentRun struct {
 	Model                   *string           `json:"model,omitempty"`
 	Provider                *string           `json:"provider,omitempty"`
 	Status                  string            `json:"status"`
+	StateVersion            int64             `json:"state_version"`
 	Outcome                 Outcome           `json:"outcome,omitempty"`
 	ExecutionSnapshot       ExecutionSnapshot `json:"execution_snapshot,omitempty"`
 	ExecutionSnapshotDigest string            `json:"execution_snapshot_digest,omitempty"`
