@@ -185,3 +185,25 @@ func TestSummarizeZeroAttentionDoesNotProduceInfinity(t *testing.T) {
 		t.Fatalf("AcceptedPerHumanAttentionMinute = %f, want 0 when attention is unmeasured", summary.AcceptedPerHumanAttentionMinute)
 	}
 }
+
+
+func TestSummarizeByStrategy(t *testing.T) {
+	summaries := SummarizeByStrategy([]Evaluation{
+		{TaskID: "task-1", Attempt: 1, Accepted: true, FirstPass: true, HumanAttentionSeconds: 60, Strategy: "plain-codex"},
+		{TaskID: "task-2", Attempt: 1, Accepted: false, HumanAttentionSeconds: 120, Strategy: "dev-plane"},
+		{TaskID: "task-2", Attempt: 2, Accepted: true, HumanAttentionSeconds: 60, Strategy: "dev-plane"},
+	})
+
+	plain := summaries["plain-codex"]
+	if plain.AcceptedTasks != 1 || plain.AcceptedPerHumanAttentionMinute != 1 {
+		t.Fatalf("plain-codex summary = %+v", plain)
+	}
+
+	devPlane := summaries["dev-plane"]
+	if devPlane.AcceptedTasks != 1 || devPlane.Attempts != 2 {
+		t.Fatalf("dev-plane summary = %+v", devPlane)
+	}
+	if math.Abs(devPlane.AcceptedPerHumanAttentionMinute-(1.0/3.0)) > 0.000001 {
+		t.Fatalf("dev-plane efficiency = %.6f, want %.6f", devPlane.AcceptedPerHumanAttentionMinute, 1.0/3.0)
+	}
+}
