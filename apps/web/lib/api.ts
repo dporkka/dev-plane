@@ -85,6 +85,8 @@ export const api = {
 
   cancelRun: (id: string): Promise<any> => getClient().cancelRun(id),
 
+  retryRun: (id: string): Promise<any> => getClient().retryRun(id),
+
   // ─── Reviews ────────────────────────────────────────────────────
   getReview: (runId: string): Promise<any> => getClient().getReview(runId),
 

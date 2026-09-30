@@ -8,9 +8,10 @@ import { Terminal } from "@/components/run/Terminal";
 import { Card } from "@/components/ui/card";
 import { type SSELike, api } from "@/lib/api";
 import type { AgentRun, AgentStep } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  AlertTriangle,
   ArrowLeft,
   Bot,
   Clock,
@@ -22,7 +23,7 @@ import {
   Zap,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 
 const roleIcons: Record<string, React.ElementType> = {
@@ -119,8 +120,12 @@ function useLiveSteps(runId: string, isRunning: boolean) {
 
 export default function RunDetailPage() {
   const params = useParams();
+  const router = useRouter();
+  const queryClient = useQueryClient();
   const runId = params.id as string;
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState<string | null>(null);
 
   const { data: run, isLoading: runLoading } = useQuery<AgentRun>({
     queryKey: ["run", runId],
@@ -204,6 +209,24 @@ export default function RunDetailPage() {
       await api.cancelRun(runId);
     } catch (err) {
       console.error("Failed to cancel run:", err);
+    }
+  };
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    setRetryError(null);
+    try {
+      const retry = await api.retryRun(runId);
+      await queryClient.invalidateQueries({ queryKey: ["run", runId] });
+      if (retry?.run_id) {
+        router.push(`/runs/${retry.run_id}`);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to retry run.";
+      setRetryError(message);
+    } finally {
+      setRetrying(false);
     }
   };
 
@@ -291,9 +314,15 @@ export default function RunDetailPage() {
               </button>
             )}
             {run?.status === "failed" && (
-              <button className="btn-secondary flex items-center gap-2">
-                <RotateCcw className="w-4 h-4" />
-                Retry
+              <button
+                onClick={handleRetry}
+                disabled={retrying}
+                className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <RotateCcw
+                  className={`w-4 h-4 ${retrying ? "animate-spin" : ""}`}
+                />
+                {retrying ? "Retrying..." : "Retry"}
               </button>
             )}
           </div>
@@ -344,6 +373,57 @@ export default function RunDetailPage() {
           <div className="text-white font-medium capitalize">{run?.status}</div>
         </Card>
       </div>
+
+      {run.failure && (
+        <Card className="p-4 border-red-500/30 bg-red-500/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="font-medium text-white">
+                  Failure classification
+                </h2>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 capitalize">
+                  {run.failure.category.replaceAll("_", " ")}
+                </span>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${
+                    run.failure.retryable
+                      ? "bg-yellow-500/10 text-yellow-300"
+                      : "bg-gray-700 text-gray-300"
+                  }`}
+                >
+                  {run.failure.retryable ? "Retryable" : "Not retryable"}
+                </span>
+              </div>
+              <div className="mt-2 text-sm text-gray-300">
+                Recommended action:{" "}
+                <span className="font-medium capitalize">
+                  {run.failure.disposition.replaceAll("_", " ")}
+                </span>
+              </div>
+              {(run.failure.stage || run.failure.source) && (
+                <div className="mt-1 text-xs text-gray-500">
+                  {[run.failure.stage, run.failure.source]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              )}
+              {run.error_message && (
+                <pre className="mt-3 whitespace-pre-wrap break-words text-xs text-red-200/80 font-mono">
+                  {run.error_message}
+                </pre>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {retryError && (
+        <Card className="p-3 border-red-500/30 bg-red-500/5">
+          <div className="text-sm text-red-300">{retryError}</div>
+        </Card>
+      )}
 
       {/* Connection status */}
       {connectionStatus === "disconnected" && isRunning && (

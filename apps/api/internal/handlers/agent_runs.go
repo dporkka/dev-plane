@@ -11,27 +11,29 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	runfailure "github.com/ai-dev-control-plane/failure"
 )
 
 // AgentRun represents an agent run record.
 type AgentRun struct {
-	ID               string          `json:"id"`
-	TaskID           string          `json:"task_id"`
-	WorkspaceID      *string         `json:"workspace_id,omitempty"`
-	AgentRole        string          `json:"agent_role"`
-	Model            *string         `json:"model,omitempty"`
-	Provider         *string         `json:"provider,omitempty"`
-	Status           string          `json:"status"`
-	StartedAt        *time.Time      `json:"started_at,omitempty"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
-	PromptTokens     int             `json:"prompt_tokens"`
-	CompletionTokens int             `json:"completion_tokens"`
-	TotalCost        float64         `json:"total_cost"`
-	ErrorMessage     *string         `json:"error_message,omitempty"`
-	Summary          *string         `json:"summary,omitempty"`
-	Metadata         json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID               string                     `json:"id"`
+	TaskID           string                     `json:"task_id"`
+	WorkspaceID      *string                    `json:"workspace_id,omitempty"`
+	AgentRole        string                     `json:"agent_role"`
+	Model            *string                    `json:"model,omitempty"`
+	Provider         *string                    `json:"provider,omitempty"`
+	Status           string                     `json:"status"`
+	StartedAt        *time.Time                 `json:"started_at,omitempty"`
+	CompletedAt      *time.Time                 `json:"completed_at,omitempty"`
+	PromptTokens     int                        `json:"prompt_tokens"`
+	CompletionTokens int                        `json:"completion_tokens"`
+	TotalCost        float64                    `json:"total_cost"`
+	ErrorMessage     *string                    `json:"error_message,omitempty"`
+	Summary          *string                    `json:"summary,omitempty"`
+	Metadata         json.RawMessage            `json:"metadata,omitempty"`
+	Failure          *runfailure.Classification `json:"failure,omitempty"`
+	CreatedAt        time.Time                  `json:"created_at"`
+	UpdatedAt        time.Time                  `json:"updated_at"`
 }
 
 // AgentStep represents an agent step record.
@@ -367,6 +369,12 @@ func scanAgentRun(scanner agentRunScanner, run *AgentRun) error {
 	}
 	if metadata.Valid {
 		run.Metadata = json.RawMessage(metadata.String)
+		var envelope struct {
+			Failure *runfailure.Classification `json:"failure"`
+		}
+		if err := json.Unmarshal([]byte(metadata.String), &envelope); err == nil {
+			run.Failure = envelope.Failure
+		}
 	}
 	return nil
 }

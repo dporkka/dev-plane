@@ -11,6 +11,7 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
 	"github.com/ai-dev-control-plane/api/internal/tools"
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 )
 
@@ -144,5 +145,40 @@ func createFailureProjectConfigTable(t *testing.T, db interface {
 		) VALUES ('config-1', 'repo-1', $1, '', '', '', CURRENT_TIMESTAMP)
 	`, testCommand); err != nil {
 		t.Fatalf("insert project config: %v", err)
+	}
+}
+
+func TestBuildFailedRunEventUsesCanonicalEnvelope(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	workspacePath := t.TempDir()
+	insertRunnerFixture(t, db, workspacePath, models.AgentRoleImplementer)
+
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default())
+	classification := runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	}
+
+	event, err := runner.buildFailedRunEvent(context.Background(), "run-1", "connection reset by peer", classification)
+	if err != nil {
+		t.Fatalf("buildFailedRunEvent() error: %v", err)
+	}
+	if event.RunID != "run-1" || event.TaskID != "task-1" || event.AgentRole != models.AgentRoleImplementer || event.Status != models.AgentRunStatusFailed {
+		t.Fatalf("event envelope = %+v", event)
+	}
+	var data struct {
+		Error   string                    `json:"error"`
+		Failure runfailure.Classification `json:"failure"`
+	}
+	if err := json.Unmarshal(event.Data, &data); err != nil {
+		t.Fatalf("decode event data: %v", err)
+	}
+	if data.Error != "connection reset by peer" || data.Failure.Category != runfailure.CategoryInfrastructure || !data.Failure.Retryable {
+		t.Fatalf("event data = %+v", data)
 	}
 }

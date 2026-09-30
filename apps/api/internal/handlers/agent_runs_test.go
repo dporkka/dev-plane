@@ -11,6 +11,8 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
+
+	runfailure "github.com/ai-dev-control-plane/failure"
 )
 
 var agentRunCols = []string{
@@ -242,5 +244,50 @@ func TestListAgentSteps(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestGetAgentRunExposesFailureClassification(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	runID := "run-1"
+	taskID := "task-1"
+	now := time.Now()
+	metadata := `{"trace_id":"trace-1","failure":{"taxonomy":"run-failure-v1","category":"infrastructure","retryable":true,"disposition":"retry","stage":"verification","source":"tests"}}`
+
+	expectAuthorizeAgentRun(mock, runID)
+	rows := sqlmock.NewRows(agentRunCols).
+		AddRow(runID, taskID, nil, "implementer", nil, nil, "failed",
+			nil, now, 100, 50,
+			0.05, "final verification failed", nil, metadata, now, now)
+	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
+		WithArgs(runID).
+		WillReturnRows(rows)
+
+	req := httptest.NewRequest(http.MethodGet, "/runs/"+runID, nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", runID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.GetAgentRun(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var run AgentRun
+	if err := json.Unmarshal(rec.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if run.Failure == nil {
+		t.Fatal("failure = nil, want classification")
+	}
+	if run.Failure.Category != runfailure.CategoryInfrastructure ||
+		!run.Failure.Retryable ||
+		run.Failure.Disposition != runfailure.DispositionRetry ||
+		run.Failure.Stage != "verification" ||
+		run.Failure.Source != "tests" {
+		t.Fatalf("failure = %+v", run.Failure)
 	}
 }

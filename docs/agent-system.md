@@ -103,12 +103,22 @@ Pending -> Queued -> Running -> Completed
 
 ### Retry Policy
 
-> **Not implemented yet.** The worker does not apply an application-level retry policy; only NATS-level redelivery of unacknowledged messages is used.
+Failed runs carry a versioned machine-readable failure classification with a category, retryability flag, disposition, stage, and source. The worker applies a deliberately narrow application-level retry policy:
+
+- Only failures with `retryable=true` and disposition `retry` are retried automatically.
+- Automatic retries are capped at 2 attempts after the original execution.
+- Retry runs retain `root_run_id`, `original_run_id`, attempt number, and the previous failure classification in metadata.
+- Retry run IDs are deterministic so redelivered failure events cannot create duplicate runs.
+- Dispatch state is persisted after `runs.triggered` publication. A failed publication is retried on event redelivery, while a successful publication is not emitted again.
+- `retry_fresh_environment` is not automatic yet because workspace reprovisioning is not part of the retry primitive.
+- `code`, `test`, `dependency`, `configuration`, `policy`, and `unknown` failures do not enter an automatic retry loop.
+
+Manual retries remain available through the run retry API and preserve the prior failure under `retry.previous_failure` without carrying it forward as the new run's active failure.
 
 ### Timeout Policy
 
-- Default timeout: 30 minutes per agent run (hardcoded in `apps/worker/internal/handlers/run_handlers.go:381`).
-- Currently not configurable via environment variable.
+- Default execution timeout remains 30 minutes per agent run in `HandleRunTriggered`.
+- It is not yet configurable via environment variable.
 - No separate grace-period kill is implemented.
 
 ### Token Tracking

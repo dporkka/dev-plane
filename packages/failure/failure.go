@@ -166,3 +166,29 @@ func containsAny(value string, patterns ...string) bool {
 	}
 	return false
 }
+
+type AutoRetryDecision struct {
+	Retry       bool   `json:"retry"`
+	NextAttempt int    `json:"next_attempt,omitempty"`
+	Reason      string `json:"reason"`
+}
+
+// DecideAutoRetry allows automatic retries only for failures explicitly marked
+// retryable with the same-environment retry disposition. Attempts are the
+// number of automatic retries already performed, not total executions.
+func DecideAutoRetry(classification Classification, attempts, maxAttempts int) AutoRetryDecision {
+	if !classification.Retryable {
+		return AutoRetryDecision{Reason: "not-retryable"}
+	}
+	if classification.Disposition != DispositionRetry {
+		return AutoRetryDecision{Reason: "manual-recovery-required"}
+	}
+	if maxAttempts <= 0 || attempts >= maxAttempts {
+		return AutoRetryDecision{Reason: "retry-budget-exhausted"}
+	}
+	return AutoRetryDecision{
+		Retry:       true,
+		NextAttempt: attempts + 1,
+		Reason:      "retryable",
+	}
+}

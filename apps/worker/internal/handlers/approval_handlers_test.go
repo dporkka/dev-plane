@@ -262,9 +262,11 @@ type fakeWorkerEventPublisher struct {
 	subject string
 	data    []byte
 	err     error
+	count   int
 }
 
 func (p *fakeWorkerEventPublisher) Publish(subject string, data []byte) error {
+	p.count++
 	p.subject = subject
 	p.data = append([]byte(nil), data...)
 	return p.err

@@ -145,3 +145,51 @@ func TestTaxonomyContainsStableCategories(t *testing.T) {
 		}
 	}
 }
+
+func TestDecideAutoRetryAllowsBoundedRetryDisposition(t *testing.T) {
+	classification := Classification{
+		Taxonomy:    TaxonomyVersion,
+		Category:    CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: DispositionRetry,
+	}
+	decision := DecideAutoRetry(classification, 1, 2)
+	if !decision.Retry {
+		t.Fatalf("Retry = false, want true: %+v", decision)
+	}
+	if decision.NextAttempt != 2 {
+		t.Fatalf("NextAttempt = %d, want 2", decision.NextAttempt)
+	}
+	if decision.Reason != "retryable" {
+		t.Fatalf("Reason = %q, want retryable", decision.Reason)
+	}
+}
+
+func TestDecideAutoRetryStopsAtBudget(t *testing.T) {
+	classification := Classification{
+		Taxonomy:    TaxonomyVersion,
+		Category:    CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: DispositionRetry,
+	}
+	decision := DecideAutoRetry(classification, 2, 2)
+	if decision.Retry {
+		t.Fatalf("Retry = true, want false: %+v", decision)
+	}
+	if decision.Reason != "retry-budget-exhausted" {
+		t.Fatalf("Reason = %q, want retry-budget-exhausted", decision.Reason)
+	}
+}
+
+func TestDecideAutoRetryRequiresSameEnvironmentRetryDisposition(t *testing.T) {
+	for _, classification := range []Classification{
+		{Taxonomy: TaxonomyVersion, Category: CategoryResource, Retryable: true, Disposition: DispositionRetryFreshEnvironment},
+		{Taxonomy: TaxonomyVersion, Category: CategoryTest, Retryable: false, Disposition: DispositionFix},
+		{Taxonomy: TaxonomyVersion, Category: CategoryUnknown, Retryable: false, Disposition: DispositionInvestigate},
+	} {
+		decision := DecideAutoRetry(classification, 0, 2)
+		if decision.Retry {
+			t.Fatalf("classification %+v unexpectedly auto-retried", classification)
+		}
+	}
+}

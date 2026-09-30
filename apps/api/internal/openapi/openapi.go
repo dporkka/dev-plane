@@ -286,6 +286,18 @@ func buildComponents() Components {
 					"generated_at":        {Type: "string", Format: "date-time"},
 				},
 			},
+			"RunFailureClassification": {
+				Type:     "object",
+				Required: []string{"taxonomy", "category", "retryable", "disposition"},
+				Properties: map[string]*Schema{
+					"taxonomy":    {Type: "string"},
+					"category":    {Type: "string", Enum: []interface{}{"code", "test", "environment", "infrastructure", "dependency", "flake", "timeout", "resource", "configuration", "policy", "unknown"}},
+					"retryable":   {Type: "boolean"},
+					"disposition": {Type: "string", Enum: []interface{}{"fix", "retry", "retry_fresh_environment", "human", "investigate"}},
+					"stage":       {Type: "string", Nullable: true},
+					"source":      {Type: "string", Nullable: true},
+				},
+			},
 			"AgentRun": {
 				Type:     "object",
 				Required: []string{"id", "task_id", "agent_role", "status", "prompt_tokens", "completion_tokens", "total_cost", "created_at", "updated_at"},
@@ -305,6 +317,7 @@ func buildComponents() Components {
 					"error_message":     {Type: "string", Nullable: true},
 					"summary":           {Type: "string", Nullable: true},
 					"metadata":          {Type: "object", Nullable: true},
+					"failure":           {Ref: "#/components/schemas/RunFailureClassification", Nullable: true},
 					"created_at":        {Type: "string", Format: "date-time"},
 					"updated_at":        {Type: "string", Format: "date-time"},
 				},
