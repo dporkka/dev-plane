@@ -196,7 +196,6 @@ func TestRecoverEffectReplaysMatchingReceiptAndRejectsConflicts(t *testing.T) {
 	}
 }
 
-
 func TestMergeIntentIsIdempotentButRejectsChangedPayloadForSameOperation(t *testing.T) {
 	activation := Activation{RunID: "run-1", ID: "activation-1", Epoch: 1}
 	grant := Grant{Operation: "forge.merge", Resource: "repo:dporkka/dev-plane/pr:123", Revision: "abc123"}
