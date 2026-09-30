@@ -118,6 +118,9 @@ func (m *Manifest) Validate() error {
 	if err := validateComponentGraph(m.Components); err != nil {
 		return err
 	}
+	if len(m.Components) > 0 && !hasValidationCommand(m.Commands) {
+		return fmt.Errorf("components require at least one top-level validation command for conservative fallback")
+	}
 
 	for _, kind := range m.Validation.FallbackChecks {
 		if !isValidationKind(kind) {
@@ -168,7 +171,21 @@ func validatePathPattern(pattern string) error {
 	if strings.Contains(strings.TrimSuffix(pattern, "/**"), "**") {
 		return fmt.Errorf("path pattern %q may only use ** as a trailing /**", pattern)
 	}
+	if strings.HasSuffix(pattern, "/**") {
+		prefix := strings.TrimSuffix(pattern, "/**")
+		if strings.ContainsAny(prefix, "*?[") {
+			return fmt.Errorf("path pattern %q must use a literal prefix before /**", pattern)
+		}
+		return nil
+	}
+	if _, err := path.Match(pattern, ""); err != nil {
+		return fmt.Errorf("invalid path pattern %q: %w", pattern, err)
+	}
 	return nil
+}
+
+func hasValidationCommand(commands Commands) bool {
+	return commands.Lint != nil || commands.Typecheck != nil || commands.Test != nil || commands.Build != nil
 }
 
 func validateComponentGraph(components map[string]Component) error {
