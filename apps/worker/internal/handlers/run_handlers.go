@@ -488,9 +488,26 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		}
 	}
 	if err != nil {
+		if isRunSuspension(err) {
+			h.logger.Info("run durably suspended", "run_id", event.RunID, "task_id", event.TaskID)
+			return ackMessage(msg)
+		}
 		return fmt.Errorf("execute run %s: %w", event.RunID, err)
 	}
 	return ackMessage(msg)
+}
+
+type runSuspension interface {
+	error
+	RunSuspended() bool
+}
+
+func isRunSuspension(err error) bool {
+	if err == nil {
+		return false
+	}
+	var suspension runSuspension
+	return errors.As(err, &suspension) && suspension.RunSuspended()
 }
 
 func ackMessage(msg *nats.Msg) error {
