@@ -303,17 +303,18 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 }
 
 func (p *DockerProvider) checkoutBranch(ctx context.Context, repoDir string, req CreateRequest) error {
-	if req.BaseBranch != "" {
-		if out, err := p.runner.Run(ctx, "git", []string{"-C", repoDir, "checkout", req.BaseBranch}, commandOptions{}); err != nil {
-			return fmt.Errorf("git checkout base branch: %w (stderr: %s)", err, out.Stderr)
-		}
-	}
 	if req.Branch == "" {
 		return nil
 	}
-	base := "HEAD"
-	if req.BaseBranch != "" {
-		base = req.BaseBranch
+	base := strings.TrimSpace(req.Revision)
+	if base == "" {
+		base = "HEAD"
+		if req.BaseBranch != "" {
+			base = req.BaseBranch
+			if out, err := p.runner.Run(ctx, "git", []string{"-C", repoDir, "checkout", req.BaseBranch}, commandOptions{}); err != nil {
+				return fmt.Errorf("git checkout base branch: %w (stderr: %s)", err, out.Stderr)
+			}
+		}
 	}
 	if out, err := p.runner.Run(ctx, "git", []string{"-C", repoDir, "checkout", "-B", req.Branch, base}, commandOptions{}); err != nil {
 		return fmt.Errorf("git checkout workspace branch: %w (stderr: %s)", err, out.Stderr)
