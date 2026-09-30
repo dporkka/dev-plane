@@ -167,3 +167,40 @@ func TestWorkItemValidateRejectsInvalidOwnershipPath(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want repository-relative path error", err)
 	}
 }
+
+
+func TestParseConfigYAMLRejectsUnknownFieldsAndValidates(t *testing.T) {
+	raw := []byte(`version: 1
+commands:
+  doctor: make doctor
+verification:
+  changed:
+    command: make verify-changed
+work:
+  isolation: worktree
+  max_parallel_cost: 4
+review:
+  independent: true
+  exact_head: true
+risk:
+  - paths:
+      - auth/**
+    level: high
+    requires:
+      - changed
+      - independent_review
+`)
+
+	cfg, err := ParseConfigYAML(raw)
+	if err != nil {
+		t.Fatalf("ParseConfigYAML() error = %v", err)
+	}
+	if cfg.Version != CurrentVersion {
+		t.Fatalf("ParseConfigYAML().Version = %d, want %d", cfg.Version, CurrentVersion)
+	}
+
+	unknown := append(raw, []byte("typo_field: true\n")...)
+	if _, err := ParseConfigYAML(unknown); err == nil || !strings.Contains(err.Error(), "field typo_field not found") {
+		t.Fatalf("ParseConfigYAML(unknown) error = %v, want strict unknown-field error", err)
+	}
+}
