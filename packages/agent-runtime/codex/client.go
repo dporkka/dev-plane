@@ -46,9 +46,9 @@ type StdioClient struct {
 	nextSub uint64
 	subs    map[uint64]chan Notification
 
-	requestsMu  sync.Mutex
+	requestsMu     sync.Mutex
 	nextRequestSub uint64
-	requests     map[uint64]chan ServerRequest
+	requests       map[uint64]chan ServerRequest
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -58,7 +58,7 @@ type StdioClient struct {
 // NewStdioClient starts and initializes Codex app-server.
 func NewStdioClient(ctx context.Context, config StdioConfig) (*StdioClient, error) {
 	client := &StdioClient{
-		config:  normalizeStdioConfig(config),
+		config:   normalizeStdioConfig(config),
 		pending:  make(map[int64]chan rpcResponse),
 		subs:     make(map[uint64]chan Notification),
 		requests: make(map[uint64]chan ServerRequest),
