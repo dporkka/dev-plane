@@ -13,6 +13,7 @@ use (
 	./packages/crypto
 	./packages/db
 	./packages/events
+	./packages/forge
 	./packages/gateway
 	./packages/models
 	./packages/policies
