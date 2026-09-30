@@ -150,5 +150,6 @@ See:
 
 - [Runtime Providers](docs/runtime-providers.md)
 - [Activity Sinks](docs/activity-sinks.md)
+- [Repository Portability Contract](docs/repository-portability.md)
 - [Contributing](CONTRIBUTING.md)
 - [Maintainer Portfolio Integration Example](docs/platform-convergence.md)
