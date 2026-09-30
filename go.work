@@ -17,6 +17,7 @@ use (
 	./packages/policies
 	./packages/prfactory
 	./packages/repo-intel
+	./packages/repo-manifest
 	./packages/reviewer
 	./packages/runtimes
 	./packages/scheduler
