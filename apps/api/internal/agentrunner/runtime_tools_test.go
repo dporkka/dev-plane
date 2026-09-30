@@ -183,11 +183,12 @@ func allowAllPolicies() *policies.Engine {
 }
 
 type fakeRuntimeProvider struct {
-	files         map[string][]byte
-	readSession   string
-	readPath      string
-	commands      []runtimes.Command
-	commandResult *runtimes.CommandResult
+	files          map[string][]byte
+	readSession    string
+	readPath       string
+	commands       []runtimes.Command
+	commandResult  *runtimes.CommandResult
+	commandResults []*runtimes.CommandResult
 }
 
 func setupAgentAuditDB(t *testing.T) *sql.DB {
@@ -232,6 +233,11 @@ func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID st
 
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
 	p.commands = append(p.commands, cmd)
+	if len(p.commandResults) > 0 {
+		result := p.commandResults[0]
+		p.commandResults = p.commandResults[1:]
+		return result, nil
+	}
 	if p.commandResult != nil {
 		return p.commandResult, nil
 	}
