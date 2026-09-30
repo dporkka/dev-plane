@@ -32,7 +32,7 @@ require (
 )
 
 require (
-	github.com/ai-dev-control-plane/securityscan v0.0.0
+	github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
