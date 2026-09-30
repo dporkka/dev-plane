@@ -254,10 +254,10 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	// Publish event to NATS if event bus is available
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"run_id":     runID,
-			"task_id":    taskID,
-			"status":     "queued",
-			"action":     "start_run",
+			"run_id":           runID,
+			"task_id":          taskID,
+			"status":           "queued",
+			"action":           "start_run",
 			"project_id":       task.ProjectID,
 			"readiness_status": readinessReport.Status,
 		}
