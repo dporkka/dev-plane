@@ -33,8 +33,8 @@ func changeSetPacket(t *testing.T, candidateID, prID, repoID, commitSHA, treeHas
 	t.Helper()
 	packet, err := decisionpacket.New(decisionpacket.Input{
 		Candidate: decisionpacket.Candidate{
-			ID: candidateID, PullRequestID: prID, TaskID: "task-"+candidateID, RunID: "run-"+candidateID,
-			RepositoryID: repoID, CommitSHA: commitSHA, TreeHash: treeHash, Branch: "feature-"+candidateID,
+			ID: candidateID, PullRequestID: prID, TaskID: "task-" + candidateID, RunID: "run-" + candidateID,
+			RepositoryID: repoID, CommitSHA: commitSHA, TreeHash: treeHash, Branch: "feature-" + candidateID,
 		},
 		Task:   decisionpacket.TaskSnapshot{Title: candidateID},
 		Review: decisionpacket.ReviewSnapshot{RiskLevel: "low", Approvable: approvable},
