@@ -317,6 +317,10 @@ func setupApprovalHandlerDB(t *testing.T) *sql.DB {
 			event_claimed_at DATETIME,
 			outcome TEXT,
 			error_message TEXT,
+			summary TEXT,
+			total_cost REAL DEFAULT 0,
+			started_at DATETIME,
+			completed_at DATETIME,
 			updated_at DATETIME
 		);
 		CREATE TABLE approvals (
