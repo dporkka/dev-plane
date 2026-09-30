@@ -216,8 +216,8 @@ func TestHandleApprovalRejectedFailsTaskAndCompletedRun(t *testing.T) {
 	if err := db.QueryRow(`SELECT status, outcome, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &outcome, &errorMessage); err != nil {
 		t.Fatalf("query run status: %v", err)
 	}
-	if runStatus != "failed" {
-		t.Fatalf("run status = %q, want failed", runStatus)
+	if runStatus != models.AgentRunStatusCompleted {
+		t.Fatalf("run status = %q, want completed lifecycle to remain immutable", runStatus)
 	}
 	if outcome != string(models.OutcomeFailed) {
 		t.Fatalf("run outcome = %q, want failed", outcome)
@@ -311,6 +311,10 @@ func setupApprovalHandlerDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
 			status TEXT NOT NULL,
+			state_version INTEGER NOT NULL DEFAULT 1,
+			processed_event_version INTEGER NOT NULL DEFAULT 0,
+			processing_event_version INTEGER NOT NULL DEFAULT 0,
+			event_claimed_at DATETIME,
 			outcome TEXT,
 			error_message TEXT,
 			updated_at DATETIME
