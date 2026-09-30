@@ -77,6 +77,44 @@ func TestBuildAdmittedTaskCapsuleUsesSchedulerMetadataAndRunIdentity(t *testing.
 	}
 }
 
+func TestBuildAdmittedTaskCapsuleDerivesRequiredEvidenceFromProjectConfig(t *testing.T) {
+	db := setupAdmittedCapsuleDB(t)
+	defer db.Close()
+
+	_, err := db.Exec(`
+		INSERT INTO tasks (
+			id, project_id, repository_id, title, description, status, metadata, deleted_at
+		) VALUES (
+			'task-1', 'project-1', 'repo-1', 'Implement API change', '',
+			'running', '{"scheduler":{"owns":["apps/api"],"cpu":1,"memory_mb":512}}', NULL
+		);
+		INSERT INTO agent_runs (
+			id, task_id, workspace_id, agent_role, model, provider, status, metadata, updated_at
+		) VALUES (
+			'run-1', 'task-1', 'workspace-1', 'implementer', 'gpt-5.6', 'openai',
+			'admitting', '{}', CURRENT_TIMESTAMP
+		);
+		INSERT INTO project_configs (
+			id, repository_id, test_command, lint_command, typecheck_command, build_command, updated_at
+		) VALUES (
+			'config-1', 'repo-1', 'go test ./...', '', 'go vet ./...', 'go build ./...', CURRENT_TIMESTAMP
+		);
+	`)
+	if err != nil {
+		t.Fatalf("insert fixture: %v", err)
+	}
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{})
+	capsule, err := admission.BuildAdmittedTaskCapsule(context.Background(), "run-1", "task-1", nil)
+	if err != nil {
+		t.Fatalf("BuildAdmittedTaskCapsule() error: %v", err)
+	}
+	want := []string{"tests", "typecheck", "build"}
+	if !reflect.DeepEqual(capsule.RequiredEvidence, want) {
+		t.Fatalf("required evidence = %#v, want %#v", capsule.RequiredEvidence, want)
+	}
+}
+
 func TestBuildAdmittedTaskCapsuleRejectsQueuedRun(t *testing.T) {
 	db := setupAdmittedCapsuleDB(t)
 	defer db.Close()
@@ -173,6 +211,15 @@ func setupAdmittedCapsuleDB(t *testing.T) *sql.DB {
 			task_id TEXT PRIMARY KEY,
 			files_to_change TEXT DEFAULT '[]',
 			files_to_create TEXT DEFAULT '[]'
+		);
+		CREATE TABLE project_configs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			test_command TEXT,
+			lint_command TEXT,
+			typecheck_command TEXT,
+			build_command TEXT,
+			updated_at DATETIME
 		);
 	`)
 	if err != nil {
