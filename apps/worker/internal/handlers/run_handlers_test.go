@@ -1094,4 +1094,7 @@ func TestHandleRunFailedAutomaticRetryIsIdempotentAcrossRedelivery(t *testing.T)
 	if count != 2 {
 		t.Fatalf("run count = %d, want original + one deterministic retry", count)
 	}
+	if publisher.count != 1 {
+		t.Fatalf("publish count = %d, want one runs.triggered publication", publisher.count)
+	}
 }
