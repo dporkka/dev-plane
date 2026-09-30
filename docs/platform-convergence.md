@@ -127,6 +127,12 @@ Target capabilities:
 
 This makes Dev Plane a serious dogfooding workload for Nulang Cloud while keeping both products independently usable.
 
+## Repository contracts
+
+Product and platform repositories should expose canonical lifecycle commands through the versioned `dev-plane.json` contract. Dev Plane consumes that repository-owned configuration before falling back to stack inference. The contract must remain declarative and must not grow product-specific business logic, credentials, or cross-repository database configuration.
+
+See [Repository Manifest](./repository-manifest.md).
+
 ## Migration strategy
 
 1. Add adapters and prove parity before deleting duplicated code.

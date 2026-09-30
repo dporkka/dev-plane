@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "dev-plane",
+  "commands": {
+    "test": {
+      "run": "make test",
+      "timeout_seconds": 600
+    },
+    "lint": {
+      "run": "make lint",
+      "timeout_seconds": 600
+    },
+    "build": {
+      "run": "make build",
+      "timeout_seconds": 600
+    },
+    "dev": {
+      "run": "make dev"
+    }
+  }
+}
