@@ -370,6 +370,17 @@ export default function RunDetailPage() {
                 </Link>
               </div>
             )}
+            {run.metadata?.trigger && (
+              <div>
+                <div className="text-gray-500 mb-1">Trigger</div>
+                <div className="font-mono text-gray-300">
+                  {String(run.metadata.trigger)}
+                  {run.metadata.repair_round
+                    ? ` · round ${String(run.metadata.repair_round)}`
+                    : ""}
+                </div>
+              </div>
+            )}
             {run.execution_snapshot?.recipe_version && (
               <div>
                 <div className="text-gray-500 mb-1">Recipe</div>
