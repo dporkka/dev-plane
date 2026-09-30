@@ -165,6 +165,68 @@ func TestHandleRunCompletedReviewsWhenNoHandoff(t *testing.T) {
 	}
 }
 
+func TestHandleRunCompletedDuplicateTerminalEventReviewsOnce(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleReviewer)
+
+	reviewService := &fakeReviewer{report: &reviewer.ReviewReport{
+		RunID:      "run-1",
+		RiskLevel:  "low",
+		Approvable: true,
+	}}
+	handler := NewRunHandler(db, slog.Default(), nil).WithReviewer(reviewService)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"completed","state_version":3}`)}
+
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("first HandleRunCompleted() error: %v", err)
+	}
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("duplicate HandleRunCompleted() error: %v", err)
+	}
+	if reviewService.calls != 1 {
+		t.Fatalf("review calls = %d, want 1", reviewService.calls)
+	}
+}
+
+func TestHandleRunCompletedIgnoresSupersededAttempt(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		INSERT INTO agent_runs (
+			id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider,
+			status, state_version, total_cost, metadata
+		) VALUES (
+			'run-2', 'task-1', 'run-1', 'workspace-1', 2, 'implementer', 'gpt-4o', 'openai',
+			'queued', 1, 0, '{}'
+		)
+	`); err != nil {
+		t.Fatalf("insert newer run: %v", err)
+	}
+
+	reviewService := &fakeReviewer{report: &reviewer.ReviewReport{
+		RunID:      "run-1",
+		RiskLevel:  "low",
+		Approvable: true,
+	}}
+	handler := NewRunHandler(db, slog.Default(), nil).WithReviewer(reviewService)
+
+	if err := handler.HandleRunCompleted(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"completed","state_version":3}`)}); err != nil {
+		t.Fatalf("HandleRunCompleted() error: %v", err)
+	}
+	if reviewService.calls != 0 {
+		t.Fatalf("review calls = %d, want 0 for superseded run", reviewService.calls)
+	}
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != string(models.TaskStatusRunning) {
+		t.Fatalf("task status = %q, want running", taskStatus)
+	}
+}
+
 func TestHandleRunCompletedSchedulesBoundedRepairForRejectedReview(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
@@ -894,12 +956,14 @@ func (e *fakeRunExecutor) ExecuteRun(ctx context.Context, runID string) error {
 
 type fakeReviewer struct {
 	runID  string
+	calls  int
 	report *reviewer.ReviewReport
 	err    error
 }
 
 func (r *fakeReviewer) Review(ctx context.Context, runID string) (*reviewer.ReviewReport, error) {
 	r.runID = runID
+	r.calls++
 	if r.err != nil {
 		return nil, r.err
 	}
@@ -933,6 +997,10 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 			model TEXT,
 			provider TEXT,
 			status TEXT NOT NULL,
+			state_version INTEGER NOT NULL DEFAULT 1,
+			processed_event_version INTEGER NOT NULL DEFAULT 0,
+			processing_event_version INTEGER NOT NULL DEFAULT 0,
+			event_claimed_at DATETIME,
 			outcome TEXT,
 			execution_snapshot TEXT NOT NULL DEFAULT '{}',
 			execution_snapshot_digest TEXT,
@@ -987,6 +1055,7 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 		) VALUES (
 			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0, '{}'
 		);
+		UPDATE agent_runs SET state_version = 3 WHERE id = 'run-1';
 	`, role)
 	if err != nil {
 		t.Fatalf("insert completed run fixture: %v", err)
