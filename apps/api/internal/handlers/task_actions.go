@@ -321,6 +321,27 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var originalMetadata sql.NullString
+	if err := h.db.QueryRowContext(ctx, `SELECT metadata FROM agent_runs WHERE id = $1`, runID).Scan(&originalMetadata); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	retryMetadata := map[string]any{}
+	if originalMetadata.Valid && len(originalMetadata.String) > 0 {
+		if err := json.Unmarshal([]byte(originalMetadata.String), &retryMetadata); err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("invalid original run metadata: %w", err))
+			return
+		}
+	}
+	retryMetadata["retry"] = map[string]any{
+		"original_run_id": runID,
+	}
+	retryMetadataJSON, err := json.Marshal(retryMetadata)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	now := time.Now().UTC()
 	newRunID := uuid.New().String()
 
@@ -340,8 +361,8 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, '{}', $7, $7)
-	`, newRunID, run.TaskID, workspaceArg, run.AgentRole, model, provider, now)
+		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
+	`, newRunID, run.TaskID, workspaceArg, run.AgentRole, model, provider, string(retryMetadataJSON), now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
