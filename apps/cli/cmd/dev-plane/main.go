@@ -74,7 +74,7 @@ func printUsage() {
 
 Usage:
   dev-plane login --base-url=<url>
-  dev-plane check --changed [--path=.] [--base=<ref>] [--dry-run] [--json]
+  dev-plane check --changed [--path=.] [--base=<ref>] [--dry-run] [--json] [--evidence-out=<file> --environment-digest=<digest> --runner-id=<id>]
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
   dev-plane tasks create --project-id=<id> --repository-id=<id> --title=<title> [--description=<desc>]
