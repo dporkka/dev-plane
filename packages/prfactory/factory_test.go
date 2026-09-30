@@ -8,7 +8,7 @@ import (
 	"github.com/ai-dev-control-plane/forge"
 )
 
-func TestOpenForgeChangeRequiresProviderAndCredential(t *testing.T) {
+func TestOpenForgeChangeRequiresProvider(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	factory := NewFactory(nil, nil)
 
@@ -17,12 +17,18 @@ func TestOpenForgeChangeRequiresProviderAndCredential(t *testing.T) {
 	} else if !strings.Contains(err.Error(), "forge provider") {
 		t.Fatalf("error = %v, want forge provider", err)
 	}
+}
 
-	factory.forgeProvider = &fakeForgeProvider{}
-	if _, err := factory.openForgeChange(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
-		t.Fatal("expected missing forge credential error")
-	} else if !strings.Contains(err.Error(), "credential") {
-		t.Fatalf("error = %v, want credential", err)
+func TestOpenForgeChangeAllowsProviderManagedAuthentication(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	provider := &fakeForgeProvider{}
+	factory := NewFactory(nil, nil).WithForgeProvider(provider)
+
+	if _, err := factory.openForgeChange(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err != nil {
+		t.Fatalf("openForgeChange() error = %v, want provider-managed authentication", err)
+	}
+	if provider.credential.Token != "" {
+		t.Fatalf("credential token = %q, want empty", provider.credential.Token)
 	}
 }
 
@@ -47,7 +53,7 @@ func TestOpenForgeChangeSendsNeutralCredentialAndDraftPayload(t *testing.T) {
 	if provider.credential.Token != "forge-token" {
 		t.Fatalf("token = %q, want forge-token", provider.credential.Token)
 	}
-	if provider.repository != (forge.Repository{Owner: "owner", Name: "repo"}) {
+	if provider.repository != (forge.Repository{Namespace: "owner", Name: "repo"}) {
 		t.Fatalf("repo = %+v, want owner/repo", provider.repository)
 	}
 	if provider.openRequest.Title != "title" || provider.openRequest.Head != "agent/task" || provider.openRequest.Base != "main" || !provider.openRequest.Draft {
