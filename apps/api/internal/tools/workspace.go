@@ -509,6 +509,9 @@ func (t *WorkspaceTools) RunTests(ctx context.Context, workspacePath string, inp
 	if testCommand == "" {
 		testCommand = detectTestCommand(workspacePath)
 	}
+	if strings.TrimSpace(testCommand) == "" {
+		return nil, fmt.Errorf("no test command detected; provide command explicitly")
+	}
 
 	// Validate command against denylist
 	if err := isDangerousCommand(testCommand); err != nil {
@@ -972,23 +975,39 @@ func detectTestCommand(workspacePath string) string {
 	case "go":
 		return "go test ./..."
 	case "pnpm":
-		return "pnpm test"
+		if packageJSONHasTestScript(workspacePath) {
+			return "pnpm test"
+		}
 	case "yarn":
-		return "yarn test"
+		if packageJSONHasTestScript(workspacePath) {
+			return "yarn test"
+		}
 	case "bun":
-		return "bun test"
+		if packageJSONHasTestScript(workspacePath) {
+			return "bun test"
+		}
 	case "npm":
-		return "npm test"
+		if packageJSONHasTestScript(workspacePath) {
+			return "npm test"
+		}
 	case "cargo":
 		return "cargo test"
 	case "uv":
-		return "uv run pytest"
+		if hasPytestSignal(workspacePath) {
+			return "uv run pytest"
+		}
 	case "poetry":
-		return "poetry run pytest"
+		if hasPytestSignal(workspacePath) {
+			return "poetry run pytest"
+		}
 	case "pipenv":
-		return "pipenv run pytest"
+		if hasPytestSignal(workspacePath) {
+			return "pipenv run pytest"
+		}
 	case "pip", "python":
-		return "python -m pytest"
+		if hasPytestSignal(workspacePath) {
+			return "python -m pytest"
+		}
 	case "maven":
 		return "mvn test"
 	case "gradle":
@@ -1000,9 +1019,43 @@ func detectTestCommand(workspacePath string) string {
 		return "bundle exec rake test"
 	case "composer":
 		return "composer test"
-	default:
-		return "echo 'No test command detected'"
 	}
+	return ""
+}
+
+func packageJSONHasTestScript(workspacePath string) bool {
+	data, err := os.ReadFile(filepath.Join(workspacePath, "package.json"))
+	if err != nil {
+		return false
+	}
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false
+	}
+	return strings.TrimSpace(manifest.Scripts["test"]) != ""
+}
+
+func hasPytestSignal(workspacePath string) bool {
+	for _, name := range []string{"pytest.ini", "tox.ini"} {
+		if fileExists(filepath.Join(workspacePath, name)) {
+			return true
+		}
+	}
+
+	for _, name := range []string{
+		"pyproject.toml",
+		"requirements.txt",
+		"requirements-dev.txt",
+		"Pipfile",
+	} {
+		data, err := os.ReadFile(filepath.Join(workspacePath, name))
+		if err == nil && strings.Contains(strings.ToLower(string(data)), "pytest") {
+			return true
+		}
+	}
+	return false
 }
 
 func fileExists(path string) bool {
