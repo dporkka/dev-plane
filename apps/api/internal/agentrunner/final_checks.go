@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/readiness"
 	"github.com/ai-dev-control-plane/runtimes"
@@ -33,6 +34,7 @@ type finalCheckReport struct {
 	Results         map[string]any
 	Evidence        []scheduler.Evidence
 	SubjectRevision string
+	Failure         *runfailure.Classification
 }
 
 func (r *Runner) WithCompletionObserver(observer RunCompletionObserver) *Runner {
@@ -94,6 +96,14 @@ func (r *Runner) executeFinalChecks(
 		}
 		if !passed {
 			report.Passed = false
+			if report.Failure == nil {
+				classification := runfailure.Classify(runfailure.Signal{
+					Stage:    "verification",
+					Evidence: step.Name,
+					Detail:   detail,
+				})
+				report.Failure = &classification
+			}
 		}
 		status := scheduler.EvidenceStatusFailed
 		if passed {

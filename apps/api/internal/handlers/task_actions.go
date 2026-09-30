@@ -357,9 +357,15 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	retryMetadata["retry"] = map[string]any{
+	previousFailure, hadFailure := retryMetadata["failure"]
+	delete(retryMetadata, "failure")
+	retryState := map[string]any{
 		"original_run_id": runID,
 	}
+	if hadFailure {
+		retryState["previous_failure"] = previousFailure
+	}
+	retryMetadata["retry"] = retryState
 	retryMetadataJSON, err := json.Marshal(retryMetadata)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
