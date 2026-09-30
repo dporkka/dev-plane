@@ -193,6 +193,8 @@ func (s *Server) routes() {
 			r.Get("/projects/{projectID}/pull-requests", h.ListPullRequests)
 			r.Get("/pull-requests/{id}", h.GetPullRequest)
 			r.Get("/pull-requests/{id}/decision-packet", h.GetPullRequestDecisionPacket)
+			r.Get("/pull-requests/{id}/change-graph", h.GetPullRequestChangeGraph)
+			r.Post("/pull-requests/{id}/dependencies", h.AddPullRequestDependency)
 			r.Post("/tasks/{taskId}/pull-request", h.CreatePullRequest)
 			r.Post("/pull-requests/{id}/merge", h.MergePullRequest)
 
