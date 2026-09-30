@@ -232,6 +232,63 @@ func TestMergePullRequest(t *testing.T) {
 	}
 }
 
+func TestMergePullRequest_BlocksUnmergedCandidateDependency(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+	digest, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-a", now)
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at", "candidate_id",
+			"packet_digest", "packet", "project_id",
+		}).AddRow(
+			"candidate-sha", "tree-a", "tree-a", "contract-a",
+			"env-a", "runtime:runner-1", now, "candidate-1", digest, packet, "project-1",
+		))
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state", "depends_on_candidate_id",
+		}).
+			AddRow("candidate-api", "pr-api", "repo-api", "sha-api", "tree-api", "open", nil).
+			AddRow("candidate-1", prID, repoID, "candidate-sha", "tree-a", "open", "candidate-api"))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "candidate-api") {
+		t.Fatalf("body = %s, want dependency blocker", rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 with unmerged dependency", len(fakeGH.calls))
+	}
+}
+
 func TestMergePullRequest_BlocksMissingVerificationEvidence(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
