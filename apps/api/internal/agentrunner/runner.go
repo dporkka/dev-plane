@@ -590,6 +590,15 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 		return &capabilityDecisionError{toolName: toolName, operation: operation, resource: resource, result: result}
 	}
 	if result.RequiredApproval {
+		if result.RequestedGrant != nil && r.db != nil {
+			consumed, err := r.consumeApprovedAuthority(ctx, run.ID, *result.RequestedGrant)
+			if err != nil {
+				return fmt.Errorf("consume approved authority for %s: %w", toolName, err)
+			}
+			if consumed {
+				return nil
+			}
+		}
 		return &capabilityDecisionError{toolName: toolName, operation: operation, resource: resource, result: result}
 	}
 	return nil
