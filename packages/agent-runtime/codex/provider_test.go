@@ -262,9 +262,9 @@ func TestRunTurnStreamsProviderNeutralEvents(t *testing.T) {
 
 	provider := NewProvider(rpc, Config{})
 	events, err := provider.RunTurn(context.Background(), agentruntime.RunTurnRequest{
-		ThreadID: "0199-codex-thread",
-		Input:     agentruntime.TurnInput{Text: "Run the tests"},
-		Model:     "gpt-5.6-codex",
+		ThreadID:     "0199-codex-thread",
+		Input:        agentruntime.TurnInput{Text: "Run the tests"},
+		Model:        "gpt-5.6-codex",
 		OutputSchema: json.RawMessage(`{"type":"object","properties":{"ok":{"type":"boolean"}}}`),
 	})
 	if err != nil {
