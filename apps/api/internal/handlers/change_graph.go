@@ -272,4 +272,3 @@ func (h *Handler) loadProjectChangeGraph(ctx context.Context, projectID string) 
 	}
 	return graph, states, nodes, nil
 }
- 
