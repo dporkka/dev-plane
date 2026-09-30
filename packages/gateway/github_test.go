@@ -117,6 +117,37 @@ func TestCreatePR(t *testing.T) {
 	}
 }
 
+func TestGetPR(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/repos/owner/repo/pulls/42" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id": 1,
+			"number": 42,
+			"state": "closed",
+			"merged": true,
+			"merge_commit_sha": "merge-sha",
+			"head": {"ref":"feature","sha":"candidate-sha"},
+			"base": {"ref":"main","sha":"base-sha"}
+		}`))
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	pr, err := g.GetPR(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", 42)
+	if err != nil {
+		t.Fatalf("get pr: %v", err)
+	}
+	if !pr.Merged || pr.MergeCommitSHA != "merge-sha" || pr.Head.SHA != "candidate-sha" {
+		t.Fatalf("pr = %#v", pr)
+	}
+}
+
 func TestGetRepo(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/owner/repo" {

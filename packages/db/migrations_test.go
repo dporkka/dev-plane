@@ -31,6 +31,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"budgets",
 		"candidate_dependencies",
 		"change_set_candidates",
+		"change_set_publications",
 		"change_sets",
 		"change_candidates",
 		"decision_packets",

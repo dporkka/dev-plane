@@ -799,13 +799,14 @@ func buildComponents() Components {
 			},
 			"ChangeSet": {
 				Type:     "object",
-				Required: []string{"id", "project_id", "name", "status", "created_by", "created_at", "updated_at"},
+				Required: []string{"id", "project_id", "name", "status", "publication_status", "created_by", "created_at", "updated_at"},
 				Properties: map[string]*Schema{
 					"id":                   {Type: "string"},
 					"project_id":           {Type: "string"},
 					"name":                 {Type: "string"},
 					"description":          {Type: "string", Nullable: true},
 					"status":               {Type: "string", Enum: []interface{}{"draft", "authorized", "completed", "cancelled"}},
+					"publication_status":   {Type: "string", Enum: []interface{}{"pending", "publishing", "completed", "blocked"}},
 					"publication_digest":   {Type: "string", Nullable: true},
 					"publication_manifest": {Type: "object", Nullable: true},
 					"authorized_at":        {Type: "string", Format: "date-time", Nullable: true},
@@ -843,6 +844,27 @@ func buildComponents() Components {
 					"ready":             {Type: "boolean"},
 					"blockers":          {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetBlocker"}},
 					"publication_order": {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
+			"ChangeSetPublicationMember": {
+				Type:     "object",
+				Required: []string{"candidate_id", "ordinal", "status", "attempt_count"},
+				Properties: map[string]*Schema{
+					"candidate_id":  {Type: "string"},
+					"ordinal":       {Type: "integer"},
+					"status":        {Type: "string", Enum: []interface{}{"pending", "publishing", "merged", "blocked"}},
+					"attempt_count": {Type: "integer"},
+					"merge_sha":     {Type: "string", Nullable: true},
+					"last_error":    {Type: "string", Nullable: true},
+				},
+			},
+			"ChangeSetPublicationResponse": {
+				Type:     "object",
+				Required: []string{"change_set_id", "publication_status", "members"},
+				Properties: map[string]*Schema{
+					"change_set_id":      {Type: "string"},
+					"publication_status": {Type: "string", Enum: []interface{}{"pending", "publishing", "completed", "blocked"}},
+					"members":            {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetPublicationMember"}},
 				},
 			},
 			"ChangeGraphNode": {
@@ -2102,6 +2124,45 @@ func buildPaths() map[string]PathItem {
 				}},
 				"404": {Description: "Change set not found"},
 				"409": {Description: "Change set is blocked or authority is invalid"},
+			},
+		},
+	}
+
+	paths["/api/v1/change-sets/{id}/publication"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Get change set publication progress",
+			Description: "Returns durable per-candidate publication checkpoints without starting or resuming execution.",
+			OperationID: "getChangeSetPublication",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Publication progress", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetPublicationResponse"}},
+				}},
+				"404": {Description: "Change set not found"},
+			},
+		},
+	}
+	paths["/api/v1/change-sets/{id}/publish"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Change Sets"},
+			Summary:     "Publish change set",
+			Description: "Starts or resumes deterministic publication. The executor leases the set, reconciles GitHub before every attempt, invokes the existing merge authority for open pull requests, checkpoints each merged member, and fails closed on drift or a blocked remote state.",
+			OperationID: "publishChangeSet",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Publication completed or already completed", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetPublicationResponse"}},
+				}},
+				"404": {Description: "Change set not found"},
+				"409": {Description: "Publication is already leased, blocked, or authority has drifted"},
+				"503": {Description: "GitHub publication capability is unavailable"},
 			},
 		},
 	}

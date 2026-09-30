@@ -63,9 +63,9 @@ func expectDraftChangeSet(mock sqlmock.Sqlmock, id string) {
 	mock.ExpectQuery("SELECT id, project_id, name, description, status").
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "project_id", "name", "description", "status", "publication_digest",
+			"id", "project_id", "name", "description", "status", "publication_status", "publication_digest",
 			"publication_manifest", "authorized_at", "authorized_by", "created_by", "created_at", "updated_at",
-		}).AddRow(id, "project-1", "Release 1", nil, "draft", nil, nil, nil, nil, testUserID, now, now))
+		}).AddRow(id, "project-1", "Release 1", nil, "draft", "pending", nil, nil, nil, nil, testUserID, now, now))
 }
 
 func expectReadyChangeSetMembers(t *testing.T, mock sqlmock.Sqlmock, changeSetID string, now time.Time) {
