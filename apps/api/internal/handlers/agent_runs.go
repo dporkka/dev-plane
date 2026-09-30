@@ -24,6 +24,7 @@ type AgentRun struct {
 	Model                   *string         `json:"model,omitempty"`
 	Provider                *string         `json:"provider,omitempty"`
 	Status                  string          `json:"status"`
+	StateVersion            int64           `json:"state_version"`
 	Outcome                 *string         `json:"outcome,omitempty"`
 	ExecutionSnapshot       json.RawMessage `json:"execution_snapshot,omitempty"`
 	ExecutionSnapshotDigest *string         `json:"execution_snapshot_digest,omitempty"`
@@ -85,7 +86,7 @@ func (h *Handler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status, state_version,
 		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
@@ -140,7 +141,7 @@ func (h *Handler) GetAgentRun(w http.ResponseWriter, r *http.Request) {
 
 	var run AgentRun
 	err := scanAgentRun(h.db.QueryRowContext(ctx, `
-		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status, state_version,
 		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
@@ -366,7 +367,7 @@ func scanAgentRun(scanner agentRunScanner, run *AgentRun) error {
 	var parentRunID, workspaceID, model, provider, outcome, executionSnapshot, executionSnapshotDigest, errorMessage, summary, metadata sql.NullString
 	var startedAt, completedAt sql.NullTime
 	if err := scanner.Scan(
-		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status,
+		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status, &run.StateVersion,
 		&outcome, &executionSnapshot, &executionSnapshotDigest,
 		&startedAt, &completedAt, &run.PromptTokens, &run.CompletionTokens,
 		&run.TotalCost, &errorMessage, &summary, &metadata, &run.CreatedAt, &run.UpdatedAt,
