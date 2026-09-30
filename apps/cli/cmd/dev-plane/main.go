@@ -21,6 +21,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "login":
 		return runLogin(args[1:])
+	case "check":
+		return runCheck(args[1:])
 	case "tasks":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: dev-plane tasks <list|get|create>")
@@ -72,6 +74,7 @@ func printUsage() {
 
 Usage:
   dev-plane login --base-url=<url>
+  dev-plane check --changed [--path=.] [--base=<ref>] [--dry-run] [--json]
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
   dev-plane tasks create --project-id=<id> --repository-id=<id> --title=<title> [--description=<desc>]
