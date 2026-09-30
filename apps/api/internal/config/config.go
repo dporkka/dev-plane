@@ -15,6 +15,12 @@ type Config struct {
 	GitHubClientID      string
 	GitHubSecret        string
 	GitHubWebhookSecret string
+	ForgeProvider        string
+	ForgeGitRemote       string
+	GiteaURL             string
+	GiteaToken           string
+	GiteaUsername        string
+	GiteaDraftTitlePrefix string
 	LinearWebhookSecret string
 	SlackSigningSecret  string
 	DiscordWebhookSecret string
@@ -42,8 +48,14 @@ func Load() (*Config, error) {
 		JWTSecret:           jwtSecret,
 		GitHubClientID:       EnvOrDefault("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:         EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
-		GitHubWebhookSecret:  EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
-		LinearWebhookSecret:  EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
+		GitHubWebhookSecret:   EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
+		ForgeProvider:         strings.ToLower(EnvOrDefault("FORGE_PROVIDER", "github")),
+		ForgeGitRemote:        EnvOrDefault("FORGE_GIT_REMOTE", "origin"),
+		GiteaURL:              EnvOrDefault("GITEA_URL", ""),
+		GiteaToken:            EnvOrDefault("GITEA_TOKEN", ""),
+		GiteaUsername:         EnvOrDefault("GITEA_USERNAME", ""),
+		GiteaDraftTitlePrefix: EnvOrDefault("GITEA_DRAFT_TITLE_PREFIX", "WIP:"),
+		LinearWebhookSecret:   EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
 		SlackSigningSecret:   EnvOrDefault("SLACK_SIGNING_SECRET", ""),
 		DiscordWebhookSecret: EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),
 		NATSURL:              EnvOrDefault("NATS_URL", "nats://localhost:4222"),
