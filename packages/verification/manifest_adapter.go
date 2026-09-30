@@ -70,7 +70,6 @@ func ContractFromManifest(manifest *repomanifest.Manifest) (Contract, error) {
 	return contract, nil
 }
 
-
 // ContractFromPlan derives the verification contract for one concrete
 // affected-validation plan. Every planned check is required because the plan
 // already represents the repository's minimum safe check set for that change.
