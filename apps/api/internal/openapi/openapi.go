@@ -289,7 +289,7 @@ func buildComponents() Components {
 			},
 			"AgentRun": {
 				Type:     "object",
-				Required: []string{"id", "task_id", "attempt", "agent_role", "status", "prompt_tokens", "completion_tokens", "total_cost", "created_at", "updated_at"},
+				Required: []string{"id", "task_id", "attempt", "agent_role", "status", "state_version", "prompt_tokens", "completion_tokens", "total_cost", "created_at", "updated_at"},
 				Properties: map[string]*Schema{
 					"id":                        {Type: "string", Format: "uuid"},
 					"task_id":                   {Type: "string", Format: "uuid"},
@@ -299,7 +299,8 @@ func buildComponents() Components {
 					"agent_role":                {Type: "string", Enum: []interface{}{"planner", "implementer", "reviewer", "test_runner", "security_reviewer", "docs_writer", "release_manager"}},
 					"model":                     {Type: "string", Nullable: true},
 					"provider":                  {Type: "string", Nullable: true},
-					"status":                    {Type: "string", Enum: []interface{}{"pending", "queued", "running", "paused", "completed", "failed", "cancelled"}},
+					"status":                    {Type: "string", Enum: []interface{}{"pending", "queued", "admitting", "running", "paused", "completed", "failed", "cancelled"}},
+					"state_version":             {Type: "integer", Format: "int64"},
 					"outcome":                   {Type: "string", Nullable: true, Enum: []interface{}{"passed", "failed", "error", "cancelled", "skipped"}},
 					"execution_snapshot":        {Type: "object", Nullable: true},
 					"execution_snapshot_digest": {Type: "string", Nullable: true},
