@@ -43,6 +43,7 @@ func openTestDB(t *testing.T) *sql.DB {
 			provider TEXT,
 			prompt_version TEXT,
 			skill_version TEXT,
+			strategy TEXT,
 			metadata TEXT NOT NULL DEFAULT '{}',
 			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(task_id, attempt)
@@ -77,6 +78,7 @@ func TestLedgerRecordPersistsTaskOutcome(t *testing.T) {
 		Provider:              "openai",
 		PromptVersion:         "planner-v2",
 		SkillVersion:          "go-tdd-v1",
+		Strategy:              "dev-plane",
 	})
 	if err != nil {
 		t.Fatalf("Record() error: %v", err)
@@ -99,6 +101,9 @@ func TestLedgerRecordPersistsTaskOutcome(t *testing.T) {
 	}
 	if eval.TotalCost != 0.42 {
 		t.Fatalf("persisted cost = %.2f, want 0.42", eval.TotalCost)
+	}
+	if eval.Strategy != "dev-plane" {
+		t.Fatalf("persisted strategy = %q, want dev-plane", eval.Strategy)
 	}
 }
 
