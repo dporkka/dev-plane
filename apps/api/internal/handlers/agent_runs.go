@@ -15,13 +15,18 @@ import (
 
 // AgentRun represents an agent run record.
 type AgentRun struct {
-	ID               string          `json:"id"`
-	TaskID           string          `json:"task_id"`
-	WorkspaceID      *string         `json:"workspace_id,omitempty"`
-	AgentRole        string          `json:"agent_role"`
-	Model            *string         `json:"model,omitempty"`
-	Provider         *string         `json:"provider,omitempty"`
-	Status           string          `json:"status"`
+	ID                      string          `json:"id"`
+	TaskID                  string          `json:"task_id"`
+	ParentRunID             *string         `json:"parent_run_id,omitempty"`
+	WorkspaceID             *string         `json:"workspace_id,omitempty"`
+	Attempt                 int             `json:"attempt"`
+	AgentRole               string          `json:"agent_role"`
+	Model                   *string         `json:"model,omitempty"`
+	Provider                *string         `json:"provider,omitempty"`
+	Status                  string          `json:"status"`
+	Outcome                 *string         `json:"outcome,omitempty"`
+	ExecutionSnapshot       json.RawMessage `json:"execution_snapshot,omitempty"`
+	ExecutionSnapshotDigest *string         `json:"execution_snapshot_digest,omitempty"`
 	StartedAt        *time.Time      `json:"started_at,omitempty"`
 	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
 	PromptTokens     int             `json:"prompt_tokens"`
@@ -41,6 +46,9 @@ type AgentStep struct {
 	StepNumber    int             `json:"step_number"`
 	StepType      string          `json:"step_type"`
 	Status        string          `json:"status"`
+	Outcome       *string         `json:"outcome,omitempty"`
+	Input         json.RawMessage `json:"input,omitempty"`
+	Output        json.RawMessage `json:"output,omitempty"`
 	Content       *string         `json:"content,omitempty"`
 	ToolName      *string         `json:"tool_name,omitempty"`
 	ToolInput     json.RawMessage `json:"tool_input,omitempty"`
@@ -52,6 +60,8 @@ type AgentStep struct {
 	Diff          *string         `json:"diff,omitempty"`
 	Cost          float64         `json:"cost"`
 	LatencyMs     int             `json:"latency_ms"`
+	StartedAt     *time.Time      `json:"started_at,omitempty"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 }
 
@@ -75,7 +85,8 @@ func (h *Handler) ListAgentRuns(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, task_id, workspace_id, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
 		FROM agent_runs
@@ -129,7 +140,8 @@ func (h *Handler) GetAgentRun(w http.ResponseWriter, r *http.Request) {
 
 	var run AgentRun
 	err := scanAgentRun(h.db.QueryRowContext(ctx, `
-		SELECT id, task_id, workspace_id, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
 		FROM agent_runs
@@ -167,9 +179,9 @@ func (h *Handler) ListAgentSteps(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.db.QueryContext(ctx, `
-		SELECT id, agent_run_id, step_number, step_type, status, content,
+		SELECT id, agent_run_id, step_number, step_type, status, outcome, input, output, content,
 		       tool_name, tool_input, tool_output, command, command_output,
-		       exit_code, file_path, diff, cost, latency_ms, created_at
+		       exit_code, file_path, diff, cost, latency_ms, started_at, completed_at, created_at
 		FROM agent_steps
 		WHERE agent_run_id = $1
 		ORDER BY step_number ASC, created_at ASC
@@ -183,16 +195,32 @@ func (h *Handler) ListAgentSteps(w http.ResponseWriter, r *http.Request) {
 	var steps []AgentStep
 	for rows.Next() {
 		var s AgentStep
-		var content, toolName, toolInput, toolOutput, command, commandOutput, filePath, diff sql.NullString
+		var outcome, input, output, content, toolName, toolInput, toolOutput, command, commandOutput, filePath, diff sql.NullString
 		var exitCode sql.NullInt32
+		var startedAt, completedAt sql.NullTime
 		err := rows.Scan(
-			&s.ID, &s.AgentRunID, &s.StepNumber, &s.StepType, &s.Status, &content,
+			&s.ID, &s.AgentRunID, &s.StepNumber, &s.StepType, &s.Status, &outcome, &input, &output, &content,
 			&toolName, &toolInput, &toolOutput, &command, &commandOutput,
-			&exitCode, &filePath, &diff, &s.Cost, &s.LatencyMs, &s.CreatedAt,
+			&exitCode, &filePath, &diff, &s.Cost, &s.LatencyMs, &startedAt, &completedAt, &s.CreatedAt,
 		)
 		if err != nil {
 			respond.Error(w, http.StatusInternalServerError, err)
 			return
+		}
+		if outcome.Valid {
+			s.Outcome = &outcome.String
+		}
+		if input.Valid {
+			s.Input = json.RawMessage(input.String)
+		}
+		if output.Valid {
+			s.Output = json.RawMessage(output.String)
+		}
+		if startedAt.Valid {
+			s.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			s.CompletedAt = &completedAt.Time
 		}
 		if content.Valid {
 			s.Content = &content.String
@@ -253,7 +281,7 @@ func (h *Handler) CancelAgentRun(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'cancelled', completed_at = $1, updated_at = $1
+		SET status = 'cancelled', outcome = 'cancelled', completed_at = $1, updated_at = $1
 		WHERE id = $2 AND status IN ('pending', 'running')
 	`, now, id)
 	if err != nil {
@@ -335,14 +363,18 @@ type agentRunScanner interface {
 }
 
 func scanAgentRun(scanner agentRunScanner, run *AgentRun) error {
-	var workspaceID, model, provider, errorMessage, summary, metadata sql.NullString
+	var parentRunID, workspaceID, model, provider, outcome, executionSnapshot, executionSnapshotDigest, errorMessage, summary, metadata sql.NullString
 	var startedAt, completedAt sql.NullTime
 	if err := scanner.Scan(
-		&run.ID, &run.TaskID, &workspaceID, &run.AgentRole, &model, &provider, &run.Status,
+		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status,
+		&outcome, &executionSnapshot, &executionSnapshotDigest,
 		&startedAt, &completedAt, &run.PromptTokens, &run.CompletionTokens,
 		&run.TotalCost, &errorMessage, &summary, &metadata, &run.CreatedAt, &run.UpdatedAt,
 	); err != nil {
 		return err
+	}
+	if parentRunID.Valid {
+		run.ParentRunID = &parentRunID.String
 	}
 	if workspaceID.Valid {
 		run.WorkspaceID = &workspaceID.String
@@ -352,6 +384,15 @@ func scanAgentRun(scanner agentRunScanner, run *AgentRun) error {
 	}
 	if provider.Valid {
 		run.Provider = &provider.String
+	}
+	if outcome.Valid {
+		run.Outcome = &outcome.String
+	}
+	if executionSnapshot.Valid {
+		run.ExecutionSnapshot = json.RawMessage(executionSnapshot.String)
+	}
+	if executionSnapshotDigest.Valid {
+		run.ExecutionSnapshotDigest = &executionSnapshotDigest.String
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time
