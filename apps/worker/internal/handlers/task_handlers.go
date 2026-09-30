@@ -110,14 +110,31 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return msg.Ack() // Task not found, ack to remove from queue
+			return ackMessage(msg) // Task not found, ack to remove from queue
 		}
 		return fmt.Errorf("load task: %w", err)
 	}
 
-	// Create workspace
-	workspaceID := uuid.New().String()
 	now := time.Now().UTC()
+	claimed, err := h.claimApprovedTaskForInitialRun(context.Background(), task.ID, now)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		h.logger.Info("initial run already claimed; skipping duplicate approval event", "task_id", task.ID)
+		return ackMessage(msg)
+	}
+	releaseClaim := true
+	defer func() {
+		if releaseClaim {
+			if releaseErr := h.releaseInitialRunClaim(context.Background(), task.ID); releaseErr != nil {
+				h.logger.Error("failed to release initial run claim", "task_id", task.ID, "error", releaseErr)
+			}
+		}
+	}()
+
+	// Create workspace only after winning the atomic initial-run claim.
+	workspaceID := uuid.New().String()
 	workspace, err := h.provisionWorkspace(context.Background(), approvedTask{
 		ID:            task.ID,
 		RepositoryID:  task.RepositoryID,
@@ -130,7 +147,19 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return fmt.Errorf("provision workspace runtime: %w", err)
 	}
 
-	_, err = h.db.Exec(`
+	tx, err := h.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("begin initial run transaction: %w", err)
+	}
+	txCommitted := false
+	defer func() {
+		if !txCommitted {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.Exec(`
 		INSERT INTO workspaces (
 			id, repository_id, task_id, name, branch, base_branch,
 			worktree_path, runtime_provider, runtime_session_id, status,
@@ -143,29 +172,47 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		now,
 	)
 	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
 		return fmt.Errorf("create workspace: %w", err)
 	}
 
-	// Update task with workspace ID and transition to running
-	_, err = h.db.Exec(`
-		UPDATE tasks SET workspace_id = $1, status = 'running', started_at = $2, updated_at = $2
-		WHERE id = $3 AND deleted_at IS NULL
+	result, err := tx.Exec(`
+		UPDATE tasks
+		SET workspace_id = $1, updated_at = $2
+		WHERE id = $3 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
 	`, workspaceID, now, task.ID)
 	if err != nil {
-		return fmt.Errorf("update task with workspace: %w", err)
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("attach workspace to claimed task: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("check workspace attachment: %w", err)
+	}
+	if rows != 1 {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("claimed task %s changed before workspace attachment", task.ID)
 	}
 
 	// Create agent run and preserve the approval-time admission evidence.
 	runID := uuid.New().String()
-	_, err = h.db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
 			status, total_cost, metadata, created_at, updated_at
 		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
 	`, runID, task.ID, workspaceID, runMetadata, now)
 	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
 		return fmt.Errorf("create agent run: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("commit initial run transaction: %w", err)
+	}
+	txCommitted = true
+	releaseClaim = false
 
 	h.logger.Info("workspace and agent run created",
 		"task_id", task.ID,
@@ -200,6 +247,46 @@ type provisionedWorkspace struct {
 	RuntimeProvider  string
 	RuntimeSessionID *string
 	Status           string
+}
+
+func (h *TaskHandler) claimApprovedTaskForInitialRun(ctx context.Context, taskID string, now time.Time) (bool, error) {
+	result, err := h.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, $1), updated_at = $1
+		WHERE id = $2 AND status = 'approved' AND workspace_id IS NULL AND deleted_at IS NULL
+	`, now, taskID)
+	if err != nil {
+		return false, fmt.Errorf("claim approved task for initial run: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check initial run claim: %w", err)
+	}
+	return rows == 1, nil
+}
+
+func (h *TaskHandler) releaseInitialRunClaim(ctx context.Context, taskID string) error {
+	_, err := h.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'approved', started_at = NULL, updated_at = $1
+		WHERE id = $2 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
+	`, time.Now().UTC(), taskID)
+	if err != nil {
+		return fmt.Errorf("release initial run claim: %w", err)
+	}
+	return nil
+}
+
+func (h *TaskHandler) cleanupProvisionedWorkspace(ctx context.Context, workspace provisionedWorkspace) {
+	if h.runtimeProvider == nil || workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID == "" {
+		return
+	}
+	if err := h.runtimeProvider.DestroyWorkspace(ctx, *workspace.RuntimeSessionID); err != nil {
+		h.logger.Warn("failed to cleanup provisioned workspace after initial-run failure",
+			"runtime_session_id", *workspace.RuntimeSessionID,
+			"error", err,
+		)
+	}
 }
 
 func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask, now time.Time) (provisionedWorkspace, error) {
