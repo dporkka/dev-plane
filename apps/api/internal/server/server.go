@@ -152,6 +152,8 @@ func (s *Server) routes() {
 			r.Get("/change-sets/{id}", h.GetChangeSet)
 			r.Post("/change-sets/{id}/candidates", h.AddChangeSetCandidate)
 			r.Post("/change-sets/{id}/authorize-publication", h.AuthorizeChangeSetPublication)
+			r.Get("/change-sets/{id}/publication", h.GetChangeSetPublication)
+			r.Post("/change-sets/{id}/publish", h.PublishChangeSet)
 
 			// Repositories
 			r.Get("/projects/{projectID}/repositories", h.ListRepositories)
