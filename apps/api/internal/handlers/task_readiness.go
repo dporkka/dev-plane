@@ -75,11 +75,27 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 	}
 
 	input.HasSpec = true
-	input.ImplementationPlan = decodeReadinessList(implementationPlan)
-	input.FilesToChange = decodeReadinessList(filesToChange)
-	input.FilesToCreate = decodeReadinessList(filesToCreate)
-	input.AcceptanceCriteria = decodeReadinessList(acceptanceCriteria)
-	input.RequiredApprovals = decodeReadinessList(requiredApprovals)
+	var decodeErr error
+	if input.ImplementationPlan, decodeErr = decodeReadinessList(implementationPlan); decodeErr != nil {
+		respond.Error(w, http.StatusInternalServerError, decodeErr)
+		return
+	}
+	if input.FilesToChange, decodeErr = decodeReadinessList(filesToChange); decodeErr != nil {
+		respond.Error(w, http.StatusInternalServerError, decodeErr)
+		return
+	}
+	if input.FilesToCreate, decodeErr = decodeReadinessList(filesToCreate); decodeErr != nil {
+		respond.Error(w, http.StatusInternalServerError, decodeErr)
+		return
+	}
+	if input.AcceptanceCriteria, decodeErr = decodeReadinessList(acceptanceCriteria); decodeErr != nil {
+		respond.Error(w, http.StatusInternalServerError, decodeErr)
+		return
+	}
+	if input.RequiredApprovals, decodeErr = decodeReadinessList(requiredApprovals); decodeErr != nil {
+		respond.Error(w, http.StatusInternalServerError, decodeErr)
+		return
+	}
 	if testPlan.Valid {
 		input.TestPlan = testPlan.String
 	}
@@ -117,13 +133,13 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, readiness.AssessTask(input))
 }
 
-func decodeReadinessList(raw sql.NullString) []string {
+func decodeReadinessList(raw sql.NullString) ([]string, error) {
 	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
-		return nil
+		return nil, nil
 	}
 	var values []string
 	if err := json.Unmarshal([]byte(raw.String), &values); err != nil {
-		return nil
+		return nil, errors.New("invalid task readiness evidence: " + err.Error())
 	}
-	return values
+	return values, nil
 }
