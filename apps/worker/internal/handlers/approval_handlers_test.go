@@ -250,7 +250,7 @@ func TestHandleApprovalRejectedFailsPausedRunByID(t *testing.T) {
 	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
 		t.Fatalf("query task status: %v", err)
 	}
-	if err := db.QueryRow(`SELECT status, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &errorMessage); err != nil {
+	if err := db.QueryRow(`SELECT status, outcome, error_message FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus, &outcome, &errorMessage); err != nil {
 		t.Fatalf("query run status: %v", err)
 	}
 	if taskStatus != "failed" || runStatus != models.AgentRunStatusFailed {
