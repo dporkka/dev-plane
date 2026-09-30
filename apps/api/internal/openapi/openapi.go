@@ -867,6 +867,15 @@ func buildComponents() Components {
 					"members":            {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetPublicationMember"}},
 				},
 			},
+			"ChangeSetPublicationRequestResponse": {
+				Type:     "object",
+				Required: []string{"change_set_id", "publication_status", "queued"},
+				Properties: map[string]*Schema{
+					"change_set_id":      {Type: "string"},
+					"publication_status": {Type: "string", Enum: []interface{}{"pending", "publishing", "completed", "blocked"}},
+					"queued":             {Type: "boolean"},
+				},
+			},
 			"ChangeGraphNode": {
 				Type:     "object",
 				Required: []string{"candidate_id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state"},
@@ -2149,20 +2158,20 @@ func buildPaths() map[string]PathItem {
 	paths["/api/v1/change-sets/{id}/publish"] = PathItem{
 		Post: &Operation{
 			Tags:        []string{"Change Sets"},
-			Summary:     "Publish change set",
-			Description: "Starts or resumes deterministic publication. The executor leases the set, reconciles GitHub before every attempt, invokes the existing merge authority for open pull requests, checkpoints each merged member, and fails closed on drift or a blocked remote state.",
+			Summary:     "Queue change set publication",
+			Description: "Queues a durable publication request for the worker and returns immediately. The worker revalidates publication authority, acquires and renews the lease, reconciles GitHub, invokes the shared merge authority, and resumes from persisted checkpoints.",
 			OperationID: "publishChangeSet",
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
 				{Name: "id", In: "path", Required: true, Description: "Change set ID", Schema: &Schema{Type: "string"}},
 			},
 			Responses: map[string]Response{
-				"200": {Description: "Publication completed or already completed", Content: map[string]MediaType{
-					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetPublicationResponse"}},
+				"202": {Description: "Publication request queued", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeSetPublicationRequestResponse"}},
 				}},
 				"404": {Description: "Change set not found"},
-				"409": {Description: "Publication is already leased, blocked, or authority has drifted"},
-				"503": {Description: "GitHub publication capability is unavailable"},
+				"409": {Description: "Change set is not authorized for publication"},
+				"503": {Description: "Publication worker/event bus is unavailable"},
 			},
 		},
 	}
