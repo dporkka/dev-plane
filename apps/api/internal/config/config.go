@@ -9,30 +9,30 @@ import (
 
 // Config holds all application configuration settings.
 type Config struct {
-	Port                string
-	DatabaseURL         string
-	JWTSecret           string
-	GitHubClientID      string
-	GitHubSecret        string
-	GitHubToken         string
-	GitHubWebhookSecret string
-	ForgeProvider        string
-	ForgeGitRemote       string
-	GiteaURL             string
-	GiteaToken           string
-	GiteaUsername        string
+	Port                  string
+	DatabaseURL           string
+	JWTSecret             string
+	GitHubClientID        string
+	GitHubSecret          string
+	GitHubToken           string
+	GitHubWebhookSecret   string
+	ForgeProvider         string
+	ForgeGitRemote        string
+	GiteaURL              string
+	GiteaToken            string
+	GiteaUsername         string
 	GiteaDraftTitlePrefix string
-	LinearWebhookSecret string
-	SlackSigningSecret  string
-	DiscordWebhookSecret string
-	NATSURL             string
-	AllowedOrigins      []string
-	OAuthCookieSecure   bool
-	LogLevel            string
-	AgentVaultURL       string
-	AgentVaultToken     string
-	AgentVaultProject   string
-	SecretKeys          string
+	LinearWebhookSecret   string
+	SlackSigningSecret    string
+	DiscordWebhookSecret  string
+	NATSURL               string
+	AllowedOrigins        []string
+	OAuthCookieSecure     bool
+	LogLevel              string
+	AgentVaultURL         string
+	AgentVaultToken       string
+	AgentVaultProject     string
+	SecretKeys            string
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -44,10 +44,10 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		Port:                EnvOrDefault("PORT", "8080"),
-		DatabaseURL:         EnvOrDefault("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
-		JWTSecret:           jwtSecret,
-		GitHubClientID:       EnvOrDefault("GITHUB_CLIENT_ID", ""),
+		Port:                  EnvOrDefault("PORT", "8080"),
+		DatabaseURL:           EnvOrDefault("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
+		JWTSecret:             jwtSecret,
+		GitHubClientID:        EnvOrDefault("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:          EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
 		GitHubToken:           EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubWebhookSecret:   EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
@@ -58,16 +58,16 @@ func Load() (*Config, error) {
 		GiteaUsername:         EnvOrDefault("GITEA_USERNAME", ""),
 		GiteaDraftTitlePrefix: EnvOrDefault("GITEA_DRAFT_TITLE_PREFIX", "WIP:"),
 		LinearWebhookSecret:   EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
-		SlackSigningSecret:   EnvOrDefault("SLACK_SIGNING_SECRET", ""),
-		DiscordWebhookSecret: EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),
-		NATSURL:              EnvOrDefault("NATS_URL", "nats://localhost:4222"),
-		AllowedOrigins:      getOrigins(),
-		OAuthCookieSecure:   EnvOrDefault("OAUTH_COOKIE_SECURE", "true") == "true",
-		LogLevel:            EnvOrDefault("LOG_LEVEL", "info"),
-		AgentVaultURL:       EnvOrDefault("AGENTVAULT_URL", ""),
-		AgentVaultToken:     EnvOrDefault("AGENTVAULT_TOKEN", ""),
-		AgentVaultProject:   EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
-		SecretKeys:          EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
+		SlackSigningSecret:    EnvOrDefault("SLACK_SIGNING_SECRET", ""),
+		DiscordWebhookSecret:  EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),
+		NATSURL:               EnvOrDefault("NATS_URL", "nats://localhost:4222"),
+		AllowedOrigins:        getOrigins(),
+		OAuthCookieSecure:     EnvOrDefault("OAUTH_COOKIE_SECURE", "true") == "true",
+		LogLevel:              EnvOrDefault("LOG_LEVEL", "info"),
+		AgentVaultURL:         EnvOrDefault("AGENTVAULT_URL", ""),
+		AgentVaultToken:       EnvOrDefault("AGENTVAULT_TOKEN", ""),
+		AgentVaultProject:     EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
+		SecretKeys:            EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 	}, nil
 }
 
