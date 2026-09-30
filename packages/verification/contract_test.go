@@ -28,6 +28,36 @@ func TestContractValidateRejectsDuplicateCheckIDs(t *testing.T) {
 	}
 }
 
+func TestContractValidateRejectsContractsWithoutRequiredChecks(t *testing.T) {
+	tests := []struct {
+		name     string
+		contract Contract
+	}{
+		{
+			name:     "no checks",
+			contract: Contract{Version: 1},
+		},
+		{
+			name: "all checks optional",
+			contract: Contract{
+				Version: 1,
+				Checks: []Check{
+					{ID: "lint", Command: "go vet ./..."},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.contract.Validate()
+			if err == nil || !strings.Contains(err.Error(), "required check") {
+				t.Fatalf("Validate() error = %v, want required check error", err)
+			}
+		})
+	}
+}
+
 func TestContractDigestChangesWhenVerificationRequirementsChange(t *testing.T) {
 	contract := testContract()
 	first, err := contract.Digest()
