@@ -158,44 +158,56 @@ func TestConfigureGitAskPass_NoToken(t *testing.T) {
 	}
 }
 
-func TestNewFactory_ReadsGitHubToken(t *testing.T) {
+func TestNewFactory_ReadsGitHubAsDefaultForgeConfig(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", " env-token ")
 	t.Setenv("GITHUB_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_CLIENT_SECRET", "client-secret")
 
 	factory := NewFactory(nil, nil)
-	if factory.githubToken != "env-token" {
-		t.Errorf("token = %q, want env-token", factory.githubToken)
+	if factory.forgeCredential.Token != "env-token" {
+		t.Errorf("token = %q, want env-token", factory.forgeCredential.Token)
 	}
-	if factory.github == nil {
-		t.Error("expected github gateway to be configured")
+	if factory.forgeProvider == nil || factory.forgeProvider.Name() != "github" {
+		t.Errorf("forge provider = %#v, want github", factory.forgeProvider)
 	}
 }
 
-func TestNewFactory_NoToken(t *testing.T) {
+func TestNewFactory_NoDefaultForgeWithoutToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	factory := NewFactory(nil, nil)
-	if factory.githubToken != "" {
-		t.Errorf("token = %q, want empty", factory.githubToken)
+	if factory.forgeCredential.Token != "" {
+		t.Errorf("token = %q, want empty", factory.forgeCredential.Token)
 	}
-	if factory.github != nil {
-		t.Error("expected no github gateway without token")
-	}
-}
-
-func TestWithGitHubToken(t *testing.T) {
-	factory := NewFactory(nil, nil).WithGitHubToken(" token ")
-	if factory.githubToken != "token" {
-		t.Errorf("token = %q, want token", factory.githubToken)
+	if factory.forgeProvider != nil {
+		t.Error("expected no default forge provider without token")
 	}
 }
 
-func TestWithGitHubGateway(t *testing.T) {
+func TestWithForgeCredential(t *testing.T) {
+	factory := NewFactory(nil, nil).WithForgeCredential(" token ")
+	if factory.forgeCredential.Token != "token" {
+		t.Errorf("token = %q, want token", factory.forgeCredential.Token)
+	}
+}
+
+func TestWithForgeProvider(t *testing.T) {
+	factory := NewFactory(nil, nil)
+	provider := &fakeForgeProvider{}
+	factory.WithForgeProvider(provider)
+	if factory.forgeProvider != provider {
+		t.Error("expected forge provider to be set")
+	}
+}
+
+func TestWithGitHubCompatibilityShims(t *testing.T) {
 	factory := NewFactory(nil, nil)
 	gh := gateway.NewGitHubGateway("id", "secret")
-	factory.WithGitHubGateway(gh)
-	if factory.github == nil {
-		t.Error("expected github gateway to be set")
+	factory.WithGitHubGateway(gh).WithGitHubToken(" token ")
+	if factory.forgeProvider != gh {
+		t.Error("expected GitHub gateway to populate forge provider")
+	}
+	if factory.forgeCredential.Token != "token" {
+		t.Errorf("forge token = %q, want token", factory.forgeCredential.Token)
 	}
 }
 
