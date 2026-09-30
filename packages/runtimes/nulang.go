@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -128,11 +127,6 @@ func (p *NulangCloudProvider) GetUsage(ctx context.Context, sessionID string) (*
 	return &usage, nil
 }
 
-// readNulangErrorBody is retained for future provider-specific error mapping.
-func readNulangErrorBody(r io.Reader) string {
-	body, _ := io.ReadAll(r)
-	return strings.TrimSpace(string(body))
-}
 
 var _ Provider = (*NulangCloudProvider)(nil)
 var _ UsageProvider = (*NulangCloudProvider)(nil)
