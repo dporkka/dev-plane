@@ -103,6 +103,73 @@ func decisionPacketFixture(t *testing.T, prID, commitSHA, treeHash string, creat
 	return digest, string(data)
 }
 
+func TestGetPullRequestDecisionPacket(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	now := time.Now().UTC()
+	digest, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-a", now)
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "candidate_id", "digest", "packet", "created_at",
+		}).AddRow("packet-1", "candidate-1", digest, packet, now))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pull-requests/"+prID+"/decision-packet", nil)
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID, OrgID: testOrgID, Email: "test@example.com", Role: models.RoleOwner,
+	}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", prID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.GetPullRequestDecisionPacket(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var response DecisionPacketResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Digest != digest || response.CandidateID != "candidate-1" {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Packet.Candidate.CommitSHA != "candidate-sha" || response.Packet.Candidate.TreeHash != "tree-a" {
+		t.Fatalf("packet candidate = %#v", response.Packet.Candidate)
+	}
+}
+
+func TestGetPullRequestDecisionPacket_NotFoundForUnverifiedPR(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at").
+		WithArgs(prID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pull-requests/"+prID+"/decision-packet", nil)
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID, OrgID: testOrgID, Email: "test@example.com", Role: models.RoleOwner,
+	}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", prID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.GetPullRequestDecisionPacket(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestMergePullRequest(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
