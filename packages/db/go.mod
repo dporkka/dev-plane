@@ -3,6 +3,7 @@ module github.com/ai-dev-control-plane/db
 go 1.25.11
 
 require (
+	github.com/ai-dev-control-plane/agent-runtime v0.0.0
 	github.com/ai-dev-control-plane/repoprotocol v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
@@ -19,4 +20,5 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 )
 
+replace github.com/ai-dev-control-plane/agent-runtime => ../agent-runtime
 replace github.com/ai-dev-control-plane/repoprotocol => ../repoprotocol
