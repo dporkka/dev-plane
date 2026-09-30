@@ -32,6 +32,14 @@ func taskRow(id, projectID, repoID, title, status string, createdAt time.Time) *
 			nil, nil, nil, nil, createdAt, createdAt)
 }
 
+func taskRowWithSourceID(id, projectID, repoID, sourceID, title, status string, createdAt time.Time) *sqlmock.Rows {
+	return sqlmock.NewRows(taskCols).
+		AddRow(id, projectID, repoID, nil, "user-1", "web", sourceID,
+			title, nil, status, "medium", "low", "main",
+			nil, nil, nil, 60,
+			nil, nil, nil, nil, createdAt, createdAt)
+}
+
 func TestListTasks(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
@@ -207,6 +215,133 @@ func TestCreateTask(t *testing.T) {
 		t.Errorf("expected default target_branch 'main', got %q", task.TargetBranch)
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestCreateTask_IdempotencyReplayReturnsExistingTask(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	projectID := "proj-1"
+	key := "adacavo:session-1:create-task:ship-feature"
+	now := time.Now()
+
+	expectAuthorizeProject(mock, projectID)
+	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
+		WithArgs(projectID, "web", key).
+		WillReturnRows(taskRowWithSourceID("task-existing", projectID, "repo-1", key, "Build Feature", "backlog", now))
+
+	body, _ := json.Marshal(CreateTaskRequest{RepositoryID: "repo-1", Title: "Build Feature"})
+	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", key)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectID", projectID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.CreateTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected replay status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var task Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if task.ID != "task-existing" {
+		t.Fatalf("expected existing task, got %q", task.ID)
+	}
+	if task.SourceID == nil || *task.SourceID != key {
+		t.Fatalf("expected source_id %q, got %v", key, task.SourceID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestCreateTask_IdempotencyKeyPersistsOnFirstCreate(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	projectID := "proj-1"
+	userID := "user-1"
+	key := "adacavo:session-1:create-task:ship-feature"
+
+	expectAuthorizeProject(mock, projectID)
+	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
+		WithArgs(projectID, "web", key).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("INSERT INTO tasks").
+		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", key, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	body, _ := json.Marshal(CreateTaskRequest{RepositoryID: "repo-1", Title: "Build Feature"})
+	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", key)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectID", projectID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.CreateTask(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	var task Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if task.SourceID == nil || *task.SourceID != key {
+		t.Fatalf("expected source_id %q, got %v", key, task.SourceID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestCreateTask_IdempotencyRaceReturnsWinner(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	projectID := "proj-1"
+	userID := "user-1"
+	key := "adacavo:session-1:create-task:ship-feature"
+	now := time.Now()
+
+	expectAuthorizeProject(mock, projectID)
+	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
+		WithArgs(projectID, "web", key).
+		WillReturnError(sql.ErrNoRows)
+	mock.ExpectExec("INSERT INTO tasks").
+		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", key, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(errors.New("duplicate key value violates unique constraint"))
+	mock.ExpectQuery("SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id").
+		WithArgs(projectID, "web", key).
+		WillReturnRows(taskRowWithSourceID("task-winner", projectID, "repo-1", key, "Build Feature", "backlog", now))
+
+	body, _ := json.Marshal(CreateTaskRequest{RepositoryID: "repo-1", Title: "Build Feature"})
+	req := httptest.NewRequest(http.MethodPost, "/projects/"+projectID+"/tasks", bytes.NewReader(body))
+	req.Header.Set("Idempotency-Key", key)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectID", projectID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.CreateTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected race replay status %d, got %d: %s", http.StatusOK, rec.Code, rec.Body.String())
+	}
+	var task Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if task.ID != "task-winner" {
+		t.Fatalf("expected winning task, got %q", task.ID)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
