@@ -124,6 +124,6 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logAgentVaultEvent(ctx, taskCreatedEvent(task, "dev-plan"))
+	h.logActivityEvent(ctx, taskCreatedEvent(task, "dev-plan"))
 	respond.JSON(w, http.StatusCreated, task)
 }
