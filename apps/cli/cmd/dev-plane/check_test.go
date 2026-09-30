@@ -145,7 +145,7 @@ func TestRunCheckChangedWritesEvidenceForCommittedCandidate(t *testing.T) {
 	runGit(t, repo, "add", ".")
 	runGit(t, repo, "commit", "-m", "change")
 
-	evidencePath := filepath.Join(repo, ".dev-plane", "evidence.json")
+	evidencePath := filepath.Join(t.TempDir(), "evidence.json")
 	err := runCheck([]string{
 		"--changed",
 		"--path", repo,
@@ -162,10 +162,14 @@ func TestRunCheckChangedWritesEvidenceForCommittedCandidate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read evidence: %v", err)
 	}
-	var evidence verification.Evidence
-	if err := json.Unmarshal(data, &evidence); err != nil {
-		t.Fatalf("decode evidence: %v", err)
+	var artifact verification.Artifact
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("decode evidence artifact: %v", err)
 	}
+	if err := artifact.Validate(); err != nil {
+		t.Fatalf("validate evidence artifact: %v", err)
+	}
+	evidence := artifact.Evidence
 	wantTree := strings.TrimSpace(runGitOutput(t, repo, "rev-parse", "HEAD^{tree}"))
 	if evidence.TreeHash != wantTree {
 		t.Fatalf("TreeHash = %q, want %q", evidence.TreeHash, wantTree)
@@ -175,6 +179,9 @@ func TestRunCheckChangedWritesEvidenceForCommittedCandidate(t *testing.T) {
 	}
 	if evidence.RunnerIdentity != "runner-test" {
 		t.Fatalf("RunnerIdentity = %q", evidence.RunnerIdentity)
+	}
+	if artifact.Contract.Scope == nil || len(artifact.Contract.Scope.AffectedComponents) != 1 || artifact.Contract.Scope.AffectedComponents[0] != "core" {
+		t.Fatalf("Contract.Scope = %#v", artifact.Contract.Scope)
 	}
 	if len(evidence.Checks) != 1 || evidence.Checks[0].ID != "core:test" || !evidence.Checks[0].Passed {
 		t.Fatalf("Checks = %#v", evidence.Checks)
