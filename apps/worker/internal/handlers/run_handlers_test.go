@@ -415,6 +415,24 @@ func TestSchedulerAdmissionRejectsBlockedPersistedReadiness(t *testing.T) {
 	}
 }
 
+func TestSchedulerAdmissionChecksPersistedReadinessBeforeMutableSchedulerMetadata(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTaskWithRunMetadata(
+		t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":`,
+		`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"blocked","checks":[]}}}`,
+	)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "readiness-blocked" {
+		t.Fatalf("decision = %#v, want readiness-blocked", decision)
+	}
+}
+
 func TestSchedulerAdmissionAcceptsPersistedAttentionReadiness(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
