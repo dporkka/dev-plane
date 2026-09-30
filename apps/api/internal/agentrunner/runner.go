@@ -21,6 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
 	"github.com/ai-dev-control-plane/api/internal/tools"
 	"github.com/ai-dev-control-plane/events"
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
@@ -332,10 +333,22 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	r.logger.Info("running final checks", "run_id", runID)
 	finalChecks, err := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
 	if err != nil {
-		return r.failRun(ctx, runID, fmt.Sprintf("final verification: %v", err))
+		classification := runfailure.Classify(runfailure.Signal{
+			Stage:  "verification",
+			Detail: err.Error(),
+		})
+		return r.failRunClassified(ctx, runID, fmt.Sprintf("final verification: %v", err), classification)
 	}
 	if !finalChecks.Passed {
-		return r.failRun(ctx, runID, "final verification failed")
+		classification := runfailure.Classify(runfailure.Signal{Stage: "verification"})
+		if finalChecks.Failure != nil {
+			classification = *finalChecks.Failure
+		}
+		errorMsg := "final verification failed"
+		if classification.Source != "" {
+			errorMsg += ": " + classification.Source
+		}
+		return r.failRunClassified(ctx, runID, errorMsg, classification)
 	}
 	if r.completionObserver != nil {
 		if err := r.completionObserver.RecordRunCompletion(
