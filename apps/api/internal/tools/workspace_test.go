@@ -352,3 +352,19 @@ func TestDetectPackageManager(t *testing.T) {
 		})
 	}
 }
+
+
+func TestDetectTestCommandPrefersRepositoryManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"schema_version":1,"commands":{"test":{"run":"make verify","timeout_seconds":42}}}`
+	if err := os.WriteFile(filepath.Join(tmpDir, "dev-plane.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := detectTestCommand(tmpDir); got != "make verify" {
+		t.Fatalf("detectTestCommand() = %q, want make verify", got)
+	}
+}

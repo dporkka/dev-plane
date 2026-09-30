@@ -277,3 +277,36 @@ func (p *fakeRuntimeProvider) StreamLogs(ctx context.Context, sessionID string) 
 	close(ch)
 	return ch, nil
 }
+
+
+func TestRuntimeRunTestsPrefersRepositoryManifest(t *testing.T) {
+	sessionID := "runtime-1"
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			"dev-plane.json": []byte(`{"schema_version":1,"commands":{"test":{"run":"make verify","timeout_seconds":42}}}`),
+			"go.mod":         []byte("module example\n"),
+		},
+		commandResult: &runtimes.CommandResult{Stdout: "ok\n", ExitCode: 0},
+	}
+	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithRuntimeProvider("docker", provider)
+
+	workspace := &models.Workspace{
+		ID:               "ws-manifest",
+		RuntimeProvider:  "docker",
+		RuntimeSessionID: &sessionID,
+		Status:           models.WorkspaceStatusReady,
+	}
+	run := &models.AgentRun{ID: "run-manifest", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-manifest", Title: "test manifest"}
+
+	if _, err := runner.executeTool(context.Background(), run, task, workspace, "", "run_tests", json.RawMessage(`{}`)); err != nil {
+		t.Fatalf("executeTool() error: %v", err)
+	}
+	if len(provider.commands) != 1 || provider.commands[0].Command != "make verify" {
+		t.Fatalf("commands = %#v, want make verify", provider.commands)
+	}
+	if provider.commands[0].Timeout != 42*time.Second {
+		t.Fatalf("timeout = %s, want 42s", provider.commands[0].Timeout)
+	}
+}
