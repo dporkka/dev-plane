@@ -1192,3 +1192,46 @@ func TestHandleRunFailedDoesNotAutoRetryWithoutEventPublisher(t *testing.T) {
 		t.Fatalf("task status = %q, want failed", taskStatus)
 	}
 }
+
+
+func TestHandleRunFailedRedeliveryDoesNotRegressAdvancedTaskStatus(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	classification := runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	}
+
+	if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+		t.Fatalf("first HandleRunFailed() error: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE tasks SET status = 'reviewing' WHERE id = 'task-1'`); err != nil {
+		t.Fatalf("advance task status: %v", err)
+	}
+
+	if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+		t.Fatalf("redelivery HandleRunFailed() error: %v", err)
+	}
+
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != "reviewing" {
+		t.Fatalf("task status = %q, want reviewing after stale failure redelivery", taskStatus)
+	}
+	if publisher.count != 1 {
+		t.Fatalf("publish count = %d, want one runs.triggered publication", publisher.count)
+	}
+}
