@@ -8,53 +8,75 @@ import (
 
 	"github.com/google/uuid"
 
+	dbpkg "github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 )
 
-func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
+func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) (int64, error) {
 	if r.db == nil {
-		return nil
+		return 0, nil
 	}
 
 	now := time.Now().UTC()
-	var startedAt interface{}
-	if status == models.AgentRunStatusRunning {
-		startedAt = now
+	req := dbpkg.AgentRunTransition{
+		RunID:    runID,
+		ToStatus: status,
+		Summary:  summary,
 	}
-
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE agent_runs
-		SET status = $1, started_at = COALESCE($2, started_at), updated_at = $3
-		WHERE id = $4
-	`, status, startedAt, now, runID)
-	return err
+	if status == models.AgentRunStatusRunning {
+		req.StartedAt = &now
+		req.ClearError = true
+	}
+	result, err := dbpkg.TransitionAgentRun(ctx, r.db, req)
+	if err != nil {
+		return 0, err
+	}
+	return result.StateVersion, nil
 }
 
 func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) error {
 	r.logger.Error("agent run failed", "run_id", runID, "error", errorMsg)
 
+	var stateVersion int64
+	var taskID, agentRole string
 	if r.db != nil {
+		if run, err := r.loadAgentRun(ctx, runID); err == nil {
+			taskID = run.TaskID
+			agentRole = run.AgentRole
+		}
 		now := time.Now().UTC()
-		_, _ = r.db.ExecContext(ctx, `
-			UPDATE agent_runs
-			SET status = $1, outcome = $2, error_message = $3, completed_at = $4, updated_at = $4
-			WHERE id = $5
-		`, models.AgentRunStatusFailed, models.OutcomeError, errorMsg, now, runID)
+		outcome := models.OutcomeError
+		result, err := dbpkg.TransitionAgentRun(ctx, r.db, dbpkg.AgentRunTransition{
+			RunID:        runID,
+			ToStatus:     models.AgentRunStatusFailed,
+			Outcome:      &outcome,
+			ErrorMessage: &errorMsg,
+			CompletedAt:  &now,
+		})
+		if err != nil {
+			return fmt.Errorf("fail run state transition: %w", err)
+		}
+		stateVersion = result.StateVersion
 	}
 
-	// Publish run.failed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"timestamp": time.Now().UTC(),
+		"run_id":        runID,
+		"task_id":       taskID,
+		"agent_role":    agentRole,
+		"status":        models.AgentRunStatusFailed,
+		"state_version": stateVersion,
+		"error":         errorMsg,
+		"timestamp":     time.Now().UTC(),
 	})
 	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"timestamp": time.Now().UTC(),
+		"run_id":        runID,
+		"task_id":       taskID,
+		"agent_role":    agentRole,
+		"status":        models.AgentRunStatusFailed,
+		"state_version": stateVersion,
+		"error":         errorMsg,
+		"timestamp":     time.Now().UTC(),
 	})
 
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
@@ -63,20 +85,25 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 func (r *Runner) pauseRun(ctx context.Context, runID string, reason string) error {
 	r.logger.Info("agent run paused", "run_id", runID, "reason", reason)
 
+	var stateVersion int64
 	if r.db != nil {
-		now := time.Now().UTC()
-		_, _ = r.db.ExecContext(ctx, `
-			UPDATE agent_runs
-			SET status = $1, error_message = $2, updated_at = $3
-			WHERE id = $4
-		`, models.AgentRunStatusPaused, reason, now, runID)
+		result, err := dbpkg.TransitionAgentRun(ctx, r.db, dbpkg.AgentRunTransition{
+			RunID:        runID,
+			ToStatus:     models.AgentRunStatusPaused,
+			ErrorMessage: &reason,
+		})
+		if err != nil {
+			return fmt.Errorf("pause run state transition: %w", err)
+		}
+		stateVersion = result.StateVersion
 	}
 
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.paused", runID), map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusPaused,
-		"reason":    reason,
-		"timestamp": time.Now().UTC(),
+		"run_id":        runID,
+		"status":        models.AgentRunStatusPaused,
+		"state_version": stateVersion,
+		"reason":        reason,
+		"timestamp":     time.Now().UTC(),
 	})
 
 	return nil
@@ -178,17 +205,24 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 	return nil
 }
 
-func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState) error {
+func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState) (int64, error) {
 	if r.db == nil {
-		return nil
+		return 0, nil
 	}
 
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE agent_runs
-		SET status = $1, outcome = $2, summary = $3, total_cost = $4,
-		    completed_at = $5, updated_at = $5
-		WHERE id = $6
-	`, status, models.OutcomePassed, summary, state.CostSoFar, now, runID)
-	return err
+	outcome := models.OutcomePassed
+	totalCost := state.CostSoFar
+	result, err := dbpkg.TransitionAgentRun(ctx, r.db, dbpkg.AgentRunTransition{
+		RunID:       runID,
+		ToStatus:    status,
+		Outcome:     &outcome,
+		Summary:     &summary,
+		TotalCost:   &totalCost,
+		CompletedAt: &now,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.StateVersion, nil
 }
