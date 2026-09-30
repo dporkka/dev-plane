@@ -361,6 +361,15 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			deleted_at DATETIME
 		);
+		CREATE TABLE project_configs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			test_command TEXT,
+			lint_command TEXT,
+			typecheck_command TEXT,
+			build_command TEXT,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
