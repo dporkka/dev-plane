@@ -351,7 +351,7 @@ func TestRetryRun(t *testing.T) {
 	mock.ExpectQuery("SELECT metadata FROM agent_runs").
 		WithArgs(runID).
 		WillReturnRows(sqlmock.NewRows([]string{"metadata"}).
-			AddRow(`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}`))
+			AddRow(`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}},"failure":{"taxonomy":"run-failure-v1","category":"infrastructure","retryable":true,"disposition":"retry","stage":"verification","source":"tests"}}`))
 
 	// Insert new agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
@@ -579,13 +579,23 @@ func (m retryAdmissionMetadataMatcher) Match(value driver.Value) bool {
 		Admission struct {
 			Policy string `json:"policy"`
 		} `json:"admission"`
+		Failure any `json:"failure"`
 		Retry struct {
 			OriginalRunID string `json:"original_run_id"`
+			PreviousFailure struct {
+				Category    string `json:"category"`
+				Retryable   bool   `json:"retryable"`
+				Disposition string `json:"disposition"`
+			} `json:"previous_failure"`
 		} `json:"retry"`
 	}
 	if err := json.Unmarshal(data, &metadata); err != nil {
 		return false
 	}
 	return metadata.Admission.Policy == "task-readiness-v1" &&
-		metadata.Retry.OriginalRunID == m.originalRunID
+		metadata.Failure == nil &&
+		metadata.Retry.OriginalRunID == m.originalRunID &&
+		metadata.Retry.PreviousFailure.Category == "infrastructure" &&
+		metadata.Retry.PreviousFailure.Retryable &&
+		metadata.Retry.PreviousFailure.Disposition == "retry"
 }
