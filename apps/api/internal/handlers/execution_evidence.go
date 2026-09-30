@@ -19,13 +19,13 @@ type TaskExecutionEvidenceResponse struct {
 }
 
 type RunExecutionEvidence struct {
-	RunID        string                        `json:"run_id"`
-	CommitHash   string                        `json:"commit_hash,omitempty"`
-	Verification *RunVerificationEvidence      `json:"verification,omitempty"`
-	Review       *RunReviewEvidence            `json:"review,omitempty"`
-	PullRequest  *RunPullRequestEvidence       `json:"pull_request,omitempty"`
-	Artifacts    []RunArtifactEvidence         `json:"artifacts"`
-	Failure      *RunFailureEvidence           `json:"failure,omitempty"`
+	RunID        string                   `json:"run_id"`
+	CommitHash   string                   `json:"commit_hash,omitempty"`
+	Verification *RunVerificationEvidence `json:"verification,omitempty"`
+	Review       *RunReviewEvidence       `json:"review,omitempty"`
+	PullRequest  *RunPullRequestEvidence  `json:"pull_request,omitempty"`
+	Artifacts    []RunArtifactEvidence    `json:"artifacts"`
+	Failure      *RunFailureEvidence      `json:"failure,omitempty"`
 }
 
 type RunVerificationEvidence struct {
@@ -390,4 +390,3 @@ func jsonInt(value any) int {
 		return 0
 	}
 }
-
