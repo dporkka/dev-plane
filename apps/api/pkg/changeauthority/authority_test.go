@@ -11,9 +11,11 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	"golang.org/x/oauth2"
 
+	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/policies"
 )
 
 type fakeGateway struct {
@@ -28,6 +30,13 @@ func (f *fakeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, n
 		return nil, f.err
 	}
 	return f.result, nil
+}
+
+func allowAllKernel() *capability.Kernel {
+	engine := policies.NewEngine([]policies.Policy{{
+		Name: "allow_all_tests", ResourceType: "*", Action: "*", Effect: policies.EffectAllow,
+	}})
+	return capability.NewKernel(engine, nil, nil, slog.Default())
 }
 
 func decisionPacketFixture(t *testing.T, now time.Time) (string, string) {
@@ -113,7 +122,8 @@ func TestMergePinsVerifiedCandidateSHA(t *testing.T) {
 	gh := &fakeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "merge-sha"}}
 	service := New(db, slog.Default()).
 		WithGitHubGateway(gh).
-		WithGitHubToken("token")
+		WithGitHubToken("token").
+		WithCapabilityKernel(allowAllKernel())
 
 	pr, err := service.Merge(context.Background(), Actor{
 		UserID: "user-1", OrganizationID: "org-1", Role: models.RoleOwner,
@@ -144,7 +154,8 @@ func TestMergeRejectsCallerSHADifferentFromVerifiedCandidate(t *testing.T) {
 	gh := &fakeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "merge-sha"}}
 	service := New(db, slog.Default()).
 		WithGitHubGateway(gh).
-		WithGitHubToken("token")
+		WithGitHubToken("token").
+		WithCapabilityKernel(allowAllKernel())
 
 	_, err = service.Merge(context.Background(), Actor{
 		UserID: "user-1", OrganizationID: "org-1", Role: models.RoleOwner,
@@ -179,7 +190,8 @@ func TestMergeRejectsActorFromDifferentOrganization(t *testing.T) {
 
 	service := New(db, slog.Default()).
 		WithGitHubGateway(&fakeGateway{}).
-		WithGitHubToken("token")
+		WithGitHubToken("token").
+		WithCapabilityKernel(allowAllKernel())
 	_, err = service.Merge(context.Background(), Actor{
 		UserID: "user-2", OrganizationID: "org-2", Role: models.RoleOwner,
 	}, Request{PullRequestID: "pr-1"})
