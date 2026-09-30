@@ -247,7 +247,6 @@ func Summarize(evaluations []Evaluation) Summary {
 	return summary
 }
 
-
 func SummarizeByStrategy(evaluations []Evaluation) map[string]Summary {
 	grouped := make(map[string][]Evaluation)
 	for _, evaluation := range evaluations {
