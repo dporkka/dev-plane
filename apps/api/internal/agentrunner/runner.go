@@ -327,27 +327,13 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		}
 	}
 
-	// 6. Run the repository's canonical verification plan and bind the
-	// resulting evidence to the exact verified workspace tree.
+	// 6. Run the repository's canonical verification authority.
 	r.logger.Info("running final checks", "run_id", runID)
-	finalChecks, err := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
+	verification, err := r.verifyLoadedRunCompletion(ctx, run, task, workspace, workspacePath, false)
 	if err != nil {
-		return r.failRun(ctx, runID, fmt.Sprintf("final verification: %v", err))
+		return r.failRun(ctx, runID, err.Error())
 	}
-	if !finalChecks.Passed {
-		return r.failRun(ctx, runID, "final verification failed")
-	}
-	if r.completionObserver != nil {
-		if err := r.completionObserver.RecordRunCompletion(
-			ctx,
-			runID,
-			finalChecks.SubjectRevision,
-			finalChecks.Evidence,
-		); err != nil {
-			return r.failRun(ctx, runID, fmt.Sprintf("completion evidence rejected: %v", err))
-		}
-	}
-	testResults := finalChecks.Results
+	testResults := verification.Results
 
 	// 7. Get git diff for summary
 	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
