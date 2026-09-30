@@ -100,7 +100,8 @@ func (b *GitBackend) Publish(ctx context.Context, req PublishRequest) error {
 	if strings.TrimSpace(req.Ref) == "" {
 		return fmt.Errorf("publish ref is required")
 	}
-	_, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"push", "-u", "origin", req.Ref}, Dir: req.WorkspacePath, Env: req.Env})
+	remote := publishRemote(req.Remote)
+	_, err := b.runner.Run(ctx, Command{Name: "git", Args: []string{"push", "-u", remote, req.Ref}, Dir: req.WorkspacePath, Env: req.Env})
 	return err
 }
 

@@ -24,7 +24,7 @@ It does **not** currently cover:
 
 Those concerns have different portability and security requirements and should not be forced into this interface merely because one vendor exposes them through the same API.
 
-In particular, Git-over-HTTPS authentication is separate from forge API authentication. The existing PR factory still has a legacy GitHub-oriented askpass helper for branch publication; a future branch-publication contract should replace that separately rather than embedding Git transport semantics in `forge.Provider`.
+Branch publication now has its own public `vcs.Publisher` boundary. Git-over-HTTPS authentication remains separate from forge API authentication; see [Branch Publication](branch-publication.md).
 
 ## Provider interface
 

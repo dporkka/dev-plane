@@ -50,6 +50,21 @@ func (f *fakeForgeMergeProvider) MergeChange(_ context.Context, credential forge
 
 var _ forge.Provider = (*fakeForgeMergeProvider)(nil)
 
+type fakePullRequestCreator struct {
+	taskID string
+	result *models.PullRequest
+	err    error
+}
+
+func (f *fakePullRequestCreator) CreatePullRequest(_ context.Context, taskID string) (*models.PullRequest, error) {
+	f.taskID = taskID
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.result, nil
+}
+
+
 func newMergeRequest(prID string, body string) *http.Request {
 	return newMergeRequestWithRole(prID, body, models.RoleOwner)
 }
@@ -67,6 +82,60 @@ func newMergeRequestWithRole(prID, body, role string) *http.Request {
 	rctx.URLParams.Add("id", prID)
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	return req
+}
+
+func TestCreatePullRequestUsesConfiguredCreator(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	now := time.Now().UTC()
+	creator := &fakePullRequestCreator{result: &models.PullRequest{
+		ID:         "pr-1",
+		TaskID:     taskID,
+		RepoID:     "repo-1",
+		Number:     7,
+		Title:      "change",
+		Branch:     "feature/test",
+		BaseBranch: "main",
+		URL:        "https://forge.example/acme/repo/changes/7",
+		State:      models.PRStateOpen,
+		CreatedBy:  testUserID,
+		CreatedAt:  now,
+		UpdatedAt:  now,
+	}}
+	h = h.WithPullRequestCreator(creator)
+
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, repository_id, target_branch").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "repository_id", "target_branch"}).
+			AddRow("reviewing", "repo-1", "main"))
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/pull-request", strings.NewReader(`{"approved":true}`))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID,
+		OrgID:  testOrgID,
+		Email:  "test@example.com",
+		Role:   models.RoleOwner,
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	rec := httptest.NewRecorder()
+	h.CreatePullRequest(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	if creator.taskID != taskID {
+		t.Fatalf("creator task id = %q, want %q", creator.taskID, taskID)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestMergePullRequest(t *testing.T) {
@@ -90,11 +159,11 @@ func TestMergePullRequest(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "group/subgroup/repo", "pr_created",
 		))
 	mock.ExpectExec("UPDATE pull_requests SET state").
 		WithArgs(sqlmock.AnyArg(), prID).
@@ -115,6 +184,9 @@ func TestMergePullRequest(t *testing.T) {
 	}
 	if fakeForge.calls[0].Method != "squash" {
 		t.Errorf("merge method = %q, want squash", fakeForge.calls[0].Method)
+	}
+	if fakeForge.repository.Namespace != "group/subgroup" || fakeForge.repository.Name != "repo" {
+		t.Fatalf("forge repository = %+v, want group/subgroup/repo", fakeForge.repository)
 	}
 
 	if pub.subject != events.PRMerged {
@@ -137,11 +209,11 @@ func TestMergePullRequest_AlreadyMerged(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "merged", false, testUserID, &now,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()
@@ -167,11 +239,11 @@ func TestMergePullRequest_WrongTaskStatus(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "running",
+			now, now, "owner/repo", "running",
 		))
 
 	rec := httptest.NewRecorder()
@@ -200,11 +272,11 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()
@@ -233,11 +305,11 @@ func TestMergePullRequest_InvalidForgeRequest(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()
@@ -266,11 +338,11 @@ func TestMergePullRequest_ForgeConflict(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()
@@ -304,11 +376,11 @@ func TestMergePullRequest_DeniedByPolicy(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()
@@ -335,11 +407,11 @@ func TestMergePullRequest_MissingToken(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "full_name", "status",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner/repo", "pr_created",
 		))
 
 	rec := httptest.NewRecorder()

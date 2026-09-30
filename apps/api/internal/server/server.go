@@ -25,6 +25,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	events "github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/prfactory"
 )
 
 // Server is the HTTP server for the API service.
@@ -95,9 +96,15 @@ func (s *Server) routes() {
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		githubForge := gateway.NewGitHubGateway(s.config.GitHubClientID, s.config.GitHubSecret)
+		changeCreator := prfactory.NewFactory(s.db, s.logger).
+			WithForgeProvider(githubForge).
+			WithForgeCredential(token).
+			WithBranchPublisher(gateway.NewGitHubBranchPublisher(nil, token))
 		h = h.
-			WithForgeProvider(gateway.NewGitHubGateway(s.config.GitHubClientID, s.config.GitHubSecret)).
-			WithForgeCredential(token)
+			WithForgeProvider(githubForge).
+			WithForgeCredential(token).
+			WithPullRequestCreator(changeCreator)
 	} else {
 		s.logger.Warn("GITHUB_TOKEN not configured; default GitHub forge operations are disabled")
 	}

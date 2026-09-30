@@ -38,13 +38,27 @@ For Jujutsu, pass an immutable/explicit base such as `main@origin` after fetch.
 For Git, pass the corresponding Git ref such as `origin/main`.
 
 Never put PATs or installation tokens in `CloneRequest.URL`. Configure Git/JJ
-credential helpers or `GIT_ASKPASS` through `CloneRequest.Env` at the runtime
-boundary.
+credential helpers or `GIT_ASKPASS` through environment-based transport
+configuration.
 
-## Next integration step
+## Branch publication
 
-The module is registered in the root `go.work`. After GitNexus impact analysis
-is available, wire it into the existing `repo-intel`, runtime, reviewer, and PR
-factory paths. The migration should replace mutating ad-hoc Git subprocess
-calls first while allowing read-only Git consumers to continue operating against
-colocated JJ/Git workspaces.
+`Publisher` is the narrow public boundary for publishing a workspace ref.
+`GitBackend` and `JujutsuBackend` both implement it, and callers may select a
+remote explicitly through `PublishRequest.Remote` (default: `origin`).
+
+`NewHTTPBasicPublisher` adds ephemeral HTTPS authentication without placing
+credentials in command arguments, repository URLs, or generated scripts.
+
+The PR factory now consumes `vcs.Publisher` directly. Platform-specific
+credential conventions are adapters layered on top; for example, the GitHub
+gateway maps a token to GitHub's HTTPS username convention.
+
+See [Branch Publication](../../docs/branch-publication.md) and run
+`make test-publication` for focused verification.
+
+## Remaining integration work
+
+The VCS module is registered in the root `go.work` and now owns PR-factory
+branch publication. Read-only Git consumers and remaining mutation paths can be
+migrated incrementally without forcing the repository into one VCS backend.

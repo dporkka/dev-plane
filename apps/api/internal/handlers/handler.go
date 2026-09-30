@@ -27,6 +27,10 @@ type EventPublisher interface {
 	Publish(subject string, data []byte) error
 }
 
+type pullRequestCreator interface {
+	CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error)
+}
+
 // Handler is the base handler struct that provides access to shared dependencies.
 type Handler struct {
 	db                *sql.DB
@@ -37,9 +41,10 @@ type Handler struct {
 	capabilityKernel  *capability.Kernel
 	runtimeProviders  map[string]runtimes.Provider
 	secretManager     *secrets.Manager
-	forgeProvider     forge.Provider
-	forgeCredential   forge.Credential
-	deployGateway     deployGateway
+	forgeProvider      forge.Provider
+	forgeCredential    forge.Credential
+	pullRequestCreator pullRequestCreator
+	deployGateway      deployGateway
 	deployToken       string
 
 	// integrationValidator is an optional override for integration credential
@@ -119,6 +124,14 @@ func (h *Handler) WithGitHubGateway(g *gateway.GitHubGateway) *Handler {
 // WithGitHubToken is a compatibility shim for existing callers.
 func (h *Handler) WithGitHubToken(token string) *Handler {
 	return h.WithForgeCredential(token)
+}
+
+// WithPullRequestCreator configures the review-change creation workflow used by
+// the HTTP handler. Composition roots should inject a factory configured with
+// the same forge and branch-publication dependencies as merge operations.
+func (h *Handler) WithPullRequestCreator(creator pullRequestCreator) *Handler {
+	h.pullRequestCreator = creator
+	return h
 }
 
 // WithDeployGateway injects a deployment gateway for task deploy operations.

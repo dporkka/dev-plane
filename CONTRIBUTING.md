@@ -26,7 +26,7 @@ make test
 make build
 ```
 
-For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete. Changes to repository inspection, ecosystem detection, or inferred validation commands should also run `make test-portability`. Changes to forge contracts or adapters should run `make test-forge`.
+For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete. Changes to repository inspection, ecosystem detection, or inferred validation commands should also run `make test-portability`. Changes to forge contracts or adapters should run `make test-forge`. Changes to branch publication, Git/Jujutsu remote handling, or transport authentication should run `make test-publication`.
 
 Behavior changes should be test-driven: add or update the test that describes the desired behavior before changing production logic.
 
@@ -60,6 +60,14 @@ Code-forge review adapters should implement `github.com/ai-dev-control-plane/for
 Keep forge API operations separate from Git transport. Opening or merging a review request belongs to the forge provider; publishing a branch with `git push` has different authentication and transport semantics and should not be smuggled into the provider contract.
 
 See [Forge Providers](docs/forge-providers.md) and run `make test-forge` for forge-boundary changes.
+
+### Branch publishers
+
+Branch publication should implement `github.com/ai-dev-control-plane/vcs.Publisher` rather than adding another `git push` subprocess to an application package.
+
+Keep transport authentication generic. Platform-specific conventions such as GitHub's HTTPS username belong in that platform's adapter, while the VCS layer owns generic credential transport and remote/ref semantics.
+
+See [Branch Publication](docs/branch-publication.md) and run `make test-publication` for publication-boundary changes.
 
 ## Public contract changes
 

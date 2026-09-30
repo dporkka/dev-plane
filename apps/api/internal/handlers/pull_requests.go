@@ -266,9 +266,14 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the pull request using the factory
-	factory := prfactory.NewFactory(h.db, h.logger)
-	pr, err := factory.CreatePullRequest(ctx, taskID)
+	// Create the review change through the configured workflow. The fallback
+	// preserves legacy standalone handler construction; production composition
+	// injects the provider-neutral factory explicitly.
+	creator := h.pullRequestCreator
+	if creator == nil {
+		creator = prfactory.NewFactory(h.db, h.logger)
+	}
+	pr, err := creator.CreatePullRequest(ctx, taskID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
@@ -319,7 +324,7 @@ type MergePullRequestRequest struct {
 	SHA string `json:"sha,omitempty"`
 }
 
-// MergePullRequest merges a pull request on GitHub after capability authorization.
+// MergePullRequest merges a forge review change after capability authorization.
 // It updates the local PR record to merged and transitions the task to done.
 func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -347,12 +352,12 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	var pr PullRequestResponse
 	var runID sql.NullString
 	var mergedAt sql.NullTime
-	var repoOwner, repoName, taskID, taskStatus string
+	var repoFullName, taskID, taskStatus string
 
 	err := h.db.QueryRowContext(ctx, `
 		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
 		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by, pr.merged_at,
-		       pr.created_at, pr.updated_at, r.owner, r.name, t.status
+		       pr.created_at, pr.updated_at, r.full_name, t.status
 		FROM pull_requests pr
 		JOIN repositories r ON r.id = pr.repository_id
 		JOIN tasks t ON t.id = pr.task_id
@@ -360,7 +365,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	`, id).Scan(
 		&pr.ID, &taskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
+		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoFullName, &taskStatus,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -388,6 +393,12 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	repository, err := forge.ParseRepositoryFullName(repoFullName)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("parse repository identity: %w", err))
+		return
+	}
+
 	// Capability kernel authorization. Merge is admin-only by default.
 	result, err := h.kernel().Evaluate(ctx, capability.Request{
 		ActorType: "human",
@@ -397,7 +408,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 			Role:           user.Role,
 		},
 		Operation: capability.OpMergePR,
-		Resource:  fmt.Sprintf("%s/%s#%d", repoOwner, repoName, pr.Number),
+		Resource:  fmt.Sprintf("%s#%d", repoFullName, pr.Number),
 		Details: map[string]any{
 			"organization_id": user.OrgID,
 			"pull_request_id": id,
@@ -420,10 +431,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusServiceUnavailable, errors.New("forge provider is not configured"))
 		return
 	}
-	mergeResult, err := h.forgeProvider.MergeChange(ctx, h.forgeCredential, forge.Repository{
-		Namespace: repoOwner,
-		Name:      repoName,
-	}, pr.Number, forge.MergeChangeRequest{
+	mergeResult, err := h.forgeProvider.MergeChange(ctx, h.forgeCredential, repository, pr.Number, forge.MergeChangeRequest{
 		Method:               forge.MergeMethod(req.Method),
 		ExpectedHeadRevision: req.SHA,
 	})

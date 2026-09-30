@@ -103,13 +103,14 @@ func (b *JujutsuBackend) Publish(ctx context.Context, req PublishRequest) error 
 	if strings.TrimSpace(req.Ref) == "" {
 		return fmt.Errorf("publish ref is required")
 	}
+	remote := publishRemote(req.Remote)
 	if _, err := b.runner.Run(ctx, Command{
 		Name: "jj", Args: []string{"bookmark", "set", "--allow-backwards", req.Ref, "-r", "@-"}, Dir: req.WorkspacePath, Env: req.Env,
 	}); err != nil {
 		return err
 	}
 	_, err := b.runner.Run(ctx, Command{
-		Name: "jj", Args: []string{"git", "push", "--remote", "origin", "--bookmark", req.Ref}, Dir: req.WorkspacePath, Env: req.Env,
+		Name: "jj", Args: []string{"git", "push", "--remote", remote, "--bookmark", req.Ref}, Dir: req.WorkspacePath, Env: req.Env,
 	})
 	return err
 }
