@@ -485,6 +485,26 @@ func (h *RunHandler) handleRejectedReview(ctx context.Context, event events.Agen
 	currentRound := repairRound(run.Metadata)
 	now := time.Now().UTC()
 
+	if currentRound < h.repairLimit {
+		var existingChild string
+		err := h.db.QueryRowContext(ctx, `
+			SELECT id
+			FROM agent_runs
+			WHERE parent_run_id = $1
+			  AND attempt = $2
+			  AND agent_role = $3
+			ORDER BY created_at ASC
+			LIMIT 1
+		`, run.RunID, run.Attempt+1, models.AgentRoleImplementer).Scan(&existingChild)
+		if err == nil {
+			h.logger.Info("review repair already scheduled", "run_id", run.RunID, "repair_run_id", existingChild)
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("check existing review repair: %w", err)
+		}
+	}
+
 	if _, err := h.db.ExecContext(ctx, `
 		UPDATE agent_runs
 		SET outcome = $1, updated_at = $2
