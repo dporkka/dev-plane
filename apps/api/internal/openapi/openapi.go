@@ -782,6 +782,17 @@ func buildComponents() Components {
 					"approved": {Type: "boolean", Nullable: true},
 				},
 			},
+			"DecisionPacketResponse": {
+				Type:     "object",
+				Required: []string{"id", "candidate_id", "digest", "packet", "created_at"},
+				Properties: map[string]*Schema{
+					"id":           {Type: "string"},
+					"candidate_id": {Type: "string"},
+					"digest":       {Type: "string", Description: "SHA-256 digest of the canonical immutable decision packet"},
+					"packet":       {Type: "object", Description: "Immutable candidate, task, review, and verification snapshot enforced by the merge gate"},
+					"created_at":   {Type: "string", Format: "date-time"},
+				},
+			},
 			"RepoAnalysis": {
 				Type:     "object",
 				Required: []string{"repository_id", "languages", "package_managers", "frameworks", "test_commands", "build_commands", "entry_points", "has_dockerfile", "has_ci_config", "structure", "analyzed_at"},
@@ -1936,6 +1947,25 @@ func buildPaths() map[string]PathItem {
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
 				}},
 				"404": {Description: "Pull request not found"},
+			},
+		},
+	}
+	paths["/api/v1/pull-requests/{id}/decision-packet"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Get decision packet",
+			Description: "Returns the immutable approval snapshot bound to the verified pull request candidate.",
+			OperationID: "getPullRequestDecisionPacket",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Pull request ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Decision packet", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/DecisionPacketResponse"}},
+				}},
+				"404": {Description: "Pull request or decision packet not found"},
+				"409": {Description: "Stored decision packet failed integrity validation"},
 			},
 		},
 	}
