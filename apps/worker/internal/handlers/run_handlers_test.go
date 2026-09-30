@@ -18,6 +18,7 @@ import (
 	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
@@ -815,10 +816,33 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`
+		CREATE TABLE repositories (
+			id TEXT PRIMARY KEY,
+			clone_url TEXT NOT NULL,
+			default_branch TEXT NOT NULL,
+			deleted_at DATETIME
+		);
 		CREATE TABLE tasks (
 			id TEXT PRIMARY KEY,
+			repository_id TEXT,
+			workspace_id TEXT,
 			status TEXT NOT NULL,
 			deleted_at DATETIME,
+			updated_at DATETIME
+		);
+		CREATE TABLE workspaces (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			task_id TEXT,
+			name TEXT NOT NULL,
+			branch TEXT NOT NULL,
+			base_branch TEXT NOT NULL,
+			worktree_path TEXT,
+			runtime_provider TEXT NOT NULL,
+			runtime_session_id TEXT,
+			status TEXT NOT NULL,
+			settings TEXT DEFAULT '{}',
+			created_at DATETIME,
 			updated_at DATETIME
 		);
 		CREATE TABLE agent_runs (
@@ -1251,5 +1275,273 @@ func TestHandleRunFailedRedeliveryDoesNotRegressAdvancedTaskStatus(t *testing.T)
 	}
 	if publisher.count != 1 {
 		t.Fatalf("publish count = %d, want one runs.triggered publication", publisher.count)
+	}
+}
+
+func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		INSERT INTO repositories (id, clone_url, default_branch)
+		VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
+		INSERT INTO workspaces (
+			id, repository_id, task_id, name, branch, base_branch,
+			runtime_provider, runtime_session_id, status, settings, created_at, updated_at
+		) VALUES (
+			'workspace-1', 'repo-1', 'task-1', 'workspace-task-1',
+			'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}',
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		);
+		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
+		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
+
+	provider := &fakeRuntimeProvider{
+		createSession: &runtimes.Session{
+			ID:           "runtime-fresh",
+			WorkspaceID:  "repo-1",
+			Status:       "ready",
+			Provider:     "local",
+			WorktreePath: "/tmp/fresh-workspace",
+			CreatedAt:    time.Now(),
+		},
+	}
+	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil
+		}
+		return nil, errors.New("unexpected runtime command")
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+	err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryResource,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetryFreshEnvironment,
+		Stage:       "verification",
+		Source:      "build",
+	}))
+	if err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+
+	if len(provider.createRequests) != 1 {
+		t.Fatalf("CreateWorkspace calls = %d, want 1", len(provider.createRequests))
+	}
+	req := provider.createRequests[0]
+	if req.Revision != "base-commit-123" {
+		t.Fatalf("Revision = %q, want base-commit-123", req.Revision)
+	}
+	if len(provider.appliedPatches) != 1 || provider.appliedPatches[0] == "" {
+		t.Fatalf("applied patches = %#v, want captured source patch", provider.appliedPatches)
+	}
+
+	var retryRunID, retryWorkspaceID, retryMetadata string
+	if err := db.QueryRow(`
+		SELECT id, workspace_id, metadata
+		FROM agent_runs
+		WHERE id <> 'run-1'
+		LIMIT 1
+	`).Scan(&retryRunID, &retryWorkspaceID, &retryMetadata); err != nil {
+		t.Fatalf("query fresh retry run: %v", err)
+	}
+	if retryWorkspaceID == "" || retryWorkspaceID == "workspace-1" {
+		t.Fatalf("retry workspace = %q, want fresh workspace", retryWorkspaceID)
+	}
+
+	var taskWorkspaceID, taskStatus string
+	if err := db.QueryRow(`SELECT workspace_id, status FROM tasks WHERE id = 'task-1'`).Scan(&taskWorkspaceID, &taskStatus); err != nil {
+		t.Fatalf("query task workspace: %v", err)
+	}
+	if taskWorkspaceID != retryWorkspaceID || taskStatus != "running" {
+		t.Fatalf("task workspace/status = %q/%q, want %q/running", taskWorkspaceID, taskStatus, retryWorkspaceID)
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(retryMetadata), &metadata); err != nil {
+		t.Fatalf("decode fresh retry metadata: %v", err)
+	}
+	retry, ok := metadata["retry"].(map[string]any)
+	if !ok {
+		t.Fatalf("retry metadata missing: %+v", metadata)
+	}
+	if retry["mode"] != string(runfailure.RetryModeFreshEnvironment) ||
+		retry["from_workspace_id"] != "workspace-1" ||
+		retry["to_workspace_id"] != retryWorkspaceID ||
+		retry["base_revision"] != "base-commit-123" ||
+		retry["subject_revision"] != "git-tree:tree-abc123" {
+		t.Fatalf("fresh retry metadata = %+v", retry)
+	}
+	if publisher.subject != events.RunTriggered || !contains(string(publisher.data), retryRunID) {
+		t.Fatalf("published %q %s, want fresh retry run %s", publisher.subject, string(publisher.data), retryRunID)
+	}
+}
+
+func TestHandleRunFailedFreshEnvironmentFailsClosedOnTreeMismatch(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		INSERT INTO repositories (id, clone_url, default_branch)
+		VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
+		INSERT INTO workspaces (
+			id, repository_id, task_id, name, branch, base_branch,
+			runtime_provider, runtime_session_id, status, settings, created_at, updated_at
+		) VALUES (
+			'workspace-1', 'repo-1', 'task-1', 'workspace-task-1',
+			'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}',
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		);
+		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
+		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
+
+	provider := &fakeRuntimeProvider{createSession: &runtimes.Session{
+		ID: "runtime-fresh", WorkspaceID: "repo-1", Status: "ready", Provider: "local", CreatedAt: time.Now(),
+	}}
+	treeCalls := 0
+	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			treeCalls++
+			if treeCalls == 1 {
+				return &runtimes.CommandResult{Stdout: "tree-source\n", ExitCode: 0}, nil
+			}
+			return &runtimes.CommandResult{Stdout: "tree-fresh\n", ExitCode: 0}, nil
+		}
+		return nil, errors.New("unexpected runtime command")
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+	err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy: runfailure.TaxonomyVersion, Category: runfailure.CategoryResource, Retryable: true,
+		Disposition: runfailure.DispositionRetryFreshEnvironment, Stage: "verification", Source: "build",
+	}))
+	if err == nil || !contains(err.Error(), "tree mismatch") {
+		t.Fatalf("HandleRunFailed() error = %v, want tree mismatch", err)
+	}
+	if len(provider.destroyedSession) != 1 || provider.destroyedSession[0] != "runtime-fresh" {
+		t.Fatalf("destroyed sessions = %#v, want runtime-fresh cleanup", provider.destroyedSession)
+	}
+	var runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("run count = %d, want no retry run on tree mismatch", runCount)
+	}
+	if publisher.count != 0 {
+		t.Fatalf("publish count = %d, want 0", publisher.count)
+	}
+}
+
+func TestHandleRunFailedFreshEnvironmentRedeliveryDoesNotReprovision(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		INSERT INTO repositories (id, clone_url, default_branch) VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
+		INSERT INTO workspaces (id, repository_id, task_id, name, branch, base_branch, runtime_provider, runtime_session_id, status, settings, created_at, updated_at)
+		VALUES ('workspace-1', 'repo-1', 'task-1', 'workspace-task-1', 'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
+		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
+
+	provider := &fakeRuntimeProvider{createSession: &runtimes.Session{ID: "runtime-fresh", WorkspaceID: "repo-1", Status: "ready", Provider: "local", CreatedAt: time.Now()}}
+	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil
+		}
+		return nil, errors.New("unexpected runtime command")
+	}
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher).WithRuntimeProvider(provider, "local")
+	classification := runfailure.Classification{Taxonomy: runfailure.TaxonomyVersion, Category: runfailure.CategoryResource, Retryable: true, Disposition: runfailure.DispositionRetryFreshEnvironment, Stage: "verification", Source: "build"}
+	for i := 0; i < 2; i++ {
+		if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+			t.Fatalf("delivery %d error: %v", i+1, err)
+		}
+	}
+	if len(provider.createRequests) != 1 {
+		t.Fatalf("CreateWorkspace calls = %d, want 1", len(provider.createRequests))
+	}
+	if publisher.count != 1 {
+		t.Fatalf("publish count = %d, want 1", publisher.count)
+	}
+}
+
+func TestHandleRunFailedFreshEnvironmentPublishFailureRedeliveryReusesWorkspace(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		INSERT INTO repositories (id, clone_url, default_branch) VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
+		INSERT INTO workspaces (id, repository_id, task_id, name, branch, base_branch, runtime_provider, runtime_session_id, status, settings, created_at, updated_at)
+		VALUES ('workspace-1', 'repo-1', 'task-1', 'workspace-task-1', 'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
+		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
+
+	provider := &fakeRuntimeProvider{createSession: &runtimes.Session{ID: "runtime-fresh", WorkspaceID: "repo-1", Status: "ready", Provider: "local", CreatedAt: time.Now()}}
+	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil
+		}
+		return nil, errors.New("unexpected runtime command")
+	}
+	publisher := &fakeWorkerEventPublisher{err: errors.New("nats unavailable")}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher).WithRuntimeProvider(provider, "local")
+	classification := runfailure.Classification{Taxonomy: runfailure.TaxonomyVersion, Category: runfailure.CategoryResource, Retryable: true, Disposition: runfailure.DispositionRetryFreshEnvironment, Stage: "verification", Source: "build"}
+	if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err == nil || !contains(err.Error(), "nats unavailable") {
+		t.Fatalf("first delivery error = %v, want publish failure", err)
+	}
+	publisher.err = nil
+	if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+		t.Fatalf("redelivery error: %v", err)
+	}
+	if len(provider.createRequests) != 1 {
+		t.Fatalf("CreateWorkspace calls = %d, want 1", len(provider.createRequests))
+	}
+	if publisher.count != 2 {
+		t.Fatalf("publish attempts = %d, want failed + successful redelivery", publisher.count)
 	}
 }

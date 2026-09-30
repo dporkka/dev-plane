@@ -105,12 +105,14 @@ Pending -> Queued -> Running -> Completed
 
 Failed runs carry a versioned machine-readable failure classification with a category, retryability flag, disposition, stage, and source. The worker applies a deliberately narrow application-level retry policy:
 
-- Only failures with `retryable=true` and disposition `retry` are retried automatically.
+- Failures with `retryable=true` and disposition `retry` are retried in the same workspace.
+- Failures with `retryable=true` and disposition `retry_fresh_environment` are replayed in a newly provisioned workspace.
 - Automatic retries are capped at 2 attempts after the original execution.
-- Retry runs retain `root_run_id`, `original_run_id`, attempt number, and the previous failure classification in metadata.
-- Retry run IDs are deterministic so redelivered failure events cannot create duplicate runs.
+- Fresh-environment recovery resolves the source workspace's immutable remote base commit, captures a binary/full-index patch with a temporary Git index, and records the resulting Git tree identity.
+- The fresh runtime is created from the exact base commit, the captured patch is applied, and dispatch fails closed unless the reconstructed Git tree identity exactly matches the source workspace.
+- Retry runs retain `root_run_id`, `original_run_id`, attempt number, recovery mode, and the previous failure classification. Fresh retries additionally retain source/destination workspace IDs, base revision, and subject revision.
+- Retry run and fresh workspace IDs are deterministic so redelivered failure events cannot create duplicate runs or repeatedly allocate environments.
 - Dispatch state is persisted after `runs.triggered` publication. A failed publication is retried on event redelivery, while a successful publication is not emitted again.
-- `retry_fresh_environment` is not automatic yet because workspace reprovisioning is not part of the retry primitive.
 - `code`, `test`, `dependency`, `configuration`, `policy`, and `unknown` failures do not enter an automatic retry loop.
 
 Manual retries remain available through the run retry API and preserve the prior failure under `retry.previous_failure` without carrying it forward as the new run's active failure.

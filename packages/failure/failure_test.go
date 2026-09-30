@@ -163,6 +163,9 @@ func TestDecideAutoRetryAllowsBoundedRetryDisposition(t *testing.T) {
 	if decision.Reason != "retryable" {
 		t.Fatalf("Reason = %q, want retryable", decision.Reason)
 	}
+	if decision.Mode != RetryModeSameEnvironment {
+		t.Fatalf("Mode = %q, want %q", decision.Mode, RetryModeSameEnvironment)
+	}
 }
 
 func TestDecideAutoRetryStopsAtBudget(t *testing.T) {
@@ -181,9 +184,27 @@ func TestDecideAutoRetryStopsAtBudget(t *testing.T) {
 	}
 }
 
-func TestDecideAutoRetryRequiresSameEnvironmentRetryDisposition(t *testing.T) {
+func TestDecideAutoRetrySelectsFreshEnvironmentMode(t *testing.T) {
+	classification := Classification{
+		Taxonomy:    TaxonomyVersion,
+		Category:    CategoryResource,
+		Retryable:   true,
+		Disposition: DispositionRetryFreshEnvironment,
+	}
+	decision := DecideAutoRetry(classification, 0, 2)
+	if !decision.Retry {
+		t.Fatalf("Retry = false, want true: %+v", decision)
+	}
+	if decision.Mode != RetryModeFreshEnvironment {
+		t.Fatalf("Mode = %q, want %q", decision.Mode, RetryModeFreshEnvironment)
+	}
+	if decision.NextAttempt != 1 {
+		t.Fatalf("NextAttempt = %d, want 1", decision.NextAttempt)
+	}
+}
+
+func TestDecideAutoRetryRejectsNonRetryDispositions(t *testing.T) {
 	for _, classification := range []Classification{
-		{Taxonomy: TaxonomyVersion, Category: CategoryResource, Retryable: true, Disposition: DispositionRetryFreshEnvironment},
 		{Taxonomy: TaxonomyVersion, Category: CategoryTest, Retryable: false, Disposition: DispositionFix},
 		{Taxonomy: TaxonomyVersion, Category: CategoryUnknown, Retryable: false, Disposition: DispositionInvestigate},
 	} {

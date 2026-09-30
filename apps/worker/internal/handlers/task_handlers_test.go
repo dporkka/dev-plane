@@ -18,11 +18,25 @@ import (
 )
 
 type fakeRuntimeProvider struct {
-	req runtimes.CreateRequest
+	req              runtimes.CreateRequest
+	createRequests   []runtimes.CreateRequest
+	createSession    *runtimes.Session
+	createErr        error
+	executeCommand   func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error)
+	appliedPatches   []string
+	destroyedSession []string
 }
 
 func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.CreateRequest) (*runtimes.Session, error) {
 	p.req = req
+	p.createRequests = append(p.createRequests, req)
+	if p.createErr != nil {
+		return nil, p.createErr
+	}
+	if p.createSession != nil {
+		copy := *p.createSession
+		return &copy, nil
+	}
 	return &runtimes.Session{
 		ID:           "runtime-session-1",
 		WorkspaceID:  req.RepositoryID,
@@ -34,9 +48,13 @@ func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.
 }
 
 func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
+	p.destroyedSession = append(p.destroyedSession, sessionID)
 	return nil
 }
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+	if p.executeCommand != nil {
+		return p.executeCommand(sessionID, cmd)
+	}
 	return nil, nil
 }
 func (p *fakeRuntimeProvider) ReadFile(ctx context.Context, sessionID, path string) ([]byte, error) {
@@ -46,6 +64,7 @@ func (p *fakeRuntimeProvider) WriteFile(ctx context.Context, sessionID, path str
 	return nil
 }
 func (p *fakeRuntimeProvider) ApplyPatch(ctx context.Context, sessionID, patch string) error {
+	p.appliedPatches = append(p.appliedPatches, patch)
 	return nil
 }
 func (p *fakeRuntimeProvider) Snapshot(ctx context.Context, sessionID string) (*runtimes.Snapshot, error) {

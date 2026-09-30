@@ -326,3 +326,33 @@ func containsArgPrefix(args []string, prefix string) bool {
 	}
 	return false
 }
+
+func TestDockerProviderCreateWorkspacePinsRequestedRevision(t *testing.T) {
+	runner := &fakeRunner{}
+	provider := &DockerProvider{
+		baseDir:  t.TempDir(),
+		image:    "test-image:latest",
+		runner:   runner,
+		sessions: map[string]*dockerSession{},
+	}
+
+	_, err := provider.CreateWorkspace(context.Background(), CreateRequest{
+		RepositoryID: "repo-1",
+		CloneURL:     "https://example.invalid/repo.git",
+		Branch:       "agent/task-1",
+		BaseBranch:   "main",
+		Revision:     "0123456789abcdef",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkspace() error: %v", err)
+	}
+
+	checkout := findCallWithArg(runner.calls, "git", "-B")
+	if checkout == nil {
+		t.Fatal("expected workspace branch checkout")
+	}
+	joined := strings.Join(checkout.args, " ")
+	if !strings.Contains(joined, "agent/task-1 0123456789abcdef") {
+		t.Fatalf("checkout args = %v, want branch created from exact revision", checkout.args)
+	}
+}
