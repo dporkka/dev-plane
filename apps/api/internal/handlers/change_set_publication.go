@@ -121,7 +121,6 @@ func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusNotFound, errors.New("change set not found"))
 		return
 	}
-
 	if changeSet.Status == "completed" || changeSet.PublicationStatus == "completed" {
 		members, err := h.loadChangeSetPublicationMembers(ctx, changeSet.ID)
 		if err != nil {
@@ -135,189 +134,33 @@ func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusConflict, fmt.Errorf("change set must be authorized before publication, current status: %s", changeSet.Status))
 		return
 	}
+	if h.eventBus == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("change set publication worker is unavailable"))
+		return
+	}
 
-	status, err := h.validateChangeSetPublicationAuthority(ctx, changeSet)
+	event := events.ChangeSetPublicationEvent{
+		ChangeSetID:    changeSet.ID,
+		ProjectID:      changeSet.ProjectID,
+		ActorID:        user.UserID,
+		OrganizationID: user.OrgID,
+		Status:         "requested",
+	}
+	data, err := json.Marshal(event)
 	if err != nil {
-		respond.Error(w, http.StatusConflict, err)
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("marshal change set publication request: %w", err))
 		return
 	}
-	if !status.Ready {
-		respond.JSON(w, http.StatusConflict, map[string]any{
-			"error":    "change set publication authority is no longer ready",
-			"blockers": status.Blockers,
-		})
+	if err := h.eventBus.Publish(events.ChangeSetPublishRequested, data); err != nil {
+		respond.Error(w, http.StatusServiceUnavailable, fmt.Errorf("queue change set publication: %w", err))
 		return
 	}
 
-	token := strings.TrimSpace(h.githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
-		return
-	}
-
-	gh := h.githubGateway
-	if gh == nil {
-		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
-	}
-	reader, ok := gh.(githubPRReader)
-	if !ok {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github gateway does not support pull request reconciliation"))
-		return
-	}
-
-	leaseToken := uuid.New().String()
-	now := time.Now().UTC()
-	leaseUntil := now.Add(publicationLeaseDuration)
-	result, err := h.db.ExecContext(ctx, `
-		UPDATE change_sets
-		SET publication_status = $1,
-		    publication_lease_token = $2,
-		    publication_lease_until = $3,
-		    updated_at = $4
-		WHERE id = $5
-		  AND status = 'authorized'
-		  AND publication_status <> 'completed'
-		  AND (publication_lease_until IS NULL OR publication_lease_until < $6)
-	`, "publishing", leaseToken, leaseUntil, now, changeSet.ID, now)
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	if affected != 1 {
-		respond.Error(w, http.StatusConflict, errors.New("change set publication is already running or no longer publishable"))
-		return
-	}
-
-	for ordinal, candidateID := range status.PublicationOrder {
-		if _, err := h.db.ExecContext(ctx, `
-			INSERT INTO change_set_publications (
-				change_set_id, candidate_id, ordinal, status, updated_at
-			) VALUES ($1, $2, $3, 'pending', $4)
-			ON CONFLICT (change_set_id, candidate_id) DO NOTHING
-		`, changeSet.ID, candidateID, ordinal, now); err != nil {
-			h.failChangeSetPublication(ctx, changeSet.ID, leaseToken, "blocked", fmt.Sprintf("materialize publication plan: %v", err))
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	members, err := h.loadChangeSetPublicationMembers(ctx, changeSet.ID)
-	if err != nil {
-		h.failChangeSetPublication(ctx, changeSet.ID, leaseToken, "blocked", fmt.Sprintf("load publication plan: %v", err))
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	for i := range members {
-		member := &members[i]
-		if member.Status == "merged" {
-			continue
-		}
-
-		attemptedAt := time.Now().UTC()
-		if _, err := h.db.ExecContext(ctx, `
-			UPDATE change_set_publications
-			SET status = 'publishing',
-			    attempt_count = attempt_count + 1,
-			    last_error = NULL,
-			    started_at = COALESCE(started_at, $1),
-			    updated_at = $1
-			WHERE change_set_id = $2 AND candidate_id = $3
-		`, attemptedAt, changeSet.ID, member.CandidateID); err != nil {
-			h.failChangeSetPublication(ctx, changeSet.ID, leaseToken, "blocked", fmt.Sprintf("checkpoint publication attempt: %v", err))
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-		member.Status = "publishing"
-		member.AttemptCount++
-
-		remote, err := reader.GetPR(ctx, &oauth2.Token{AccessToken: token}, member.Owner, member.RepoName, member.PRNumber)
-		if err != nil {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, fmt.Sprintf("reconcile github pull request: %v", err))
-			return
-		}
-		if remote == nil {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, "github pull request reconciliation returned no result")
-			return
-		}
-		if remote.Head.SHA != member.CommitSHA {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, "github pull request head does not match authorized candidate")
-			return
-		}
-
-		if remote.Merged {
-			if err := h.reconcilePublicationMemberMerged(ctx, changeSet.ID, member, remote.MergeCommitSHA); err != nil {
-				h.failChangeSetPublication(ctx, changeSet.ID, leaseToken, "blocked", err.Error())
-				respond.Error(w, http.StatusInternalServerError, err)
-				return
-			}
-			member.Status = "merged"
-			mergeSHA := remote.MergeCommitSHA
-			member.MergeSHA = &mergeSHA
-			continue
-		}
-		if remote.State != "open" {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, "github pull request is closed without merge")
-			return
-		}
-
-		if err := h.invokeMergeAuthority(ctx, user, member.PullRequestID); err != nil {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, err.Error())
-			return
-		}
-
-		remote, err = reader.GetPR(ctx, &oauth2.Token{AccessToken: token}, member.Owner, member.RepoName, member.PRNumber)
-		if err != nil {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, fmt.Sprintf("confirm github merge: %v", err))
-			return
-		}
-		if remote == nil || !remote.Merged {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, "github did not confirm merged state after merge authority completed")
-			return
-		}
-		if remote.Head.SHA != member.CommitSHA {
-			h.blockPublicationMember(w, ctx, changeSet.ID, leaseToken, member, "github pull request head changed after merge")
-			return
-		}
-		if err := h.checkpointPublicationMemberMerged(ctx, changeSet.ID, member.CandidateID, remote.MergeCommitSHA); err != nil {
-			h.failChangeSetPublication(ctx, changeSet.ID, leaseToken, "blocked", err.Error())
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-		member.Status = "merged"
-		mergeSHA := remote.MergeCommitSHA
-		member.MergeSHA = &mergeSHA
-	}
-
-	completedAt := time.Now().UTC()
-	result, err = h.db.ExecContext(ctx, `
-		UPDATE change_sets
-		SET status = $1,
-		    publication_status = $2,
-		    publication_lease_token = NULL,
-		    publication_lease_until = NULL,
-		    updated_at = $3
-		WHERE id = $4 AND publication_lease_token = $5
-	`, "completed", "completed", completedAt, changeSet.ID, leaseToken)
-	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	affected, err = result.RowsAffected()
-	if err != nil || affected != 1 {
-		respond.Error(w, http.StatusConflict, errors.New("change set publication lease was lost before completion"))
-		return
-	}
-
-	respond.JSON(w, http.StatusOK, publicationResponse(changeSet.ID, "completed", members))
+	respond.JSON(w, http.StatusAccepted, map[string]any{
+		"change_set_id":       changeSet.ID,
+		"publication_status": changeSet.PublicationStatus,
+		"queued":             true,
+	})
 }
 
 func (h *Handler) validateChangeSetPublicationAuthority(ctx context.Context, changeSet *ChangeSet) (*ChangeSetStatusResponse, error) {
