@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -363,24 +364,60 @@ func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID strin
 	if h.db == nil || h.eventBus == nil {
 		return false, nil
 	}
-	var runID string
-	err := h.db.QueryRowContext(ctx, `
-		SELECT id
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, COALESCE(metadata, '{}')
 		FROM agent_runs
 		WHERE task_id = $1 AND status = 'queued'
 		ORDER BY created_at DESC
-		LIMIT 1
-	`, taskID).Scan(&runID)
+	`, taskID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("load existing queued run: %w", err)
+		return false, fmt.Errorf("load existing queued runs: %w", err)
 	}
-	if err := h.publishRunTriggered(ctx, runID, taskID, "task_approved_retry"); err != nil {
+	defer rows.Close()
+
+	for rows.Next() {
+		var runID, metadata string
+		if err := rows.Scan(&runID, &metadata); err != nil {
+			return false, fmt.Errorf("scan existing queued run: %w", err)
+		}
+		initial, err := isInitialQueuedRunMetadata(metadata)
+		if err != nil {
+			return false, fmt.Errorf("classify queued run %s: %w", runID, err)
+		}
+		if !initial {
+			continue
+		}
+		if err := h.publishRunTriggered(ctx, runID, taskID, "task_approved_retry"); err != nil {
+			return false, err
+		}
+		h.logger.Info("republished existing initial queued run for approved task", "task_id", taskID, "run_id", runID)
+		return true, nil
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate existing queued runs: %w", err)
+	}
+	return false, nil
+}
+
+func isInitialQueuedRunMetadata(raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return true, nil
+	}
+	var metadata struct {
+		Trigger          string          `json:"trigger"`
+		HandoffFromRunID string          `json:"handoff_from_run_id"`
+		Retry            json.RawMessage `json:"retry"`
+	}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
 		return false, err
 	}
-	h.logger.Info("republished existing queued run for approved task", "task_id", taskID, "run_id", runID)
+	if len(metadata.Retry) > 0 && string(metadata.Retry) != "null" {
+		return false, nil
+	}
+	if metadata.Trigger == "mailbox_handoff" || metadata.HandoffFromRunID != "" {
+		return false, nil
+	}
 	return true, nil
 }
 
