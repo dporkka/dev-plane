@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-dev-control-plane/readiness"
 	"github.com/ai-dev-control-plane/scheduler"
 )
 
@@ -47,6 +48,7 @@ type schedulerTaskRow struct {
 	RepositoryID string
 	Status       string
 	Metadata     string
+	RunMetadata  string
 }
 
 func NewSchedulerAdmission(db *sql.DB, capacity SchedulerCapacity) *SchedulerAdmission {
@@ -74,11 +76,20 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 		return RunAdmissionDecision{Allowed: true}, nil
 	}
 
-	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
+	candidate, err := a.loadCandidate(ctx, runID, taskID)
 	if err != nil {
 		return RunAdmissionDecision{}, err
 	}
+	if decision, ok, err := validatePersistedAdmission(candidate.RunMetadata); err != nil {
+		return RunAdmissionDecision{}, err
+	} else if ok {
+		return decision, nil
+	}
 
+	config, err := a.resolveSchedulerConfig(ctx, taskID, candidate.Metadata)
+	if err != nil {
+		return RunAdmissionDecision{}, err
+	}
 	if config != nil {
 		for _, dependency := range config.DependsOn {
 			var status string
@@ -196,13 +207,13 @@ func (a *SchedulerAdmission) claimRun(ctx context.Context, runID string) (bool, 
 	staleBefore := now.Add(-schedulerAdmissionClaimTTL)
 	result, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'admitting', updated_at = $2
-		WHERE id = $1
+		SET status = 'admitting', updated_at = $1
+		WHERE id = $2
 		  AND (
 			status = 'queued'
 			OR (status = 'admitting' AND updated_at < $3)
 		  )
-	`, runID, now, staleBefore)
+	`, now, runID, staleBefore)
 	if err != nil {
 		return false, fmt.Errorf("claim scheduler run %s: %w", runID, err)
 	}
@@ -219,35 +230,64 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 	}
 	_, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'queued', updated_at = $2
-		WHERE id = $1 AND status = 'admitting'
-	`, runID, time.Now().UTC())
+		SET status = 'queued', updated_at = $1
+		WHERE id = $2 AND status = 'admitting'
+	`, time.Now().UTC(), runID)
 	if err != nil {
 		return fmt.Errorf("release scheduler run %s: %w", runID, err)
 	}
 	return nil
 }
 
-func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, *schedulerConfig, error) {
+func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, error) {
 	var row schedulerTaskRow
 	var runStatus string
 	err := a.db.QueryRowContext(ctx, `
-		SELECT t.id, t.project_id, t.repository_id, t.status, COALESCE(t.metadata, '{}'), ar.status
+		SELECT t.id, t.project_id, t.repository_id, t.status,
+		       COALESCE(t.metadata, '{}'), ar.status, COALESCE(ar.metadata, '{}')
 		FROM agent_runs ar
 		JOIN tasks t ON t.id = ar.task_id
 		WHERE ar.id = $1 AND t.id = $2 AND t.deleted_at IS NULL
-	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus)
+	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus, &row.RunMetadata)
 	if err != nil {
-		return row, nil, fmt.Errorf("load scheduler candidate: %w", err)
+		return row, fmt.Errorf("load scheduler candidate: %w", err)
 	}
 	if runStatus != "queued" && runStatus != "admitting" {
-		return row, nil, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
+		return row, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
 	}
-	config, err := a.resolveSchedulerConfig(ctx, taskID, row.Metadata)
-	if err != nil {
-		return row, nil, err
+	return row, nil
+}
+
+type persistedAdmissionMetadata struct {
+	Admission *struct {
+		Policy    string           `json:"policy"`
+		Readiness readiness.Report `json:"readiness"`
+	} `json:"admission"`
+}
+
+func validatePersistedAdmission(raw string) (RunAdmissionDecision, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return RunAdmissionDecision{}, false, nil
 	}
-	return row, config, nil
+	var metadata persistedAdmissionMetadata
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return RunAdmissionDecision{}, false, fmt.Errorf("decode persisted admission metadata: %w", err)
+	}
+	if metadata.Admission == nil {
+		return RunAdmissionDecision{}, false, nil
+	}
+	if metadata.Admission.Policy != readiness.AdmissionPolicyVersion {
+		return RunAdmissionDecision{Allowed: false, Reason: "unsupported-admission-policy"}, true, nil
+	}
+	switch metadata.Admission.Readiness.Status {
+	case readiness.StatusReady, readiness.StatusAttention:
+		return RunAdmissionDecision{}, false, nil
+	case readiness.StatusBlocked:
+		return RunAdmissionDecision{Allowed: false, Reason: "readiness-blocked"}, true, nil
+	default:
+		return RunAdmissionDecision{Allowed: false, Reason: "invalid-readiness-status"}, true, nil
+	}
 }
 
 func (a *SchedulerAdmission) loadRunningClaims(ctx context.Context, candidate schedulerTaskRow) ([]scheduler.Task, bool, error) {

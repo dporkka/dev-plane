@@ -54,8 +54,8 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 	if role != models.AgentRoleReviewer || status != "queued" || workspaceID != "workspace-1" {
 		t.Fatalf("next run = role %q status %q workspace %q", role, status, workspaceID)
 	}
-	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") {
-		t.Fatalf("metadata = %s, want handoff trace", metadata)
+	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") || !contains(metadata, "task-readiness-v1") {
+		t.Fatalf("metadata = %s, want handoff trace and inherited admission evidence", metadata)
 	}
 
 	var consumedBy sql.NullString
@@ -298,6 +298,28 @@ func (b *fakeSchedulerStartBudget) CheckRunStart(_ context.Context, runID string
 	return b.allowed, b.reason, b.err
 }
 
+func TestSchedulerAdmissionClaimsQueuedRun(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 1, CPU: 1, MemoryMB: 512})
+	claimed, err := admission.claimRun(context.Background(), "run-a")
+	if err != nil {
+		t.Fatalf("claimRun() error: %v", err)
+	}
+	if !claimed {
+		t.Fatal("claimRun() = false, want true for queued run")
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query run status: %v", err)
+	}
+	if status != "admitting" {
+		t.Fatalf("run status = %q, want admitting", status)
+	}
+}
+
 func TestSchedulerAdmissionBlocksBudgetAfterAtomicClaim(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()
@@ -387,6 +409,85 @@ func TestSchedulerAdmissionDerivesRunningOwnershipFromTaskSpec(t *testing.T) {
 	}
 	if decision.Allowed || !contains(decision.Reason, "ownership-conflict") {
 		t.Fatalf("decision = %#v, want ownership conflict derived from running task spec", decision)
+	}
+}
+
+func TestSchedulerAdmissionRejectsBlockedPersistedReadiness(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTaskWithRunMetadata(
+		t, db, "task-candidate", "run-candidate", "queued", `{}`,
+		`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"blocked","checks":[]}}}`,
+	)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "readiness-blocked" {
+		t.Fatalf("decision = %#v, want readiness-blocked", decision)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-candidate'`).Scan(&status); err != nil {
+		t.Fatalf("query run status: %v", err)
+	}
+	if status != "queued" {
+		t.Fatalf("run status = %q, want queued", status)
+	}
+}
+
+func TestSchedulerAdmissionChecksPersistedReadinessBeforeMutableSchedulerMetadata(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTaskWithRunMetadata(
+		t, db, "task-candidate", "run-candidate", "queued", `{"scheduler":`,
+		`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"blocked","checks":[]}}}`,
+	)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "readiness-blocked" {
+		t.Fatalf("decision = %#v, want readiness-blocked", decision)
+	}
+}
+
+func TestSchedulerAdmissionAcceptsPersistedAttentionReadiness(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTaskWithRunMetadata(
+		t, db, "task-candidate", "run-candidate", "queued", `{}`,
+		`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"attention","checks":[]}}}`,
+	)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if !decision.Allowed {
+		t.Fatalf("decision = %#v, want allowed", decision)
+	}
+}
+
+func TestSchedulerAdmissionRejectsUnknownPersistedAdmissionPolicy(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTaskWithRunMetadata(
+		t, db, "task-candidate", "run-candidate", "queued", `{}`,
+		`{"admission":{"policy":"task-readiness-v999","readiness":{"status":"ready","checks":[]}}}`,
+	)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 4, CPU: 8, MemoryMB: 8192})
+	decision, err := admission.AdmitRun(context.Background(), "run-candidate", "task-candidate")
+	if err != nil {
+		t.Fatalf("AdmitRun() error: %v", err)
+	}
+	if decision.Allowed || decision.Reason != "unsupported-admission-policy" {
+		t.Fatalf("decision = %#v, want unsupported-admission-policy", decision)
 	}
 }
 
@@ -578,6 +679,7 @@ func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
 			status TEXT NOT NULL,
+			metadata TEXT DEFAULT '{}',
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
@@ -596,6 +698,16 @@ func insertSchedulerTask(t *testing.T, db *sql.DB, taskID, runID, status, metada
 		if _, err := db.Exec(`INSERT INTO agent_runs (id, task_id, status) VALUES (?, ?, ?)`, runID, taskID, mapRunStatus(status)); err != nil {
 			t.Fatalf("insert run %s: %v", runID, err)
 		}
+	}
+}
+
+func insertSchedulerTaskWithRunMetadata(t *testing.T, db *sql.DB, taskID, runID, taskStatus, taskMetadata, runMetadata string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO tasks (id, status, metadata) VALUES (?, ?, ?)`, taskID, taskStatus, taskMetadata); err != nil {
+		t.Fatalf("insert task %s: %v", taskID, err)
+	}
+	if _, err := db.Exec(`INSERT INTO agent_runs (id, task_id, status, metadata) VALUES (?, ?, ?, ?)`, runID, taskID, mapRunStatus(taskStatus), runMetadata); err != nil {
+		t.Fatalf("insert run %s: %v", runID, err)
 	}
 }
 
@@ -749,7 +861,8 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata
 		) VALUES (
-			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0, '{}'
+			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0,
+			'{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}'
 		);
 	`, role)
 	if err != nil {

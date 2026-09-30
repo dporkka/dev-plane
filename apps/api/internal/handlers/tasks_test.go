@@ -476,6 +476,11 @@ func TestApproveSpec(t *testing.T) {
 	taskID := "task-1"
 
 	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT repository_id, risk_level, status FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"repository_id", "risk_level", "status"}).
+			AddRow("repo-1", "low", "spec_review"))
+	expectReadyTaskReadiness(mock, taskID)
 	mock.ExpectExec("UPDATE tasks SET status = 'approved'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -523,9 +528,10 @@ func TestApproveSpec_WrongStatus(t *testing.T) {
 	taskID := "task-1"
 
 	expectAuthorizeTask(mock, taskID)
-	mock.ExpectExec("UPDATE tasks SET status = 'approved'").
-		WithArgs(sqlmock.AnyArg(), taskID).
-		WillReturnResult(sqlmock.NewResult(1, 0))
+	mock.ExpectQuery("SELECT repository_id, risk_level, status FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"repository_id", "risk_level", "status"}).
+			AddRow("repo-1", "low", "backlog"))
 
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve-spec", nil)
 	rctx := chi.NewRouteContext()
@@ -539,6 +545,54 @@ func TestApproveSpec_WrongStatus(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestApproveSpec_ReadinessBlocked(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	publisher := &fakeEventPublisher{}
+	h.WithEventPublisher(publisher)
+
+	taskID := "task-1"
+
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT repository_id, risk_level, status FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"repository_id", "risk_level", "status"}).
+			AddRow("repo-1", "low", "spec_review"))
+	mock.ExpectQuery("SELECT implementation_plan, files_to_change, files_to_create, acceptance_criteria").
+		WithArgs(taskID).
+		WillReturnError(sql.ErrNoRows)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/approve-spec", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.ApproveSpec(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error     string `json:"error"`
+		Readiness struct {
+			Status string `json:"status"`
+		} `json:"readiness"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Readiness.Status != "blocked" {
+		t.Fatalf("readiness status = %q, want blocked", resp.Readiness.Status)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("unexpected event published: %q", publisher.subject)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}

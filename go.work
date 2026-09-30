@@ -16,6 +16,7 @@ use (
 	./packages/models
 	./packages/policies
 	./packages/prfactory
+	./packages/readiness
 	./packages/repo-intel
 	./packages/reviewer
 	./packages/runtimes

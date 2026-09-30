@@ -19,17 +19,21 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "inspect":
+		return runInspect(args[1:])
 	case "login":
 		return runLogin(args[1:])
 	case "tasks":
 		if len(args) < 2 {
-			return fmt.Errorf("usage: dev-plane tasks <list|get|create>")
+			return fmt.Errorf("usage: dev-plane tasks <list|get|create|readiness>")
 		}
 		switch args[1] {
 		case "list":
 			return runTasksList(args[2:])
 		case "get":
 			return runTasksGet(args[2:])
+		case "readiness":
+			return runTasksReadiness(args[2:])
 		case "create":
 			return runTasksCreate(args[2:])
 		default:
@@ -71,9 +75,11 @@ func printUsage() {
 	fmt.Println(`dev-plane CLI
 
 Usage:
+  dev-plane inspect [--path=<repo>] [--json]
   dev-plane login --base-url=<url>
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
+  dev-plane tasks readiness <id>
   dev-plane tasks create --project-id=<id> --repository-id=<id> --title=<title> [--description=<desc>]
   dev-plane runs list --task-id=<id>
   dev-plane runs logs <id>

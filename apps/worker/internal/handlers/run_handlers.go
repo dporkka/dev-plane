@@ -193,6 +193,7 @@ type completedRunContext struct {
 	AgentRole   string
 	Model       string
 	Provider    string
+	Metadata    string
 }
 
 type pendingHandoff struct {
@@ -228,12 +229,17 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 
 	nextRunID := uuid.New().String()
 	now := time.Now().UTC()
-	metadata, err := json.Marshal(map[string]any{
-		"trigger":             "mailbox_handoff",
-		"handoff_message_id":  handoff.ID,
-		"handoff_from_run_id": run.RunID,
-		"handoff_from_agent":  run.AgentRole,
-	})
+	metadataValues := map[string]any{}
+	if strings.TrimSpace(run.Metadata) != "" {
+		if err := json.Unmarshal([]byte(run.Metadata), &metadataValues); err != nil {
+			return false, "", "", fmt.Errorf("decode parent run metadata: %w", err)
+		}
+	}
+	metadataValues["trigger"] = "mailbox_handoff"
+	metadataValues["handoff_message_id"] = handoff.ID
+	metadataValues["handoff_from_run_id"] = run.RunID
+	metadataValues["handoff_from_agent"] = run.AgentRole
+	metadata, err := json.Marshal(metadataValues)
 	if err != nil {
 		return false, "", "", fmt.Errorf("marshal follow-on run metadata: %w", err)
 	}
@@ -300,13 +306,13 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 }
 
 func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.AgentRunEvent) (*completedRunContext, error) {
-	var workspaceID, model, provider sql.NullString
+	var workspaceID, model, provider, metadata sql.NullString
 	run := &completedRunContext{RunID: event.RunID}
 	err := h.db.QueryRowContext(ctx, `
-		SELECT task_id, workspace_id, agent_role, model, provider
+		SELECT task_id, workspace_id, agent_role, model, provider, metadata
 		FROM agent_runs
 		WHERE id = $1
-	`, event.RunID).Scan(&run.TaskID, &workspaceID, &run.AgentRole, &model, &provider)
+	`, event.RunID).Scan(&run.TaskID, &workspaceID, &run.AgentRole, &model, &provider, &metadata)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("completed run %s not found", event.RunID)
@@ -326,6 +332,10 @@ func (h *RunHandler) loadCompletedRunContext(ctx context.Context, event events.A
 	run.Provider = "openai"
 	if provider.Valid && strings.TrimSpace(provider.String) != "" {
 		run.Provider = provider.String
+	}
+	run.Metadata = "{}"
+	if metadata.Valid && strings.TrimSpace(metadata.String) != "" {
+		run.Metadata = metadata.String
 	}
 	return run, nil
 }

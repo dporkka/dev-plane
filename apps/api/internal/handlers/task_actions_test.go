@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -211,20 +213,21 @@ func TestStartRun(t *testing.T) {
 
 	expectAuthorizeTask(mock, taskID)
 	// Get task details - must be approved
-	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch").
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level").
 		WithArgs(taskID).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch"}).
-			AddRow("approved", "proj-1", "repo-1", workspaceID, "main"))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch", "risk_level"}).
+			AddRow("approved", "proj-1", "repo-1", workspaceID, "main", "low"))
 
-	// Insert agent run
-	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	expectReadyTaskReadiness(mock, taskID)
 
-	// Update task status to running
+	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE tasks SET status = 'running'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO agent_runs").
+		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, admissionMetadataMatcher{}, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
 	rctx := chi.NewRouteContext()
@@ -256,6 +259,47 @@ func TestStartRun(t *testing.T) {
 	}
 }
 
+func TestStartRunRejectsConcurrentInitialRunClaim(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch", "risk_level"}).
+			AddRow("approved", "proj-1", "repo-1", nil, "main", "low"))
+	expectReadyTaskReadiness(mock, taskID)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE tasks SET status = 'running'").
+		WithArgs(sqlmock.AnyArg(), taskID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.StartRun(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "initial run already claimed" {
+		t.Fatalf("error = %q, want initial run already claimed", resp["error"])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
 func TestStartRun_NotApproved(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
@@ -264,10 +308,10 @@ func TestStartRun_NotApproved(t *testing.T) {
 
 	expectAuthorizeTask(mock, taskID)
 	// Get task details - not approved
-	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch").
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level").
 		WithArgs(taskID).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch"}).
-			AddRow("backlog", "proj-1", "repo-1", nil, "main"))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch", "risk_level"}).
+			AddRow("backlog", "proj-1", "repo-1", nil, "main", "low"))
 
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
 	rctx := chi.NewRouteContext()
@@ -304,10 +348,14 @@ func TestRetryRun(t *testing.T) {
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("failed"))
+	mock.ExpectQuery("SELECT metadata FROM agent_runs").
+		WithArgs(runID).
+		WillReturnRows(sqlmock.NewRows([]string{"metadata"}).
+			AddRow(`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}`))
 
 	// Insert new agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, nil, "implementer", "gpt-4o", "openai", sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), taskID, nil, "implementer", "gpt-4o", "openai", retryAdmissionMetadataMatcher{originalRunID: runID}, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Update task status to running
@@ -421,4 +469,123 @@ func TestRetryRun_TaskNotRetryable(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
+}
+
+type admissionMetadataMatcher struct{}
+
+func (admissionMetadataMatcher) Match(value driver.Value) bool {
+	var data []byte
+	switch typed := value.(type) {
+	case string:
+		data = []byte(typed)
+	case []byte:
+		data = typed
+	default:
+		return false
+	}
+	var metadata struct {
+		Admission struct {
+			Policy    string `json:"policy"`
+			Readiness struct {
+				Status string `json:"status"`
+			} `json:"readiness"`
+		} `json:"admission"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return false
+	}
+	return metadata.Admission.Policy == "task-readiness-v1" &&
+		metadata.Admission.Readiness.Status == "ready"
+}
+
+func expectReadyTaskReadiness(mock sqlmock.Sqlmock, taskID string) {
+	mock.ExpectQuery("SELECT implementation_plan, files_to_change, files_to_create, acceptance_criteria").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"implementation_plan", "files_to_change", "files_to_create", "acceptance_criteria",
+			"test_plan", "rollback_plan", "required_approvals",
+		}).AddRow(
+			`["implement change","add tests"]`,
+			`["apps/api/handler.go"]`,
+			`[]`,
+			`["request succeeds"]`,
+			"go test ./...",
+			"",
+			`[]`,
+		))
+}
+
+func TestStartRunBlockedByTaskReadiness(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"status", "project_id", "repository_id", "workspace_id", "target_branch", "risk_level",
+		}).AddRow("approved", "proj-1", "repo-1", nil, "main", "low"))
+	mock.ExpectQuery("SELECT implementation_plan, files_to_change, files_to_create, acceptance_criteria").
+		WithArgs(taskID).
+		WillReturnError(sql.ErrNoRows)
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.StartRun(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Error     string `json:"error"`
+		Readiness struct {
+			Status string `json:"status"`
+		} `json:"readiness"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Error != "task readiness blocked" {
+		t.Fatalf("error = %q, want task readiness blocked", resp.Error)
+	}
+	if resp.Readiness.Status != "blocked" {
+		t.Fatalf("readiness status = %q, want blocked", resp.Readiness.Status)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+type retryAdmissionMetadataMatcher struct {
+	originalRunID string
+}
+
+func (m retryAdmissionMetadataMatcher) Match(value driver.Value) bool {
+	var data []byte
+	switch typed := value.(type) {
+	case string:
+		data = []byte(typed)
+	case []byte:
+		data = typed
+	default:
+		return false
+	}
+	var metadata struct {
+		Admission struct {
+			Policy string `json:"policy"`
+		} `json:"admission"`
+		Retry struct {
+			OriginalRunID string `json:"original_run_id"`
+		} `json:"retry"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return false
+	}
+	return metadata.Admission.Policy == "task-readiness-v1" &&
+		metadata.Retry.OriginalRunID == m.originalRunID
 }

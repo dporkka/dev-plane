@@ -8,10 +8,11 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -89,6 +90,11 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
+	runMetadata, err := approvedTaskRunMetadata(event.Data)
+	if err != nil {
+		return err
+	}
+
 	// Load task details
 	var task struct {
 		ID            string
@@ -97,7 +103,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		CloneURL      string
 		DefaultBranch string
 	}
-	err := h.db.QueryRow(`
+	err = h.db.QueryRow(`
 		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch
 		FROM tasks t
 		JOIN repositories r ON r.id = t.repository_id
@@ -105,14 +111,31 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return msg.Ack() // Task not found, ack to remove from queue
+			return ackMessage(msg) // Task not found, ack to remove from queue
 		}
 		return fmt.Errorf("load task: %w", err)
 	}
 
-	// Create workspace
-	workspaceID := uuid.New().String()
 	now := time.Now().UTC()
+	claimed, err := h.claimApprovedTaskForInitialRun(context.Background(), task.ID, now)
+	if err != nil {
+		return err
+	}
+	if !claimed {
+		h.logger.Info("initial run already claimed; skipping duplicate approval event", "task_id", task.ID)
+		return ackMessage(msg)
+	}
+	releaseClaim := true
+	defer func() {
+		if releaseClaim {
+			if releaseErr := h.releaseInitialRunClaim(context.Background(), task.ID); releaseErr != nil {
+				h.logger.Error("failed to release initial run claim", "task_id", task.ID, "error", releaseErr)
+			}
+		}
+	}()
+
+	// Create workspace only after winning the atomic initial-run claim.
+	workspaceID := uuid.New().String()
 	workspace, err := h.provisionWorkspace(context.Background(), approvedTask{
 		ID:            task.ID,
 		RepositoryID:  task.RepositoryID,
@@ -125,7 +148,19 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return fmt.Errorf("provision workspace runtime: %w", err)
 	}
 
-	_, err = h.db.Exec(`
+	tx, err := h.db.BeginTx(context.Background(), nil)
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("begin initial run transaction: %w", err)
+	}
+	txCommitted := false
+	defer func() {
+		if !txCommitted {
+			_ = tx.Rollback()
+		}
+	}()
+
+	_, err = tx.Exec(`
 		INSERT INTO workspaces (
 			id, repository_id, task_id, name, branch, base_branch,
 			worktree_path, runtime_provider, runtime_session_id, status,
@@ -138,29 +173,47 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		now,
 	)
 	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
 		return fmt.Errorf("create workspace: %w", err)
 	}
 
-	// Update task with workspace ID and transition to running
-	_, err = h.db.Exec(`
-		UPDATE tasks SET workspace_id = $1, status = 'running', started_at = $2, updated_at = $2
-		WHERE id = $3 AND deleted_at IS NULL
+	result, err := tx.Exec(`
+		UPDATE tasks
+		SET workspace_id = $1, started_at = COALESCE(started_at, $2), updated_at = $2
+		WHERE id = $3 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
 	`, workspaceID, now, task.ID)
 	if err != nil {
-		return fmt.Errorf("update task with workspace: %w", err)
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("attach workspace to claimed task: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("check workspace attachment: %w", err)
+	}
+	if rows != 1 {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("claimed task %s changed before workspace attachment", task.ID)
 	}
 
-	// Create agent run
+	// Create agent run and preserve the approval-time admission evidence.
 	runID := uuid.New().String()
-	_, err = h.db.Exec(`
+	_, err = tx.Exec(`
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
 			status, total_cost, metadata, created_at, updated_at
-		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, task.ID, workspaceID, now)
+		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
+	`, runID, task.ID, workspaceID, runMetadata, now)
 	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
 		return fmt.Errorf("create agent run: %w", err)
 	}
+	if err := tx.Commit(); err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("commit initial run transaction: %w", err)
+	}
+	txCommitted = true
+	releaseClaim = false
 
 	h.logger.Info("workspace and agent run created",
 		"task_id", task.ID,
@@ -195,6 +248,46 @@ type provisionedWorkspace struct {
 	RuntimeProvider  string
 	RuntimeSessionID *string
 	Status           string
+}
+
+func (h *TaskHandler) claimApprovedTaskForInitialRun(ctx context.Context, taskID string, now time.Time) (bool, error) {
+	result, err := h.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', updated_at = $1
+		WHERE id = $2 AND status = 'approved' AND workspace_id IS NULL AND deleted_at IS NULL
+	`, now, taskID)
+	if err != nil {
+		return false, fmt.Errorf("claim approved task for initial run: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check initial run claim: %w", err)
+	}
+	return rows == 1, nil
+}
+
+func (h *TaskHandler) releaseInitialRunClaim(ctx context.Context, taskID string) error {
+	_, err := h.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'approved', updated_at = $1
+		WHERE id = $2 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
+	`, time.Now().UTC(), taskID)
+	if err != nil {
+		return fmt.Errorf("release initial run claim: %w", err)
+	}
+	return nil
+}
+
+func (h *TaskHandler) cleanupProvisionedWorkspace(ctx context.Context, workspace provisionedWorkspace) {
+	if h.runtimeProvider == nil || workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID == "" {
+		return
+	}
+	if err := h.runtimeProvider.DestroyWorkspace(ctx, *workspace.RuntimeSessionID); err != nil {
+		h.logger.Warn("failed to cleanup provisioned workspace after initial-run failure",
+			"runtime_session_id", *workspace.RuntimeSessionID,
+			"error", err,
+		)
+	}
 }
 
 func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask, now time.Time) (provisionedWorkspace, error) {
@@ -252,28 +345,79 @@ func shortID(id string) string {
 	return id[:8]
 }
 
+func approvedTaskRunMetadata(data json.RawMessage) (string, error) {
+	if len(data) == 0 || string(data) == "null" {
+		return "{}", nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return "", fmt.Errorf("decode approved task metadata: %w", err)
+	}
+	normalized, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode approved task metadata: %w", err)
+	}
+	return string(normalized), nil
+}
+
 func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID string) (bool, error) {
 	if h.db == nil || h.eventBus == nil {
 		return false, nil
 	}
-	var runID string
-	err := h.db.QueryRowContext(ctx, `
-		SELECT id
+	rows, err := h.db.QueryContext(ctx, `
+		SELECT id, COALESCE(metadata, '{}')
 		FROM agent_runs
 		WHERE task_id = $1 AND status = 'queued'
 		ORDER BY created_at DESC
-		LIMIT 1
-	`, taskID).Scan(&runID)
+	`, taskID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("load existing queued run: %w", err)
+		return false, fmt.Errorf("load existing queued runs: %w", err)
 	}
-	if err := h.publishRunTriggered(ctx, runID, taskID, "task_approved_retry"); err != nil {
+	defer rows.Close()
+
+	for rows.Next() {
+		var runID, metadata string
+		if err := rows.Scan(&runID, &metadata); err != nil {
+			return false, fmt.Errorf("scan existing queued run: %w", err)
+		}
+		initial, err := isInitialQueuedRunMetadata(metadata)
+		if err != nil {
+			return false, fmt.Errorf("classify queued run %s: %w", runID, err)
+		}
+		if !initial {
+			continue
+		}
+		if err := h.publishRunTriggered(ctx, runID, taskID, "task_approved_retry"); err != nil {
+			return false, err
+		}
+		h.logger.Info("republished existing initial queued run for approved task", "task_id", taskID, "run_id", runID)
+		return true, nil
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("iterate existing queued runs: %w", err)
+	}
+	return false, nil
+}
+
+func isInitialQueuedRunMetadata(raw string) (bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return true, nil
+	}
+	var metadata struct {
+		Trigger          string          `json:"trigger"`
+		HandoffFromRunID string          `json:"handoff_from_run_id"`
+		Retry            json.RawMessage `json:"retry"`
+	}
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
 		return false, err
 	}
-	h.logger.Info("republished existing queued run for approved task", "task_id", taskID, "run_id", runID)
+	if len(metadata.Retry) > 0 && string(metadata.Retry) != "null" {
+		return false, nil
+	}
+	if metadata.Trigger == "mailbox_handoff" || metadata.HandoffFromRunID != "" {
+		return false, nil
+	}
 	return true, nil
 }
 

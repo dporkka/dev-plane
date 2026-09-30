@@ -14,6 +14,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/readiness"
 )
 
 // Task represents a task record.
@@ -347,6 +348,38 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var repositoryID, riskLevel, currentStatus string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT repository_id, risk_level, status
+		FROM tasks
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id).Scan(&repositoryID, &riskLevel, &currentStatus)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("task not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if currentStatus != "spec_review" {
+		respond.Error(w, http.StatusBadRequest, errors.New("task not in spec_review status"))
+		return
+	}
+
+	readinessReport, err := h.assessTaskReadiness(ctx, id, repositoryID, riskLevel)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if readinessReport.Status == "blocked" {
+		respond.JSON(w, http.StatusConflict, map[string]any{
+			"error":     "task readiness blocked",
+			"readiness": readinessReport,
+		})
+		return
+	}
+
 	now := time.Now().UTC()
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE tasks SET status = 'approved', updated_at = $1
@@ -359,7 +392,7 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		respond.Error(w, http.StatusBadRequest, errors.New("task not in spec_review status or not found"))
+		respond.Error(w, http.StatusConflict, errors.New("task status changed before approval"))
 		return
 	}
 
@@ -367,6 +400,12 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(events.TaskEvent{
 			TaskID: id,
 			Status: "approved",
+			Data: mustRawMessage(map[string]any{
+				"admission": map[string]any{
+					"policy":    readiness.AdmissionPolicyVersion,
+					"readiness": readinessReport,
+				},
+			}),
 		})
 		if pubErr := h.eventBus.Publish(events.TaskApproved, data); pubErr != nil {
 			h.logger.Warn("failed to publish task approved event", "task_id", id, "error", pubErr)
