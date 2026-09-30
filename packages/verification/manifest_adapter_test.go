@@ -80,3 +80,95 @@ func TestContractFromManifestDefaultsAllValidationCommandsToRequired(t *testing.
 		}
 	}
 }
+
+
+func TestContractFromPlanBindsAffectedScopeAndRequiresEveryPlannedCheck(t *testing.T) {
+	plan := repomanifest.CheckPlan{
+		ChangedFiles:       []string{"apps/api/routes.go", "packages/shared/schema.go"},
+		ChangedComponents:  []string{"shared"},
+		AffectedComponents: []string{"api", "shared"},
+		Checks: []repomanifest.PlannedCheck{
+			{
+				Component: "api",
+				Kind:      "test",
+				Command:   repomanifest.Command{Run: "go test ./apps/api/...", TimeoutSeconds: 300},
+			},
+			{
+				Component: "shared",
+				Kind:      "typecheck",
+				Command:   repomanifest.Command{Run: "go test ./packages/shared/...", TimeoutSeconds: 120},
+			},
+		},
+	}
+
+	contract, err := ContractFromPlan(plan)
+	if err != nil {
+		t.Fatalf("ContractFromPlan() error = %v", err)
+	}
+	if contract.Scope == nil {
+		t.Fatal("ContractFromPlan() Scope = nil")
+	}
+	if got := contract.Scope.ChangedFiles; len(got) != 2 || got[0] != "apps/api/routes.go" || got[1] != "packages/shared/schema.go" {
+		t.Fatalf("Scope.ChangedFiles = %#v", got)
+	}
+	if got := contract.Scope.AffectedComponents; len(got) != 2 || got[0] != "api" || got[1] != "shared" {
+		t.Fatalf("Scope.AffectedComponents = %#v", got)
+	}
+	if len(contract.Checks) != 2 {
+		t.Fatalf("len(Checks) = %d, want 2", len(contract.Checks))
+	}
+	for _, check := range contract.Checks {
+		if !check.Required {
+			t.Fatalf("check %q required = false, want true", check.ID)
+		}
+	}
+	if contract.Checks[0].ID != "api:test" || contract.Checks[1].ID != "shared:typecheck" {
+		t.Fatalf("check IDs = %q, %q", contract.Checks[0].ID, contract.Checks[1].ID)
+	}
+}
+
+func TestContractFromPlanRejectsEmptyPlan(t *testing.T) {
+	if _, err := ContractFromPlan(repomanifest.CheckPlan{}); err == nil {
+		t.Fatal("ContractFromPlan() error = nil, want empty plan error")
+	}
+}
+
+func TestContractDigestChangesWhenValidationScopeChanges(t *testing.T) {
+	first, err := ContractFromPlan(repomanifest.CheckPlan{
+		ChangedFiles:       []string{"apps/api/a.go"},
+		ChangedComponents:  []string{"api"},
+		AffectedComponents: []string{"api"},
+		Checks: []repomanifest.PlannedCheck{{
+			Component: "api",
+			Kind:      "test",
+			Command:   repomanifest.Command{Run: "go test ./apps/api/..."},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ContractFromPlan(repomanifest.CheckPlan{
+		ChangedFiles:       []string{"apps/api/b.go"},
+		ChangedComponents:  []string{"api"},
+		AffectedComponents: []string{"api"},
+		Checks: []repomanifest.PlannedCheck{{
+			Component: "api",
+			Kind:      "test",
+			Command:   repomanifest.Command{Run: "go test ./apps/api/..."},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstDigest, err := first.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := second.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDigest == secondDigest {
+		t.Fatal("contract digest did not change when changed-file scope changed")
+	}
+}
