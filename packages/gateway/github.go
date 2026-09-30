@@ -59,8 +59,11 @@ type GitHubPR struct {
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
-	State     string    `json:"state"`
-	HTMLURL   string    `json:"html_url"`
+	State          string     `json:"state"`
+	HTMLURL        string     `json:"html_url"`
+	Merged         bool       `json:"merged"`
+	MergeCommitSHA string     `json:"merge_commit_sha"`
+	MergedAt       *time.Time `json:"merged_at,omitempty"`
 	Head      struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
@@ -220,6 +223,16 @@ func (g *GitHubGateway) CreateWebhook(ctx context.Context, token *oauth2.Token, 
 		return 0, fmt.Errorf("create github webhook: %w", err)
 	}
 	return result.ID, nil
+}
+
+// GetPR retrieves a pull request for reconciliation.
+func (g *GitHubGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*GitHubPR, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", g.apiBaseURL, owner, name, number)
+	var pr GitHubPR
+	if err := g.get(ctx, token, url, &pr); err != nil {
+		return nil, fmt.Errorf("get github pr %s/%s#%d: %w", owner, name, number, err)
+	}
+	return &pr, nil
 }
 
 // CreatePR creates a new pull request.
