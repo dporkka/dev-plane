@@ -2,11 +2,13 @@ package prfactory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
 
+	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
@@ -282,8 +284,8 @@ func TestGetRepoNamespaceName_InvalidFullName(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid full_name")
 	}
-	if !strings.Contains(err.Error(), "invalid repository full_name") {
-		t.Errorf("error = %v", err)
+	if !errors.Is(err, forge.ErrInvalidRequest) {
+		t.Errorf("error = %v, want forge.ErrInvalidRequest", err)
 	}
 }
 
