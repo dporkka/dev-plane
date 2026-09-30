@@ -15,6 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ai-dev-control-plane/events"
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
 )
@@ -886,4 +887,178 @@ func insertHandoffFixture(t *testing.T, db *sql.DB, id, runID, toAgent string) {
 
 func contains(value, substr string) bool {
 	return strings.Contains(value, substr)
+}
+
+
+func TestHandleRunFailedSchedulesBoundedAutomaticRetry(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	})
+
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != "running" {
+		t.Fatalf("task status = %q, want running", taskStatus)
+	}
+
+	var retryRunID, retryStatus, retryMetadata string
+	if err := db.QueryRow(`
+		SELECT id, status, metadata
+		FROM agent_runs
+		WHERE id <> 'run-1'
+		LIMIT 1
+	`).Scan(&retryRunID, &retryStatus, &retryMetadata); err != nil {
+		t.Fatalf("query retry run: %v", err)
+	}
+	if retryRunID == "" || retryStatus != "queued" {
+		t.Fatalf("retry run = id %q status %q", retryRunID, retryStatus)
+	}
+	var metadata struct {
+		Failure any `json:"failure"`
+		Retry struct {
+			OriginalRunID string                    `json:"original_run_id"`
+			AutoAttempt   int                       `json:"auto_attempt"`
+			Previous      runfailure.Classification `json:"previous_failure"`
+		} `json:"retry"`
+	}
+	if err := json.Unmarshal([]byte(retryMetadata), &metadata); err != nil {
+		t.Fatalf("decode retry metadata: %v", err)
+	}
+	if metadata.Failure != nil {
+		t.Fatalf("new run inherited active failure: %#v", metadata.Failure)
+	}
+	if metadata.Retry.OriginalRunID != "run-1" || metadata.Retry.AutoAttempt != 1 {
+		t.Fatalf("retry metadata = %+v", metadata.Retry)
+	}
+	if metadata.Retry.Previous.Category != runfailure.CategoryInfrastructure {
+		t.Fatalf("previous failure = %+v", metadata.Retry.Previous)
+	}
+	if publisher.subject != events.RunTriggered {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.RunTriggered)
+	}
+	if !contains(string(publisher.data), retryRunID) {
+		t.Fatalf("published retry event = %s, want run %s", publisher.data, retryRunID)
+	}
+}
+
+func TestHandleRunFailedStopsAutomaticRetryAtBudget(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		UPDATE agent_runs
+		SET status = 'failed', metadata = '{"retry":{"auto_attempt":2}}'
+		WHERE id = 'run-1'
+	`); err != nil {
+		t.Fatalf("mark retried run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	})
+
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&count); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("run count = %d, want 1 after exhausted retry budget", count)
+	}
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != "failed" {
+		t.Fatalf("task status = %q, want failed", taskStatus)
+	}
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.TaskFailed)
+	}
+}
+
+func TestHandleRunFailedDoesNotAutoRetryFreshEnvironmentDisposition(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryResource,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetryFreshEnvironment,
+		Stage:       "verification",
+		Source:      "build",
+	})
+
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&count); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("run count = %d, want no automatic fresh-environment retry", count)
+	}
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.TaskFailed)
+	}
+}
+
+func failedRunMessage(t *testing.T, runID, taskID string, classification runfailure.Classification) *nats.Msg {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"error":   "verification failed",
+		"failure": classification,
+	})
+	if err != nil {
+		t.Fatalf("marshal failure data: %v", err)
+	}
+	event, err := json.Marshal(events.AgentRunEvent{
+		RunID:     runID,
+		TaskID:    taskID,
+		AgentRole: models.AgentRoleImplementer,
+		Status:    models.AgentRunStatusFailed,
+		Data:      data,
+	})
+	if err != nil {
+		t.Fatalf("marshal failed run event: %v", err)
+	}
+	return &nats.Msg{Data: event}
 }
