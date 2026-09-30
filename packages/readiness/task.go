@@ -20,31 +20,6 @@ type TaskAssessmentInput struct {
 	BuildCommand       string   `json:"build_command,omitempty"`
 }
 
-type VerificationStep struct {
-	Evidence string
-	Command  string
-}
-
-// BuildVerificationPlan returns the canonical machine-verification steps shared
-// by admission and execution. Tests are always required; secondary checks are
-// required only when the repository has an explicit command for them.
-func BuildVerificationPlan(testCommand, lintCommand, typecheckCommand, buildCommand string) []VerificationStep {
-	plan := []VerificationStep{{
-		Evidence: "tests",
-		Command:  strings.TrimSpace(testCommand),
-	}}
-	for _, step := range []VerificationStep{
-		{Evidence: "lint", Command: strings.TrimSpace(lintCommand)},
-		{Evidence: "typecheck", Command: strings.TrimSpace(typecheckCommand)},
-		{Evidence: "build", Command: strings.TrimSpace(buildCommand)},
-	} {
-		if step.Command != "" {
-			plan = append(plan, step)
-		}
-	}
-	return plan
-}
-
 func AssessTask(input TaskAssessmentInput) Report {
 	checks := []Check{
 		taskSpecCheck(input),

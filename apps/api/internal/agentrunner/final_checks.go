@@ -49,7 +49,7 @@ func (r *Runner) executeFinalChecks(
 	workspace *models.Workspace,
 	workspacePath string,
 ) (finalCheckReport, error) {
-	plan, err := r.loadVerificationPlan(ctx, task, workspace)
+	plan, err := r.loadFinalVerificationPlan(ctx, task, workspace)
 	if err != nil {
 		return finalCheckReport{}, err
 	}
@@ -65,19 +65,19 @@ func (r *Runner) executeFinalChecks(
 
 	report := finalCheckReport{
 		Passed:   true,
-		Results:  make(map[string]any, len(plan)),
-		Evidence: make([]scheduler.Evidence, 0, len(plan)),
+		Results:  make(map[string]any, len(plan.Checks)),
+		Evidence: make([]scheduler.Evidence, 0, len(plan.Checks)),
 	}
-	for _, step := range plan {
+	for _, step := range plan.Checks {
 		toolName := "run_command"
-		if step.Evidence == "tests" {
+		if step.Name == "tests" {
 			toolName = "run_tests"
 		}
 		input := json.RawMessage(`{}`)
 		if step.Command != "" {
 			encoded, err := json.Marshal(map[string]any{"command": step.Command})
 			if err != nil {
-				return finalCheckReport{}, fmt.Errorf("encode %s verification command: %w", step.Evidence, err)
+				return finalCheckReport{}, fmt.Errorf("encode %s verification command: %w", step.Name, err)
 			}
 			input = encoded
 		}
@@ -100,12 +100,12 @@ func (r *Runner) executeFinalChecks(
 			status = scheduler.EvidenceStatusPassed
 		}
 		report.Evidence = append(report.Evidence, scheduler.Evidence{
-			Name:    step.Evidence,
+			Name:    step.Name,
 			Kind:    "command",
 			Status:  status,
 			Command: step.Command,
 		})
-		report.Results[step.Evidence] = map[string]any{
+		report.Results[step.Name] = map[string]any{
 			"passed":  passed,
 			"command": step.Command,
 			"detail":  detail,
@@ -132,11 +132,11 @@ func (r *Runner) executeFinalChecks(
 	return report, nil
 }
 
-func (r *Runner) loadVerificationPlan(
+func (r *Runner) loadFinalVerificationPlan(
 	ctx context.Context,
 	task *models.Task,
 	workspace *models.Workspace,
-) ([]readiness.VerificationStep, error) {
+) (readiness.VerificationPlan, error) {
 	repositoryID := ""
 	if task != nil {
 		repositoryID = strings.TrimSpace(task.RepositoryID)
@@ -145,7 +145,7 @@ func (r *Runner) loadVerificationPlan(
 		repositoryID = strings.TrimSpace(workspace.RepositoryID)
 	}
 	if r == nil || r.db == nil || repositoryID == "" {
-		return readiness.BuildVerificationPlan("", "", "", ""), nil
+		return readiness.VerificationPlan{}, nil
 	}
 
 	var testCommand, lintCommand, typecheckCommand, buildCommand sql.NullString
@@ -157,7 +157,7 @@ func (r *Runner) loadVerificationPlan(
 		LIMIT 1
 	`, repositoryID).Scan(&testCommand, &lintCommand, &typecheckCommand, &buildCommand)
 	if errors.Is(err, sql.ErrNoRows) {
-		return readiness.BuildVerificationPlan("", "", "", ""), nil
+		return readiness.VerificationPlan{}, nil
 	}
 	if err != nil {
 		// Older/minimal runner contexts may not have the detection schema. They
@@ -165,16 +165,16 @@ func (r *Runner) loadVerificationPlan(
 		// observer is installed, in which case missing configuration is an
 		// authority-path error and must fail closed.
 		if r.completionObserver == nil && strings.Contains(strings.ToLower(err.Error()), "no such table") {
-			return readiness.BuildVerificationPlan("", "", "", ""), nil
+			return readiness.VerificationPlan{}, nil
 		}
-		return nil, fmt.Errorf("load final verification commands: %w", err)
+		return readiness.VerificationPlan{}, fmt.Errorf("load final verification commands: %w", err)
 	}
-	return readiness.BuildVerificationPlan(
-		testCommand.String,
-		lintCommand.String,
-		typecheckCommand.String,
-		buildCommand.String,
-	), nil
+	return readiness.BuildVerificationPlan(readiness.VerificationCommands{
+		Test:      testCommand.String,
+		Lint:      lintCommand.String,
+		Typecheck: typecheckCommand.String,
+		Build:     buildCommand.String,
+	}), nil
 }
 
 func decodeFinalCheckResult(toolName string, output json.RawMessage, toolErr error) (bool, string, error) {

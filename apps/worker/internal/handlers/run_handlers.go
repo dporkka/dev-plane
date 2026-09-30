@@ -96,6 +96,10 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 
 	h.logger.Info("handling run completed", "run_id", event.RunID, "task_id", event.TaskID)
 
+	if err := h.verifyCompletedRunCapsule(context.Background(), event); err != nil {
+		return err
+	}
+
 	if scheduled, nextRunID, nextRole, err := h.scheduleFollowOnRun(context.Background(), event); err != nil {
 		return err
 	} else if scheduled {
