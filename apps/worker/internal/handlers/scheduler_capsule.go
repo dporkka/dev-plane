@@ -99,13 +99,7 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		dependsOn = append(dependsOn, config.DependsOn...)
 	}
 
-	if len(requiredEvidence) == 0 {
-		requiredEvidence, err = a.requiredEvidenceForRepository(ctx, repositoryID)
-		if err != nil {
-			return scheduler.TaskCapsule{}, err
-		}
-	}
-	required, err := normalizeCapsuleEvidenceRequirements(requiredEvidence)
+	required, err := a.resolveCapsuleEvidenceRequirements(ctx, repositoryID, requiredEvidence)
 	if err != nil {
 		return scheduler.TaskCapsule{}, err
 	}
@@ -147,7 +141,15 @@ func normalizeCapsuleEvidenceRequirements(values []string) ([]string, error) {
 	return out, nil
 }
 
-func (a *SchedulerAdmission) requiredEvidenceForRepository(ctx context.Context, repositoryID string) ([]string, error) {
+func (a *SchedulerAdmission) resolveCapsuleEvidenceRequirements(
+	ctx context.Context,
+	repositoryID string,
+	explicit []string,
+) ([]string, error) {
+	if len(explicit) > 0 {
+		return normalizeCapsuleEvidenceRequirements(explicit)
+	}
+
 	var testCommand, lintCommand, typecheckCommand, buildCommand sql.NullString
 	err := a.db.QueryRowContext(ctx, `
 		SELECT test_command, lint_command, typecheck_command, build_command
@@ -162,21 +164,17 @@ func (a *SchedulerAdmission) requiredEvidenceForRepository(ctx context.Context, 
 		&buildCommand,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		err = nil
+		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load repository verification commands: %w", err)
+		return nil, fmt.Errorf("load project verification commands: %w", err)
 	}
 
-	plan := readiness.BuildVerificationPlan(
-		testCommand.String,
-		lintCommand.String,
-		typecheckCommand.String,
-		buildCommand.String,
-	)
-	required := make([]string, 0, len(plan))
-	for _, step := range plan {
-		required = append(required, step.Evidence)
-	}
-	return required, nil
+	plan := readiness.BuildVerificationPlan(readiness.VerificationCommands{
+		Test:      testCommand.String,
+		Lint:      lintCommand.String,
+		Typecheck: typecheckCommand.String,
+		Build:     buildCommand.String,
+	})
+	return plan.RequiredEvidence(), nil
 }

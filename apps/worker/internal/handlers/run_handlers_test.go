@@ -847,6 +847,25 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 			consumed_by_run_id TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
+		CREATE TABLE task_capsules (
+			agent_run_id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			workspace_id TEXT NOT NULL,
+			version INTEGER NOT NULL,
+			agent_id TEXT NOT NULL,
+			agent_role TEXT NOT NULL,
+			payload TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE task_leases (
+			agent_run_id TEXT NOT NULL,
+			path TEXT NOT NULL,
+			mode TEXT NOT NULL,
+			acquired_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			PRIMARY KEY (agent_run_id, path)
+		);
 	`)
 	if err != nil {
 		_ = db.Close()

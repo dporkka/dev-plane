@@ -37,13 +37,38 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 		Stage:  "execution",
 		Detail: errorMsg,
 	})
-	return r.failRunClassified(ctx, runID, errorMsg, classification)
+	return r.failRunClassifiedWithData(ctx, runID, "", errorMsg, nil, classification)
+}
+
+func (r *Runner) failRunWithData(
+	ctx context.Context,
+	runID string,
+	taskID string,
+	errorMsg string,
+	data any,
+) error {
+	classification := runfailure.Classify(runfailure.Signal{
+		Stage:  "execution",
+		Detail: errorMsg,
+	})
+	return r.failRunClassifiedWithData(ctx, runID, taskID, errorMsg, data, classification)
 }
 
 func (r *Runner) failRunClassified(
 	ctx context.Context,
 	runID string,
 	errorMsg string,
+	classification runfailure.Classification,
+) error {
+	return r.failRunClassifiedWithData(ctx, runID, "", errorMsg, nil, classification)
+}
+
+func (r *Runner) failRunClassifiedWithData(
+	ctx context.Context,
+	runID string,
+	taskID string,
+	errorMsg string,
+	data any,
 	classification runfailure.Classification,
 ) error {
 	r.logger.Error(
@@ -77,6 +102,20 @@ func (r *Runner) failRunClassified(
 			"error":   errorMsg,
 			"failure": classification,
 		})
+	}
+	if taskID != "" && failedEvent.TaskID == "" {
+		failedEvent.TaskID = taskID
+	}
+	if data != nil {
+		envelope := map[string]any{}
+		if err := json.Unmarshal(failedEvent.Data, &envelope); err != nil {
+			envelope = map[string]any{
+				"error":   errorMsg,
+				"failure": classification,
+			}
+		}
+		envelope["details"] = data
+		failedEvent.Data, _ = json.Marshal(envelope)
 	}
 	now := time.Now().UTC()
 	payload := map[string]any{
