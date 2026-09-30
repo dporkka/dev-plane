@@ -40,7 +40,6 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	if creator.taskID != "task-1" {
 		t.Fatalf("creator taskID = %q, want task-1", creator.taskID)
 	}
-}
 
 	var outcome string
 	if err := db.QueryRow(`SELECT outcome FROM task_evaluations WHERE id = 'eval-approved'`).Scan(&outcome); err != nil {
@@ -49,6 +48,7 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	if outcome != "accepted" {
 		t.Fatalf("approved evaluation outcome = %q, want accepted", outcome)
 	}
+}
 
 func TestHandleApprovalApprovedIgnoresNonPRApproval(t *testing.T) {
 	db := setupApprovalHandlerDB(t)
