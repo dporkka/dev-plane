@@ -1259,7 +1259,6 @@ func TestHandleRunFailedRedeliveryDoesNotRegressAdvancedTaskStatus(t *testing.T)
 	}
 }
 
-
 func TestHandleRunFailedReprovisionsFreshEnvironmentAtExactTree(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
@@ -1450,13 +1449,21 @@ func TestHandleRunFailedFreshEnvironmentRedeliveryDoesNotReprovision(t *testing.
 		VALUES ('workspace-1', 'repo-1', 'task-1', 'workspace-task-1', 'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
 		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
-	`); err != nil { t.Fatalf("seed fresh retry fixture: %v", err) }
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
 
 	provider := &fakeRuntimeProvider{createSession: &runtimes.Session{ID: "runtime-fresh", WorkspaceID: "repo-1", Status: "ready", Provider: "local", CreatedAt: time.Now()}}
 	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
-		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" { return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil }
-		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") { return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil }
-		if strings.Contains(cmd.Command, "git write-tree") { return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil }
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil
+		}
 		return nil, errors.New("unexpected runtime command")
 	}
 	publisher := &fakeWorkerEventPublisher{}
@@ -1485,13 +1492,21 @@ func TestHandleRunFailedFreshEnvironmentPublishFailureRedeliveryReusesWorkspace(
 		VALUES ('workspace-1', 'repo-1', 'task-1', 'workspace-task-1', 'agent/task-1', 'main', 'local', 'runtime-old', 'ready', '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
 		UPDATE tasks SET repository_id = 'repo-1', workspace_id = 'workspace-1' WHERE id = 'task-1';
 		UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1';
-	`); err != nil { t.Fatalf("seed fresh retry fixture: %v", err) }
+	`); err != nil {
+		t.Fatalf("seed fresh retry fixture: %v", err)
+	}
 
 	provider := &fakeRuntimeProvider{createSession: &runtimes.Session{ID: "runtime-fresh", WorkspaceID: "repo-1", Status: "ready", Provider: "local", CreatedAt: time.Now()}}
 	provider.executeCommand = func(sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
-		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" { return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil }
-		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") { return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil }
-		if strings.Contains(cmd.Command, "git write-tree") { return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil }
+		if len(cmd.Args) == 3 && cmd.Args[0] == "git" && cmd.Args[1] == "rev-parse" {
+			return &runtimes.CommandResult{Stdout: "base-commit-123\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git diff --cached --binary --full-index") {
+			return &runtimes.CommandResult{Stdout: "diff --git a/file.txt b/file.txt\n", ExitCode: 0}, nil
+		}
+		if strings.Contains(cmd.Command, "git write-tree") {
+			return &runtimes.CommandResult{Stdout: "tree-abc123\n", ExitCode: 0}, nil
+		}
 		return nil, errors.New("unexpected runtime command")
 	}
 	publisher := &fakeWorkerEventPublisher{err: errors.New("nats unavailable")}
