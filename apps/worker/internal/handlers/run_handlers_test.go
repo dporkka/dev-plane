@@ -1098,3 +1098,61 @@ func TestHandleRunFailedAutomaticRetryIsIdempotentAcrossRedelivery(t *testing.T)
 		t.Fatalf("publish count = %d, want one runs.triggered publication", publisher.count)
 	}
 }
+
+
+func TestHandleRunFailedRetriesDispatchAfterPublishFailure(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{err: errors.New("nats unavailable")}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	classification := runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	}
+
+	err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification))
+	if err == nil || !contains(err.Error(), "nats unavailable") {
+		t.Fatalf("first delivery error = %v, want publish failure", err)
+	}
+
+	var retryRunID string
+	if err := db.QueryRow(`SELECT id FROM agent_runs WHERE id <> 'run-1'`).Scan(&retryRunID); err != nil {
+		t.Fatalf("query persisted retry run: %v", err)
+	}
+
+	publisher.err = nil
+	if err := handler.HandleRunFailed(failedRunMessage(t, "run-1", "task-1", classification)); err != nil {
+		t.Fatalf("redelivery error: %v", err)
+	}
+	if publisher.count != 2 {
+		t.Fatalf("publish attempts = %d, want failed attempt plus successful redelivery", publisher.count)
+	}
+	if !contains(string(publisher.data), retryRunID) {
+		t.Fatalf("published data = %s, want retry run %s", publisher.data, retryRunID)
+	}
+
+	var metadata string
+	if err := db.QueryRow(`SELECT metadata FROM agent_runs WHERE id = ?`, retryRunID).Scan(&metadata); err != nil {
+		t.Fatalf("query retry metadata: %v", err)
+	}
+	var envelope struct {
+		Retry struct {
+			DispatchPublished bool `json:"dispatch_published"`
+		} `json:"retry"`
+	}
+	if err := json.Unmarshal([]byte(metadata), &envelope); err != nil {
+		t.Fatalf("decode retry metadata: %v", err)
+	}
+	if !envelope.Retry.DispatchPublished {
+		t.Fatalf("retry metadata = %s, want dispatch_published=true", metadata)
+	}
+}
