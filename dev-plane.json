@@ -16,12 +16,18 @@
     },
     "dev": {
       "run": "make dev"
+    },
+    "typecheck": {
+      "run": "make typecheck",
+      "timeout_seconds": 600
     }
   },
   "validation": {
     "fallback_checks": [
       "lint",
-      "test"
+      "typecheck",
+      "test",
+      "build"
     ]
   },
   "components": {
