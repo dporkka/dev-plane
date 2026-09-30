@@ -1,7 +1,9 @@
 package models
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"time"
 )
@@ -16,6 +18,55 @@ const (
 	AgentRunStatusFailed    = "failed"
 	AgentRunStatusCancelled = "cancelled"
 )
+
+// Outcome is the terminal semantic result of a run or step. It is intentionally
+// separate from lifecycle status so infrastructure errors and negative business
+// outcomes do not have to share the same state machine.
+type Outcome string
+
+const (
+	OutcomePassed    Outcome = "passed"
+	OutcomeFailed    Outcome = "failed"
+	OutcomeError     Outcome = "error"
+	OutcomeCancelled Outcome = "cancelled"
+	OutcomeSkipped   Outcome = "skipped"
+)
+
+// Valid reports whether o is a recognized terminal outcome.
+func (o Outcome) Valid() bool {
+	switch o {
+	case OutcomePassed, OutcomeFailed, OutcomeError, OutcomeCancelled, OutcomeSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+// ExecutionSnapshot captures the immutable definition used to start a run.
+// Persist this at run creation; later policy/model/runtime changes must not
+// rewrite historical snapshots.
+type ExecutionSnapshot struct {
+	RecipeVersion       string `json:"recipe_version,omitempty"`
+	PolicyVersion       string `json:"policy_version,omitempty"`
+	ToolManifestDigest  string `json:"tool_manifest_digest,omitempty"`
+	AgentProfileVersion string `json:"agent_profile_version,omitempty"`
+	RepositoryBaseSHA   string `json:"repository_base_sha,omitempty"`
+	ModelRoute          string `json:"model_route,omitempty"`
+	RuntimeImageDigest  string `json:"runtime_image_digest,omitempty"`
+	VerificationProfile string `json:"verification_profile,omitempty"`
+}
+
+// Digest returns a deterministic SHA-256 fingerprint for the execution
+// definition. ExecutionSnapshot is a struct (rather than a map), so its JSON
+// field order is stable for a given schema version.
+func (s ExecutionSnapshot) Digest() (string, error) {
+	payload, err := json.Marshal(s)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
 
 // AgentStepType constants for the type of step an agent performed.
 const (
@@ -47,34 +98,54 @@ const (
 	AgentRoleReleaseManager = "release_manager"
 )
 
-// AgentRun represents a single execution of an agent on a task.
+// AgentRun represents one execution attempt for a durable task.
 type AgentRun struct {
-	ID               string          `json:"id"`
-	TaskID           string          `json:"task_id"`
-	WorkspaceID      *string         `json:"workspace_id,omitempty"`
-	AgentRole        string          `json:"agent_role"`
-	Model            *string         `json:"model,omitempty"`
-	Provider         *string         `json:"provider,omitempty"`
-	Status           string          `json:"status"`
-	StartedAt        *time.Time      `json:"started_at,omitempty"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
-	PromptTokens     int             `json:"prompt_tokens"`
-	CompletionTokens int             `json:"completion_tokens"`
-	TotalCost        float64         `json:"total_cost"`
-	ErrorMessage     *string         `json:"error_message,omitempty"`
-	Summary          *string         `json:"summary,omitempty"`
-	Metadata         json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	ID                      string            `json:"id"`
+	TaskID                  string            `json:"task_id"`
+	ParentRunID             *string           `json:"parent_run_id,omitempty"`
+	WorkspaceID             *string           `json:"workspace_id,omitempty"`
+	Attempt                 int               `json:"attempt"`
+	AgentRole               string            `json:"agent_role"`
+	Model                   *string           `json:"model,omitempty"`
+	Provider                *string           `json:"provider,omitempty"`
+	Status                  string            `json:"status"`
+	Outcome                 Outcome           `json:"outcome,omitempty"`
+	ExecutionSnapshot       ExecutionSnapshot `json:"execution_snapshot,omitempty"`
+	ExecutionSnapshotDigest string            `json:"execution_snapshot_digest,omitempty"`
+	StartedAt               *time.Time        `json:"started_at,omitempty"`
+	CompletedAt             *time.Time        `json:"completed_at,omitempty"`
+	PromptTokens            int               `json:"prompt_tokens"`
+	CompletionTokens        int               `json:"completion_tokens"`
+	TotalCost               float64           `json:"total_cost"`
+	ErrorMessage            *string           `json:"error_message,omitempty"`
+	Summary                 *string           `json:"summary,omitempty"`
+	Metadata                json.RawMessage   `json:"metadata,omitempty"`
+	CreatedAt               time.Time         `json:"created_at"`
+	UpdatedAt               time.Time         `json:"updated_at"`
 }
 
-// AgentStep represents a single step within an agent run.
+// IsTerminal reports whether the run lifecycle can no longer make progress.
+func (r AgentRun) IsTerminal() bool {
+	return r.Status == AgentRunStatusCompleted ||
+		r.Status == AgentRunStatusFailed ||
+		r.Status == AgentRunStatusCancelled
+}
+
+// HasOutcome reports whether a terminal semantic outcome has been recorded.
+func (r AgentRun) HasOutcome() bool {
+	return r.Outcome.Valid()
+}
+
+// AgentStep represents a single execution step within an agent run.
 type AgentStep struct {
 	ID            string          `json:"id"`
 	AgentRunID    string          `json:"agent_run_id"`
 	StepNumber    int             `json:"step_number"`
 	StepType      string          `json:"step_type"`
 	Status        string          `json:"status"`
+	Outcome       Outcome         `json:"outcome,omitempty"`
+	Input         json.RawMessage `json:"input,omitempty"`
+	Output        json.RawMessage `json:"output,omitempty"`
 	Content       *string         `json:"content,omitempty"`
 	ToolName      *string         `json:"tool_name,omitempty"`
 	ToolInput     json.RawMessage `json:"tool_input,omitempty"`
@@ -86,12 +157,14 @@ type AgentStep struct {
 	Diff          *string         `json:"diff,omitempty"`
 	Cost          float64         `json:"cost"`
 	LatencyMs     int             `json:"latency_ms"`
+	StartedAt     *time.Time      `json:"started_at,omitempty"`
+	CompletedAt   *time.Time      `json:"completed_at,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // NullAgentRun returns an AgentRun from sql.Null fields.
 func NullAgentRun(id sql.NullString, taskID sql.NullString, workspaceID sql.NullString, agentRole sql.NullString, model sql.NullString, provider sql.NullString, status sql.NullString, startedAt sql.NullTime, completedAt sql.NullTime, promptTokens sql.NullInt32, completionTokens sql.NullInt32, totalCost sql.NullFloat64, errorMessage sql.NullString, summary sql.NullString, metadata sql.NullString, createdAt sql.NullTime, updatedAt sql.NullTime) *AgentRun {
-	r := &AgentRun{}
+	r := &AgentRun{Attempt: 1}
 	if id.Valid {
 		r.ID = id.String
 	}

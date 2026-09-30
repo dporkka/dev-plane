@@ -8,8 +8,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -18,10 +18,29 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
 // TaskHandler handles task-related events.
+func workerExecutionSnapshot(agentRole, provider, model string) (string, string, error) {
+	snapshot := models.ExecutionSnapshot{
+		RecipeVersion:       "agent-run/v1",
+		AgentProfileVersion: agentRole + "/v1",
+		ModelRoute:          provider + "/" + model,
+		VerificationProfile: "project/default",
+	}
+	digest, err := snapshot.Digest()
+	if err != nil {
+		return "", "", err
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", "", err
+	}
+	return string(payload), digest, nil
+}
+
 type TaskHandler struct {
 	db              *sql.DB
 	logger          *slog.Logger
@@ -150,14 +169,18 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		return fmt.Errorf("update task with workspace: %w", err)
 	}
 
-	// Create agent run
+	// Create agent run with an immutable execution definition snapshot.
 	runID := uuid.New().String()
+	snapshot, snapshotDigest, err := workerExecutionSnapshot("implementer", "openai", "gpt-4o")
+	if err != nil {
+		return fmt.Errorf("build execution snapshot: %w", err)
+	}
 	_, err = h.db.Exec(`
 		INSERT INTO agent_runs (
-			id, task_id, workspace_id, agent_role, model, provider,
-			status, total_cost, metadata, created_at, updated_at
-		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, task.ID, workspaceID, now)
+			id, task_id, workspace_id, agent_role, model, provider, status,
+			execution_snapshot, execution_snapshot_digest, total_cost, metadata, created_at, updated_at
+		) VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', $4, $5, 0.0, '{}', $6, $6)
+	`, runID, task.ID, workspaceID, snapshot, snapshotDigest, now)
 	if err != nil {
 		return fmt.Errorf("create agent run: %w", err)
 	}

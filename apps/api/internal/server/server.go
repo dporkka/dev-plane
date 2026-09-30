@@ -174,6 +174,7 @@ func (s *Server) routes() {
 
 			// Agent Runs
 			r.Get("/tasks/{taskID}/runs", h.ListAgentRuns)
+			r.Get("/tasks/{taskID}/execution-evidence", h.ListTaskExecutionEvidence)
 			r.Get("/runs/{id}", h.GetAgentRun)
 			r.Get("/runs/{id}/steps", h.ListAgentSteps)
 			r.Post("/runs/{id}/cancel", h.CancelAgentRun)

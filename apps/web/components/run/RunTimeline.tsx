@@ -93,6 +93,14 @@ const statusColors: Record<string, string> = {
   failed: "text-red-400",
 };
 
+const outcomeColors: Record<string, string> = {
+  passed: "text-green-300 bg-green-500/10 border-green-500/20",
+  failed: "text-orange-300 bg-orange-500/10 border-orange-500/20",
+  error: "text-red-300 bg-red-500/10 border-red-500/20",
+  cancelled: "text-gray-300 bg-gray-500/10 border-gray-500/20",
+  skipped: "text-gray-400 bg-gray-500/10 border-gray-500/20",
+};
+
 function getPhaseForStep(step: AgentStep): Phase {
   const type = step.step_type;
   const content = (step.content || "").toLowerCase();
@@ -227,6 +235,16 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
                 {run.agent_role.replace("_", " ")}
               </span>
               <StatusBadge status={run.status} size="sm" />
+              {run.outcome && (
+                <span
+                  className={cn(
+                    "text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5",
+                    outcomeColors[run.outcome] || outcomeColors.skipped,
+                  )}
+                >
+                  {run.outcome}
+                </span>
+              )}
               {isLive && (
                 <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
@@ -238,6 +256,12 @@ export function RunTimeline({ run, steps = [], isLive }: RunTimelineProps) {
               {run.model && <span>{run.model}</span>}
               {run.provider && (
                 <span className="text-gray-600">via {run.provider}</span>
+              )}
+              <span>attempt {run.attempt || 1}</span>
+              {run.parent_run_id && (
+                <span title={run.parent_run_id}>
+                  child of {run.parent_run_id.slice(0, 8)}
+                </span>
               )}
               {totalSteps > 0 && (
                 <span>
@@ -399,6 +423,16 @@ function TimelineStep({
             {step.tool_name && (
               <span className="text-[10px] bg-[#21262d] text-gray-400 px-1.5 py-0.5 rounded">
                 {step.tool_name}
+              </span>
+            )}
+            {step.outcome && (
+              <span
+                className={cn(
+                  "text-[10px] uppercase tracking-wide border rounded px-1.5 py-0.5",
+                  outcomeColors[step.outcome] || outcomeColors.skipped,
+                )}
+              >
+                {step.outcome}
               </span>
             )}
             {step.file_path && (

@@ -341,9 +341,92 @@ export default function RunDetailPage() {
             <Activity className="w-3 h-3" />
             Status
           </div>
-          <div className="text-white font-medium capitalize">{run?.status}</div>
+          <div className="text-white font-medium capitalize">
+            {run?.outcome ? `${run.status} · ${run.outcome}` : run?.status}
+          </div>
         </Card>
       </div>
+
+      {run && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <div className="text-sm font-medium text-white">Execution definition</div>
+              <div className="text-xs text-gray-500">
+                Immutable inputs pinned when this attempt was created
+              </div>
+            </div>
+            <div className="text-xs text-gray-400">Attempt {run.attempt || 1}</div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+            {run.parent_run_id && (
+              <div>
+                <div className="text-gray-500 mb-1">Parent run</div>
+                <Link
+                  href={`/runs/${run.parent_run_id}`}
+                  className="font-mono text-blue-400 hover:text-blue-300"
+                >
+                  {run.parent_run_id.slice(0, 12)}
+                </Link>
+              </div>
+            )}
+            {run.metadata?.trigger && (
+              <div>
+                <div className="text-gray-500 mb-1">Trigger</div>
+                <div className="font-mono text-gray-300">
+                  {String(run.metadata.trigger)}
+                  {run.metadata.repair_round
+                    ? ` · round ${String(run.metadata.repair_round)}`
+                    : ""}
+                </div>
+              </div>
+            )}
+            {run.execution_snapshot?.recipe_version && (
+              <div>
+                <div className="text-gray-500 mb-1">Recipe</div>
+                <div className="font-mono text-gray-300">
+                  {run.execution_snapshot.recipe_version}
+                </div>
+              </div>
+            )}
+            {run.execution_snapshot?.agent_profile_version && (
+              <div>
+                <div className="text-gray-500 mb-1">Agent profile</div>
+                <div className="font-mono text-gray-300">
+                  {run.execution_snapshot.agent_profile_version}
+                </div>
+              </div>
+            )}
+            {run.execution_snapshot?.model_route && (
+              <div>
+                <div className="text-gray-500 mb-1">Model route</div>
+                <div className="font-mono text-gray-300">
+                  {run.execution_snapshot.model_route}
+                </div>
+              </div>
+            )}
+            {run.execution_snapshot?.verification_profile && (
+              <div>
+                <div className="text-gray-500 mb-1">Verification</div>
+                <div className="font-mono text-gray-300">
+                  {run.execution_snapshot.verification_profile}
+                </div>
+              </div>
+            )}
+            {run.execution_snapshot_digest && (
+              <div>
+                <div className="text-gray-500 mb-1">Definition digest</div>
+                <div
+                  className="font-mono text-gray-300"
+                  title={run.execution_snapshot_digest}
+                >
+                  {run.execution_snapshot_digest.slice(0, 24)}…
+                </div>
+              </div>
+            )}
+          </div>
+        </Card>
+      )}
 
       {/* Connection status */}
       {connectionStatus === "disconnected" && isRunning && (

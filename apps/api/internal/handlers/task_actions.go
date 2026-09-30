@@ -15,6 +15,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/models"
 )
 
 // GetTaskSpec returns the generated spec for a task.
@@ -122,6 +123,24 @@ func mustRawMessage(v any) json.RawMessage {
 	return data
 }
 
+func newExecutionSnapshot(agentRole, provider, model string) (string, string, error) {
+	snapshot := models.ExecutionSnapshot{
+		RecipeVersion:       "agent-run/v1",
+		AgentProfileVersion: agentRole + "/v1",
+		ModelRoute:          provider + "/" + model,
+		VerificationProfile: "project/default",
+	}
+	digest, err := snapshot.Digest()
+	if err != nil {
+		return "", "", err
+	}
+	payload, err := json.Marshal(snapshot)
+	if err != nil {
+		return "", "", err
+	}
+	return string(payload), digest, nil
+}
+
 // StartRun starts an agent run for an approved task.
 // Validates the task is in "approved" status, creates an AgentRun, and publishes an event.
 func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
@@ -180,10 +199,18 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	if task.WorkspaceID != nil {
 		workspaceArg = *task.WorkspaceID
 	}
+	snapshot, snapshotDigest, err := newExecutionSnapshot("implementer", "openai", "gpt-4o")
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
 	_, err = h.db.ExecContext(ctx, `
-		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, taskID, workspaceArg, now)
+		INSERT INTO agent_runs (
+			id, task_id, workspace_id, agent_role, model, provider, status,
+			execution_snapshot, execution_snapshot_digest, total_cost, metadata, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', $4, $5, 0.0, '{}', $6, $6)
+	`, runID, taskID, workspaceArg, snapshot, snapshotDigest, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -241,18 +268,25 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 
 	// Get the failed run details
 	var run struct {
-		TaskID      string
-		WorkspaceID *string
-		AgentRole   string
-		Model       *string
-		Provider    *string
-		Status      string
+		TaskID                  string
+		WorkspaceID             *string
+		AgentRole               string
+		Model                   *string
+		Provider                *string
+		Status                  string
+		Attempt                 int
+		ExecutionSnapshot       string
+		ExecutionSnapshotDigest *string
 	}
-	var workspaceID, modelValue, providerValue sql.NullString
+	var workspaceID, modelValue, providerValue, snapshotDigest sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT task_id, workspace_id, agent_role, model, provider, status
+		SELECT task_id, workspace_id, agent_role, model, provider, status,
+		       attempt, execution_snapshot, execution_snapshot_digest
 		FROM agent_runs WHERE id = $1
-	`, runID).Scan(&run.TaskID, &workspaceID, &run.AgentRole, &modelValue, &providerValue, &run.Status)
+	`, runID).Scan(
+		&run.TaskID, &workspaceID, &run.AgentRole, &modelValue, &providerValue, &run.Status,
+		&run.Attempt, &run.ExecutionSnapshot, &snapshotDigest,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("agent run not found"))
@@ -274,6 +308,12 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if providerValue.Valid {
 		run.Provider = &providerValue.String
+	}
+	if snapshotDigest.Valid {
+		run.ExecutionSnapshotDigest = &snapshotDigest.String
+	}
+	if run.Attempt < 1 {
+		run.Attempt = 1
 	}
 
 	// Get the task to ensure it's in a retryable state
@@ -307,10 +347,28 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	if run.WorkspaceID != nil {
 		workspaceArg = *run.WorkspaceID
 	}
+	snapshot := run.ExecutionSnapshot
+	snapshotDigestValue := ""
+	if run.ExecutionSnapshotDigest != nil {
+		snapshotDigestValue = *run.ExecutionSnapshotDigest
+	}
+	if snapshot == "" || snapshotDigestValue == "" {
+		var snapshotErr error
+		snapshot, snapshotDigestValue, snapshotErr = newExecutionSnapshot(run.AgentRole, provider, model)
+		if snapshotErr != nil {
+			respond.Error(w, http.StatusInternalServerError, snapshotErr)
+			return
+		}
+	}
+
 	_, err = h.db.ExecContext(ctx, `
-		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, '{}', $7, $7)
-	`, newRunID, run.TaskID, workspaceArg, run.AgentRole, model, provider, now)
+		INSERT INTO agent_runs (
+			id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider,
+			status, execution_snapshot, execution_snapshot_digest, total_cost, metadata, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'queued', $9, $10, 0.0, '{}', $11, $11)
+	`, newRunID, run.TaskID, runID, workspaceArg, run.Attempt+1, run.AgentRole, model, provider,
+		snapshot, snapshotDigestValue, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -342,6 +400,8 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, map[string]interface{}{
 		"run_id":          newRunID,
 		"original_run_id": runID,
+		"parent_run_id":   runID,
+		"attempt":         run.Attempt + 1,
 		"status":          "queued",
 	})
 }

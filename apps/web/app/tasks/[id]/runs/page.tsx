@@ -2,11 +2,19 @@
 
 import { Loading } from "@/components/common/Loading";
 import { RunTimeline } from "@/components/run/RunTimeline";
+import { TaskExecutionGraph } from "@/components/task/TaskExecutionGraph";
 import { api } from "@/lib/api";
+import type { AgentRun } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+
+function runListHasActiveRuns(runs: AgentRun[]): boolean {
+  return runs.some((run) =>
+    ["pending", "queued", "running", "paused"].includes(run.status),
+  );
+}
 
 export default function RunTimelinePage() {
   const params = useParams();
@@ -23,9 +31,16 @@ export default function RunTimelinePage() {
     enabled: !!taskId,
   });
 
+  const { data: executionEvidence } = useQuery({
+    queryKey: ["execution-evidence", taskId],
+    queryFn: () => api.getTaskExecutionEvidence(taskId),
+    enabled: !!taskId,
+    refetchInterval: runListHasActiveRuns(runs?.data || runs || []) ? 5000 : false,
+  });
+
   if (taskLoading || runsLoading) return <Loading />;
 
-  const runList = runs?.data || runs || [];
+  const runList: AgentRun[] = runs?.data || runs || [];
 
   return (
     <div className="space-y-6">
@@ -49,13 +64,30 @@ export default function RunTimelinePage() {
         </div>
       </div>
 
-      {/* Run selector */}
       {runList.length > 0 && (
-        <div className="space-y-4">
-          {runList.map((run: any) => (
-            <RunTimeline key={run.id} run={run} />
-          ))}
-        </div>
+        <>
+          <section>
+            <div className="mb-3">
+              <h2 className="text-lg font-semibold text-white">Run Lineage</h2>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Parent/child execution structure across retries, handoffs, and review repairs.
+              </p>
+            </div>
+            <TaskExecutionGraph runs={runList} evidence={executionEvidence?.runs || {}} />
+          </section>
+
+          <section className="space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Run Timelines</h2>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Step-level history for each execution attempt.
+              </p>
+            </div>
+            {runList.map((run) => (
+              <RunTimeline key={run.id} run={run} />
+            ))}
+          </section>
+        </>
       )}
 
       {runList.length === 0 && (

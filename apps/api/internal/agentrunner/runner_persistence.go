@@ -12,14 +12,15 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 )
+
 func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.AgentStep {
 	if r.db == nil || strings.TrimSpace(runID) == "" {
 		return nil
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, agent_run_id, step_number, step_type, status, content,
+		SELECT id, agent_run_id, step_number, step_type, status, outcome, input, output, content,
 		       tool_name, tool_input, tool_output, command, command_output,
-		       exit_code, file_path, diff, cost, latency_ms, created_at
+		       exit_code, file_path, diff, cost, latency_ms, started_at, completed_at, created_at
 		FROM agent_steps
 		WHERE agent_run_id = $1
 		ORDER BY step_number ASC, created_at ASC
@@ -33,15 +34,31 @@ func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.Agen
 	var history []models.AgentStep
 	for rows.Next() {
 		var step models.AgentStep
-		var content, toolName, toolInput, toolOutput, command, commandOutput, filePath, diff sql.NullString
+		var outcome, input, output, content, toolName, toolInput, toolOutput, command, commandOutput, filePath, diff sql.NullString
 		var exitCode sql.NullInt32
+		var startedAt, completedAt sql.NullTime
 		if err := rows.Scan(
 			&step.ID, &step.AgentRunID, &step.StepNumber, &step.StepType, &step.Status,
-			&content, &toolName, &toolInput, &toolOutput, &command, &commandOutput,
-			&exitCode, &filePath, &diff, &step.Cost, &step.LatencyMs, &step.CreatedAt,
+			&outcome, &input, &output, &content, &toolName, &toolInput, &toolOutput, &command, &commandOutput,
+			&exitCode, &filePath, &diff, &step.Cost, &step.LatencyMs, &startedAt, &completedAt, &step.CreatedAt,
 		); err != nil {
 			r.logger.Warn("failed to scan run history step", "run_id", runID, "error", err)
 			return history
+		}
+		if outcome.Valid {
+			step.Outcome = models.Outcome(outcome.String)
+		}
+		if input.Valid {
+			step.Input = json.RawMessage(input.String)
+		}
+		if output.Valid {
+			step.Output = json.RawMessage(output.String)
+		}
+		if startedAt.Valid {
+			step.StartedAt = &startedAt.Time
+		}
+		if completedAt.Valid {
+			step.CompletedAt = &completedAt.Time
 		}
 		if content.Valid {
 			step.Content = &content.String
@@ -84,7 +101,17 @@ func (r *Runner) persistStep(ctx context.Context, step *models.AgentStep) error 
 		return nil
 	}
 
-	var toolInput, toolOutput sql.NullString
+	var input, output, toolInput, toolOutput sql.NullString
+	if step.Input != nil {
+		input = sql.NullString{String: string(step.Input), Valid: true}
+	} else if step.ToolInput != nil {
+		input = sql.NullString{String: string(step.ToolInput), Valid: true}
+	}
+	if step.Output != nil {
+		output = sql.NullString{String: string(step.Output), Valid: true}
+	} else if step.ToolOutput != nil {
+		output = sql.NullString{String: string(step.ToolOutput), Valid: true}
+	}
 	if step.ToolInput != nil {
 		toolInput = sql.NullString{String: string(step.ToolInput), Valid: true}
 	}
@@ -112,15 +139,25 @@ func (r *Runner) persistStep(ctx context.Context, step *models.AgentStep) error 
 		diff = sql.NullString{String: *step.Diff, Valid: true}
 	}
 
+	now := time.Now().UTC()
+	startedAt := step.StartedAt
+	if startedAt == nil {
+		startedAt = &now
+		step.StartedAt = startedAt
+	}
+	var outcome any
+	if step.Outcome.Valid() {
+		outcome = string(step.Outcome)
+	}
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO agent_steps (
-			id, agent_run_id, step_number, step_type, status, content,
+			id, agent_run_id, step_number, step_type, status, outcome, input, output, content,
 			tool_name, tool_input, tool_output, command, command_output,
-			exit_code, file_path, diff, cost, latency_ms, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-	`, step.ID, step.AgentRunID, step.StepNumber, step.StepType, step.Status, content,
+			exit_code, file_path, diff, cost, latency_ms, started_at, completed_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+	`, step.ID, step.AgentRunID, step.StepNumber, step.StepType, step.Status, outcome, input, output, content,
 		toolName, toolInput, toolOutput, command, commandOutput,
-		nil, filePath, diff, step.Cost, step.LatencyMs, time.Now().UTC(),
+		nil, filePath, diff, step.Cost, step.LatencyMs, startedAt, step.CompletedAt, now,
 	)
 	return err
 }
@@ -130,7 +167,12 @@ func (r *Runner) updateStepStatus(ctx context.Context, step *models.AgentStep) e
 		return nil
 	}
 
-	var toolOutput sql.NullString
+	var output, toolOutput sql.NullString
+	if step.Output != nil {
+		output = sql.NullString{String: string(step.Output), Valid: true}
+	} else if step.ToolOutput != nil {
+		output = sql.NullString{String: string(step.ToolOutput), Valid: true}
+	}
 	if step.ToolOutput != nil {
 		toolOutput = sql.NullString{String: string(step.ToolOutput), Valid: true}
 	}
@@ -140,11 +182,29 @@ func (r *Runner) updateStepStatus(ctx context.Context, step *models.AgentStep) e
 		exitCode = sql.NullInt32{Int32: int32(*step.ExitCode), Valid: true}
 	}
 
+	var completedAt any
+	if step.Status == models.AgentStepStatusCompleted || step.Status == models.AgentStepStatusFailed {
+		now := time.Now().UTC()
+		step.CompletedAt = &now
+		completedAt = now
+		if !step.Outcome.Valid() {
+			if step.Status == models.AgentStepStatusCompleted {
+				step.Outcome = models.OutcomePassed
+			} else {
+				step.Outcome = models.OutcomeError
+			}
+		}
+	}
+	var outcome any
+	if step.Outcome.Valid() {
+		outcome = string(step.Outcome)
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE agent_steps
-		SET status = $1, tool_output = $2, exit_code = $3, latency_ms = $4, content = $5
-		WHERE id = $6
-	`, step.Status, toolOutput, exitCode, step.LatencyMs, step.Content, step.ID)
+		SET status = $1, outcome = $2, output = $3, tool_output = $4, exit_code = $5,
+		    latency_ms = $6, content = $7, completed_at = COALESCE($8, completed_at)
+		WHERE id = $9
+	`, step.Status, outcome, output, toolOutput, exitCode, step.LatencyMs, step.Content, completedAt, step.ID)
 	return err
 }
 
@@ -154,17 +214,19 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 	}
 
 	var run models.AgentRun
-	var workspaceID, model, provider, errorMessage, summary sql.NullString
+	var parentRunID, workspaceID, model, provider, outcome, executionSnapshot, executionSnapshotDigest, errorMessage, summary sql.NullString
 	var startedAt, completedAt, createdAt, updatedAt sql.NullTime
 	var metadata sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, task_id, workspace_id, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
 		FROM agent_runs WHERE id = $1
 	`, runID).Scan(
-		&run.ID, &run.TaskID, &workspaceID, &run.AgentRole, &model, &provider, &run.Status,
+		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status,
+		&outcome, &executionSnapshot, &executionSnapshotDigest,
 		&startedAt, &completedAt, &run.PromptTokens, &run.CompletionTokens,
 		&run.TotalCost, &errorMessage, &summary, &metadata, &createdAt, &updatedAt,
 	)
@@ -172,6 +234,9 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 		return nil, err
 	}
 
+	if parentRunID.Valid {
+		run.ParentRunID = &parentRunID.String
+	}
 	if workspaceID.Valid {
 		run.WorkspaceID = &workspaceID.String
 	}
@@ -180,6 +245,17 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 	}
 	if provider.Valid {
 		run.Provider = &provider.String
+	}
+	if outcome.Valid {
+		run.Outcome = models.Outcome(outcome.String)
+	}
+	if executionSnapshot.Valid {
+		if err := json.Unmarshal([]byte(executionSnapshot.String), &run.ExecutionSnapshot); err != nil {
+			return nil, fmt.Errorf("decode execution snapshot: %w", err)
+		}
+	}
+	if executionSnapshotDigest.Valid {
+		run.ExecutionSnapshotDigest = executionSnapshotDigest.String
 	}
 	if startedAt.Valid {
 		run.StartedAt = &startedAt.Time

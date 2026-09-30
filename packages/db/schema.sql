@@ -162,28 +162,39 @@ CREATE INDEX IF NOT EXISTS idx_tasks_deleted_at ON tasks(deleted_at);
 -- 7. agent_runs
 -- =====================================================
 CREATE TABLE IF NOT EXISTS agent_runs (
-    id                  UUID PRIMARY KEY,
-    task_id             UUID NOT NULL REFERENCES tasks(id),
-    workspace_id        UUID REFERENCES workspaces(id),
-    agent_role          TEXT NOT NULL DEFAULT 'implementer',
-    model               TEXT,
-    provider            TEXT,
-    status              TEXT NOT NULL DEFAULT 'pending',
-    started_at          TIMESTAMPTZ,
-    completed_at        TIMESTAMPTZ,
-    prompt_tokens       INTEGER DEFAULT 0,
-    completion_tokens   INTEGER DEFAULT 0,
-    total_cost          DECIMAL(10,6) DEFAULT 0,
-    error_message       TEXT,
-    summary             TEXT,
-    metadata            JSONB DEFAULT '{}',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    id                          UUID PRIMARY KEY,
+    task_id                     UUID NOT NULL REFERENCES tasks(id),
+    parent_run_id               UUID REFERENCES agent_runs(id),
+    workspace_id                UUID REFERENCES workspaces(id),
+    attempt                     INTEGER NOT NULL DEFAULT 1,
+    agent_role                  TEXT NOT NULL DEFAULT 'implementer',
+    model                       TEXT,
+    provider                    TEXT,
+    status                      TEXT NOT NULL DEFAULT 'pending',
+    outcome                     TEXT,
+    execution_snapshot          JSONB NOT NULL DEFAULT '{}',
+    execution_snapshot_digest   TEXT,
+    started_at                  TIMESTAMPTZ,
+    completed_at                TIMESTAMPTZ,
+    prompt_tokens               INTEGER DEFAULT 0,
+    completion_tokens           INTEGER DEFAULT 0,
+    total_cost                  DECIMAL(10,6) DEFAULT 0,
+    error_message               TEXT,
+    summary                     TEXT,
+    metadata                    JSONB DEFAULT '{}',
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_parent_run_id ON agent_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_id ON agent_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_outcome ON agent_runs(outcome);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_task_attempt ON agent_runs(task_id, attempt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_parent_attempt_role
+    ON agent_runs(parent_run_id, attempt, agent_role)
+    WHERE parent_run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 
 -- =====================================================
@@ -195,6 +206,9 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     step_number     INTEGER NOT NULL,
     step_type       TEXT NOT NULL,
     status          TEXT NOT NULL DEFAULT 'pending',
+    outcome         TEXT,
+    input           JSONB,
+    output          JSONB,
     content         TEXT,
     tool_name       TEXT,
     tool_input      JSONB,
@@ -206,12 +220,15 @@ CREATE TABLE IF NOT EXISTS agent_steps (
     diff            TEXT,
     cost            DECIMAL(10,6) DEFAULT 0,
     latency_ms      INTEGER DEFAULT 0,
+    started_at      TIMESTAMPTZ,
+    completed_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_steps_agent_run_id ON agent_steps(agent_run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_step_number ON agent_steps(agent_run_id, step_number);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_status ON agent_steps(status);
+CREATE INDEX IF NOT EXISTS idx_agent_steps_outcome ON agent_steps(outcome);
 CREATE INDEX IF NOT EXISTS idx_agent_steps_created_at ON agent_steps(created_at);
 
 -- =====================================================

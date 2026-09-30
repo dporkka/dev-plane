@@ -43,12 +43,16 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 		t.Fatalf("nextRole = %q, want reviewer", nextRole)
 	}
 
-	var role, status, workspaceID, metadata string
+	var role, status, workspaceID, metadata, parentRunID, snapshot, snapshotDigest string
+	var attempt int
 	if err := db.QueryRow(`
-		SELECT agent_role, status, workspace_id, metadata
+		SELECT agent_role, status, workspace_id, metadata, parent_run_id, attempt,
+		       execution_snapshot, execution_snapshot_digest
 		FROM agent_runs
 		WHERE id = ?
-	`, nextRunID).Scan(&role, &status, &workspaceID, &metadata); err != nil {
+	`, nextRunID).Scan(
+		&role, &status, &workspaceID, &metadata, &parentRunID, &attempt, &snapshot, &snapshotDigest,
+	); err != nil {
 		t.Fatalf("query next run: %v", err)
 	}
 	if role != models.AgentRoleReviewer || status != "queued" || workspaceID != "workspace-1" {
@@ -56,6 +60,12 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 	}
 	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") {
 		t.Fatalf("metadata = %s, want handoff trace", metadata)
+	}
+	if parentRunID != "run-1" || attempt != 2 {
+		t.Fatalf("next run lineage = parent %q attempt %d, want run-1/2", parentRunID, attempt)
+	}
+	if !contains(snapshot, "reviewer/v1") || snapshotDigest == "" {
+		t.Fatalf("execution snapshot = %s digest=%q, want reviewer snapshot and digest", snapshot, snapshotDigest)
 	}
 
 	var consumedBy sql.NullString
@@ -152,6 +162,211 @@ func TestHandleRunCompletedReviewsWhenNoHandoff(t *testing.T) {
 	}
 	if status != "reviewing" {
 		t.Fatalf("task status = %q, want reviewing", status)
+	}
+}
+
+func TestHandleRunCompletedSchedulesBoundedRepairForRejectedReview(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	publisher := &fakeWorkerEventPublisher{}
+	reviewService := &fakeReviewer{report: &reviewer.ReviewReport{
+		RunID:      "run-1",
+		Summary:    "Correctness issues remain.",
+		RiskLevel:  "high",
+		Approvable: false,
+		Findings: []reviewer.Finding{{
+			Severity: "high",
+			File:     "service.go",
+			Line:     42,
+			Message:  "nil input can panic",
+			Category: "correctness",
+		}},
+		Suggestions: []string{"Add the missing guard and regression test."},
+	}}
+	handler := NewRunHandler(db, slog.Default(), publisher).
+		WithReviewer(reviewService).
+		WithRepairLimit(2)
+
+	if err := handler.HandleRunCompleted(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}); err != nil {
+		t.Fatalf("HandleRunCompleted() error: %v", err)
+	}
+
+	var parentRunID, role, status, metadata, snapshot string
+	var attempt int
+	if err := db.QueryRow(`
+		SELECT parent_run_id, attempt, agent_role, status, metadata, execution_snapshot
+		FROM agent_runs
+		WHERE parent_run_id = 'run-1'
+	`).Scan(&parentRunID, &attempt, &role, &status, &metadata, &snapshot); err != nil {
+		t.Fatalf("query repair run: %v", err)
+	}
+	if parentRunID != "run-1" || attempt != 2 || role != models.AgentRoleImplementer || status != models.AgentRunStatusQueued {
+		t.Fatalf("repair run = parent %q attempt %d role %q status %q", parentRunID, attempt, role, status)
+	}
+	if !contains(metadata, `"trigger":"review_repair"`) || !contains(metadata, `"repair_round":1`) {
+		t.Fatalf("repair metadata = %s", metadata)
+	}
+	if !contains(snapshot, `"agent_profile_version":"implementer/v1"`) {
+		t.Fatalf("repair snapshot = %s", snapshot)
+	}
+
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != string(models.TaskStatusRunning) {
+		t.Fatalf("task status = %q, want running", taskStatus)
+	}
+
+	var outcome string
+	if err := db.QueryRow(`SELECT outcome FROM agent_runs WHERE id = 'run-1'`).Scan(&outcome); err != nil {
+		t.Fatalf("query reviewed run outcome: %v", err)
+	}
+	if outcome != string(models.OutcomeFailed) {
+		t.Fatalf("reviewed run outcome = %q, want failed", outcome)
+	}
+
+	var messageType, toAgent, content string
+	if err := db.QueryRow(`
+		SELECT message_type, to_agent, content
+		FROM agent_messages
+		WHERE task_id = 'task-1' AND agent_run_id = 'run-1'
+	`).Scan(&messageType, &toAgent, &content); err != nil {
+		t.Fatalf("query repair feedback: %v", err)
+	}
+	if messageType != models.MessageTypeReview || toAgent != models.AgentRoleImplementer {
+		t.Fatalf("repair feedback = type %q to %q", messageType, toAgent)
+	}
+	if !contains(content, "nil input can panic") || !contains(content, "Add the missing guard") {
+		t.Fatalf("repair feedback content = %q", content)
+	}
+
+	if publisher.subject != events.RunTriggered {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.RunTriggered)
+	}
+	if !contains(string(publisher.data), `"action":"review_repair"`) || !contains(string(publisher.data), `"repair_round":1`) {
+		t.Fatalf("published repair event = %s", publisher.data)
+	}
+}
+
+func TestHandleRunCompletedRejectedReviewIsIdempotent(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	handler := NewRunHandler(db, slog.Default(), nil).
+		WithReviewer(&fakeReviewer{report: &reviewer.ReviewReport{
+			RunID:      "run-1",
+			Summary:    "Needs repair.",
+			RiskLevel:  "high",
+			Approvable: false,
+		}}).
+		WithRepairLimit(2)
+
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("first HandleRunCompleted() error: %v", err)
+	}
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("second HandleRunCompleted() error: %v", err)
+	}
+
+	var childCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs WHERE parent_run_id = 'run-1'`).Scan(&childCount); err != nil {
+		t.Fatalf("count repair children: %v", err)
+	}
+	if childCount != 1 {
+		t.Fatalf("repair child count = %d, want 1", childCount)
+	}
+
+	var feedbackCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM agent_messages
+		WHERE agent_run_id = 'run-1' AND message_type = 'review_comment'
+	`).Scan(&feedbackCount); err != nil {
+		t.Fatalf("count repair feedback: %v", err)
+	}
+	if feedbackCount != 1 {
+		t.Fatalf("repair feedback count = %d, want 1", feedbackCount)
+	}
+}
+
+func TestHandleRunCompletedStopsAfterRepairBudgetExhausted(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`
+		UPDATE agent_runs
+		SET attempt = 3, metadata = '{"trigger":"review_repair","repair_round":2}'
+		WHERE id = 'run-1'
+	`); err != nil {
+		t.Fatalf("seed repair round: %v", err)
+	}
+
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), publisher).
+		WithReviewer(&fakeReviewer{report: &reviewer.ReviewReport{
+			RunID:      "run-1",
+			Summary:    "Still not approvable.",
+			RiskLevel:  "high",
+			Approvable: false,
+		}}).
+		WithRepairLimit(2)
+
+	if err := handler.HandleRunCompleted(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}); err != nil {
+		t.Fatalf("HandleRunCompleted() error: %v", err)
+	}
+
+	var childCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs WHERE parent_run_id = 'run-1'`).Scan(&childCount); err != nil {
+		t.Fatalf("count repair children: %v", err)
+	}
+	if childCount != 0 {
+		t.Fatalf("repair child count = %d, want 0", childCount)
+	}
+
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != string(models.TaskStatusFailed) {
+		t.Fatalf("task status = %q, want failed", taskStatus)
+	}
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("published subject = %q, want %q", publisher.subject, events.TaskFailed)
+	}
+	if !contains(string(publisher.data), "repair_budget_exhausted") {
+		t.Fatalf("published failure event = %s", publisher.data)
+	}
+}
+
+func TestHandleReviewCompletedDoesNotRequestPRApprovalWhenExplicitlyRejected(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	handler := NewRunHandler(db, slog.Default(), nil).WithRepairLimit(0)
+	approvable := false
+	payload, err := json.Marshal(map[string]any{
+		"run_id":     "run-1",
+		"task_id":    "task-1",
+		"approvable": approvable,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if err := handler.HandleReviewCompleted(&nats.Msg{Data: payload}); err != nil {
+		t.Fatalf("HandleReviewCompleted() error: %v", err)
+	}
+
+	var approvalCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM approvals WHERE task_id = 'task-1'`).Scan(&approvalCount); err != nil {
+		t.Fatalf("count approvals: %v", err)
+	}
+	if approvalCount != 0 {
+		t.Fatalf("approval count = %d, want 0", approvalCount)
 	}
 }
 
@@ -733,12 +948,33 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
+			parent_run_id TEXT,
 			workspace_id TEXT,
+			attempt INTEGER NOT NULL DEFAULT 1,
 			agent_role TEXT NOT NULL,
 			model TEXT,
 			provider TEXT,
 			status TEXT NOT NULL,
+			outcome TEXT,
+			execution_snapshot TEXT NOT NULL DEFAULT '{}',
+			execution_snapshot_digest TEXT,
 			total_cost REAL DEFAULT 0,
+			metadata TEXT DEFAULT '{}',
+			created_at DATETIME,
+			updated_at DATETIME
+		);
+		CREATE TABLE approvals (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			agent_run_id TEXT,
+			approval_type TEXT NOT NULL,
+			requested_by TEXT NOT NULL,
+			requested_at DATETIME NOT NULL,
+			responded_by TEXT,
+			response TEXT,
+			response_note TEXT,
+			responded_at DATETIME,
+			expires_at DATETIME,
 			metadata TEXT DEFAULT '{}',
 			created_at DATETIME,
 			updated_at DATETIME

@@ -2,13 +2,13 @@
 import { Loading } from "@/components/common/Loading";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
-import { CostBadge } from "@/components/run/CostBadge";
 import { TaskActions } from "@/components/task/TaskActions";
+import { TaskExecutionGraph } from "@/components/task/TaskExecutionGraph";
 import { TaskSpecPreview } from "@/components/task/TaskSpecPreview";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import type { TaskSpec } from "@/lib/types";
+import type { AgentRun, TaskSpec } from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -25,6 +25,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+
+function runListHasActiveRuns(runs: AgentRun[]): boolean {
+  return runs.some((run) =>
+    ["pending", "queued", "running", "paused"].includes(run.status),
+  );
+}
 
 function parseSpec(task: any): TaskSpec | null {
   if (!task?.spec) return null;
@@ -71,6 +77,13 @@ export default function TaskDetailPage() {
     enabled: !!taskId,
   });
 
+  const { data: executionEvidence } = useQuery({
+    queryKey: ["execution-evidence", taskId],
+    queryFn: () => api.getTaskExecutionEvidence(taskId),
+    enabled: !!taskId,
+    refetchInterval: runListHasActiveRuns(runs?.data || runs || []) ? 5000 : false,
+  });
+
   const { data: approvals } = useQuery({
     queryKey: ["approvals", taskId],
     queryFn: () => api.listApprovals(taskId),
@@ -100,7 +113,7 @@ export default function TaskDetailPage() {
 
   if (taskLoading) return <Loading />;
 
-  const runList = runs?.data || runs || [];
+  const runList: AgentRun[] = runs?.data || runs || [];
   const approvalList = approvals?.data || approvals || [];
   const workspaceList = workspaces?.data || workspaces || [];
   const spec = parseSpec(task);
@@ -263,52 +276,23 @@ export default function TaskDetailPage() {
         </div>
       )}
 
-      {/* Agent Runs */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-lg font-semibold text-white">Agent Runs</h2>
+      {/* Execution graph */}
+      <div id="execution-graph">
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-white">Execution Graph</h2>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Complete run lineage, including retries, handoffs, and bounded review repairs.
+            </p>
+          </div>
           <Link
             href={`/tasks/${taskId}/runs`}
             className="text-sm text-blue-400 hover:text-blue-300"
           >
-            View All
+            View run list
           </Link>
         </div>
-        <div className="space-y-2">
-          {runList.map((run: any) => (
-            <Card key={run.id}>
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={run.status} />
-                  <span className="text-white font-medium capitalize">
-                    {run.agent_role.replace("_", " ")}
-                  </span>
-                  {run.model && (
-                    <span className="text-xs text-gray-500">{run.model}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-4 text-sm text-gray-500">
-                  <CostBadge cost={run.total_cost} />
-                  <span>
-                    {run.prompt_tokens + run.completion_tokens} tokens
-                  </span>
-                  <TimeAgo date={run.created_at} />
-                  <Link
-                    href={`/runs/${run.id}`}
-                    className="text-blue-400 hover:text-blue-300 text-xs"
-                  >
-                    View
-                  </Link>
-                </div>
-              </div>
-            </Card>
-          ))}
-          {runList.length === 0 && (
-            <div className="text-center py-8 text-gray-500">
-              No runs yet. Start the task to begin execution.
-            </div>
-          )}
-        </div>
+        <TaskExecutionGraph runs={runList} evidence={executionEvidence?.runs || {}} />
       </div>
 
       {/* Approvals */}

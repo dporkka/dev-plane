@@ -67,12 +67,15 @@ func TestRunUsesModelDrivenToolActions(t *testing.T) {
 		t.Fatalf("model_usage rows = %d, want 2", usageRows)
 	}
 
-	var status string
-	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&status); err != nil {
+	var status, outcome string
+	if err := db.QueryRow(`SELECT status, outcome FROM agent_runs WHERE id = 'run-1'`).Scan(&status, &outcome); err != nil {
 		t.Fatalf("query run status: %v", err)
 	}
 	if status != models.AgentRunStatusCompleted {
 		t.Fatalf("run status = %q, want completed", status)
+	}
+	if outcome != string(models.OutcomePassed) {
+		t.Fatalf("run outcome = %q, want passed", outcome)
 	}
 }
 
@@ -364,11 +367,16 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
+			parent_run_id TEXT,
 			workspace_id TEXT,
+			attempt INTEGER NOT NULL DEFAULT 1,
 			agent_role TEXT NOT NULL DEFAULT 'implementer',
 			model TEXT,
 			provider TEXT,
 			status TEXT NOT NULL DEFAULT 'pending',
+			outcome TEXT,
+			execution_snapshot TEXT NOT NULL DEFAULT '{}',
+			execution_snapshot_digest TEXT,
 			started_at DATETIME,
 			completed_at DATETIME,
 			prompt_tokens INTEGER DEFAULT 0,
@@ -386,6 +394,9 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			step_number INTEGER NOT NULL,
 			step_type TEXT NOT NULL,
 			status TEXT NOT NULL DEFAULT 'pending',
+			outcome TEXT,
+			input TEXT,
+			output TEXT,
 			content TEXT,
 			tool_name TEXT,
 			tool_input TEXT,
@@ -397,6 +408,8 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			diff TEXT,
 			cost REAL DEFAULT 0,
 			latency_ms INTEGER DEFAULT 0,
+			started_at DATETIME,
+			completed_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE model_usage (
