@@ -187,10 +187,10 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 }
 
 type completedRunContext struct {
-	RunID       string
-	TaskID      string
-	WorkspaceID *string
-	AgentRole   string
+	RunID             string
+	TaskID            string
+	WorkspaceID       *string
+	AgentRole         string
 	Model             string
 	Provider          string
 	Attempt           int
