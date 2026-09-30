@@ -192,7 +192,6 @@ func TestSummarizeZeroAttentionDoesNotProduceInfinity(t *testing.T) {
 	}
 }
 
-
 func TestSummarizeByStrategy(t *testing.T) {
 	summaries := SummarizeByStrategy([]Evaluation{
 		{TaskID: "task-1", Attempt: 1, Accepted: true, FirstPass: true, HumanAttentionSeconds: 60, Strategy: "plain-codex"},
