@@ -275,7 +275,7 @@ func (g *GitHubGateway) OpenChange(ctx context.Context, credential forge.Credent
 	created, err := g.CreatePR(ctx, &oauth2.Token{
 		AccessToken: credential.Token,
 		TokenType:   "Bearer",
-	}, repository.Owner, repository.Name, NewPR{
+	}, repository.Namespace, repository.Name, NewPR{
 		Title: req.Title,
 		Body:  req.Body,
 		Head:  req.Head,
@@ -314,7 +314,7 @@ func (g *GitHubGateway) MergeChange(ctx context.Context, credential forge.Creden
 	result, err := g.MergePR(ctx, &oauth2.Token{
 		AccessToken: credential.Token,
 		TokenType:   "Bearer",
-	}, repository.Owner, repository.Name, number, MergePRRequest{
+	}, repository.Namespace, repository.Name, number, MergePRRequest{
 		Method:  string(forge.NormalizeMergeMethod(req.Method)),
 		Title:   req.CommitTitle,
 		Message: req.CommitMessage,
