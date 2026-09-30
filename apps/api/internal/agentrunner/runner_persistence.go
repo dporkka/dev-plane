@@ -219,13 +219,13 @@ func (r *Runner) loadAgentRun(ctx context.Context, runID string) (*models.AgentR
 	var metadata sql.NullString
 
 	err := r.db.QueryRowContext(ctx, `
-		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status,
+		SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status, state_version,
 		       outcome, execution_snapshot, execution_snapshot_digest,
 		       started_at, completed_at, prompt_tokens, completion_tokens,
 		       total_cost, error_message, summary, metadata, created_at, updated_at
 		FROM agent_runs WHERE id = $1
 	`, runID).Scan(
-		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status,
+		&run.ID, &run.TaskID, &parentRunID, &workspaceID, &run.Attempt, &run.AgentRole, &model, &provider, &run.Status, &run.StateVersion,
 		&outcome, &executionSnapshot, &executionSnapshotDigest,
 		&startedAt, &completedAt, &run.PromptTokens, &run.CompletionTokens,
 		&run.TotalCost, &errorMessage, &summary, &metadata, &createdAt, &updatedAt,
