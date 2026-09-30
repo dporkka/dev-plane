@@ -96,7 +96,6 @@ func (r *Runner) failRunClassified(
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
 }
 
-
 func (r *Runner) buildFailedRunEvent(
 	ctx context.Context,
 	runID string,
