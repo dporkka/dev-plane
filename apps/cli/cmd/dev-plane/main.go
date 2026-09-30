@@ -23,6 +23,16 @@ func run(args []string) error {
 		return runLogin(args[1:])
 	case "check":
 		return runCheck(args[1:])
+	case "evidence":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: dev-plane evidence verify <artifact>")
+		}
+		switch args[1] {
+		case "verify":
+			return runEvidenceVerify(args[2:])
+		default:
+			return fmt.Errorf("unknown evidence subcommand: %s", args[1])
+		}
 	case "tasks":
 		if len(args) < 2 {
 			return fmt.Errorf("usage: dev-plane tasks <list|get|create>")
@@ -75,6 +85,7 @@ func printUsage() {
 Usage:
   dev-plane login --base-url=<url>
   dev-plane check --changed [--path=.] [--base=<ref>] [--dry-run] [--json] [--evidence-out=<file> --environment-digest=<digest> --runner-id=<id>]
+  dev-plane evidence verify [--path=.] [--environment-digest=<digest>] <artifact>
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
   dev-plane tasks create --project-id=<id> --repository-id=<id> --title=<title> [--description=<desc>]
