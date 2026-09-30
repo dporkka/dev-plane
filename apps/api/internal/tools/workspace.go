@@ -389,7 +389,7 @@ func (t *WorkspaceTools) RunCommand(ctx context.Context, workspacePath string, i
 
 // InspectRepo returns repository structure and metadata.
 // Input: {}
-// Output: {"root": "/path", "total_files": 150, "total_dirs": 20, "languages": {"Go": 80, "TypeScript": 40}, "package_manager": "go", "framework": "chi"}
+// Output: {"root": "/path", "total_files": 150, "total_dirs": 20, "languages": {"Go": 80, "TypeScript": 40}, "package_manager": "go", "framework": "chi", "test_command": "go test ./..."}
 func (t *WorkspaceTools) InspectRepo(ctx context.Context, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
 	files, dirs, languages := countFileStats(workspacePath)
 
@@ -399,8 +399,9 @@ func (t *WorkspaceTools) InspectRepo(ctx context.Context, workspacePath string, 
 	// Detect framework
 	framework := detectFramework(workspacePath)
 
-	// Find key files
+	// Find key files and infer the repository-native test command.
 	keyFiles := findKeyFiles(workspacePath)
+	testCommand := detectTestCommand(workspacePath)
 
 	return json.Marshal(map[string]any{
 		"root":            workspacePath,
@@ -409,6 +410,7 @@ func (t *WorkspaceTools) InspectRepo(ctx context.Context, workspacePath string, 
 		"languages":       languages,
 		"package_manager": packageManager,
 		"framework":       framework,
+		"test_command":    testCommand,
 		"key_files":       keyFiles,
 	})
 }
@@ -506,6 +508,9 @@ func (t *WorkspaceTools) RunTests(ctx context.Context, workspacePath string, inp
 	testCommand := req.Command
 	if testCommand == "" {
 		testCommand = detectTestCommand(workspacePath)
+	}
+	if strings.TrimSpace(testCommand) == "" {
+		return nil, fmt.Errorf("no test command detected; provide command explicitly")
 	}
 
 	// Validate command against denylist
@@ -791,23 +796,38 @@ func detectLanguage(filename string) string {
 
 // detectPackageManager detects the package manager used in the project.
 func detectPackageManager(workspacePath string) string {
-	files := map[string]string{
-		"go.mod":           "go",
-		"package.json":     "npm",
-		"yarn.lock":        "yarn",
-		"pnpm-lock.yaml":   "pnpm",
-		"Cargo.toml":       "cargo",
-		"requirements.txt": "pip",
-		"pyproject.toml":   "poetry",
-		"Pipfile":          "pipenv",
-		"Gemfile":          "bundler",
-		"pom.xml":          "maven",
-		"build.gradle":     "gradle",
-		"composer.json":    "composer",
+	// Order matters. Prefer specific lockfiles over generic manifests so
+	// detection is deterministic and reflects the repository's chosen tool.
+	markers := []struct {
+		file    string
+		manager string
+	}{
+		{"go.mod", "go"},
+		{"pnpm-lock.yaml", "pnpm"},
+		{"yarn.lock", "yarn"},
+		{"bun.lock", "bun"},
+		{"bun.lockb", "bun"},
+		{"package-lock.json", "npm"},
+		{"package.json", "npm"},
+		{"Cargo.toml", "cargo"},
+		{"uv.lock", "uv"},
+		{"poetry.lock", "poetry"},
+		{"Pipfile.lock", "pipenv"},
+		{"Pipfile", "pipenv"},
+		{"requirements.txt", "pip"},
+		{"pyproject.toml", "python"},
+		{"Gemfile.lock", "bundler"},
+		{"Gemfile", "bundler"},
+		{"pom.xml", "maven"},
+		{"gradlew", "gradle"},
+		{"build.gradle.kts", "gradle"},
+		{"build.gradle", "gradle"},
+		{"composer.lock", "composer"},
+		{"composer.json", "composer"},
 	}
-	for file, manager := range files {
-		if _, err := os.Stat(filepath.Join(workspacePath, file)); err == nil {
-			return manager
+	for _, marker := range markers {
+		if fileExists(filepath.Join(workspacePath, marker.file)) {
+			return marker.manager
 		}
 	}
 	return "unknown"
@@ -864,7 +884,14 @@ func detectFramework(workspacePath string) string {
 // findKeyFiles finds important configuration files in the repository.
 func findKeyFiles(workspacePath string) []string {
 	keyFilePatterns := []string{
-		"go.mod", "go.sum", "package.json", "Dockerfile", "docker-compose.yml",
+		"go.mod", "go.sum",
+		"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb",
+		"Cargo.toml", "Cargo.lock",
+		"pyproject.toml", "requirements.txt", "uv.lock", "poetry.lock", "Pipfile", "Pipfile.lock",
+		"Gemfile", "Gemfile.lock",
+		"pom.xml", "build.gradle", "build.gradle.kts", "gradlew",
+		"composer.json", "composer.lock",
+		"Dockerfile", "docker-compose.yml", "compose.yml",
 		"Makefile", "README.md", ".gitignore", ".github/workflows",
 	}
 
@@ -944,28 +971,96 @@ func parseTestCounts(output string) (total, failed, skipped int) {
 
 // detectTestCommand determines the test command for a project.
 func detectTestCommand(workspacePath string) string {
-	if _, err := os.Stat(filepath.Join(workspacePath, "go.mod")); err == nil {
+	switch detectPackageManager(workspacePath) {
+	case "go":
 		return "go test ./..."
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "package.json")); err == nil {
-		return "npm test"
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "Cargo.toml")); err == nil {
+	case "pnpm":
+		if packageJSONHasTestScript(workspacePath) {
+			return "pnpm test"
+		}
+	case "yarn":
+		if packageJSONHasTestScript(workspacePath) {
+			return "yarn test"
+		}
+	case "bun":
+		if packageJSONHasTestScript(workspacePath) {
+			return "bun test"
+		}
+	case "npm":
+		if packageJSONHasTestScript(workspacePath) {
+			return "npm test"
+		}
+	case "cargo":
 		return "cargo test"
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "requirements.txt")); err == nil {
-		return "python -m pytest"
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "pyproject.toml")); err == nil {
-		return "pytest"
-	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "pom.xml")); err == nil {
+	case "uv":
+		if hasPytestSignal(workspacePath) {
+			return "uv run pytest"
+		}
+	case "poetry":
+		if hasPytestSignal(workspacePath) {
+			return "poetry run pytest"
+		}
+	case "pipenv":
+		if hasPytestSignal(workspacePath) {
+			return "pipenv run pytest"
+		}
+	case "pip", "python":
+		if hasPytestSignal(workspacePath) {
+			return "python -m pytest"
+		}
+	case "maven":
 		return "mvn test"
+	case "gradle":
+		if fileExists(filepath.Join(workspacePath, "gradlew")) {
+			return "./gradlew test"
+		}
+		return "gradle test"
+	case "bundler":
+		return "bundle exec rake test"
+	case "composer":
+		return "composer test"
 	}
-	if _, err := os.Stat(filepath.Join(workspacePath, "build.gradle")); err == nil {
-		return "./gradlew test"
+	return ""
+}
+
+func packageJSONHasTestScript(workspacePath string) bool {
+	data, err := os.ReadFile(filepath.Join(workspacePath, "package.json"))
+	if err != nil {
+		return false
 	}
-	return "echo 'No test command detected'"
+	var manifest struct {
+		Scripts map[string]string `json:"scripts"`
+	}
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return false
+	}
+	return strings.TrimSpace(manifest.Scripts["test"]) != ""
+}
+
+func hasPytestSignal(workspacePath string) bool {
+	for _, name := range []string{"pytest.ini", "tox.ini"} {
+		if fileExists(filepath.Join(workspacePath, name)) {
+			return true
+		}
+	}
+
+	for _, name := range []string{
+		"pyproject.toml",
+		"requirements.txt",
+		"requirements-dev.txt",
+		"Pipfile",
+	} {
+		data, err := os.ReadFile(filepath.Join(workspacePath, name))
+		if err == nil && strings.Contains(strings.ToLower(string(data)), "pytest") {
+			return true
+		}
+	}
+	return false
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // truncateString truncates a string to maxLen, appending ... if truncated.

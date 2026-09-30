@@ -26,7 +26,7 @@ make test
 make build
 ```
 
-For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete.
+For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete. Changes to repository inspection, ecosystem detection, or inferred validation commands should also run `make test-portability`.
 
 Behavior changes should be test-driven: add or update the test that describes the desired behavior before changing production logic.
 

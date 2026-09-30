@@ -7,7 +7,7 @@
 .PHONY: dev dev-web dev-api dev-worker dev-runner \
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
-        test test-api test-cli test-packages test-race test-sdk \
+        test test-api test-cli test-packages test-portability test-race test-sdk \
         lint lint-go lint-web lint-fix-web lint-sdk \
         build build-api build-cli build-worker build-runner build-web build-sdk \
         clean help install-tools
@@ -198,9 +198,13 @@ test-worker: ## Run worker-specific tests
 test-packages: ## Run package tests only (no apps)
 	@echo "$(GREEN)Running package tests...$(RESET)"
 	@for pkg in $(GO_PACKAGES); do \
-		echo "$(BLUE)[test]$(RESET) $$pkg"; \
-		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; \
+		echo "$(BLUE)[test]$(RESET) $pkg"; \
+		cd $pkg && go test ./... && cd - > /dev/null || exit 1; \
 	done
+
+test-portability: ## Verify Dev Plane against unbranded Go/TypeScript/Rust/Python repository fixtures
+	@echo "$(BLUE)[test]$(RESET) Running repository portability contract..."
+	cd apps/api && go test ./internal/tools -run 'PortableRepositoryFixtures|DetectPackageManagerUsesDeterministicSpecificMarkers|DetectTestCommandRespectsRepositoryToolchain' -count=1
 
 test-race: ## Run Go tests with race detector
 	@echo "$(GREEN)Running tests with race detector...$(RESET)"
