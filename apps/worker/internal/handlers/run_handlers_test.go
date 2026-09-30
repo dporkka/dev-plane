@@ -861,6 +861,7 @@ func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
 			status TEXT NOT NULL,
+			state_version INTEGER NOT NULL DEFAULT 1,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
