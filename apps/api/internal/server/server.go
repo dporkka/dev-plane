@@ -105,7 +105,7 @@ func (s *Server) routes() {
 		h = h.WithEventBus(s.eventBus)
 	}
 	if av := agentvaultclient.NewClient(s.config.AgentVaultURL, s.config.AgentVaultToken); av != nil {
-		h = h.WithAgentVault(av, s.config.AgentVaultProject)
+		h = h.WithActivitySink(av, s.config.AgentVaultProject)
 	}
 	ghAuth := handlers.NewGitHubAuthHandler(s.db, s.config)
 	wh := handlers.NewWebhookHandler().

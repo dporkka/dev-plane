@@ -38,6 +38,36 @@ type Provider interface {
 }
 ```
 
+### Provider Conformance Contract
+
+Third-party runtime implementations should run the reusable contract suite from `packages/runtimes/contracttest`. The contract verifies the semantics Dev Plane relies on rather than implementation details: workspace creation/status, file round-trips, command execution, patch application, snapshot/restore, log streaming availability, cleanup, and `ErrSessionNotFound` after destruction.
+
+```go
+package myruntime_test
+
+import (
+    "testing"
+
+    "github.com/ai-dev-control-plane/runtimes"
+    "github.com/ai-dev-control-plane/runtimes/contracttest"
+)
+
+func TestProviderContract(t *testing.T) {
+    contracttest.Run(t,
+        func(t *testing.T) runtimes.Provider {
+            return newMyProviderForTest(t)
+        },
+        func(t *testing.T) runtimes.CreateRequest {
+            return repositoryFixture(t) // seed.txt must initially contain "before\n"
+        },
+    )
+}
+```
+
+A provider should not require changes to Dev Plane core merely to satisfy this interface. Provider-specific configuration, credentials, scheduling, or infrastructure belongs in the provider implementation.
+
+The built-in local provider runs this same contract in CI. Docker retains additional isolation-specific integration tests because security properties such as network isolation and resource limits are stronger than the generic provider contract.
+
 ### Session Lifecycle
 
 ```

@@ -8,19 +8,13 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ai-dev-control-plane/activity"
 )
 
-// Event is a durable activity record to capture in AgentVault.
-type Event struct {
-	Type       string         `json:"type"`
-	Title      string         `json:"title"`
-	Text       string         `json:"text"`
-	Project    string         `json:"project,omitempty"`
-	Tags       []string       `json:"tags,omitempty"`
-	Metadata   map[string]any `json:"metadata,omitempty"`
-	ExternalID string         `json:"external_id,omitempty"`
-	CreatedAt  time.Time      `json:"created_at"`
-}
+// Event remains as a compatibility alias for callers that used the original
+// AgentVault-specific event type before lifecycle events became provider-neutral.
+type Event = activity.Event
 
 // Client writes Dev Plane lifecycle events to AgentVault's local HTTP API.
 type Client struct {
@@ -45,8 +39,8 @@ func NewClient(baseURL, authToken string) *Client {
 	}
 }
 
-// LogEvent captures an event as an AgentVault inbox note.
-func (c *Client) LogEvent(ctx context.Context, event Event) error {
+// Publish implements activity.Sink by capturing an event as an AgentVault inbox note.
+func (c *Client) Publish(ctx context.Context, event activity.Event) error {
 	if c == nil {
 		return nil
 	}
@@ -92,7 +86,12 @@ func (c *Client) LogEvent(ctx context.Context, event Event) error {
 	return nil
 }
 
-func renderEventText(event Event) string {
+// LogEvent is retained for backward compatibility with the original adapter API.
+func (c *Client) LogEvent(ctx context.Context, event Event) error {
+	return c.Publish(ctx, event)
+}
+
+func renderEventText(event activity.Event) string {
 	var b strings.Builder
 	b.WriteString(event.Text)
 	if b.Len() > 0 {
@@ -109,3 +108,5 @@ func renderEventText(event Event) string {
 	}
 	return b.String()
 }
+
+var _ activity.Sink = (*Client)(nil)

@@ -1,14 +1,27 @@
-# AI Dev Control Plane
+# Dev Plane
 
-> A production-grade, self-hostable AI development control plane. Takes tasks from
-> prompts, GitHub issues, Linear tickets, Slack/Discord commands, or voice transcripts and turns
-> them into isolated branches, code changes, tests, reviews, pull requests, and
-> deployment-gated releases.
+> A self-hostable software-development control plane for agents and automation. Dev Plane turns
+> work from prompts, issues, tickets, chat commands, or other adapters into isolated workspaces,
+> code changes, verification evidence, reviews, pull requests, and deployment-gated releases.
 
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://go.dev)
 [![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=next.js)](https://nextjs.org)
 [![NATS](https://img.shields.io/badge/NATS-JetStream-27AAE1?logo=nats.io)](https://nats.io)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+---
+
+## Design Principles
+
+Dev Plane is designed to remain useful without any other project maintained by its authors:
+
+- **Provider-neutral core** — runtimes, model backends, forges, event/context systems, and other integrations belong behind explicit interfaces.
+- **Optional means optional** — an external integration must never be required for the core task → workspace → evidence → artifact lifecycle.
+- **Repository-owned correctness** — repositories declare their own build, test, and validation semantics; Dev Plane orchestrates them rather than replacing native tooling.
+- **Agent-agnostic governance** — the durable value is execution policy, isolation, evidence, provenance, and publication gates, not dependence on one coding agent or model vendor.
+- **Standalone first** — local and self-hosted operation must remain possible without a maintainer-specific service stack.
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the core/extension boundary and [Runtime Providers](docs/runtime-providers.md) for a concrete provider contract.
 
 ---
 
@@ -38,11 +51,11 @@
 
  +-------------------+       +---------------------------------------------+
  |   GitHub App      |       |                AI Providers                 |
- |   (Webhooks)      |       |              (Bifrost/Direct)               |
+ |   (Webhooks)      |       |              (Gateway/Direct)               |
  |                   |       |                                             |
  | - Issue Sync      |       | - OpenAI                                    |
  | - PR Management   |       | - Anthropic                                 |
- | - Webhook Events  |       | - External Bifrost AI Gateway (optional)   |
+ | - Webhook Events  |       | - OpenAI-compatible gateway (optional)   |
  +-------------------+       +---------------------------------------------+
 ```
 
@@ -121,9 +134,9 @@ make dev-worker      # Start worker service
 | NATS Monitor | http://localhost:8222 | NATS dashboard |
 | Temporal UI | http://localhost:8233 | Workflow UI (if enabled) |
 
-### Optional AgentVault Logging
+### Optional Event / Context Adapter
 
-Dev Plane can capture task lifecycle events into a local AgentVault inbox:
+Dev Plane's core task lifecycle does not require an external context or memory system. The current built-in optional adapter can capture task lifecycle events into an AgentVault inbox:
 
 ```bash
 AGENTVAULT_URL=http://127.0.0.1:47321
@@ -131,7 +144,7 @@ AGENTVAULT_TOKEN=<token printed by agentvault serve>
 AGENTVAULT_PROJECT=dev-plane
 ```
 
-When configured, task creation events are posted to AgentVault's `/capture` endpoint. Logging is best-effort; Dev Plane continues working if AgentVault is offline.
+When configured, task creation events are posted to AgentVault's `/capture` endpoint. This adapter is best-effort and non-blocking: Dev Plane continues working if it is absent or offline. The architectural boundary is an optional event/context sink; AgentVault is one implementation, not a core dependency.
 
 ### Dev Plan Brief Handoff
 
