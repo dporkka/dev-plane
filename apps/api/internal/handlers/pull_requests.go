@@ -686,4 +686,3 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 	verified.Packet = json.RawMessage(packet)
 	return &verified, nil
 }
- 
