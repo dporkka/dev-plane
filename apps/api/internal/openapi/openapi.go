@@ -782,6 +782,44 @@ func buildComponents() Components {
 					"approved": {Type: "boolean", Nullable: true},
 				},
 			},
+			"ChangeGraphNode": {
+				Type:     "object",
+				Required: []string{"candidate_id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state"},
+				Properties: map[string]*Schema{
+					"candidate_id":    {Type: "string"},
+					"pull_request_id": {Type: "string"},
+					"repository_id":   {Type: "string"},
+					"commit_sha":      {Type: "string"},
+					"tree_hash":       {Type: "string"},
+					"state":           {Type: "string"},
+					"depends_on":      {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
+			"ChangeGraphResponse": {
+				Type:     "object",
+				Required: []string{"target_candidate_id", "nodes", "merge_ready"},
+				Properties: map[string]*Schema{
+					"target_candidate_id": {Type: "string"},
+					"nodes":               {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeGraphNode"}},
+					"blockers":            {Type: "array", Items: &Schema{Type: "string"}},
+					"merge_ready":         {Type: "boolean"},
+				},
+			},
+			"AddCandidateDependencyRequest": {
+				Type:     "object",
+				Required: []string{"depends_on_pull_request_id"},
+				Properties: map[string]*Schema{
+					"depends_on_pull_request_id": {Type: "string"},
+				},
+			},
+			"AddCandidateDependencyResponse": {
+				Type:     "object",
+				Required: []string{"candidate_id", "depends_on_candidate_id"},
+				Properties: map[string]*Schema{
+					"candidate_id":            {Type: "string"},
+					"depends_on_candidate_id": {Type: "string"},
+				},
+			},
 			"DecisionPacketResponse": {
 				Type:     "object",
 				Required: []string{"id", "candidate_id", "digest", "packet", "created_at"},
@@ -1947,6 +1985,51 @@ func buildPaths() map[string]PathItem {
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/PullRequest"}},
 				}},
 				"404": {Description: "Pull request not found"},
+			},
+		},
+	}
+	paths["/api/v1/pull-requests/{id}/change-graph"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Get candidate change graph",
+			Description: "Returns the project candidate DAG and transitive merge blockers for this verified pull request.",
+			OperationID: "getPullRequestChangeGraph",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Pull request ID", Schema: &Schema{Type: "string"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Candidate dependency graph", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/ChangeGraphResponse"}},
+				}},
+				"404": {Description: "Pull request or verified candidate not found"},
+				"409": {Description: "Persisted candidate graph is invalid"},
+			},
+		},
+	}
+	paths["/api/v1/pull-requests/{id}/dependencies"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Add candidate dependency",
+			Description: "Adds a directed dependency between verified candidates. Cycles, duplicates, self-dependencies, and cross-project dependencies are rejected.",
+			OperationID: "addPullRequestDependency",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "id", In: "path", Required: true, Description: "Dependent pull request ID", Schema: &Schema{Type: "string"}},
+			},
+			RequestBody: &RequestBody{
+				Required: true,
+				Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/AddCandidateDependencyRequest"}},
+				},
+			},
+			Responses: map[string]Response{
+				"201": {Description: "Candidate dependency created", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/AddCandidateDependencyResponse"}},
+				}},
+				"400": {Description: "Invalid request"},
+				"404": {Description: "Pull request not found"},
+				"409": {Description: "Dependency would create an invalid graph"},
 			},
 		},
 	}
