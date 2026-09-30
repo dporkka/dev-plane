@@ -166,9 +166,6 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	if f.forgeProvider == nil {
 		return nil, fmt.Errorf("forge provider is not configured")
 	}
-	if strings.TrimSpace(f.forgeCredential.Token) == "" {
-		return nil, fmt.Errorf("forge credential is not configured")
-	}
 
 	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
 	if err != nil {
@@ -403,12 +400,9 @@ func (f *Factory) openForgeChange(ctx context.Context, owner, name, title, body,
 	if f.forgeProvider == nil {
 		return nil, fmt.Errorf("forge provider is not configured")
 	}
-	if strings.TrimSpace(f.forgeCredential.Token) == "" {
-		return nil, fmt.Errorf("forge credential is not configured")
-	}
 	return f.forgeProvider.OpenChange(ctx, f.forgeCredential, forge.Repository{
-		Owner: owner,
-		Name:  name,
+		Namespace: owner,
+		Name:      name,
 	}, forge.OpenChangeRequest{
 		Title: title,
 		Body:  body,
