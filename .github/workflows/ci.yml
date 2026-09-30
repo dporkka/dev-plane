@@ -16,6 +16,82 @@ env:
   NEXT_PUBLIC_API_URL: "http://localhost:8080"
 
 jobs:
+  repository-contract:
+    name: Repository contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            packages/sdk/typescript/package-lock.json
+
+      - name: Install web dependencies
+        run: cd apps/web && npm ci
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          install-only: true
+
+      - name: Start NATS
+        run: docker compose up -d --wait nats
+
+      - name: Resolve comparison base
+        id: comparison
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+            if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+              base="$(git rev-parse HEAD^)"
+            fi
+          fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+
+      - name: Compute environment digest
+        id: environment
+        shell: bash
+        run: |
+          digest="$(
+            printf '%s\n'               "${ImageOS:-unknown}"               "${ImageVersion:-unknown}"               "${GO_VERSION}"               "${NODE_VERSION}" |
+              sha256sum | awk '{print $1}'
+          )"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Run repository-owned affected validation
+        shell: bash
+        env:
+          DEV_PLANE_ENVIRONMENT_DIGEST: ${{ steps.environment.outputs.digest }}
+          DEV_PLANE_RUNNER_ID: github-actions:${{ github.run_id }}:${{ github.run_attempt }}
+        run: |
+          cd apps/cli
+          go run ./cmd/dev-plane check             --changed             --path ../..             --base "${{ steps.comparison.outputs.base }}"             --evidence-out "$RUNNER_TEMP/dev-plane-evidence.json"
+
+      - name: Upload verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: dev-plane-verification-evidence
+          path: ${{ runner.temp }}/dev-plane-evidence.json
+          if-no-files-found: error
+          retention-days: 14
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

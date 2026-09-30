@@ -16,10 +16,19 @@
     },
     "dev": {
       "run": "make dev"
+    },
+    "typecheck": {
+      "run": "make typecheck",
+      "timeout_seconds": 600
     }
   },
   "validation": {
-    "fallback_checks": ["lint", "test"]
+    "fallback_checks": [
+      "lint",
+      "typecheck",
+      "test",
+      "build"
+    ]
   },
   "components": {
     "repo-manifest": {
@@ -42,7 +51,10 @@
       "paths": [
         "apps/cli/**"
       ],
-      "depends_on": ["repo-manifest"],
+      "depends_on": [
+        "repo-manifest",
+        "verification"
+      ],
       "checks": {
         "lint": {
           "run": "cd apps/cli && go vet ./...",
@@ -58,7 +70,9 @@
       "paths": [
         "apps/api/**"
       ],
-      "depends_on": ["repo-manifest"],
+      "depends_on": [
+        "repo-manifest"
+      ],
       "checks": {
         "lint": {
           "run": "cd apps/api && go vet ./...",
@@ -67,6 +81,24 @@
         "test": {
           "run": "cd apps/api && go test ./...",
           "timeout_seconds": 300
+        }
+      }
+    },
+    "verification": {
+      "paths": [
+        "packages/verification/**"
+      ],
+      "depends_on": [
+        "repo-manifest"
+      ],
+      "checks": {
+        "lint": {
+          "run": "cd packages/verification && go vet ./...",
+          "timeout_seconds": 120
+        },
+        "test": {
+          "run": "cd packages/verification && go test ./...",
+          "timeout_seconds": 120
         }
       }
     }
