@@ -262,7 +262,7 @@ func TestBuildTaskCapsuleCapturesSubjectRevision(t *testing.T) {
 			MemoryMB: 1,
 		},
 		Tasks: []Task{
-			{ID: "task-1", Owns: []string{"apps/api"}},
+			{ID: "task-1", Owns: []string{"apps/api"}, Resources: Resources{CPU: 1, MemoryMB: 1}},
 		},
 	}
 	state := State{"task-1": StatusPending}
