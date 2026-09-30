@@ -17,11 +17,23 @@ import (
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/scheduler"
 )
 
 // Executor runs queued agent_runs by ID.
 type Executor struct {
 	runner *agentrunner.Runner
+}
+
+// RunCompletionObserver receives final verification evidence before the runner
+// transitions to completed.
+type RunCompletionObserver interface {
+	RecordRunCompletion(
+		context.Context,
+		string,
+		string,
+		[]scheduler.Evidence,
+	) error
 }
 
 // New creates a production runner with the shared policy, budget, audit,
@@ -40,6 +52,16 @@ func New(db *sql.DB, eventBus *events.Bus, logger *slog.Logger) *Executor {
 }
 
 // WithRuntimeProvider registers the runtime provider used by queued runs.
+// WithCompletionObserver installs the authority-bearing completion gate used by
+// the worker's durable task capsule.
+func (e *Executor) WithCompletionObserver(observer RunCompletionObserver) *Executor {
+	if e == nil || e.runner == nil || observer == nil {
+		return e
+	}
+	e.runner.WithCompletionObserver(observer)
+	return e
+}
+
 func (e *Executor) WithRuntimeProvider(name string, provider runtimes.Provider) *Executor {
 	if e == nil || e.runner == nil || provider == nil || name == "" {
 		return e
