@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -9,24 +8,13 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/oauth2"
 
-	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
-	"github.com/ai-dev-control-plane/changeset"
 	"github.com/ai-dev-control-plane/events"
-	"github.com/ai-dev-control-plane/gateway"
 )
-
-const publicationLeaseDuration = 5 * time.Minute
-
-type githubPRReader interface {
-	GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*gateway.GitHubPR, error)
-}
 
 type changeSetPublicationMember struct {
 	CandidateID   string
@@ -94,6 +82,9 @@ func (h *Handler) GetChangeSetPublication(w http.ResponseWriter, r *http.Request
 	respond.JSON(w, http.StatusOK, publicationResponse(changeSet.ID, changeSet.PublicationStatus, members))
 }
 
+// PublishChangeSet requests asynchronous publication by the worker. All
+// authority validation, lease acquisition, GitHub reconciliation, and merge
+// execution occur in the durable worker-side publisher.
 func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)
@@ -162,49 +153,6 @@ func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *Handler) validateChangeSetPublicationAuthority(ctx context.Context, changeSet *ChangeSet) (*ChangeSetStatusResponse, error) {
-	if changeSet.PublicationDigest == nil || strings.TrimSpace(*changeSet.PublicationDigest) == "" ||
-		len(changeSet.PublicationManifest) == 0 {
-		return nil, errors.New("authorized change set is missing publication authority")
-	}
-
-	status, graph, err := h.evaluateChangeSetWithGraph(ctx, changeSet)
-	if err != nil {
-		return nil, err
-	}
-	current, err := changeset.NewManifest(changeset.ManifestInput{
-		ChangeSetID: changeSet.ID,
-		ProjectID:   changeSet.ProjectID,
-		Members:     status.Members,
-		Graph:       graph,
-	})
-	if err != nil {
-		return nil, err
-	}
-	currentDigest, err := current.Digest()
-	if err != nil {
-		return nil, err
-	}
-	if currentDigest != *changeSet.PublicationDigest {
-		return nil, errors.New("change set publication authority is stale")
-	}
-
-	var stored changeset.Manifest
-	if err := json.Unmarshal(changeSet.PublicationManifest, &stored); err != nil {
-		return nil, fmt.Errorf("decode stored change set publication manifest: %w", err)
-	}
-	storedDigest, err := stored.Digest()
-	if err != nil {
-		return nil, fmt.Errorf("validate stored change set publication manifest: %w", err)
-	}
-	if storedDigest != *changeSet.PublicationDigest ||
-		stored.ChangeSetID != changeSet.ID ||
-		stored.ProjectID != changeSet.ProjectID {
-		return nil, errors.New("change set publication manifest integrity check failed")
-	}
-	return status, nil
-}
-
 func (h *Handler) loadChangeSetPublicationMembers(ctx context.Context, changeSetID string) ([]changeSetPublicationMember, error) {
 	rows, err := h.db.QueryContext(ctx, `
 		SELECT cp.candidate_id, cp.ordinal, cp.status, cp.attempt_count, cp.merge_sha, cp.last_error,
@@ -246,70 +194,6 @@ func (h *Handler) loadChangeSetPublicationMembers(ctx context.Context, changeSet
 	return members, nil
 }
 
-func (h *Handler) reconcilePublicationMemberMerged(ctx context.Context, changeSetID string, member *changeSetPublicationMember, mergeSHA string) error {
-	now := time.Now().UTC()
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE pull_requests SET state = 'merged', merged_at = COALESCE(merged_at, $1), updated_at = $1
-		WHERE id = $2
-	`, now, member.PullRequestID); err != nil {
-		return fmt.Errorf("reconcile local pull request: %w", err)
-	}
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'done', completed_at = COALESCE(completed_at, $1), updated_at = $1
-		WHERE id = $2
-	`, now, member.TaskID); err != nil {
-		return fmt.Errorf("reconcile local task: %w", err)
-	}
-	return h.checkpointPublicationMemberMerged(ctx, changeSetID, member.CandidateID, mergeSHA)
-}
-
-func (h *Handler) checkpointPublicationMemberMerged(ctx context.Context, changeSetID, candidateID, mergeSHA string) error {
-	now := time.Now().UTC()
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE change_set_publications SET status = 'merged',
-		    merge_sha = $1, last_error = NULL, completed_at = $2, updated_at = $2
-		WHERE change_set_id = $3 AND candidate_id = $4
-	`, mergeSHA, now, changeSetID, candidateID); err != nil {
-		return fmt.Errorf("checkpoint merged publication member: %w", err)
-	}
-	return nil
-}
-
-func (h *Handler) blockPublicationMember(w http.ResponseWriter, ctx context.Context, changeSetID, leaseToken string, member *changeSetPublicationMember, reason string) {
-	now := time.Now().UTC()
-	_, _ = h.db.ExecContext(ctx, `
-		UPDATE change_set_publications SET status = 'blocked', last_error = $1, updated_at = $2
-		WHERE change_set_id = $3 AND candidate_id = $4
-	`, reason, now, changeSetID, member.CandidateID)
-	_, _ = h.db.ExecContext(ctx, `
-		UPDATE change_sets
-		SET publication_status = $1,
-		    publication_lease_token = NULL,
-		    publication_lease_until = NULL,
-		    updated_at = $2
-		WHERE id = $3 AND publication_lease_token = $4
-	`, "blocked", now, changeSetID, leaseToken)
-	member.Status = "blocked"
-	member.LastError = &reason
-	respond.JSON(w, http.StatusConflict, map[string]any{
-		"error":              reason,
-		"candidate_id":       member.CandidateID,
-		"publication_status": "blocked",
-	})
-}
-
-func (h *Handler) failChangeSetPublication(ctx context.Context, changeSetID, leaseToken, status, reason string) {
-	now := time.Now().UTC()
-	_, _ = h.db.ExecContext(ctx, `
-		UPDATE change_sets
-		SET publication_status = $1,
-		    publication_lease_token = NULL,
-		    publication_lease_until = NULL,
-		    updated_at = $2
-		WHERE id = $3 AND publication_lease_token = $4
-	`, status, now, changeSetID, leaseToken)
-}
-
 func publicationResponse(changeSetID, publicationStatus string, members []changeSetPublicationMember) ChangeSetPublicationResponse {
 	responseMembers := make([]ChangeSetPublicationMemberResponse, 0, len(members))
 	for _, member := range members {
@@ -327,54 +211,4 @@ func publicationResponse(changeSetID, publicationStatus string, members []change
 		PublicationStatus: publicationStatus,
 		Members:           responseMembers,
 	}
-}
-
-type mergeAuthorityCapture struct {
-	header http.Header
-	status int
-	body   bytes.Buffer
-}
-
-func newMergeAuthorityCapture() *mergeAuthorityCapture {
-	return &mergeAuthorityCapture{header: make(http.Header)}
-}
-
-func (c *mergeAuthorityCapture) Header() http.Header {
-	return c.header
-}
-
-func (c *mergeAuthorityCapture) WriteHeader(status int) {
-	if c.status == 0 {
-		c.status = status
-	}
-}
-
-func (c *mergeAuthorityCapture) Write(data []byte) (int, error) {
-	if c.status == 0 {
-		c.status = http.StatusOK
-	}
-	return c.body.Write(data)
-}
-
-func (h *Handler) invokeMergeAuthority(ctx context.Context, user *auth.Claims, pullRequestID string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/pull-requests/"+pullRequestID+"/merge", strings.NewReader("{}"))
-	if err != nil {
-		return fmt.Errorf("build merge authority request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req = req.WithContext(auth.WithUser(req.Context(), user))
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("id", pullRequestID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	capture := newMergeAuthorityCapture()
-	h.MergePullRequest(capture, req)
-	if capture.status >= 200 && capture.status < 300 {
-		return nil
-	}
-	message := strings.TrimSpace(capture.body.String())
-	if message == "" {
-		message = http.StatusText(capture.status)
-	}
-	return fmt.Errorf("merge authority rejected pull request %s: %s", pullRequestID, message)
 }
