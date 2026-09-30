@@ -171,6 +171,10 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     model                       TEXT,
     provider                    TEXT,
     status                      TEXT NOT NULL DEFAULT 'pending',
+    state_version               BIGINT NOT NULL DEFAULT 1,
+    processed_event_version     BIGINT NOT NULL DEFAULT 0,
+    processing_event_version    BIGINT NOT NULL DEFAULT 0,
+    event_claimed_at            TIMESTAMPTZ,
     outcome                     TEXT,
     execution_snapshot          JSONB NOT NULL DEFAULT '{}',
     execution_snapshot_digest   TEXT,
@@ -190,6 +194,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_parent_run_id ON agent_runs(parent_run_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_id ON agent_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_state_version ON agent_runs(id, state_version);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_event_processing ON agent_runs(processing_event_version, event_claimed_at);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_outcome ON agent_runs(outcome);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_attempt ON agent_runs(task_id, attempt);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_parent_attempt_role
