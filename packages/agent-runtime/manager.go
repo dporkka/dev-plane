@@ -114,6 +114,9 @@ func (m *Manager) ResumeThread(ctx context.Context, threadID string) (*Thread, e
 	resumed.Model = firstValue(resumed.Model, stored.Model)
 	if resumed.CreatedAt.IsZero() {
 		resumed.CreatedAt = stored.CreatedAt
+		if resumed.CreatedAt.IsZero() {
+			resumed.CreatedAt = m.now()
+		}
 	}
 	if resumed.UpdatedAt.IsZero() {
 		resumed.UpdatedAt = m.now()
