@@ -247,7 +247,6 @@ func TestListAgentSteps(t *testing.T) {
 	}
 }
 
-
 func TestGetAgentRunExposesFailureClassification(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
