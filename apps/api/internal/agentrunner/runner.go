@@ -326,9 +326,15 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		}
 	}
 
-	// 6. Run lint/typecheck/tests via test runner
+	// 6. Run configured deterministic verification checks.
 	r.logger.Info("running final checks", "run_id", runID)
 	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
+	if errMsg, _ := testResults["error"].(string); errMsg != "" {
+		return r.failRunWithData(ctx, runID, run.TaskID, "final verification could not complete: "+errMsg, testResults)
+	}
+	if passed, ok := testResults["passed"].(bool); !ok || !passed {
+		return r.failRunWithData(ctx, runID, run.TaskID, "final verification failed", testResults)
+	}
 
 	// 7. Get git diff for summary
 	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
@@ -340,8 +346,8 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	now := time.Now().UTC()
 	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
 
-	// Publish run.completed event
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
+	// Publish run.completed event with revision-bound verification evidence.
+	completedPayload := map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
@@ -349,16 +355,10 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"steps":      state.ToolCalls,
 		"summary":    summary,
 		"timestamp":  now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
+		"data":       testResults,
+	}
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), completedPayload)
+	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, completedPayload)
 
 	r.logger.Info("agent run completed", "run_id", runID, "steps", state.ToolCalls, "duration_ms", time.Since(startTime).Milliseconds())
 
@@ -696,7 +696,6 @@ func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, worksp
 	return nil
 }
 
-
 // streamStep publishes a step event via NATS.
 func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventType string) error {
 	if r.eventBus == nil {
@@ -725,7 +724,6 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
 }
-
 
 func nextStepNumber(history []models.AgentStep) int {
 	maxStep := 0
@@ -766,19 +764,10 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	return filepath.Join("workspaces", ws.ID)
 }
 
-
-// runFinalChecks executes lint, typecheck, and tests via the test runner.
+// runFinalChecks executes the configured deterministic verification plan and
+// binds every result to an immutable workspace tree revision.
 func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath string) map[string]any {
-	results := make(map[string]any)
-
-	// Run tests
-	testOutput, testErr := r.executeTool(ctx, run, task, workspace, workspacePath, "run_tests", json.RawMessage(`{}`))
-	results["tests"] = map[string]any{
-		"output": string(testOutput),
-		"error":  fmt.Sprintf("%v", testErr),
-	}
-
-	return results
+	return r.runConfiguredFinalChecks(ctx, run, task, workspace, workspacePath)
 }
 
 // buildSummary creates a human-readable summary of the run.
