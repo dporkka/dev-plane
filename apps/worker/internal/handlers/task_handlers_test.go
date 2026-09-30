@@ -252,6 +252,43 @@ func TestHandleTaskApprovedSkipsWhenInitialRunAlreadyClaimed(t *testing.T) {
 	}
 }
 
+func TestHandleTaskApprovedDoesNotRepublishFollowOnRun(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	if _, err := db.Exec(`UPDATE tasks SET status = 'running' WHERE id = 'task-1'`); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	_, err := db.Exec(`
+		INSERT INTO agent_runs (
+			id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at
+		) VALUES (
+			'run-follow-on', 'task-1', NULL, 'reviewer', 'gpt-4o', 'openai', 'queued', 0,
+			'{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}},"trigger":"mailbox_handoff","handoff_from_run_id":"run-1"}',
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		t.Fatalf("insert follow-on run: %v", err)
+	}
+	publisher := &fakeWorkerEventPublisher{}
+	provider := &fakeRuntimeProvider{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+
+	err = handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
+	if err != nil {
+		t.Fatalf("HandleTaskApproved() error: %v", err)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("published follow-on run as approval recovery: %q %s", publisher.subject, string(publisher.data))
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called for already-running task: %+v", provider.req)
+	}
+}
+
 func TestHandleTaskApprovedRepublishesExistingQueuedRun(t *testing.T) {
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
