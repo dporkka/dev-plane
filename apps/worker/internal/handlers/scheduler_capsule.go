@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ai-dev-control-plane/readiness"
 	"github.com/ai-dev-control-plane/scheduler"
 )
 
@@ -35,6 +36,7 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 
 	var (
 		storedTaskID string
+		repositoryID string
 		title string
 		rawMetadata string
 		workspaceID sql.NullString
@@ -44,7 +46,7 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		runStatus string
 	)
 	err := a.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, COALESCE(t.metadata, '{}'),
+		SELECT t.id, t.repository_id, t.title, COALESCE(t.metadata, '{}'),
 		       ar.workspace_id, ar.agent_role, ar.model, ar.provider, ar.status
 		FROM agent_runs ar
 		JOIN tasks t ON t.id = ar.task_id
@@ -53,6 +55,7 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		  AND t.deleted_at IS NULL
 	`, runID, taskID).Scan(
 		&storedTaskID,
+		&repositoryID,
 		&title,
 		&rawMetadata,
 		&workspaceID,
@@ -96,6 +99,12 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		dependsOn = append(dependsOn, config.DependsOn...)
 	}
 
+	if len(requiredEvidence) == 0 {
+		requiredEvidence, err = a.requiredEvidenceForRepository(ctx, repositoryID)
+		if err != nil {
+			return scheduler.TaskCapsule{}, err
+		}
+	}
 	required, err := normalizeCapsuleEvidenceRequirements(requiredEvidence)
 	if err != nil {
 		return scheduler.TaskCapsule{}, err
@@ -136,4 +145,39 @@ func normalizeCapsuleEvidenceRequirements(values []string) ([]string, error) {
 		out = append(out, value)
 	}
 	return out, nil
+}
+
+
+func (a *SchedulerAdmission) requiredEvidenceForRepository(ctx context.Context, repositoryID string) ([]string, error) {
+	var testCommand, lintCommand, typecheckCommand, buildCommand sql.NullString
+	err := a.db.QueryRowContext(ctx, `
+		SELECT test_command, lint_command, typecheck_command, build_command
+		FROM project_configs
+		WHERE repository_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, strings.TrimSpace(repositoryID)).Scan(
+		&testCommand,
+		&lintCommand,
+		&typecheckCommand,
+		&buildCommand,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		err = nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load repository verification commands: %w", err)
+	}
+
+	plan := readiness.BuildVerificationPlan(
+		testCommand.String,
+		lintCommand.String,
+		typecheckCommand.String,
+		buildCommand.String,
+	)
+	required := make([]string, 0, len(plan))
+	for _, step := range plan {
+		required = append(required, step.Evidence)
+	}
+	return required, nil
 }
