@@ -18,6 +18,7 @@ import (
 	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
