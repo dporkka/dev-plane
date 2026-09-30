@@ -219,6 +219,10 @@ func TestEventConstants(t *testing.T) {
 		{ReviewTriggered, "review.triggered"},
 		{ApprovalRequested, "approval.requested"},
 		{PRCreated, "pr.created"},
+		{ChangeSetPublishRequested, "changesets.publish_requested"},
+		{ChangeSetPublicationStarted, "changesets.publication_started"},
+		{ChangeSetPublicationCompleted, "changesets.publication_completed"},
+		{ChangeSetPublicationBlocked, "changesets.publication_blocked"},
 	}
 
 	for _, tt := range tests {
