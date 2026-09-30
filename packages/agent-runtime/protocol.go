@@ -267,11 +267,12 @@ func (r CreateThreadRequest) Validate() error {
 
 // RunTurnRequest starts a new turn on an existing thread.
 type RunTurnRequest struct {
-	ThreadID     string          `json:"thread_id"`
-	Input        TurnInput       `json:"input"`
-	Model        string          `json:"model,omitempty"`
-	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
-	Metadata     json.RawMessage `json:"metadata,omitempty"`
+	ThreadID         string          `json:"thread_id"`
+	ProviderThreadID string          `json:"provider_thread_id,omitempty"`
+	Input            TurnInput       `json:"input"`
+	Model            string          `json:"model,omitempty"`
+	OutputSchema     json.RawMessage `json:"output_schema,omitempty"`
+	Metadata         json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Validate checks the required run-turn fields.
@@ -303,15 +304,19 @@ func (r ResumeThreadRequest) Validate() error {
 
 // InterruptTurnRequest identifies the active turn to interrupt.
 type InterruptTurnRequest struct {
-	ThreadID string `json:"thread_id"`
-	TurnID   string `json:"turn_id"`
+	ThreadID         string `json:"thread_id"`
+	ProviderThreadID string `json:"provider_thread_id,omitempty"`
+	TurnID           string `json:"turn_id"`
+	ProviderTurnID   string `json:"provider_turn_id,omitempty"`
 }
 
 // SteerTurnRequest supplies additional input to an active turn.
 type SteerTurnRequest struct {
-	ThreadID string    `json:"thread_id"`
-	TurnID   string    `json:"turn_id"`
-	Input    TurnInput `json:"input"`
+	ThreadID         string    `json:"thread_id"`
+	ProviderThreadID string    `json:"provider_thread_id,omitempty"`
+	TurnID           string    `json:"turn_id"`
+	ProviderTurnID   string    `json:"provider_turn_id,omitempty"`
+	Input            TurnInput `json:"input"`
 }
 
 // ApprovalDecision is the response to a provider approval request.
