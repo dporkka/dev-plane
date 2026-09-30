@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -97,8 +99,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 
 	for _, gateName := range executable {
 		profile := cfg.Verification[gateName]
+		kind, commandText := verificationCommand(profile)
 		command := runtimes.Command{
-			Command:     profile.Command,
+			Command:     commandText,
 			Timeout:     profileTimeout(profile.TimeoutSeconds),
 			UnsafeShell: true,
 		}
@@ -110,11 +113,18 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 
 		evidence := repoprotocol.GateEvidence{
 			Name:    gateName,
+			Kind:    kind,
 			Status:  repoprotocol.GatePassed,
-			Command: profile.Command,
+			Command: commandText,
 			Output:  evidenceOutput(commandResult, runErr),
 		}
 		failed := runErr != nil || commandResult == nil || commandResult.ExitCode != 0
+		if profile.Browser != nil {
+			reportOutput, artifacts, browserErr := v.collectBrowserEvidence(ctx, req.SessionID, *profile.Browser)
+			evidence.Output = joinEvidenceOutput(evidence.Output, reportOutput, browserErr)
+			evidence.Artifacts = artifacts
+			failed = failed || browserErr != nil
+		}
 		if failed {
 			evidence.Status = repoprotocol.GateFailed
 		}
@@ -230,6 +240,58 @@ func evidenceOutput(result *runtimes.CommandResult, err error) string {
 	}
 	if err != nil {
 		parts = append(parts, "error: "+err.Error())
+	}
+	output := strings.Join(parts, "\n")
+	if len(output) > maxEvidenceOutput {
+		return output[:maxEvidenceOutput] + "\n... [output truncated]"
+	}
+	return output
+}
+
+
+func verificationCommand(profile repoprotocol.VerificationProfile) (repoprotocol.VerificationKind, string) {
+	if profile.Browser != nil {
+		return repoprotocol.VerificationKindBrowser, profile.Browser.Command
+	}
+	return repoprotocol.VerificationKindCommand, profile.Command
+}
+
+func (v *Verifier) collectBrowserEvidence(ctx context.Context, sessionID string, profile repoprotocol.BrowserVerificationProfile) (string, []repoprotocol.EvidenceArtifact, error) {
+	var report string
+	if strings.TrimSpace(profile.ReportPath) != "" {
+		data, err := v.runtime.ReadFile(ctx, sessionID, profile.ReportPath)
+		if err != nil {
+			return "", nil, fmt.Errorf("read browser report %s: %w", profile.ReportPath, err)
+		}
+		report = strings.TrimSpace(string(data))
+	}
+
+	artifacts := make([]repoprotocol.EvidenceArtifact, 0, len(profile.ArtifactPaths))
+	for _, artifactPath := range profile.ArtifactPaths {
+		data, err := v.runtime.ReadFile(ctx, sessionID, artifactPath)
+		if err != nil {
+			return report, artifacts, fmt.Errorf("read browser artifact %s: %w", artifactPath, err)
+		}
+		sum := sha256.Sum256(data)
+		artifacts = append(artifacts, repoprotocol.EvidenceArtifact{
+			Path:      artifactPath,
+			SHA256:    hex.EncodeToString(sum[:]),
+			SizeBytes: int64(len(data)),
+		})
+	}
+	return report, artifacts, nil
+}
+
+func joinEvidenceOutput(commandOutput, reportOutput string, err error) string {
+	parts := make([]string, 0, 3)
+	if value := strings.TrimSpace(commandOutput); value != "" {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(reportOutput); value != "" {
+		parts = append(parts, "browser report: "+value)
+	}
+	if err != nil {
+		parts = append(parts, "browser evidence error: "+err.Error())
 	}
 	output := strings.Join(parts, "\n")
 	if len(output) > maxEvidenceOutput {
