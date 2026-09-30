@@ -320,7 +320,7 @@ func (p *Publisher) Publish(ctx context.Context, changeSetID string, actor chang
 			return nil, p.transientFailure(ctx, changeSet, leaseToken, member.CandidateID, errors.New("github pull request reconciliation returned no result"))
 		}
 		if remote.Head.SHA != member.CommitSHA {
-			return nil, p.blockFailure(ctx, changeSet, leaseToken, member.CandidateID, errors.New("github pull request head does not match authorized candidate"))
+			return nil, p.blockFailure(ctx, changeSet, leaseToken, actor, member.CandidateID, errors.New("github pull request head does not match authorized candidate"))
 		}
 
 		if remote.Merged {
@@ -333,14 +333,14 @@ func (p *Publisher) Publish(ctx context.Context, changeSetID string, actor chang
 			continue
 		}
 		if remote.State != "open" {
-			return nil, p.blockFailure(ctx, changeSet, leaseToken, member.CandidateID, errors.New("github pull request is closed without merge"))
+			return nil, p.blockFailure(ctx, changeSet, leaseToken, actor, member.CandidateID, errors.New("github pull request is closed without merge"))
 		}
 
 		if _, err := merger.Merge(ctx, actor, changeauthority.Request{PullRequestID: member.PullRequestID}); err != nil {
 			if changeauthority.StatusCode(err) >= 500 {
 				return nil, p.transientFailure(ctx, changeSet, leaseToken, member.CandidateID, fmt.Errorf("merge authority: %w", err))
 			}
-			return nil, p.blockFailure(ctx, changeSet, leaseToken, member.CandidateID, fmt.Errorf("merge authority: %w", err))
+			return nil, p.blockFailure(ctx, changeSet, leaseToken, actor, member.CandidateID, fmt.Errorf("merge authority: %w", err))
 		}
 
 		if err := p.renewLease(ctx, changeSet.ID, leaseToken); err != nil {
@@ -360,7 +360,7 @@ func (p *Publisher) Publish(ctx context.Context, changeSetID string, actor chang
 			return nil, p.transientFailure(ctx, changeSet, leaseToken, member.CandidateID, errors.New("github did not confirm merged state after merge authority completed"))
 		}
 		if remote.Head.SHA != member.CommitSHA {
-			return nil, p.blockFailure(ctx, changeSet, leaseToken, member.CandidateID, errors.New("github pull request head changed after merge"))
+			return nil, p.blockFailure(ctx, changeSet, leaseToken, actor, member.CandidateID, errors.New("github pull request head changed after merge"))
 		}
 		if err := p.checkpointMerged(ctx, changeSet.ID, member.CandidateID, remote.MergeCommitSHA); err != nil {
 			return nil, p.transientFailure(ctx, changeSet, leaseToken, member.CandidateID, err)
@@ -664,7 +664,7 @@ func (p *Publisher) checkpointMerged(ctx context.Context, changeSetID, candidate
 	return nil
 }
 
-func (p *Publisher) blockFailure(ctx context.Context, record *changeSetRecord, leaseToken, candidateID string, err error) error {
+func (p *Publisher) blockFailure(ctx context.Context, record *changeSetRecord, leaseToken string, actor changeauthority.Actor, candidateID string, err error) error {
 	now := time.Now().UTC()
 	if candidateID != "" {
 		_, _ = p.db.ExecContext(ctx, `
@@ -679,7 +679,7 @@ func (p *Publisher) blockFailure(ctx context.Context, record *changeSetRecord, l
 		    publication_lease_until = NULL, updated_at = $1
 		WHERE id = $2 AND publication_lease_token = $3
 	`, now, record.ID, leaseToken)
-	p.publishLifecycle(events.ChangeSetPublicationBlocked, record, changeauthority.Actor{}, candidateID, err.Error())
+	p.publishLifecycle(events.ChangeSetPublicationBlocked, record, actor, candidateID, err.Error())
 	return &PublishError{Kind: ErrorBlocked, CandidateID: candidateID, Err: err}
 }
 
