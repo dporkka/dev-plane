@@ -2,6 +2,7 @@
 package contracttest
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ai-dev-control-plane/forge"
@@ -30,7 +31,7 @@ func Run(t *testing.T, factory Factory) {
 	}
 
 	opened, err := fixture.Provider.OpenChange(
-		t.Context(),
+		context.Background(),
 		fixture.Credential,
 		fixture.Repository,
 		forge.OpenChangeRequest{
@@ -64,7 +65,7 @@ func Run(t *testing.T, factory Factory) {
 	}
 
 	merged, err := fixture.Provider.MergeChange(
-		t.Context(),
+		context.Background(),
 		fixture.Credential,
 		fixture.Repository,
 		opened.Number,
@@ -81,7 +82,7 @@ func Run(t *testing.T, factory Factory) {
 	}
 
 	if _, err := fixture.Provider.OpenChange(
-		t.Context(),
+		context.Background(),
 		fixture.Credential,
 		fixture.Repository,
 		forge.OpenChangeRequest{Title: "", Head: "feature", Base: "main"},
@@ -90,7 +91,7 @@ func Run(t *testing.T, factory Factory) {
 	}
 
 	if _, err := fixture.Provider.MergeChange(
-		t.Context(),
+		context.Background(),
 		fixture.Credential,
 		fixture.Repository,
 		0,
