@@ -147,7 +147,7 @@ func (h *Handler) PublishChangeSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusAccepted, map[string]any{
-		"change_set_id":       changeSet.ID,
+		"change_set_id":      changeSet.ID,
 		"publication_status": changeSet.PublicationStatus,
 		"queued":             true,
 	})
