@@ -154,7 +154,7 @@ func main() {
 		schedulerAdmission,
 		schedulerAdmission,
 		db.NewTaskCapsuleSQLStore(database.DB),
-		[]string{"tests", "lint"},
+		nil,
 	)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
 		WithRunExecutor(runExecutor).
