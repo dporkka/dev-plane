@@ -30,6 +30,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"audit_logs",
 		"budgets",
 		"change_candidates",
+		"decision_packets",
 		"deployments",
 		"detection_results",
 		"integrations",
