@@ -14,6 +14,7 @@ type Config struct {
 	JWTSecret           string
 	GitHubClientID      string
 	GitHubSecret        string
+	GitHubToken         string
 	GitHubWebhookSecret string
 	ForgeProvider        string
 	ForgeGitRemote       string
@@ -47,7 +48,8 @@ func Load() (*Config, error) {
 		DatabaseURL:         EnvOrDefault("DATABASE_URL", "file:./data/dev.db?_journal_mode=WAL"),
 		JWTSecret:           jwtSecret,
 		GitHubClientID:       EnvOrDefault("GITHUB_CLIENT_ID", ""),
-		GitHubSecret:         EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
+		GitHubSecret:          EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
+		GitHubToken:           EnvOrDefault("GITHUB_TOKEN", ""),
 		GitHubWebhookSecret:   EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
 		ForgeProvider:         strings.ToLower(EnvOrDefault("FORGE_PROVIDER", "github")),
 		ForgeGitRemote:        EnvOrDefault("FORGE_GIT_REMOTE", "origin"),
