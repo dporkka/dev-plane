@@ -74,6 +74,9 @@ export const api = {
   getTaskSpec: (taskId: string): Promise<any> =>
     getClient().getTaskSpec(taskId),
 
+  getTaskReadiness: (taskId: string): Promise<any> =>
+    getClient().getTaskReadiness(taskId),
+
   // ─── Agent Runs ─────────────────────────────────────────────────
   listRuns: (taskId: string): Promise<any> => getClient().listRuns(taskId),
 
