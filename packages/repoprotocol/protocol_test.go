@@ -204,7 +204,6 @@ risk:
 	}
 }
 
-
 func TestConfigValidateAcceptsBrowserVerificationProfile(t *testing.T) {
 	cfg := validConfig()
 	cfg.Verification["browser"] = VerificationProfile{
