@@ -21,6 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/models"
 )
 
 const defaultLeaseDuration = 5 * time.Minute
