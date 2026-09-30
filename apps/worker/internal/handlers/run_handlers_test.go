@@ -54,8 +54,8 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 	if role != models.AgentRoleReviewer || status != "queued" || workspaceID != "workspace-1" {
 		t.Fatalf("next run = role %q status %q workspace %q", role, status, workspaceID)
 	}
-	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") {
-		t.Fatalf("metadata = %s, want handoff trace", metadata)
+	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") || !contains(metadata, "task-readiness-v1") {
+		t.Fatalf("metadata = %s, want handoff trace and inherited admission evidence", metadata)
 	}
 
 	var consumedBy sql.NullString
@@ -749,7 +749,8 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata
 		) VALUES (
-			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0, '{}'
+			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0,
+			'{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}'
 		);
 	`, role)
 	if err != nil {
