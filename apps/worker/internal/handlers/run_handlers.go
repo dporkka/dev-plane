@@ -522,9 +522,9 @@ func (h *RunHandler) handleRejectedReview(ctx context.Context, event events.Agen
 			return fmt.Errorf("fail task after repair budget exhausted: %w", err)
 		}
 		metadata, _ := json.Marshal(map[string]any{
-			"reason":       "repair_budget_exhausted",
-			"repair_round": currentRound,
-			"repair_limit": h.repairLimit,
+			"reason":        "repair_budget_exhausted",
+			"repair_round":  currentRound,
+			"repair_limit":  h.repairLimit,
 			"review_run_id": run.RunID,
 		})
 		_, _ = h.db.ExecContext(ctx, `
