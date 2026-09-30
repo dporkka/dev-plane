@@ -26,6 +26,12 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+function runListHasActiveRuns(runs: AgentRun[]): boolean {
+  return runs.some((run) =>
+    ["pending", "queued", "running", "paused"].includes(run.status),
+  );
+}
+
 function parseSpec(task: any): TaskSpec | null {
   if (!task?.spec) return null;
   if (typeof task.spec === "object" && task.spec.summary) {
@@ -69,6 +75,13 @@ export default function TaskDetailPage() {
     queryKey: ["runs", taskId],
     queryFn: () => api.listRuns(taskId),
     enabled: !!taskId,
+  });
+
+  const { data: executionEvidence } = useQuery({
+    queryKey: ["execution-evidence", taskId],
+    queryFn: () => api.getTaskExecutionEvidence(taskId),
+    enabled: !!taskId,
+    refetchInterval: runListHasActiveRuns(runs?.data || runs || []) ? 5000 : false,
   });
 
   const { data: approvals } = useQuery({
@@ -279,7 +292,7 @@ export default function TaskDetailPage() {
             View run list
           </Link>
         </div>
-        <TaskExecutionGraph runs={runList} />
+        <TaskExecutionGraph runs={runList} evidence={executionEvidence?.runs || {}} />
       </div>
 
       {/* Approvals */}
