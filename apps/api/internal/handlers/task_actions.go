@@ -123,8 +123,6 @@ func mustRawMessage(v any) json.RawMessage {
 	return data
 }
 
-const runAdmissionPolicyVersion = "task-readiness-v1"
-
 // StartRun starts an agent run for an approved task.
 // Validates the task is in "approved" status, creates an AgentRun, and publishes an event.
 func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
@@ -188,7 +186,7 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 
 	admissionMetadata, err := json.Marshal(map[string]any{
 		"admission": map[string]any{
-			"policy":    runAdmissionPolicyVersion,
+			"policy":    readiness.AdmissionPolicyVersion,
 			"readiness": readinessReport,
 		},
 	})
