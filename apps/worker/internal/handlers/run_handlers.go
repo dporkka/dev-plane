@@ -20,6 +20,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
 )
@@ -40,6 +41,8 @@ type RunExecutor interface {
 }
 
 var ErrRunAdmissionDeferred = errors.New("run admission deferred")
+
+const maxAutomaticRunRetries = 2
 
 type RunAdmissionDecision struct {
 	Allowed    bool
@@ -148,8 +151,9 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 	return ackMessage(msg)
 }
 
-// HandleRunFailed processes agents.run.failed events.
-// It transitions the associated task to failed and publishes a tasks.failed event.
+// HandleRunFailed processes agents.run.failed events. Retryable failures with
+// an explicit same-environment retry disposition are retried within a bounded
+// budget; all other failures transition the task to failed.
 func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	var event events.AgentRunEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
@@ -157,6 +161,33 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	}
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
+
+	var failureData struct {
+		Error   string                    `json:"error"`
+		Failure runfailure.Classification `json:"failure"`
+	}
+	if len(event.Data) > 0 {
+		if err := json.Unmarshal(event.Data, &failureData); err != nil {
+			return fmt.Errorf("unmarshal agent run failure data: %w", err)
+		}
+	}
+
+	if scheduled, retryRunID, err := h.scheduleAutomaticRetry(
+		context.Background(),
+		event,
+		failureData.Failure,
+	); err != nil {
+		return err
+	} else if scheduled {
+		h.logger.Info(
+			"run failure scheduled for automatic retry",
+			"run_id", event.RunID,
+			"retry_run_id", retryRunID,
+			"task_id", event.TaskID,
+			"failure_category", failureData.Failure.Category,
+		)
+		return ackMessage(msg)
+	}
 
 	now := time.Now().UTC()
 	_, err := h.db.Exec(`
@@ -182,8 +213,130 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	h.logger.Info("run failure processed, task transitioned to failed",
 		"run_id", event.RunID,
 		"task_id", event.TaskID,
+		"failure_category", failureData.Failure.Category,
 	)
 	return ackMessage(msg)
+}
+
+
+func (h *RunHandler) scheduleAutomaticRetry(
+	ctx context.Context,
+	event events.AgentRunEvent,
+	classification runfailure.Classification,
+) (bool, string, error) {
+	if h.db == nil || strings.TrimSpace(event.RunID) == "" {
+		return false, "", nil
+	}
+
+	run, err := h.loadCompletedRunContext(ctx, event)
+	if err != nil {
+		return false, "", err
+	}
+
+	metadataValues := map[string]any{}
+	if strings.TrimSpace(run.Metadata) != "" {
+		if err := json.Unmarshal([]byte(run.Metadata), &metadataValues); err != nil {
+			return false, "", fmt.Errorf("decode failed run metadata: %w", err)
+		}
+	}
+	attempts := automaticRetryAttempt(metadataValues)
+	decision := runfailure.DecideAutoRetry(classification, attempts, maxAutomaticRunRetries)
+	if !decision.Retry {
+		return false, "", nil
+	}
+
+	rootRunID := run.RunID
+	if retry, ok := metadataValues["retry"].(map[string]any); ok {
+		if value, ok := retry["root_run_id"].(string); ok && strings.TrimSpace(value) != "" {
+			rootRunID = value
+		}
+	}
+	delete(metadataValues, "failure")
+	metadataValues["retry"] = map[string]any{
+		"automatic":        true,
+		"auto_attempt":     decision.NextAttempt,
+		"original_run_id":  run.RunID,
+		"root_run_id":      rootRunID,
+		"previous_failure": classification,
+	}
+	metadata, err := json.Marshal(metadataValues)
+	if err != nil {
+		return false, "", fmt.Errorf("marshal automatic retry metadata: %w", err)
+	}
+
+	retryRunID := uuid.NewSHA1(
+		uuid.NameSpaceOID,
+		[]byte(fmt.Sprintf("dev-plane:auto-retry:%s:%d", run.RunID, decision.NextAttempt)),
+	).String()
+	workspaceArg := any(nil)
+	if run.WorkspaceID != nil {
+		workspaceArg = *run.WorkspaceID
+	}
+	now := time.Now().UTC()
+
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, "", fmt.Errorf("begin automatic retry transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO agent_runs (
+			id, task_id, workspace_id, agent_role, model, provider,
+			status, total_cost, metadata, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
+		ON CONFLICT(id) DO NOTHING
+	`, retryRunID, run.TaskID, workspaceArg, run.AgentRole, run.Model, run.Provider, string(metadata), now); err != nil {
+		return false, "", fmt.Errorf("create automatic retry run: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'running', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, now, run.TaskID); err != nil {
+		return false, "", fmt.Errorf("update task for automatic retry: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, "", fmt.Errorf("commit automatic retry: %w", err)
+	}
+
+	if h.eventBus != nil {
+		payload := events.RunEvent{
+			RunID:  retryRunID,
+			TaskID: run.TaskID,
+			Status: "queued",
+		}
+		payload.Data, _ = json.Marshal(map[string]any{
+			"action":          "automatic_retry",
+			"previous_run_id": run.RunID,
+			"auto_attempt":    decision.NextAttempt,
+			"failure":         classification,
+		})
+		data, _ := json.Marshal(payload)
+		if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
+			return false, "", fmt.Errorf("publish automatic retry run: %w", err)
+		}
+	}
+
+	return true, retryRunID, nil
+}
+
+func automaticRetryAttempt(metadata map[string]any) int {
+	retry, ok := metadata["retry"].(map[string]any)
+	if !ok {
+		return 0
+	}
+	switch value := retry["auto_attempt"].(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	case json.Number:
+		n, _ := value.Int64()
+		return int(n)
+	default:
+		return 0
+	}
 }
 
 type completedRunContext struct {
