@@ -26,6 +26,7 @@ type ChangeSet struct {
 	Name                string          `json:"name"`
 	Description         *string         `json:"description,omitempty"`
 	Status              string          `json:"status"`
+	PublicationStatus   string          `json:"publication_status"`
 	PublicationDigest   *string         `json:"publication_digest,omitempty"`
 	PublicationManifest json.RawMessage `json:"publication_manifest,omitempty"`
 	AuthorizedAt        *time.Time      `json:"authorized_at,omitempty"`
@@ -97,7 +98,7 @@ func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	changeSet := ChangeSet{
-		ID: id, ProjectID: projectID, Name: req.Name, Status: "draft",
+		ID: id, ProjectID: projectID, Name: req.Name, Status: "draft", PublicationStatus: "pending",
 		CreatedBy: user.UserID, CreatedAt: now, UpdatedAt: now,
 	}
 	if description != nil {
@@ -404,13 +405,13 @@ func (h *Handler) loadChangeSet(ctx context.Context, id string) (*ChangeSet, err
 		authorizedBy        sql.NullString
 	)
 	err := h.db.QueryRowContext(ctx, `
-		SELECT id, project_id, name, description, status, publication_digest,
+		SELECT id, project_id, name, description, status, publication_status, publication_digest,
 		       publication_manifest, authorized_at, authorized_by, created_by, created_at, updated_at
 		FROM change_sets
 		WHERE id = $1
 	`, id).Scan(
 		&changeSet.ID, &changeSet.ProjectID, &changeSet.Name, &description, &changeSet.Status,
-		&publicationDigest, &publicationManifest, &authorizedAt, &authorizedBy,
+		&changeSet.PublicationStatus, &publicationDigest, &publicationManifest, &authorizedAt, &authorizedBy,
 		&changeSet.CreatedBy, &changeSet.CreatedAt, &changeSet.UpdatedAt,
 	)
 	if err != nil {
