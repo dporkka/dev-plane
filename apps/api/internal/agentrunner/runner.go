@@ -28,14 +28,14 @@ import (
 
 // Runner executes agent runs with tool calling, budget checks, and event streaming.
 type Runner struct {
-	db       *sql.DB
-	tools    *tools.WorkspaceTools
-	router   *modelrouter.Router
-	policies *policies.Engine
-	budget   *budget.Engine
-	kernel   *capability.Kernel
-	eventBus *events.Bus
-	logger   *slog.Logger
+	db                 *sql.DB
+	tools              *tools.WorkspaceTools
+	router             *modelrouter.Router
+	policies           *policies.Engine
+	budget             *budget.Engine
+	kernel             *capability.Kernel
+	eventBus           *events.Bus
+	logger             *slog.Logger
 	runtimes           map[string]runtimes.Provider
 	completionObserver RunCompletionObserver
 }
@@ -715,7 +715,6 @@ func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, worksp
 	return nil
 }
 
-
 // streamStep publishes a step event via NATS.
 func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventType string) error {
 	if r.eventBus == nil {
@@ -744,7 +743,6 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
 }
-
 
 func nextStepNumber(history []models.AgentStep) int {
 	maxStep := 0
@@ -784,7 +782,6 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	// Fallback: construct from workspaces directory
 	return filepath.Join("workspaces", ws.ID)
 }
-
 
 // runFinalChecks executes the repository's canonical verification plan and
 // returns authority-bearing evidence for the exact workspace tree.
