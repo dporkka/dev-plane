@@ -60,6 +60,7 @@ type CreateRequest struct {
 	Branch       string            `json:"branch"`
 	BaseBranch   string            `json:"base_branch"`
 	WorktreeName string            `json:"worktree_name"`
+	VCSBackend   string            `json:"vcs_backend,omitempty"`
 	Env          map[string]string `json:"env,omitempty"`
 }
 

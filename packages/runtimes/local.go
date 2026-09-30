@@ -8,8 +8,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 // LocalProvider implements the Provider interface for trusted local mode.
@@ -25,7 +28,9 @@ type LocalProvider struct {
 type localSession struct {
 	id           string
 	workspaceID  string
+	repositoryPath string
 	worktreePath string
+	backend      vcs.Backend
 	status       string
 	createdAt    time.Time
 }
@@ -41,40 +46,78 @@ func NewLocalProvider(baseDir string) *LocalProvider {
 	}
 }
 
-// CreateWorkspace creates a new local workspace by cloning the repository
-// and setting up a git worktree for the specified branch.
+// CreateWorkspace creates a new local workspace using the repository's
+// configured Git or Jujutsu backend.
 func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
+	if req.CloneURL == "" {
+		return nil, fmt.Errorf("clone url is required")
+	}
+	if req.WorktreeName == "" {
+		return nil, fmt.Errorf("worktree name is required")
+	}
+
+	backend, err := vcs.NewBackend(req.VCSBackend, nil)
+	if err != nil {
+		return nil, err
+	}
+
 	sessionID := generateSessionID()
-	worktreePath := filepath.Join(p.baseDir, sessionID, req.WorktreeName)
+	sessionDir := filepath.Join(p.baseDir, sessionID)
+	repoDir := filepath.Join(sessionDir, "repo")
+	worktreePath := filepath.Join(sessionDir, req.WorktreeName)
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create session directory: %w", err)
+	}
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.RemoveAll(sessionDir)
+		}
+	}()
 
-	if err := os.MkdirAll(worktreePath, 0755); err != nil {
-		return nil, fmt.Errorf("create worktree directory: %w", err)
+	if err := backend.CloneOrFetch(ctx, vcs.CloneRequest{
+		URL: req.CloneURL,
+		Path: repoDir,
+		Env: req.Env,
+	}); err != nil {
+		return nil, fmt.Errorf("%s clone repository: %w", backend.Name(), err)
 	}
 
-	// Clone the repository if not already cloned
-	repoDir := filepath.Join(p.baseDir, sessionID, "repo")
-	cloneCmd := exec.CommandContext(ctx, "git", "clone", req.CloneURL, repoDir)
-	if out, err := cloneCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git clone: %w (output: %s)", err, string(out))
+	base := req.BaseBranch
+	if base == "" {
+		base = "main"
+	}
+	if backend.Name() == "jj" && !strings.Contains(base, "@") {
+		base += "@origin"
+	}
+	branch := req.Branch
+	if branch == "" {
+		branch = req.WorktreeName
+	}
+	if err := backend.CreateWorkspace(ctx, vcs.WorkspaceRequest{
+		RepositoryPath: repoDir,
+		WorkspacePath:  worktreePath,
+		Name:           req.WorktreeName,
+		Base:           base,
+		Ref:            branch,
+	}); err != nil {
+		return nil, fmt.Errorf("%s create workspace: %w", backend.Name(), err)
 	}
 
-	// Create worktree
-	wtCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "worktree", "add", "-B", req.Branch, worktreePath, req.BaseBranch)
-	if out, err := wtCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git worktree add: %w (output: %s)", err, string(out))
-	}
-
+	now := time.Now()
 	sess := &localSession{
-		id:           sessionID,
-		workspaceID:  req.RepositoryID,
-		worktreePath: worktreePath,
-		status:       "ready",
-		createdAt:    time.Now(),
+		id:             sessionID,
+		workspaceID:    req.RepositoryID,
+		repositoryPath: repoDir,
+		worktreePath:   worktreePath,
+		backend:        backend,
+		status:         "ready",
+		createdAt:      now,
 	}
-
 	p.mu.Lock()
 	p.sessions[sessionID] = sess
 	p.mu.Unlock()
+	cleanup = false
 
 	return &Session{
 		ID:           sessionID,
@@ -82,7 +125,7 @@ func (p *LocalProvider) CreateWorkspace(ctx context.Context, req CreateRequest) 
 		Status:       "ready",
 		Provider:     "local",
 		WorktreePath: worktreePath,
-		CreatedAt:    sess.createdAt,
+		CreatedAt:    now,
 	}, nil
 }
 
@@ -254,51 +297,42 @@ func (p *LocalProvider) ApplyPatch(ctx context.Context, sessionID, patch string)
 	return nil
 }
 
-// Snapshot creates a git commit in the workspace as a snapshot point.
+// Snapshot captures the current workspace through its configured VCS backend.
 func (p *LocalProvider) Snapshot(ctx context.Context, sessionID string) (*Snapshot, error) {
 	p.mu.RLock()
 	sess, ok := p.sessions[sessionID]
 	p.mu.RUnlock()
-
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
 
-	// Stage all changes
-	addCmd := exec.CommandContext(ctx, "git", "-C", sess.worktreePath, "add", "-A")
-	if out, err := addCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git add: %w (output: %s)", err, string(out))
+	revision, err := sess.backend.Snapshot(ctx, sess.worktreePath, "snapshot: "+sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("%s snapshot: %w", sess.backend.Name(), err)
 	}
-
-	// Create snapshot commit
-	commitHash := fmt.Sprintf("snapshot-%d", time.Now().Unix())
-	commitCmd := exec.CommandContext(ctx, "git", "-C", sess.worktreePath, "commit", "-m", "snapshot: "+commitHash, "--allow-empty")
-	if out, err := commitCmd.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("git commit: %w (output: %s)", err, string(out))
-	}
-
+	now := time.Now()
 	return &Snapshot{
-		ID:          commitHash,
+		ID:          revision.CommitID,
 		SessionID:   sessionID,
-		GitCommit:   commitHash,
-		Description: "Local snapshot at " + time.Now().Format(time.RFC3339),
-		CreatedAt:   time.Now(),
+		GitCommit:   revision.CommitID,
+		Description: fmt.Sprintf("%s snapshot at %s", sess.backend.Name(), now.Format(time.RFC3339)),
+		CreatedAt:   now,
 	}, nil
 }
 
-// Restore resets the workspace to a snapshot using git reset.
+// Restore returns the workspace to the snapshot revision using its configured VCS backend.
 func (p *LocalProvider) Restore(ctx context.Context, sessionID string, snap *Snapshot) error {
+	if snap == nil || snap.GitCommit == "" {
+		return fmt.Errorf("snapshot git commit is required")
+	}
 	p.mu.RLock()
 	sess, ok := p.sessions[sessionID]
 	p.mu.RUnlock()
-
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, sessionID)
 	}
-
-	resetCmd := exec.CommandContext(ctx, "git", "-C", sess.worktreePath, "reset", "--hard", snap.GitCommit)
-	if out, err := resetCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git reset: %w (output: %s)", err, string(out))
+	if err := sess.backend.Restore(ctx, sess.worktreePath, snap.GitCommit); err != nil {
+		return fmt.Errorf("%s restore: %w", sess.backend.Name(), err)
 	}
 	return nil
 }

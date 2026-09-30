@@ -322,7 +322,7 @@ type MergePullRequestRequest struct {
 	SHA string `json:"sha,omitempty"`
 }
 
-// MergePullRequest merges a pull request on GitHub after capability authorization.
+// MergePullRequest merges a pull request on its configured forge after capability authorization.
 // It updates the local PR record to merged and transitions the task to done.
 func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -350,12 +350,12 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	var pr PullRequestResponse
 	var runID sql.NullString
 	var mergedAt sql.NullTime
-	var repoOwner, repoName, taskID, taskStatus string
+	var repoOwner, repoName, taskID, taskStatus, forgeProvider, forgeBaseURL string
 
 	err := h.db.QueryRowContext(ctx, `
 		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
 		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by, pr.merged_at,
-		       pr.created_at, pr.updated_at, r.owner, r.name, t.status
+		       pr.created_at, pr.updated_at, r.owner, r.name, r.forge_provider, r.forge_base_url, t.status
 		FROM pull_requests pr
 		JOIN repositories r ON r.id = pr.repository_id
 		JOIN tasks t ON t.id = pr.task_id
@@ -363,7 +363,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	`, id).Scan(
 		&pr.ID, &taskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
+		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &forgeProvider, &forgeBaseURL, &taskStatus,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -419,30 +419,63 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := strings.TrimSpace(h.githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	if forgeProvider == "" {
+		forgeProvider = "github"
 	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
+	mergeRequest := gateway.MergePRRequest{Method: req.Method, SHA: req.SHA}
+	var mergeSHA, mergeMessage string
+	var merged bool
+
+	switch forgeProvider {
+	case "github":
+		token := strings.TrimSpace(h.githubToken)
+		if token == "" {
+			token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+		}
+		if token == "" {
+			respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
+			return
+		}
+		gh := h.githubGateway
+		if gh == nil {
+			gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+		}
+		result, mergeErr := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, mergeRequest)
+		if mergeErr != nil {
+			err = mergeErr
+		} else {
+			merged, mergeSHA, mergeMessage = result.Merged, result.SHA, result.Message
+		}
+	case "gitea":
+		token := strings.TrimSpace(h.giteaToken)
+		if token == "" {
+			token = strings.TrimSpace(os.Getenv("GITEA_TOKEN"))
+		}
+		if token == "" {
+			respond.Error(w, http.StatusServiceUnavailable, errors.New("gitea token is not configured"))
+			return
+		}
+		gt := h.giteaGateway
+		if gt == nil {
+			gt = gateway.NewGiteaGateway(forgeBaseURL)
+		}
+		result, mergeErr := gt.MergePullRequest(ctx, token, repoOwner, repoName, pr.Number, mergeRequest)
+		if mergeErr != nil {
+			err = mergeErr
+		} else {
+			merged, mergeSHA, mergeMessage = result.Merged, result.SHA, result.Message
+		}
+	default:
+		respond.Error(w, http.StatusBadRequest, fmt.Errorf("unsupported forge provider %q", forgeProvider))
 		return
 	}
-
-	gh := h.githubGateway
-	if gh == nil {
-		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
-	}
-	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
-		Method: req.Method,
-		SHA:    req.SHA,
-	})
 	if err != nil {
-		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
+		h.logger.Error("failed to merge pull request", "pr_id", id, "forge", forgeProvider, "error", err)
 		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
 		return
 	}
-	if !mergeResult.Merged {
-		respond.Error(w, http.StatusConflict, errors.New(mergeResult.Message))
+	if !merged {
+		respond.Error(w, http.StatusConflict, errors.New(mergeMessage))
 		return
 	}
 
@@ -468,7 +501,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 			"pr_id":      id,
 			"task_id":    taskID,
 			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
+			"sha":        mergeSHA,
 			"timestamp":  now.Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)

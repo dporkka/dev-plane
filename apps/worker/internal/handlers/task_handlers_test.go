@@ -74,6 +74,7 @@ func TestProvisionWorkspaceUsesRuntimeProvider(t *testing.T) {
 		TargetBranch:  "main",
 		CloneURL:      "https://example.invalid/repo.git",
 		DefaultBranch: "trunk",
+		VCSBackend:    "jj",
 		WorkspaceID:   "workspace-1",
 	}, now)
 	if err != nil {
@@ -100,6 +101,9 @@ func TestProvisionWorkspaceUsesRuntimeProvider(t *testing.T) {
 	}
 	if provider.req.WorktreeName != "workspace-task-123" {
 		t.Fatalf("WorktreeName = %q, want workspace-task-123", provider.req.WorktreeName)
+	}
+	if provider.req.VCSBackend != "jj" {
+		t.Fatalf("VCSBackend = %q, want jj", provider.req.VCSBackend)
 	}
 }
 
@@ -226,6 +230,7 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 			id TEXT PRIMARY KEY,
 			clone_url TEXT NOT NULL,
 			default_branch TEXT NOT NULL,
+			vcs_backend TEXT NOT NULL DEFAULT 'git',
 			deleted_at DATETIME
 		);
 		CREATE TABLE tasks (

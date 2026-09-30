@@ -1,7 +1,7 @@
 // Package prfactory creates pull requests for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive PR descriptions and create pull requests on supported Git forges.
 package prfactory
 
 import (
@@ -23,10 +23,23 @@ import (
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 type githubPRCreator interface {
 	CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr gateway.NewPR) (*gateway.GitHubPR, error)
+}
+
+type giteaPRCreator interface {
+	CreatePullRequest(ctx context.Context, token, owner, name string, pr gateway.NewPR) (*gateway.ForgePullRequest, error)
+}
+
+type repositoryTarget struct {
+	Provider   string
+	BaseURL    string
+	VCSBackend string
+	Owner      string
+	Name       string
 }
 
 // shortID returns the first n bytes of id, or the full id if shorter.
@@ -39,10 +52,13 @@ func shortID(id string, n int) string {
 
 // Factory creates pull requests for completed tasks.
 type Factory struct {
-	db          *sql.DB
-	logger      *slog.Logger
-	github      githubPRCreator
-	githubToken string
+	db             *sql.DB
+	logger         *slog.Logger
+	github         githubPRCreator
+	githubToken    string
+	gitea          giteaPRCreator
+	giteaToken     string
+	giteaUsername  string
 }
 
 // NewFactory creates a PR factory.
@@ -51,9 +67,11 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 		logger = slog.Default()
 	}
 	f := &Factory{
-		db:          db,
-		logger:      logger,
-		githubToken: strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
+		db:            db,
+		logger:        logger,
+		githubToken:   strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
+		giteaToken:    strings.TrimSpace(os.Getenv("GITEA_TOKEN")),
+		giteaUsername: strings.TrimSpace(os.Getenv("GITEA_USERNAME")),
 	}
 	if f.githubToken != "" {
 		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
@@ -73,7 +91,25 @@ func (f *Factory) WithGitHubToken(token string) *Factory {
 	return f
 }
 
-// CreatePullRequest opens a GitHub PR for completed task changes.
+// WithGiteaGateway adds a Gitea gateway for creating pull requests.
+func (f *Factory) WithGiteaGateway(g giteaPRCreator) *Factory {
+	f.gitea = g
+	return f
+}
+
+// WithGiteaToken configures the token used for Gitea API and Git operations.
+func (f *Factory) WithGiteaToken(token string) *Factory {
+	f.giteaToken = strings.TrimSpace(token)
+	return f
+}
+
+// WithGiteaUsername configures the username used for HTTPS Git authentication.
+func (f *Factory) WithGiteaUsername(username string) *Factory {
+	f.giteaUsername = strings.TrimSpace(username)
+	return f
+}
+
+// CreatePullRequest opens a forge pull request for completed task changes.
 //
 // Steps:
 //  1. Load task, workspace, agent run from DB
@@ -81,7 +117,7 @@ func (f *Factory) WithGitHubToken(token string) *Factory {
 //  3. Get git diff and review report
 //  4. Build comprehensive PR body
 //  5. Push branch to origin (if not already pushed)
-//  6. Create PR via GitHub API
+//  6. Create PR via the configured forge API
 //  7. Save PR record in DB
 //  8. Update task status to "pr_created"
 //  9. Publish pr.created event
@@ -151,27 +187,20 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		prTitle = prTitle[:253] + "..."
 	}
 
-	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured; set GITHUB_TOKEN or inject a GitHub gateway")
-	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
-	}
-
-	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
+	target, err := f.getRepositoryTarget(ctx, task.RepositoryID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
 	if workspacePath != "" {
-		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
-			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
+		if err := f.publishBranch(ctx, workspacePath, workspaceBranch, target); err != nil {
+			return nil, fmt.Errorf("publish branch %s with %s: %w", workspaceBranch, target.VCSBackend, err)
 		}
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.createGitHubPR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.createForgePR(ctx, target, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
-		return nil, fmt.Errorf("create github pull request: %w", err)
+		return nil, fmt.Errorf("create %s pull request: %w", target.Provider, err)
 	}
 
 	// 8. Create PR record
@@ -360,6 +389,80 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 		return fmt.Errorf("insert pull request: %w", err)
 	}
 	return nil
+}
+
+func (f *Factory) createForgePR(ctx context.Context, target repositoryTarget, title, body, head, base string, draft bool) (*gateway.ForgePullRequest, error) {
+	request := gateway.NewPR{Title: title, Body: body, Head: head, Base: base, Draft: draft}
+	switch target.Provider {
+	case "github":
+		created, err := f.createGitHubPR(ctx, target.Owner, target.Name, title, body, head, base, draft)
+		if err != nil {
+			return nil, err
+		}
+		return &gateway.ForgePullRequest{
+			Number: created.Number, HTMLURL: created.HTMLURL, State: created.State, Draft: draft,
+		}, nil
+	case "gitea":
+		if f.giteaToken == "" {
+			return nil, fmt.Errorf("gitea token is not configured")
+		}
+		client := f.gitea
+		if client == nil {
+			client = gateway.NewGiteaGateway(target.BaseURL)
+		}
+		return client.CreatePullRequest(ctx, f.giteaToken, target.Owner, target.Name, request)
+	default:
+		return nil, fmt.Errorf("unsupported forge provider %q", target.Provider)
+	}
+}
+
+func (f *Factory) publishBranch(ctx context.Context, workspacePath, branch string, target repositoryTarget) error {
+	backend, err := vcs.NewBackend(target.VCSBackend, nil)
+	if err != nil {
+		return err
+	}
+	username, token := "", ""
+	switch target.Provider {
+	case "github":
+		username, token = "x-access-token", f.githubToken
+	case "gitea":
+		username, token = f.giteaUsername, f.giteaToken
+	default:
+		return fmt.Errorf("unsupported forge provider %q", target.Provider)
+	}
+	authEnv, cleanup, err := forgeGitAuthEnv(username, token)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	return backend.Publish(ctx, vcs.PublishRequest{
+		WorkspacePath: workspacePath,
+		Ref:           branch,
+		Env:           authEnv,
+	})
+}
+
+func forgeGitAuthEnv(username, token string) (map[string]string, func(), error) {
+	if strings.TrimSpace(token) == "" {
+		return nil, func() {}, nil
+	}
+	if strings.TrimSpace(username) == "" {
+		return nil, nil, fmt.Errorf("git username is required when token authentication is configured")
+	}
+	dir, err := os.MkdirTemp("", "dev-plane-forge-askpass-*")
+	if err != nil {
+		return nil, nil, fmt.Errorf("create git askpass dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	script := filepath.Join(dir, "askpass.sh")
+	contents := "#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s\\n' \"$FORGE_USERNAME\" ;;\n*) printf '%s\\n' \"$FORGE_TOKEN\" ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(contents), 0o700); err != nil {
+		cleanup()
+		return nil, nil, fmt.Errorf("write git askpass helper: %w", err)
+	}
+	return map[string]string{
+		"GIT_ASKPASS": script, "FORGE_USERNAME": username, "FORGE_TOKEN": token,
+	}, cleanup, nil
 }
 
 // pushBranch pushes the workspace branch to origin.
@@ -580,19 +683,30 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 	return &ws, nil
 }
 
-// getRepoOwnerName extracts owner and name from repository record.
-func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
-	var fullName string
-	err = f.db.QueryRowContext(ctx, `
-		SELECT full_name FROM repositories WHERE id = $1
-	`, repoID).Scan(&fullName)
+func (f *Factory) getRepositoryTarget(ctx context.Context, repoID string) (repositoryTarget, error) {
+	var target repositoryTarget
+	err := f.db.QueryRowContext(ctx, `
+		SELECT forge_provider, forge_base_url, vcs_backend, owner, name
+		FROM repositories
+		WHERE id = $1 AND deleted_at IS NULL
+	`, repoID).Scan(&target.Provider, &target.BaseURL, &target.VCSBackend, &target.Owner, &target.Name)
 	if err != nil {
-		return "", "", fmt.Errorf("get repository: %w", err)
+		return repositoryTarget{}, fmt.Errorf("get repository: %w", err)
 	}
+	if target.Provider == "" {
+		target.Provider = "github"
+	}
+	if target.VCSBackend == "" {
+		target.VCSBackend = "git"
+	}
+	return target, nil
+}
 
-	parts := strings.SplitN(fullName, "/", 2)
-	if len(parts) != 2 {
-		return "", "", fmt.Errorf("invalid repository full_name: %s", fullName)
+// getRepoOwnerName is retained for compatibility with callers/tests that only need the repository path.
+func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
+	target, err := f.getRepositoryTarget(ctx, repoID)
+	if err != nil {
+		return "", "", err
 	}
-	return parts[0], parts[1], nil
+	return target.Owner, target.Name, nil
 }

@@ -66,6 +66,7 @@ export type Effect = 'allow' | 'ask' | 'deny' | 'admin_only';
 
 export type IntegrationType =
   | 'github'
+  | 'gitea'
   | 'linear'
   | 'slack'
   | 'discord'
@@ -127,6 +128,10 @@ export interface Project {
 export interface Repository {
   id: string;
   project_id: string;
+  forge_provider?: 'github' | 'gitea';
+  forge_base_url?: string;
+  forge_repository_id?: string;
+  vcs_backend?: 'git' | 'jj';
   github_id?: number;
   owner: string;
   name: string;
@@ -613,6 +618,10 @@ export interface CreateProjectRequest {
 export interface ConnectRepositoryRequest {
   owner: string;
   name: string;
+  provider?: 'github' | 'gitea';
+  base_url?: string;
+  vcs_backend?: 'git' | 'jj';
+  default_branch?: string;
 }
 
 export interface CreateTaskRequest {

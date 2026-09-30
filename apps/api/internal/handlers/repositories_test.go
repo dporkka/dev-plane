@@ -20,7 +20,7 @@ func TestConnectRepository(t *testing.T) {
 	body, _ := json.Marshal(ConnectRepositoryRequest{Owner: "dporkka", Name: "dev-plane"})
 	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO repositories").
-		WithArgs(sqlmock.AnyArg(), projectID, "dporkka", "dev-plane", "dporkka/dev-plane", "https://github.com/dporkka/dev-plane.git", sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), projectID, "github", "https://github.com", "git", "dporkka", "dev-plane", "dporkka/dev-plane", "https://github.com/dporkka/dev-plane.git", "main", sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
@@ -39,8 +39,46 @@ func TestConnectRepository(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &repo); err != nil {
 		t.Fatalf("decode repository: %v", err)
 	}
-	if repo.Owner != "dporkka" || repo.Name != "dev-plane" || repo.CloneURL != "https://github.com/dporkka/dev-plane.git" {
+	if repo.Owner != "dporkka" || repo.Name != "dev-plane" || repo.CloneURL != "https://github.com/dporkka/dev-plane.git" ||
+		repo.ForgeProvider != "github" || repo.VCSBackend != "git" {
 		t.Fatalf("unexpected repository response: %+v", repo)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestConnectRepository_GiteaJujutsu(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	projectID := "proj-1"
+	body, _ := json.Marshal(ConnectRepositoryRequest{
+		Owner: "acme", Name: "agents", Provider: "gitea",
+		BaseURL: "https://git.example.com/", VCSBackend: "jj", DefaultBranch: "trunk",
+	})
+	expectAuthorizeProject(mock, projectID)
+	mock.ExpectExec("INSERT INTO repositories").
+		WithArgs(sqlmock.AnyArg(), projectID, "gitea", "https://git.example.com", "jj",
+			"acme", "agents", "acme/agents", "https://git.example.com/acme/agents.git", "trunk",
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	rec := httptest.NewRecorder()
+	h.ConnectRepository(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusCreated, rec.Code, rec.Body.String())
+	}
+	var got Repository
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ForgeProvider != "gitea" || got.ForgeBaseURL != "https://git.example.com" || got.VCSBackend != "jj" ||
+		got.CloneURL != "https://git.example.com/acme/agents.git" || got.DefaultBranch != "trunk" {
+		t.Fatalf("unexpected Gitea repository response: %+v", got)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unfulfilled expectations: %v", err)

@@ -99,6 +99,14 @@ func (b *JujutsuBackend) Snapshot(ctx context.Context, workspacePath, message st
 	return b.revision(ctx, workspacePath, "@-")
 }
 
+func (b *JujutsuBackend) Restore(ctx context.Context, workspacePath, revision string) error {
+	if strings.TrimSpace(revision) == "" {
+		return fmt.Errorf("restore revision is required")
+	}
+	_, err := b.runner.Run(ctx, Command{Name: "jj", Args: []string{"new", revision}, Dir: workspacePath})
+	return err
+}
+
 func (b *JujutsuBackend) Publish(ctx context.Context, req PublishRequest) error {
 	if strings.TrimSpace(req.Ref) == "" {
 		return fmt.Errorf("publish ref is required")

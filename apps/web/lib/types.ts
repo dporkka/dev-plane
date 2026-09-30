@@ -129,6 +129,10 @@ export type ConnectionStatus = "pending" | "connected" | "error";
 export interface Repository {
   id: string;
   project_id: string;
+  forge_provider?: "github" | "gitea";
+  forge_base_url?: string;
+  forge_repository_id?: string;
+  vcs_backend?: "git" | "jj";
   github_id?: number;
   owner: string;
   name: string;
@@ -229,6 +233,7 @@ export interface Policy {
 // Integration types
 export type IntegrationType =
   | "github"
+  | "gitea"
   | "linear"
   | "slack"
   | "discord"

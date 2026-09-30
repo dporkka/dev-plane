@@ -37,6 +37,8 @@ type Handler struct {
 	secretManager     *secrets.Manager
 	githubGateway     githubGateway
 	githubToken       string
+	giteaGateway      giteaGateway
+	giteaToken        string
 	deployGateway     deployGateway
 	deployToken       string
 
@@ -48,6 +50,10 @@ type Handler struct {
 // githubGateway is the subset of the GitHub gateway used by handlers.
 type githubGateway interface {
 	MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error)
+}
+
+type giteaGateway interface {
+	MergePullRequest(ctx context.Context, token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.ForgeMergeResult, error)
 }
 
 // deployGateway is the subset of a deployment provider used by handlers.
@@ -111,6 +117,18 @@ func (h *Handler) WithGitHubGateway(g githubGateway) *Handler {
 // WithGitHubToken configures the GitHub token used for PR/merge operations.
 func (h *Handler) WithGitHubToken(token string) *Handler {
 	h.githubToken = token
+	return h
+}
+
+// WithGiteaGateway injects a Gitea gateway for PR merge operations.
+func (h *Handler) WithGiteaGateway(g giteaGateway) *Handler {
+	h.giteaGateway = g
+	return h
+}
+
+// WithGiteaToken configures the Gitea token used for PR merge operations.
+func (h *Handler) WithGiteaToken(token string) *Handler {
+	h.giteaToken = token
 	return h
 }
 

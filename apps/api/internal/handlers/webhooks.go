@@ -21,7 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/events"
 )
 
-// WebhookHandler handles incoming webhooks from GitHub, Linear, Slack, Discord,
+// WebhookHandler handles incoming webhooks from GitHub, Gitea, Linear, Slack, Discord,
 // and other provider integrations.
 type WebhookHandler struct {
 	eventBus             EventPublisher
@@ -257,10 +257,21 @@ func (h *WebhookHandler) IntegrationWebhook(w http.ResponseWriter, r *http.Reque
 
 	eventType := provider
 	deliveryID := r.Header.Get("X-Request-ID")
+	if provider == integrationTypeGitea {
+		deliveryID = r.Header.Get("X-Gitea-Delivery")
+	}
 	if deliveryID == "" {
 		deliveryID = r.Header.Get("X-Linear-Delivery")
 	}
 	switch provider {
+	case integrationTypeGitea:
+		eventType = r.Header.Get("X-Gitea-Event")
+		if specific := r.Header.Get("X-Gitea-Event-Type"); specific != "" {
+			eventType = specific
+		}
+		if eventType == "" {
+			eventType = integrationTypeGitea
+		}
 	case integrationTypeLinear:
 		eventType = extractLinearEventType(body)
 	case integrationTypeSlack, integrationTypeDiscord:
@@ -811,6 +822,7 @@ func webhookSignatureFromRequest(r *http.Request) string {
 		"X-Slack-Signature",
 		"X-Discord-Signature",
 		"X-Webhook-Signature",
+		"X-Gitea-Signature",
 		"X-Hub-Signature-256",
 	}
 	for _, key := range candidates {

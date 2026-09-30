@@ -404,3 +404,22 @@ func (g *GitHubGateway) del(ctx context.Context, token *oauth2.Token, url string
 func ParseInstallationID(s string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
+
+
+// CreatePullRequest adapts the GitHub API to the provider-neutral ForgeClient contract.
+func (g *GitHubGateway) CreatePullRequest(ctx context.Context, token, owner, name string, pr NewPR) (*ForgePullRequest, error) {
+	result, err := g.CreatePR(ctx, &oauth2.Token{AccessToken: token, TokenType: "Bearer"}, owner, name, pr)
+	if err != nil {
+		return nil, err
+	}
+	return &ForgePullRequest{Number: result.Number, HTMLURL: result.HTMLURL, State: result.State, Draft: pr.Draft}, nil
+}
+
+// MergePullRequest adapts the GitHub API to the provider-neutral ForgeClient contract.
+func (g *GitHubGateway) MergePullRequest(ctx context.Context, token, owner, name string, number int, req MergePRRequest) (*ForgeMergeResult, error) {
+	result, err := g.MergePR(ctx, &oauth2.Token{AccessToken: token, TokenType: "Bearer"}, owner, name, number, req)
+	if err != nil {
+		return nil, err
+	}
+	return &ForgeMergeResult{SHA: result.SHA, Merged: result.Merged, Message: result.Message}, nil
+}

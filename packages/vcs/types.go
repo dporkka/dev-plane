@@ -12,6 +12,7 @@ type Backend interface {
 	Status(ctx context.Context, workspacePath string) (string, error)
 	Diff(ctx context.Context, workspacePath string) (string, error)
 	Snapshot(ctx context.Context, workspacePath, message string) (Revision, error)
+	Restore(ctx context.Context, workspacePath, revision string) error
 	Publish(ctx context.Context, req PublishRequest) error
 }
 
@@ -30,6 +31,9 @@ type WorkspaceRequest struct {
 	WorkspacePath  string
 	Name           string
 	Base           string
+	// Ref is the forge-visible Git branch/bookmark to publish. It may differ
+	// from the local workspace name.
+	Ref            string
 }
 
 type PublishRequest struct {

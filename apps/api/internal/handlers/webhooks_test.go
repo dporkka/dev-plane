@@ -11,6 +11,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -252,6 +253,44 @@ func TestGitHubWebhookHandler_MissingEventHeader(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestIntegrationWebhook_GiteaSignatureAndEvent(t *testing.T) {
+	baseHandler, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	secret := "gitea-secret"
+	configJSON := `{"project_id":"proj-1","repository_id":"repo-1","created_by":"user-1","webhook_secret":"gitea-secret"}`
+	mock.ExpectQuery("SELECT id, organization_id, integration_type, display_name, config, status FROM integrations").
+		WithArgs("int-gitea", integrationTypeGitea).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
+			AddRow("int-gitea", "org-1", integrationTypeGitea, "Gitea", configJSON, "connected"))
+
+	publisher := &webhookEventPublisher{}
+	h := NewWebhookHandler().WithHandler(baseHandler).WithEventPublisher(publisher)
+	body := []byte(`{"repository":{"full_name":"acme/agents"},"ref":"refs/heads/main"}`)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea/int-gitea", bytes.NewReader(body))
+	req.Header.Set("X-Gitea-Signature", strings.TrimPrefix(signPayload(body, secret), "sha256="))
+	req.Header.Set("X-Gitea-Event", "push")
+	req.Header.Set("X-Gitea-Event-Type", "push")
+	req.Header.Set("X-Gitea-Delivery", "delivery-1")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("provider", integrationTypeGitea)
+	rctx.URLParams.Add("integrationID", "int-gitea")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.IntegrationWebhook(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusAccepted, rec.Code, rec.Body.String())
+	}
+	var event events.WebhookEvent
+	if err := json.Unmarshal(publisher.data, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.Source != "gitea" || event.EventType != "push" || event.DeliveryID != "delivery-1" {
+		t.Fatalf("unexpected published event: %+v", event)
 	}
 }
 

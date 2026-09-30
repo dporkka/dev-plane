@@ -71,7 +71,7 @@ export type Action = "read" | "write" | "execute" | "delete";
 
 export type Effect = "allow" | "ask" | "deny" | "admin_only";
 
-export type IntegrationType = "github" | "linear" | "slack" | "discord";
+export type IntegrationType = "github" | "gitea" | "linear" | "slack" | "discord";
 
 export type IntegrationStatus =
   | "pending"

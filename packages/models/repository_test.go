@@ -146,3 +146,28 @@ func TestNullRepository(t *testing.T) {
 		t.Error("expected nil deleted_at")
 	}
 }
+
+
+func TestNullRepositoryDefaultsLegacyForgeMetadata(t *testing.T) {
+	repo := NullRepository(
+		sql.NullString{String: "id", Valid: true},
+		sql.NullString{String: "project", Valid: true},
+		sql.NullInt64{},
+		sql.NullString{String: "owner", Valid: true},
+		sql.NullString{String: "repo", Valid: true},
+		sql.NullString{String: "owner/repo", Valid: true},
+		sql.NullString{String: "https://github.com/owner/repo.git", Valid: true},
+		sql.NullString{String: "main", Valid: true},
+		sql.NullBool{},
+		sql.NullString{String: ConnectionStatusConnected, Valid: true},
+		sql.NullTime{},
+		sql.NullString{},
+		sql.NullString{},
+		sql.NullTime{},
+		sql.NullTime{},
+		sql.NullTime{},
+	)
+	if repo.ForgeProvider != "github" || repo.ForgeBaseURL != "https://github.com" || repo.VCSBackend != "git" {
+		t.Fatalf("unexpected legacy defaults: %+v", repo)
+	}
+}
