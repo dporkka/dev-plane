@@ -439,6 +439,71 @@ export interface Artifact {
   created_at: string;
 }
 
+export interface RunVerificationEvidence {
+  step_id: string;
+  status: string;
+  outcome?: string;
+  passed: boolean;
+  total: number;
+  failed: number;
+  skipped: number;
+  duration_ms: number;
+  exit_code?: number;
+}
+
+export interface RunReviewEvidence {
+  summary: string;
+  risk_level: string;
+  approvable: boolean;
+  findings?: unknown[];
+  suggestions?: string[];
+  test_coverage?: string;
+  security_notes?: string;
+  diff_summary: DiffSummary;
+  created_at: string;
+}
+
+export interface RunPullRequestEvidence {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  state: string;
+  draft: boolean;
+  created_at: string;
+}
+
+export interface RunArtifactEvidence {
+  id: string;
+  artifact_type: string;
+  file_name: string;
+  mime_type?: string;
+  size_bytes?: number;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface RunFailureEvidence {
+  status: string;
+  outcome?: string;
+  message: string;
+  summary?: string;
+}
+
+export interface RunExecutionEvidence {
+  run_id: string;
+  commit_hash?: string;
+  verification?: RunVerificationEvidence;
+  review?: RunReviewEvidence;
+  pull_request?: RunPullRequestEvidence;
+  artifacts: RunArtifactEvidence[];
+  failure?: RunFailureEvidence;
+}
+
+export interface TaskExecutionEvidenceResponse {
+  runs: Record<string, RunExecutionEvidence>;
+}
+
 export interface AuditLog {
   id: string;
   organization_id: string;
