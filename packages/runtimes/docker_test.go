@@ -327,7 +327,6 @@ func containsArgPrefix(args []string, prefix string) bool {
 	return false
 }
 
-
 func TestDockerProviderCreateWorkspacePinsRequestedRevision(t *testing.T) {
 	runner := &fakeRunner{}
 	provider := &DockerProvider{
