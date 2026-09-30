@@ -3,6 +3,7 @@ package vcs
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -60,6 +61,55 @@ func TestJujutsuPublishUsesConfiguredRemote(t *testing.T) {
 	if got := runner.commands[1].Args; !reflect.DeepEqual(got, wantPush) {
 		t.Fatalf("push args = %#v, want %#v", got, wantPush)
 	}
+}
+
+func TestGitPublisherPublishesToLocalBareRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+
+	root := t.TempDir()
+	remote := filepath.Join(root, "remote.git")
+	workspace := filepath.Join(root, "workspace")
+
+	runGitCommand(t, "", "init", "--bare", remote)
+	runGitCommand(t, "", "init", "-b", "feature/test", workspace)
+	runGitCommand(t, workspace, "config", "user.email", "portable@example.invalid")
+	runGitCommand(t, workspace, "config", "user.name", "Portable Publisher")
+	if err := os.WriteFile(filepath.Join(workspace, "README.md"), []byte("portable\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGitCommand(t, workspace, "add", "README.md")
+	runGitCommand(t, workspace, "commit", "-m", "initial")
+	runGitCommand(t, workspace, "remote", "add", "upstream", remote)
+
+	backend := NewGitBackend(nil)
+	if err := backend.Publish(context.Background(), PublishRequest{
+		WorkspacePath: workspace,
+		Ref:           "feature/test",
+		Remote:        "upstream",
+	}); err != nil {
+		t.Fatalf("Publish: %v", err)
+	}
+
+	localHead := strings.TrimSpace(runGitCommand(t, workspace, "rev-parse", "HEAD"))
+	remoteHead := strings.TrimSpace(runGitCommand(t, "", "--git-dir", remote, "rev-parse", "refs/heads/feature/test"))
+	if remoteHead != localHead {
+		t.Fatalf("remote head = %q, want local head %q", remoteHead, localHead)
+	}
+}
+
+func runGitCommand(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, output)
+	}
+	return string(output)
 }
 
 func TestHTTPBasicPublisherUsesEphemeralAskPassEnvironment(t *testing.T) {
