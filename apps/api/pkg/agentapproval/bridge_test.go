@@ -38,14 +38,14 @@ func TestBridgeCreatesIdempotentApprovalFromRuntimeEvent(t *testing.T) {
 		Status: agentruntime.ThreadStatusActive, Metadata: metadata,
 	}
 	event := agentruntime.Event{
-		Type: agentruntime.EventTypeItemStarted,
+		Type:     agentruntime.EventTypeItemStarted,
 		ThreadID: thread.ID,
-		TurnID: "turn-1",
-		Status: agentruntime.TurnStatusPausedApproval,
+		TurnID:   "turn-1",
+		Status:   agentruntime.TurnStatusPausedApproval,
 		Item: &agentruntime.Item{
 			ID: "item-1", ThreadID: thread.ID, TurnID: "turn-1",
 			Type: agentruntime.ItemTypeApproval, Status: agentruntime.ItemStatusPending,
-			Name: "item/commandExecution/requestApproval",
+			Name:    "item/commandExecution/requestApproval",
 			Payload: json.RawMessage(`{"command":"go test ./..."}`),
 		},
 	}
