@@ -85,6 +85,34 @@ func TestRuntimeRunTestsDetectsCommandThroughProvider(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunTestsExplicitCommandOverridesVerificationContract(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"contract","command":"go test ./...","required":true}
+				]
+			}`),
+		},
+		commandResult: &runtimes.CommandResult{ExitCode: 0},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{"command":"go test ./internal/...", "timeout":45}`))
+	if err != nil {
+		t.Fatalf("runtimeRunTests() error: %v", err)
+	}
+	if len(provider.commands) != 1 {
+		t.Fatalf("commands = %#v, want one explicit command", provider.commands)
+	}
+	if provider.commands[0].Command != "go test ./internal/..." {
+		t.Fatalf("command = %q, want explicit command", provider.commands[0].Command)
+	}
+	if provider.commands[0].Timeout.String() != "45s" {
+		t.Fatalf("timeout = %s, want 45s", provider.commands[0].Timeout)
+	}
+}
+
 func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
 	sessionID := "runtime-1"
 	provider := &fakeRuntimeProvider{
