@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"log/slog"
-	"os"
 	"testing"
 
 	"github.com/ai-dev-control-plane/runtimes"
@@ -34,6 +33,4 @@ func TestRuntimeProviderKeepsGenericRemoteForOtherRemoteWorkspaces(t *testing.T)
 	if _, ok := provider.(*runtimes.RemoteProvider); !ok {
 		t.Fatalf("provider type = %T, want *runtimes.RemoteProvider", provider)
 	}
-
-	_ = os.Getenv("RUNNER_URL")
 }
