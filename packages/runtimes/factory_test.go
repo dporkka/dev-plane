@@ -55,7 +55,6 @@ func TestNewProviderUnsupported(t *testing.T) {
 	}
 }
 
-
 func TestNewProviderNulang(t *testing.T) {
 	p, name, err := NewProvider("nulang", "", "http://localhost:8096", "token")
 	if err != nil {
