@@ -37,6 +37,12 @@ jobs:
             apps/web/package-lock.json
             packages/sdk/typescript/package-lock.json
 
+      - name: Install SDK dependencies
+        run: cd packages/sdk/typescript && npm ci
+
+      - name: Build SDK
+        run: cd packages/sdk/typescript && npm run build
+
       - name: Install web dependencies
         run: cd apps/web && npm ci
 
@@ -79,6 +85,12 @@ jobs:
             apps/web/package-lock.json
             packages/sdk/typescript/package-lock.json
 
+      - name: Install SDK dependencies
+        run: cd packages/sdk/typescript && npm ci
+
+      - name: Build SDK
+        run: cd packages/sdk/typescript && npm run build
+
       - name: Install web dependencies
         run: cd apps/web && npm ci
 
@@ -111,6 +123,12 @@ jobs:
           cache-dependency-path: |
             apps/web/package-lock.json
             packages/sdk/typescript/package-lock.json
+
+      - name: Install SDK dependencies
+        run: cd packages/sdk/typescript && npm ci
+
+      - name: Build SDK
+        run: cd packages/sdk/typescript && npm run build
 
       - name: Install web dependencies
         run: cd apps/web && npm ci
