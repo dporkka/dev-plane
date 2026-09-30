@@ -21,5 +21,6 @@ use (
 	./packages/runtimes
 	./packages/scheduler
 	./packages/securityscan
+	./packages/verification
 	./packages/vcs
 )
