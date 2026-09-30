@@ -15,6 +15,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/readiness"
 )
 
 // GetTaskSpec returns the generated spec for a task.
@@ -122,6 +123,8 @@ func mustRawMessage(v any) json.RawMessage {
 	return data
 }
 
+const runAdmissionPolicyVersion = "task-readiness-v1"
+
 // StartRun starts an agent run for an approved task.
 // Validates the task is in "approved" status, creates an AgentRun, and publishes an event.
 func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
@@ -149,12 +152,13 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 		RepositoryID string
 		WorkspaceID  *string
 		TargetBranch string
+		RiskLevel    string
 	}
 	var workspaceID sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT status, project_id, repository_id, workspace_id, target_branch
+		SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level
 		FROM tasks WHERE id = $1 AND deleted_at IS NULL
-	`, taskID).Scan(&task.Status, &task.ProjectID, &task.RepositoryID, &workspaceID, &task.TargetBranch)
+	`, taskID).Scan(&task.Status, &task.ProjectID, &task.RepositoryID, &workspaceID, &task.TargetBranch, &task.RiskLevel)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("task not found"))
@@ -168,6 +172,31 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, fmt.Errorf("task must be in 'approved' status, current: %s", task.Status))
 		return
 	}
+
+	readinessReport, err := h.assessTaskReadiness(ctx, taskID, task.RepositoryID, task.RiskLevel)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if readinessReport.Status == readiness.StatusBlocked {
+		respond.JSON(w, http.StatusConflict, map[string]any{
+			"error":     "task readiness blocked",
+			"readiness": readinessReport,
+		})
+		return
+	}
+
+	admissionMetadata, err := json.Marshal(map[string]any{
+		"admission": map[string]any{
+			"policy":    runAdmissionPolicyVersion,
+			"readiness": readinessReport,
+		},
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	if workspaceID.Valid {
 		task.WorkspaceID = &workspaceID.String
 	}
@@ -182,8 +211,8 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, taskID, workspaceArg, now)
+		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
+	`, runID, taskID, workspaceArg, string(admissionMetadata), now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -205,7 +234,8 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 			"task_id":    taskID,
 			"status":     "queued",
 			"action":     "start_run",
-			"project_id": task.ProjectID,
+			"project_id":       task.ProjectID,
+			"readiness_status": readinessReport.Status,
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("runs.triggered", data); pubErr != nil {
@@ -214,8 +244,9 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusCreated, map[string]interface{}{
-		"run_id": runID,
-		"status": "queued",
+		"run_id":           runID,
+		"status":           "queued",
+		"readiness_status": readinessReport.Status,
 	})
 }
 
