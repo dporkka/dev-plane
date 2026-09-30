@@ -125,27 +125,114 @@ func TestDetectPackageManagerUsesDeterministicSpecificMarkers(t *testing.T) {
 func TestDetectTestCommandRespectsRepositoryToolchain(t *testing.T) {
 	tests := []struct {
 		name  string
-		files []string
+		files map[string]string
 		want  string
 	}{
-		{name: "pnpm", files: []string{"package.json", "pnpm-lock.yaml"}, want: "pnpm test"},
-		{name: "yarn", files: []string{"package.json", "yarn.lock"}, want: "yarn test"},
-		{name: "npm", files: []string{"package.json", "package-lock.json"}, want: "npm test"},
-		{name: "uv", files: []string{"pyproject.toml", "uv.lock"}, want: "uv run pytest"},
-		{name: "poetry", files: []string{"pyproject.toml", "poetry.lock"}, want: "poetry run pytest"},
-		{name: "generic python", files: []string{"pyproject.toml"}, want: "python -m pytest"},
+		{
+			name: "pnpm",
+			files: map[string]string{
+				"package.json":   `{"scripts":{"test":"node --test"}}`,
+				"pnpm-lock.yaml": "",
+			},
+			want: "pnpm test",
+		},
+		{
+			name: "yarn",
+			files: map[string]string{
+				"package.json": `{"scripts":{"test":"node --test"}}`,
+				"yarn.lock":    "",
+			},
+			want: "yarn test",
+		},
+		{
+			name: "npm",
+			files: map[string]string{
+				"package.json":     `{"scripts":{"test":"node --test"}}`,
+				"package-lock.json": "",
+			},
+			want: "npm test",
+		},
+		{
+			name: "uv",
+			files: map[string]string{
+				"pyproject.toml": "[tool.pytest.ini_options]\n",
+				"uv.lock":        "",
+			},
+			want: "uv run pytest",
+		},
+		{
+			name: "poetry",
+			files: map[string]string{
+				"pyproject.toml": "[tool.pytest.ini_options]\n",
+				"poetry.lock":    "",
+			},
+			want: "poetry run pytest",
+		},
+		{
+			name: "generic python with pytest",
+			files: map[string]string{
+				"pyproject.toml": "[tool.pytest.ini_options]\n",
+			},
+			want: "python -m pytest",
+		},
 	}
 
 	for _, tt := range tests {
 		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
-			for _, name := range tt.files {
-				writeFixtureFile(t, dir, name, "")
+			for name, content := range tt.files {
+				writeFixtureFile(t, dir, name, content)
 			}
 			if got := detectTestCommand(dir); got != tt.want {
 				t.Fatalf("detectTestCommand() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDetectTestCommandDoesNotGuessWithoutTestSignal(t *testing.T) {
+	tests := []struct {
+		name    string
+		files   map[string]string
+	}{
+		{
+			name:  "package json without test script",
+			files: map[string]string{"package.json": `{"scripts":{"build":"tsc"}}`},
+		},
+		{
+			name:  "generic pyproject without runner",
+			files: map[string]string{"pyproject.toml": "[project]\nname = \"example\"\n"},
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			for name, content := range tt.files {
+				writeFixtureFile(t, dir, name, content)
+			}
+			if got := detectTestCommand(dir); got != "" {
+				t.Fatalf("detectTestCommand() = %q, want empty command", got)
+			}
+		})
+	}
+}
+
+func TestRunTestsRequiresDetectedOrExplicitCommand(t *testing.T) {
+	dir := t.TempDir()
+	writeFixtureFile(t, dir, "package.json", `{"scripts":{"build":"tsc"}}`)
+
+	_, err := NewWorkspaceTools(testLogger()).RunTests(
+		context.Background(),
+		dir,
+		json.RawMessage(`{}`),
+	)
+	if err == nil {
+		t.Fatal("RunTests() error = nil, want no-test-command error")
+	}
+	if got := err.Error(); got != "no test command detected; provide command explicitly" {
+		t.Fatalf("RunTests() error = %q", got)
 	}
 }
