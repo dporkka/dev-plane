@@ -1,8 +1,11 @@
 package verification
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -73,4 +76,35 @@ func (a Artifact) Validate() error {
 		}
 	}
 	return nil
+}
+
+
+// ParseArtifact decodes and validates a self-contained verification artifact.
+func ParseArtifact(data []byte) (Artifact, error) {
+	var artifact Artifact
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&artifact); err != nil {
+		return Artifact{}, fmt.Errorf("decode verification artifact: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return Artifact{}, errors.New("decode verification artifact: trailing JSON value")
+		}
+		return Artifact{}, fmt.Errorf("decode verification artifact: %w", err)
+	}
+	if err := artifact.Validate(); err != nil {
+		return Artifact{}, err
+	}
+	return artifact, nil
+}
+
+// FreshFor reports whether this valid artifact still applies to the exact tree
+// and verification environment supplied by the caller.
+func (a Artifact) FreshFor(treeHash, environmentDigest string) (bool, string, error) {
+	if err := a.Validate(); err != nil {
+		return false, "", err
+	}
+	return a.Evidence.FreshFor(treeHash, a.Contract, environmentDigest)
 }

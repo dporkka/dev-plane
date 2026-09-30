@@ -241,3 +241,46 @@ func TestArtifactValidateBindsEmbeddedContractToEvidenceHash(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want contract hash mismatch", err)
 	}
 }
+
+
+func TestParseArtifactRejectsUnknownFields(t *testing.T) {
+	_, err := ParseArtifact([]byte(`{"version":1,"contract":{},"evidence":{},"unknown":true}`))
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("ParseArtifact() error = %v, want unknown field error", err)
+	}
+}
+
+func TestArtifactFreshForDetectsTreeAndEnvironmentChanges(t *testing.T) {
+	contract := testContract()
+	evidence, err := NewEvidence(EvidenceInput{
+		TreeHash:          "tree-a",
+		Contract:          contract,
+		EnvironmentDigest: "env-a",
+		RunnerIdentity:    "runner-a",
+		Checks: []CheckResult{
+			{ID: "unit", Passed: true},
+			{ID: "lint", Passed: true},
+		},
+		StartedAt:   time.Date(2026, time.September, 30, 12, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2026, time.September, 30, 12, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact := Artifact{Version: ArtifactVersion, Contract: contract, Evidence: evidence}
+
+	fresh, reason, err := artifact.FreshFor("tree-a", "env-a")
+	if err != nil || !fresh || reason != "" {
+		t.Fatalf("FreshFor exact = (%v, %q, %v), want (true, empty, nil)", fresh, reason, err)
+	}
+
+	fresh, reason, err = artifact.FreshFor("tree-b", "env-a")
+	if err != nil || fresh || reason != "tree hash changed" {
+		t.Fatalf("FreshFor tree change = (%v, %q, %v)", fresh, reason, err)
+	}
+
+	fresh, reason, err = artifact.FreshFor("tree-a", "env-b")
+	if err != nil || fresh || reason != "environment changed" {
+		t.Fatalf("FreshFor env change = (%v, %q, %v)", fresh, reason, err)
+	}
+}
