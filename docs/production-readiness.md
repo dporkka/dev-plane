@@ -139,4 +139,4 @@ These gates require external credentials and cannot be completed in a credential
 - Runtime integration tests proving Docker sessions cannot access host paths or network unless granted: `RUN_DOCKER_INTEGRATION=1 go test ./...` in `packages/runtimes`.
 - Postgres migration verification: `POSTGRES_TEST_DATABASE_URL=... go test ./...` in `packages/db`.
 - Policy tests proving write, patch, shell, commit, push, PR, merge, deploy, network, and secret operations cannot bypass approval/deny rules.
-- Event tests proving `tasks.*`, `agents.>`, `runs.*`, `review.*`, `approval.*`, `pr.*`, `webhooks.*`, and `audit.>` subjects publish to configured streams.
+- Event tests proving `tasks.*`, `agents.>`, `runs.*`, `review.*`, `approval.*`, `pr.*`, `webhooks.*`, `audit.>`, and `changesets.*` subjects publish to configured streams.
