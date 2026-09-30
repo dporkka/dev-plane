@@ -167,7 +167,6 @@ func containsAny(value string, patterns ...string) bool {
 	return false
 }
 
-
 type AutoRetryDecision struct {
 	Retry       bool   `json:"retry"`
 	NextAttempt int    `json:"next_attempt,omitempty"`
