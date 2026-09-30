@@ -196,6 +196,22 @@ FORGE_GIT_REMOTE=origin
 
 The Gitea adapter runs `forge/contracttest` plus deterministic HTTP tests for draft translation, optimistic merge revision checks, provider error normalization, and HTTPS publication credential mapping.
 
+For an actual disposable Gitea/Forgejo instance, the integration-tag suite can open a draft review change and close it during test cleanup:
+
+```sh
+export GITEA_INTEGRATION_ALLOW_MUTATION=1
+export GITEA_URL=https://code.example.com
+export GITEA_TOKEN=...
+export GITEA_TEST_OWNER=acme
+export GITEA_TEST_REPO=widget
+export GITEA_TEST_HEAD=dev-plane-integration
+export GITEA_TEST_BASE=main   # optional; defaults to main
+
+make integration-test
+```
+
+The head branch must already exist. The mutation gate is intentionally explicit because this test creates a real review change even though cleanup closes it afterward.
+
 ## Adding another forge
 
 A new adapter should normally require no changes to `packages/forge`.
