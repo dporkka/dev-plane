@@ -85,6 +85,88 @@ func TestRuntimeRunTestsDetectsCommandThroughProvider(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
+	sessionID := "runtime-1"
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"unit","command":"go test ./...","required":true,"timeout_seconds":120},
+					{"id":"lint","command":"go vet ./...","required":true,"timeout_seconds":60}
+				]
+			}`),
+		},
+		commandResults: []*runtimes.CommandResult{
+			{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
+			{Stdout: "", ExitCode: 0},
+		},
+	}
+	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithRuntimeProvider("docker", provider)
+
+	workspace := &models.Workspace{
+		ID:               "ws-1",
+		RuntimeProvider:  "docker",
+		RuntimeSessionID: &sessionID,
+		Status:           models.WorkspaceStatusReady,
+	}
+	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", Title: "verify"}
+
+	output, err := runner.executeTool(context.Background(), run, task, workspace, "", "run_tests", json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("executeTool() error: %v", err)
+	}
+	if len(provider.commands) != 2 {
+		t.Fatalf("commands = %#v, want 2 contract checks", provider.commands)
+	}
+	if provider.commands[0].Command != "go test ./..." || provider.commands[0].Timeout.String() != "2m0s" {
+		t.Fatalf("first command = %#v, want contract unit check", provider.commands[0])
+	}
+	if provider.commands[1].Command != "go vet ./..." || provider.commands[1].Timeout.String() != "1m0s" {
+		t.Fatalf("second command = %#v, want contract lint check", provider.commands[1])
+	}
+
+	var decoded struct {
+		Passed       bool `json:"passed"`
+		Failed       int `json:"failed"`
+		ContractHash string `json:"contract_hash"`
+		Checks       []struct {
+			ID     string `json:"id"`
+			Passed bool   `json:"passed"`
+		} `json:"checks"`
+	}
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		t.Fatalf("decode output: %v", err)
+	}
+	if !decoded.Passed || decoded.Failed != 0 {
+		t.Fatalf("verification result = %#v, want all checks passing", decoded)
+	}
+	if decoded.ContractHash == "" {
+		t.Fatal("contract_hash is empty")
+	}
+	if len(decoded.Checks) != 2 || decoded.Checks[0].ID != "unit" || decoded.Checks[1].ID != "lint" {
+		t.Fatalf("checks = %#v, want unit and lint", decoded.Checks)
+	}
+}
+
+func TestRuntimeRunTestsFailsClosedOnInvalidVerificationContract(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{"version":1,"unknown":true}`),
+		},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "verification contract") {
+		t.Fatalf("runtimeRunTests() error = %v, want verification contract error", err)
+	}
+	if len(provider.commands) != 0 {
+		t.Fatalf("commands = %#v, want no commands for invalid contract", provider.commands)
+	}
+}
+
 func TestRuntimeListDirectorySendsValidShellCommand(t *testing.T) {
 	sessionID := "runtime-1"
 	provider := &fakeRuntimeProvider{
@@ -187,7 +269,8 @@ type fakeRuntimeProvider struct {
 	readSession   string
 	readPath      string
 	commands      []runtimes.Command
-	commandResult *runtimes.CommandResult
+	commandResult  *runtimes.CommandResult
+	commandResults []*runtimes.CommandResult
 }
 
 func setupAgentAuditDB(t *testing.T) *sql.DB {
@@ -232,6 +315,11 @@ func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID st
 
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
 	p.commands = append(p.commands, cmd)
+	if len(p.commandResults) > 0 {
+		result := p.commandResults[0]
+		p.commandResults = p.commandResults[1:]
+		return result, nil
+	}
 	if p.commandResult != nil {
 		return p.commandResult, nil
 	}
