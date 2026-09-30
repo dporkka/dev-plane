@@ -222,7 +222,8 @@ export default function RunDetailPage() {
         router.push(`/runs/${retry.run_id}`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to retry run.";
+      const message =
+        err instanceof Error ? err.message : "Failed to retry run.";
       setRetryError(message);
     } finally {
       setRetrying(false);
@@ -318,7 +319,9 @@ export default function RunDetailPage() {
                 disabled={retrying}
                 className="btn-secondary flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                <RotateCcw className={`w-4 h-4 ${retrying ? "animate-spin" : ""}`} />
+                <RotateCcw
+                  className={`w-4 h-4 ${retrying ? "animate-spin" : ""}`}
+                />
                 {retrying ? "Retrying..." : "Retry"}
               </button>
             )}
@@ -377,7 +380,9 @@ export default function RunDetailPage() {
             <AlertTriangle className="w-5 h-5 text-red-400 mt-0.5" />
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="font-medium text-white">Failure classification</h2>
+                <h2 className="font-medium text-white">
+                  Failure classification
+                </h2>
                 <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 capitalize">
                   {run.failure.category.replaceAll("_", " ")}
                 </span>
@@ -399,7 +404,9 @@ export default function RunDetailPage() {
               </div>
               {(run.failure.stage || run.failure.source) && (
                 <div className="mt-1 text-xs text-gray-500">
-                  {[run.failure.stage, run.failure.source].filter(Boolean).join(" · ")}
+                  {[run.failure.stage, run.failure.source]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </div>
               )}
               {run.error_message && (
