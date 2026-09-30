@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -211,6 +212,72 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestMergePullRequest_InvalidForgeRequest(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeForge := &fakeForgeMergeProvider{err: fmt.Errorf("%w: unsupported merge method", forge.ErrInvalidRequest)}
+	h = h.WithForgeProvider(fakeForge)
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"octopus"}`))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMergePullRequest_ForgeConflict(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeForge := &fakeForgeMergeProvider{err: fmt.Errorf("%w: head changed", forge.ErrConflict)}
+	h = h.WithForgeProvider(fakeForge)
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"squash"}`))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
 	}
 }
 
