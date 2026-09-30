@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -22,6 +24,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	events "github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/gateway"
 )
 
 // Server is the HTTP server for the API service.
@@ -91,6 +94,13 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		h = h.
+			WithForgeProvider(gateway.NewGitHubGateway(s.config.GitHubClientID, s.config.GitHubSecret)).
+			WithForgeCredential(token)
+	} else {
+		s.logger.Warn("GITHUB_TOKEN not configured; default GitHub forge operations are disabled")
+	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
