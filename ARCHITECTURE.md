@@ -67,7 +67,7 @@ Not every integration seam is equally mature. Treat the following status as arch
 | Workspace runtime | Public `packages/runtimes.Provider` | Provider implementations should satisfy `packages/runtimes/contracttest` |
 | Remote runtime transport | Public runner HTTP adapter | Keep semantics aligned with `runtimes.Provider` |
 | Model routing | Interface exists inside the API application | Experimental; do not treat as a stable external plugin API yet |
-| Forge operations | Adapters exist and are evolving | Experimental until a provider-neutral public contract is explicitly versioned |
+| Forge change requests | Public `packages/forge.Provider` | Open/merge adapters should satisfy `packages/forge/contracttest`; Git transport remains separate |
 | Lifecycle activity sinks | Public `packages/activity.Sink` | Initial provider-neutral contract; core execution must not depend on delivery |
 | Secrets | Multiple provider concepts exist | Experimental public boundary |
 
@@ -151,5 +151,6 @@ See:
 - [Runtime Providers](docs/runtime-providers.md)
 - [Activity Sinks](docs/activity-sinks.md)
 - [Repository Portability Contract](docs/repository-portability.md)
+- [Forge Providers](docs/forge-providers.md)
 - [Contributing](CONTRIBUTING.md)
 - [Maintainer Portfolio Integration Example](docs/platform-convergence.md)

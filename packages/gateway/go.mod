@@ -4,4 +4,9 @@ module github.com/ai-dev-control-plane/gateway
 
 go 1.25.11
 
-require golang.org/x/oauth2 v0.36.0
+require (
+	github.com/ai-dev-control-plane/forge v0.0.0
+	golang.org/x/oauth2 v0.36.0
+)
+
+replace github.com/ai-dev-control-plane/forge => ../forge

@@ -12,18 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/oauth2"
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
-	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/prfactory"
@@ -419,26 +416,27 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := strings.TrimSpace(h.githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
+	if h.forgeProvider == nil {
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("forge provider is not configured"))
 		return
 	}
-
-	gh := h.githubGateway
-	if gh == nil {
-		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
-	}
-	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
-		Method: req.Method,
-		SHA:    req.SHA,
+	mergeResult, err := h.forgeProvider.MergeChange(ctx, h.forgeCredential, forge.Repository{
+		Namespace: repoOwner,
+		Name:      repoName,
+	}, pr.Number, forge.MergeChangeRequest{
+		Method:               forge.MergeMethod(req.Method),
+		ExpectedHeadRevision: req.SHA,
 	})
 	if err != nil {
 		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
-		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
+		switch {
+		case forge.IsInvalidRequest(err):
+			respond.Error(w, http.StatusBadRequest, err)
+		case errors.Is(err, forge.ErrConflict):
+			respond.Error(w, http.StatusConflict, err)
+		default:
+			respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
+		}
 		return
 	}
 	if !mergeResult.Merged {
@@ -468,7 +466,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 			"pr_id":      id,
 			"task_id":    taskID,
 			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
+			"sha":        mergeResult.Revision,
 			"timestamp":  now.Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)

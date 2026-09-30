@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+
+	"github.com/ai-dev-control-plane/forge"
 )
 
 // GitHubGateway provides methods for interacting with the GitHub API.
@@ -257,6 +259,78 @@ func (g *GitHubGateway) MergePR(ctx context.Context, token *oauth2.Token, owner,
 	return &result, nil
 }
 
+
+// Name identifies the forge provider.
+func (g *GitHubGateway) Name() string {
+	return "github"
+}
+
+// OpenChange implements forge.Provider by translating the provider-neutral
+// change request into GitHub's pull request API.
+func (g *GitHubGateway) OpenChange(ctx context.Context, credential forge.Credential, repository forge.Repository, req forge.OpenChangeRequest) (*forge.Change, error) {
+	if err := forge.ValidateOpenChangeRequest(repository, req); err != nil {
+		return nil, err
+	}
+
+	created, err := g.CreatePR(ctx, &oauth2.Token{
+		AccessToken: credential.Token,
+		TokenType:   "Bearer",
+	}, repository.Namespace, repository.Name, NewPR{
+		Title: req.Title,
+		Body:  req.Body,
+		Head:  req.Head,
+		Base:  req.Base,
+		Draft: req.Draft,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	state := forge.ChangeState(created.State)
+	if state == "" {
+		state = forge.ChangeStateOpen
+	}
+
+	return &forge.Change{
+		Number:       created.Number,
+		Title:        created.Title,
+		Body:         created.Body,
+		URL:          created.HTMLURL,
+		State:        state,
+		Head:         created.Head.Ref,
+		Base:         created.Base.Ref,
+		HeadRevision: created.Head.SHA,
+		Draft:        req.Draft,
+	}, nil
+}
+
+// MergeChange implements forge.Provider by translating a provider-neutral
+// merge request into GitHub's pull request merge API.
+func (g *GitHubGateway) MergeChange(ctx context.Context, credential forge.Credential, repository forge.Repository, number int, req forge.MergeChangeRequest) (*forge.MergeResult, error) {
+	if err := forge.ValidateMergeChangeRequest(repository, number, req); err != nil {
+		return nil, err
+	}
+
+	result, err := g.MergePR(ctx, &oauth2.Token{
+		AccessToken: credential.Token,
+		TokenType:   "Bearer",
+	}, repository.Namespace, repository.Name, number, MergePRRequest{
+		Method:  string(forge.NormalizeMergeMethod(req.Method)),
+		Title:   req.CommitTitle,
+		Message: req.CommitMessage,
+		SHA:     req.ExpectedHeadRevision,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &forge.MergeResult{
+		Merged:   result.Merged,
+		Revision: result.SHA,
+		Message:  result.Message,
+	}, nil
+}
+
 // CreateDeployment creates a new GitHub deployment for the given ref and environment.
 func (g *GitHubGateway) CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*Deployment, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBaseURL, owner, name)
@@ -404,3 +478,5 @@ func (g *GitHubGateway) del(ctx context.Context, token *oauth2.Token, url string
 func ParseInstallationID(s string) (int64, error) {
 	return strconv.ParseInt(s, 10, 64)
 }
+
+var _ forge.Provider = (*GitHubGateway)(nil)

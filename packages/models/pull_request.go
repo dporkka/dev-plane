@@ -13,7 +13,7 @@ const (
 	PRStateMerged = "merged"
 )
 
-// PullRequest represents a GitHub pull request created by an agent run.
+// PullRequest is Dev Plane's persisted review-change record for forge pull/merge requests created by an agent run.
 type PullRequest struct {
 	ID         string     `json:"id"`
 	TaskID     string     `json:"task_id"`

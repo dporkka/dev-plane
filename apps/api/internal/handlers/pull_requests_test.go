@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,29 +14,41 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/oauth2"
-
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/events"
-	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
 
-type fakeMergeGateway struct {
-	result *gateway.MergePRResult
-	err    error
-	calls  []gateway.MergePRRequest
+type fakeForgeMergeProvider struct {
+	result     *forge.MergeResult
+	err        error
+	calls      []forge.MergeChangeRequest
+	credential forge.Credential
+	repository forge.Repository
+	number     int
 }
 
-func (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error) {
+func (f *fakeForgeMergeProvider) Name() string { return "fake" }
+
+func (f *fakeForgeMergeProvider) OpenChange(context.Context, forge.Credential, forge.Repository, forge.OpenChangeRequest) (*forge.Change, error) {
+	return nil, errors.New("open change not used by merge handler")
+}
+
+func (f *fakeForgeMergeProvider) MergeChange(_ context.Context, credential forge.Credential, repository forge.Repository, number int, req forge.MergeChangeRequest) (*forge.MergeResult, error) {
 	f.calls = append(f.calls, req)
+	f.credential = credential
+	f.repository = repository
+	f.number = number
 	if f.err != nil {
 		return nil, f.err
 	}
 	return f.result, nil
 }
+
+var _ forge.Provider = (*fakeForgeMergeProvider)(nil)
 
 func newMergeRequest(prID string, body string) *http.Request {
 	return newMergeRequestWithRole(prID, body, models.RoleOwner)
@@ -60,8 +73,8 @@ func TestMergePullRequest(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 
-	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
-	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+	fakeForge := &fakeForgeMergeProvider{result: &forge.MergeResult{Merged: true, Revision: "abc123"}}
+	h = h.WithForgeProvider(fakeForge)
 
 	pub := &fakeEventPublisher{}
 	h = h.WithEventPublisher(pub)
@@ -97,11 +110,11 @@ func TestMergePullRequest(t *testing.T) {
 		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
 	}
 
-	if len(fakeGH.calls) != 1 {
-		t.Fatalf("merge calls = %d, want 1", len(fakeGH.calls))
+	if len(fakeForge.calls) != 1 {
+		t.Fatalf("merge calls = %d, want 1", len(fakeForge.calls))
 	}
-	if fakeGH.calls[0].Method != "squash" {
-		t.Errorf("merge method = %q, want squash", fakeGH.calls[0].Method)
+	if fakeForge.calls[0].Method != "squash" {
+		t.Errorf("merge method = %q, want squash", fakeForge.calls[0].Method)
 	}
 
 	if pub.subject != events.PRMerged {
@@ -173,8 +186,8 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 
-	fakeGH := &fakeMergeGateway{err: errors.New("merge conflict")}
-	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+	fakeForge := &fakeForgeMergeProvider{err: errors.New("merge conflict")}
+	h = h.WithForgeProvider(fakeForge).WithForgeCredential("forge-token")
 
 	prID := "pr-1"
 	taskID := "task-1"
@@ -199,6 +212,72 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestMergePullRequest_InvalidForgeRequest(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeForge := &fakeForgeMergeProvider{err: fmt.Errorf("%w: unsupported merge method", forge.ErrInvalidRequest)}
+	h = h.WithForgeProvider(fakeForge)
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"octopus"}`))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMergePullRequest_ForgeConflict(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeForge := &fakeForgeMergeProvider{err: fmt.Errorf("%w: head changed", forge.ErrConflict)}
+	h = h.WithForgeProvider(fakeForge)
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://forge.example/owner/repo/changes/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"squash"}`))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
 	}
 }
 
