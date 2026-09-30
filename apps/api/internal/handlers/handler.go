@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
@@ -13,6 +14,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	"github.com/ai-dev-control-plane/activity"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
@@ -35,19 +37,14 @@ type Handler struct {
 	capabilityKernel  *capability.Kernel
 	runtimeProviders  map[string]runtimes.Provider
 	secretManager     *secrets.Manager
-	githubGateway     githubGateway
-	githubToken       string
+	forgeProvider     forge.Provider
+	forgeCredential   forge.Credential
 	deployGateway     deployGateway
 	deployToken       string
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
 	integrationValidator func(ctx context.Context, integrationType string, token, webhookURL *string) error
-}
-
-// githubGateway is the subset of the GitHub gateway used by handlers.
-type githubGateway interface {
-	MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error)
 }
 
 // deployGateway is the subset of a deployment provider used by handlers.
@@ -102,16 +99,26 @@ func (h *Handler) WithSecretManager(manager *secrets.Manager) *Handler {
 	return h
 }
 
-// WithGitHubGateway injects a GitHub gateway for PR/merge operations.
-func (h *Handler) WithGitHubGateway(g githubGateway) *Handler {
-	h.githubGateway = g
+// WithForgeProvider configures the provider used for code-change operations.
+func (h *Handler) WithForgeProvider(provider forge.Provider) *Handler {
+	h.forgeProvider = provider
 	return h
 }
 
-// WithGitHubToken configures the GitHub token used for PR/merge operations.
-func (h *Handler) WithGitHubToken(token string) *Handler {
-	h.githubToken = token
+// WithForgeCredential configures the API credential passed to the forge provider.
+func (h *Handler) WithForgeCredential(token string) *Handler {
+	h.forgeCredential = forge.Credential{Token: strings.TrimSpace(token)}
 	return h
+}
+
+// WithGitHubGateway is a compatibility shim that configures GitHub as the forge provider.
+func (h *Handler) WithGitHubGateway(g *gateway.GitHubGateway) *Handler {
+	return h.WithForgeProvider(g)
+}
+
+// WithGitHubToken is a compatibility shim for existing callers.
+func (h *Handler) WithGitHubToken(token string) *Handler {
+	return h.WithForgeCredential(token)
 }
 
 // WithDeployGateway injects a deployment gateway for task deploy operations.
