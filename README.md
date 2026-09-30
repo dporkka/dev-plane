@@ -451,6 +451,7 @@ Streams are created automatically by the application on startup:
 - `RUNS` (`runs.*`, `review.*`, `approval.*`, `pr.*`) -- Run, review, approval, and PR events
 - `WEBHOOKS` (`webhooks.*`) -- Incoming webhook events
 - `AUDIT` (`audit.>`) -- Audit log events
+- `CHANGESETS` (`changesets.*`) -- Change Set publication work and lifecycle events
 
 ---
 
