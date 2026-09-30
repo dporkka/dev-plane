@@ -24,11 +24,3 @@ type Event struct {
 type Sink interface {
 	Publish(ctx context.Context, event Event) error
 }
-
-// SinkFunc adapts a function to Sink.
-type SinkFunc func(ctx context.Context, event Event) error
-
-// Publish implements Sink.
-func (f SinkFunc) Publish(ctx context.Context, event Event) error {
-	return f(ctx, event)
-}
