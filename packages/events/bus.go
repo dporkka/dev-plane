@@ -10,10 +10,10 @@ import (
 
 // Stream names used across the system.
 const (
-	StreamTasks    = "TASKS"
-	StreamAgents   = "AGENTS"
-	StreamRuns     = "RUNS"
-	StreamWebhooks = "WEBHOOKS"
+	StreamTasks      = "TASKS"
+	StreamAgents     = "AGENTS"
+	StreamRuns       = "RUNS"
+	StreamWebhooks   = "WEBHOOKS"
 	StreamAudit      = "AUDIT"
 	StreamChangeSets = "CHANGESETS"
 )
