@@ -306,7 +306,13 @@ func (h *RunHandler) scheduleAutomaticRetry(
 	}
 
 	if !created {
-		return true, retryRunID, nil
+		dispatched, err := h.automaticRetryDispatchPublished(ctx, retryRunID)
+		if err != nil {
+			return false, "", err
+		}
+		if dispatched {
+			return true, retryRunID, nil
+		}
 	}
 
 	if h.eventBus != nil {
@@ -325,9 +331,66 @@ func (h *RunHandler) scheduleAutomaticRetry(
 		if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
 			return false, "", fmt.Errorf("publish automatic retry run: %w", err)
 		}
+		if err := h.markAutomaticRetryDispatchPublished(ctx, retryRunID); err != nil {
+			return false, "", err
+		}
 	}
 
 	return true, retryRunID, nil
+}
+
+func (h *RunHandler) automaticRetryDispatchPublished(ctx context.Context, runID string) (bool, error) {
+	var raw sql.NullString
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT metadata FROM agent_runs WHERE id = $1
+	`, runID).Scan(&raw); err != nil {
+		return false, fmt.Errorf("load automatic retry dispatch metadata: %w", err)
+	}
+	if !raw.Valid || strings.TrimSpace(raw.String) == "" {
+		return false, nil
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw.String), &metadata); err != nil {
+		return false, fmt.Errorf("decode automatic retry dispatch metadata: %w", err)
+	}
+	retry, ok := metadata["retry"].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	dispatched, _ := retry["dispatch_published"].(bool)
+	return dispatched, nil
+}
+
+func (h *RunHandler) markAutomaticRetryDispatchPublished(ctx context.Context, runID string) error {
+	var raw sql.NullString
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT metadata FROM agent_runs WHERE id = $1
+	`, runID).Scan(&raw); err != nil {
+		return fmt.Errorf("load automatic retry metadata for dispatch marker: %w", err)
+	}
+	metadata := map[string]any{}
+	if raw.Valid && strings.TrimSpace(raw.String) != "" {
+		if err := json.Unmarshal([]byte(raw.String), &metadata); err != nil {
+			return fmt.Errorf("decode automatic retry metadata for dispatch marker: %w", err)
+		}
+	}
+	retry, ok := metadata["retry"].(map[string]any)
+	if !ok {
+		retry = map[string]any{}
+		metadata["retry"] = retry
+	}
+	retry["dispatch_published"] = true
+	retry["dispatch_published_at"] = time.Now().UTC().Format(time.RFC3339Nano)
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("encode automatic retry dispatch marker: %w", err)
+	}
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE agent_runs SET metadata = $1, updated_at = $2 WHERE id = $3
+	`, string(encoded), time.Now().UTC(), runID); err != nil {
+		return fmt.Errorf("persist automatic retry dispatch marker: %w", err)
+	}
+	return nil
 }
 
 func automaticRetryAttempt(metadata map[string]any) int {
