@@ -240,3 +240,60 @@ func TestLedgerRecordRejectsUnknownOutcome(t *testing.T) {
 		t.Fatal("Record() error = nil, want invalid outcome error")
 	}
 }
+
+
+func TestLedgerRecordNextAttemptIsIdempotentByRun(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.Exec(`CREATE UNIQUE INDEX idx_task_evaluations_run_unique ON task_evaluations(agent_run_id)`); err != nil {
+		t.Fatalf("create agent-run uniqueness index: %v", err)
+	}
+	ledger := NewLedger(db)
+	ctx := context.Background()
+
+	firstAttempt, err := ledger.RecordNextAttempt(ctx, Evaluation{
+		TaskID:     "task-1",
+		AgentRunID: "run-1",
+		Outcome:    OutcomePending,
+		Strategy:   "dev-plane",
+	})
+	if err != nil {
+		t.Fatalf("RecordNextAttempt(run-1) error: %v", err)
+	}
+	if firstAttempt != 1 {
+		t.Fatalf("first attempt = %d, want 1", firstAttempt)
+	}
+
+	replayedAttempt, err := ledger.RecordNextAttempt(ctx, Evaluation{
+		TaskID:     "task-1",
+		AgentRunID: "run-1",
+		Outcome:    OutcomePending,
+		Strategy:   "dev-plane",
+	})
+	if err != nil {
+		t.Fatalf("RecordNextAttempt(replay) error: %v", err)
+	}
+	if replayedAttempt != 1 {
+		t.Fatalf("replayed attempt = %d, want 1", replayedAttempt)
+	}
+
+	secondAttempt, err := ledger.RecordNextAttempt(ctx, Evaluation{
+		TaskID:     "task-1",
+		AgentRunID: "run-2",
+		Outcome:    OutcomePending,
+		Strategy:   "dev-plane",
+	})
+	if err != nil {
+		t.Fatalf("RecordNextAttempt(run-2) error: %v", err)
+	}
+	if secondAttempt != 2 {
+		t.Fatalf("second attempt = %d, want 2", secondAttempt)
+	}
+
+	got, err := ledger.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask() error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("GetTask() len = %d, want 2 after replay", len(got))
+	}
+}
