@@ -90,6 +90,6 @@ func (h *Handler) CreateVoiceTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.logAgentVaultEvent(ctx, taskCreatedEvent(task, integrationTypeVoice))
+	h.logActivityEvent(ctx, taskCreatedEvent(task, integrationTypeVoice))
 	respond.JSON(w, http.StatusCreated, task)
 }
