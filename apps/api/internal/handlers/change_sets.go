@@ -319,6 +319,81 @@ func (h *Handler) AuthorizeChangeSetPublication(w http.ResponseWriter, r *http.R
 	respond.JSON(w, http.StatusOK, status)
 }
 
+func (h *Handler) validateCandidateChangeSetPublication(ctx context.Context, candidateID, projectID string) error {
+	var (
+		changeSetID string
+		storedProjectID string
+		status string
+		publicationDigest sql.NullString
+		publicationManifest sql.NullString
+	)
+	err := h.db.QueryRowContext(ctx, `
+		SELECT cs.id, cs.project_id, cs.status, cs.publication_digest, cs.publication_manifest
+		FROM change_set_candidates csc
+		JOIN change_sets cs ON cs.id = csc.change_set_id
+		WHERE csc.candidate_id = $1
+		LIMIT 1
+	`, candidateID).Scan(
+		&changeSetID, &storedProjectID, &status, &publicationDigest, &publicationManifest,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	if storedProjectID != projectID {
+		return errors.New("candidate change set project identity is inconsistent")
+	}
+	if status != "authorized" {
+		return fmt.Errorf("candidate belongs to change set %s that is not authorized for publication", changeSetID)
+	}
+	if !publicationDigest.Valid || strings.TrimSpace(publicationDigest.String) == "" ||
+		!publicationManifest.Valid || strings.TrimSpace(publicationManifest.String) == "" {
+		return errors.New("authorized change set is missing publication authority")
+	}
+
+	members, err := h.loadChangeSetMembers(ctx, changeSetID)
+	if err != nil {
+		return fmt.Errorf("load authorized change set members: %w", err)
+	}
+	graph, _, _, err := h.loadProjectChangeGraph(ctx, projectID)
+	if err != nil {
+		return fmt.Errorf("load authorized change graph: %w", err)
+	}
+	current, err := changeset.NewManifest(changeset.ManifestInput{
+		ChangeSetID: changeSetID,
+		ProjectID:   projectID,
+		Members:     members,
+		Graph:       graph,
+	})
+	if err != nil {
+		return fmt.Errorf("build current change set manifest: %w", err)
+	}
+	currentDigest, err := current.Digest()
+	if err != nil {
+		return fmt.Errorf("digest current change set manifest: %w", err)
+	}
+	if currentDigest != publicationDigest.String {
+		return errors.New("change set publication authority is stale")
+	}
+
+	var stored changeset.Manifest
+	if err := json.Unmarshal([]byte(publicationManifest.String), &stored); err != nil {
+		return fmt.Errorf("decode stored change set manifest: %w", err)
+	}
+	storedDigest, err := stored.Digest()
+	if err != nil {
+		return fmt.Errorf("validate stored change set manifest: %w", err)
+	}
+	if storedDigest != publicationDigest.String ||
+		stored.ChangeSetID != changeSetID ||
+		stored.ProjectID != projectID {
+		return errors.New("change set publication manifest integrity check failed")
+	}
+	return nil
+}
+
 func (h *Handler) loadChangeSet(ctx context.Context, id string) (*ChangeSet, error) {
 	var (
 		changeSet ChangeSet
