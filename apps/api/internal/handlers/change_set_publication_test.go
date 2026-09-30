@@ -262,6 +262,38 @@ func TestPublishChangeSet_MergesOpenMemberThroughExistingAuthority(t *testing.T)
 	}
 }
 
+func TestPublishChangeSet_RejectsActivePublicationLease(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	now := time.Now().UTC()
+
+	fakeGH := &fakePublicationGateway{}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	expectAuthorizedSingleCandidateChangeSet(t, mock, "publishing", now)
+	mock.ExpectExec("UPDATE change_sets").
+		WithArgs("publishing", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "set-1", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	rec := httptest.NewRecorder()
+	h.PublishChangeSet(rec, newChangeSetRequest(
+		http.MethodPost, "/change-sets/set-1/publish", "id", "set-1", "",
+	))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already running") {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	if fakeGH.getCalls != 0 || len(fakeGH.mergeCalls) != 0 {
+		t.Fatalf("github calls occurred while lease was active")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
 func TestPublishChangeSet_BlocksClosedUnmergedRemoteMember(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
