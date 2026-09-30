@@ -48,14 +48,32 @@ func (r *Runner) consumeApprovedAuthority(ctx context.Context, runID string, req
 	if err != nil {
 		return false, fmt.Errorf("load approved authority: %w", err)
 	}
-	defer rows.Close()
 
+	type candidate struct {
+		id  string
+		raw []byte
+	}
+	var candidates []candidate
 	for rows.Next() {
-		var approvalID string
-		var raw []byte
-		if err := rows.Scan(&approvalID, &raw); err != nil {
+		var item candidate
+		if err := rows.Scan(&item.id, &item.raw); err != nil {
+			_ = rows.Close()
 			return false, fmt.Errorf("scan approved authority: %w", err)
 		}
+		item.raw = append([]byte(nil), item.raw...)
+		candidates = append(candidates, item)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate approved authority: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close approved authority rows: %w", err)
+	}
+
+	for _, candidate := range candidates {
+		approvalID := candidate.id
+		raw := candidate.raw
 
 		var parsed approvalAuthorityMetadata
 		if err := json.Unmarshal(raw, &parsed); err != nil {
@@ -122,8 +140,6 @@ func (r *Runner) consumeApprovedAuthority(ctx context.Context, runID string, req
 		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return false, fmt.Errorf("iterate approved authority: %w", err)
-	}
 	return false, nil
 }
+
