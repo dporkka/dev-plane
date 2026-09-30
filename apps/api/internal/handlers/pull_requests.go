@@ -266,9 +266,14 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create the pull request using the factory
-	factory := prfactory.NewFactory(h.db, h.logger)
-	pr, err := factory.CreatePullRequest(ctx, taskID)
+	// Create the review change through the configured workflow. The fallback
+	// preserves legacy standalone handler construction; production composition
+	// injects the provider-neutral factory explicitly.
+	creator := h.pullRequestCreator
+	if creator == nil {
+		creator = prfactory.NewFactory(h.db, h.logger)
+	}
+	pr, err := creator.CreatePullRequest(ctx, taskID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
