@@ -29,7 +29,7 @@ type EventPublisher interface {
 type Handler struct {
 	db                *sql.DB
 	logger            *slog.Logger
-	eventBus         EventPublisher
+	eventBus          EventPublisher
 	activitySink      activity.Sink
 	activityProject   string
 	capabilityKernel  *capability.Kernel
