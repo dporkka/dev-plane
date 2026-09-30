@@ -32,11 +32,41 @@ export type AgentRole =
 
 export type RunStatus =
   | "pending"
+  | "queued"
   | "running"
   | "paused"
   | "completed"
   | "failed"
   | "cancelled";
+
+export type FailureCategory =
+  | "code"
+  | "test"
+  | "environment"
+  | "infrastructure"
+  | "dependency"
+  | "flake"
+  | "timeout"
+  | "resource"
+  | "configuration"
+  | "policy"
+  | "unknown";
+
+export type FailureDisposition =
+  | "fix"
+  | "retry"
+  | "retry_fresh_environment"
+  | "human"
+  | "investigate";
+
+export interface RunFailureClassification {
+  taxonomy: string;
+  category: FailureCategory;
+  retryable: boolean;
+  disposition: FailureDisposition;
+  stage?: string;
+  source?: string;
+}
 
 export type StepType =
   | "thought"
@@ -190,6 +220,7 @@ export interface AgentRun {
   error_message?: string;
   summary?: string;
   metadata?: Record<string, unknown>;
+  failure?: RunFailureClassification;
   created_at: string;
   updated_at: string;
 }
