@@ -28,10 +28,10 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	}
 
 	expectedRetention := map[string]nats.RetentionPolicy{
-		StreamTasks:    nats.WorkQueuePolicy,
-		StreamAgents:   nats.WorkQueuePolicy,
-		StreamRuns:     nats.WorkQueuePolicy,
-		StreamWebhooks: nats.WorkQueuePolicy,
+		StreamTasks:      nats.WorkQueuePolicy,
+		StreamAgents:     nats.WorkQueuePolicy,
+		StreamRuns:       nats.WorkQueuePolicy,
+		StreamWebhooks:   nats.WorkQueuePolicy,
 		StreamAudit:      nats.WorkQueuePolicy,
 		StreamChangeSets: nats.WorkQueuePolicy,
 	}
@@ -46,10 +46,10 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		StreamTasks:    {"tasks.*"},
-		StreamAgents:   {"agents.>"},
-		StreamRuns:     {"runs.*", "review.*", "approval.*", "pr.*"},
-		StreamWebhooks: {"webhooks.*"},
+		StreamTasks:      {"tasks.*"},
+		StreamAgents:     {"agents.>"},
+		StreamRuns:       {"runs.*", "review.*", "approval.*", "pr.*"},
+		StreamWebhooks:   {"webhooks.*"},
 		StreamAudit:      {"audit.>"},
 		StreamChangeSets: {"changesets.*"},
 	}
