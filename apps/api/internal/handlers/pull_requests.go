@@ -429,7 +429,14 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
-		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
+		switch {
+		case forge.IsInvalidRequest(err):
+			respond.Error(w, http.StatusBadRequest, err)
+		case errors.Is(err, forge.ErrConflict):
+			respond.Error(w, http.StatusConflict, err)
+		default:
+			respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
+		}
 		return
 	}
 	if !mergeResult.Merged {
