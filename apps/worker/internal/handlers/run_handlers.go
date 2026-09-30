@@ -148,7 +148,7 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 
 	// Update task status to reviewing
 	now := time.Now().UTC()
-	_, err := h.db.Exec(`
+	_, err = h.db.Exec(`
 		UPDATE tasks SET status = 'reviewing', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
 	`, now, event.TaskID)
@@ -237,7 +237,7 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	}()
 
 	now := time.Now().UTC()
-	_, err := h.db.Exec(`
+	_, err = h.db.Exec(`
 		UPDATE tasks SET status = 'failed', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
 	`, now, event.TaskID)
