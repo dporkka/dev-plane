@@ -176,3 +176,102 @@ func TestVerifyCompletionUsesLatestEvidenceAndRejectsFailure(t *testing.T) {
 		t.Fatalf("expected latest failed evidence to block completion, got %v", err)
 	}
 }
+
+
+func TestVerifyCompletionRejectsEvidenceFromStaleSubjectRevision(t *testing.T) {
+	capsule := TaskCapsule{
+		Version:          TaskCapsuleVersion,
+		TaskID:           "task-1",
+		WorkspaceID:      "workspace-1",
+		Agent:            AgentIdentity{ID: "agent-1", Role: "implementer"},
+		SubjectRevision:  "git:revision-b",
+		RequiredEvidence: []string{"tests"},
+		Evidence: []Evidence{
+			{
+				Name:            "tests",
+				Kind:            "command",
+				Status:          EvidenceStatusPassed,
+				SubjectRevision: "git:revision-a",
+			},
+		},
+	}
+
+	err := VerifyCompletion(capsule)
+	if err == nil || !strings.Contains(err.Error(), "current subject revision") {
+		t.Fatalf("expected stale subject revision error, got %v", err)
+	}
+}
+
+func TestVerifyCompletionIgnoresDelayedEvidenceFromOlderRevision(t *testing.T) {
+	capsule := TaskCapsule{
+		Version:          TaskCapsuleVersion,
+		TaskID:           "task-1",
+		WorkspaceID:      "workspace-1",
+		Agent:            AgentIdentity{ID: "agent-1", Role: "implementer"},
+		SubjectRevision:  "git:revision-b",
+		RequiredEvidence: []string{"tests"},
+		Evidence: []Evidence{
+			{
+				Name:            "tests",
+				Kind:            "command",
+				Status:          EvidenceStatusPassed,
+				SubjectRevision: "git:revision-b",
+			},
+			{
+				Name:            "tests",
+				Kind:            "command",
+				Status:          EvidenceStatusFailed,
+				SubjectRevision: "git:revision-a",
+			},
+		},
+	}
+
+	if err := VerifyCompletion(capsule); err != nil {
+		t.Fatalf("VerifyCompletion() error: %v", err)
+	}
+}
+
+func TestVerifyCompletionRequiresRevisionOnEvidenceForRevisionBoundCapsule(t *testing.T) {
+	capsule := TaskCapsule{
+		Version:          TaskCapsuleVersion,
+		TaskID:           "task-1",
+		WorkspaceID:      "workspace-1",
+		Agent:            AgentIdentity{ID: "agent-1", Role: "implementer"},
+		SubjectRevision:  "git:revision-b",
+		RequiredEvidence: []string{"tests"},
+		Evidence: []Evidence{
+			{
+				Name:   "tests",
+				Kind:   "command",
+				Status: EvidenceStatusPassed,
+			},
+		},
+	}
+
+	err := VerifyCompletion(capsule)
+	if err == nil || !strings.Contains(err.Error(), "subject revision") {
+		t.Fatalf("expected missing subject revision error, got %v", err)
+	}
+}
+
+func TestBuildTaskCapsuleCapturesSubjectRevision(t *testing.T) {
+	manifest := Manifest{
+		MaxParallel: 1,
+		Tasks: []Task{
+			{ID: "task-1", Owns: []string{"apps/api"}},
+		},
+	}
+	state := State{"task-1": StatusPending}
+
+	capsule, err := BuildTaskCapsule(manifest, state, "task-1", CapsuleOptions{
+		Agent:           AgentIdentity{ID: "agent-1", Role: "implementer"},
+		WorkspaceID:     "workspace-1",
+		SubjectRevision: "git:abc123",
+	})
+	if err != nil {
+		t.Fatalf("BuildTaskCapsule() error: %v", err)
+	}
+	if capsule.SubjectRevision != "git:abc123" {
+		t.Fatalf("subject revision = %q, want git:abc123", capsule.SubjectRevision)
+	}
+}
