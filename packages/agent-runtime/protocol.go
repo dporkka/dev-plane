@@ -267,10 +267,11 @@ func (r CreateThreadRequest) Validate() error {
 
 // RunTurnRequest starts a new turn on an existing thread.
 type RunTurnRequest struct {
-	ThreadID string          `json:"thread_id"`
-	Input    TurnInput       `json:"input"`
-	Model    string          `json:"model,omitempty"`
-	Metadata json.RawMessage `json:"metadata,omitempty"`
+	ThreadID     string          `json:"thread_id"`
+	Input        TurnInput       `json:"input"`
+	Model        string          `json:"model,omitempty"`
+	OutputSchema json.RawMessage `json:"output_schema,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Validate checks the required run-turn fields.
@@ -279,6 +280,25 @@ func (r RunTurnRequest) Validate() error {
 		return fmt.Errorf("thread id is required")
 	}
 	return r.Input.Validate()
+}
+
+// ResumeThreadRequest reattaches a provider-native thread to its durable workspace.
+type ResumeThreadRequest struct {
+	ThreadID         string `json:"thread_id"`
+	ProviderThreadID string `json:"provider_thread_id,omitempty"`
+	WorkspaceID      string `json:"workspace_id"`
+	Model            string `json:"model,omitempty"`
+}
+
+// Validate checks the durable identifiers required to reconstruct a thread.
+func (r ResumeThreadRequest) Validate() error {
+	if strings.TrimSpace(r.ThreadID) == "" {
+		return fmt.Errorf("thread id is required")
+	}
+	if strings.TrimSpace(r.WorkspaceID) == "" {
+		return fmt.Errorf("workspace id is required")
+	}
+	return nil
 }
 
 // InterruptTurnRequest identifies the active turn to interrupt.
@@ -363,7 +383,7 @@ type Provider interface {
 
 // ResumeProvider resumes a provider-native thread after process or client loss.
 type ResumeProvider interface {
-	ResumeThread(ctx context.Context, threadID string) (*Thread, error)
+	ResumeThread(ctx context.Context, req ResumeThreadRequest) (*Thread, error)
 }
 
 // InterruptProvider interrupts an active turn without deleting its thread.
