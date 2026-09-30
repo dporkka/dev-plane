@@ -242,7 +242,21 @@ func (m *Manager) persistEvent(ctx context.Context, thread Thread, currentTurn *
 		if err := m.store.PutItem(ctx, item); err != nil {
 			return currentTurn, fmt.Errorf("persist item %s: %w", item.ID, err)
 		}
-		return currentTurn, nil
+
+		nextTurn := currentTurn
+		if currentTurn != nil && event.Status != "" && event.Status != currentTurn.Status {
+			if !CanTransitionTurnStatus(currentTurn.Status, event.Status) {
+				return currentTurn, fmt.Errorf("invalid turn status transition %s -> %s", currentTurn.Status, event.Status)
+			}
+			updated := *currentTurn
+			updated.Status = event.Status
+			updated.UpdatedAt = occurredAt
+			if err := m.store.PutTurn(ctx, updated); err != nil {
+				return currentTurn, fmt.Errorf("persist turn %s status: %w", updated.ID, err)
+			}
+			nextTurn = &updated
+		}
+		return nextTurn, nil
 
 	case EventTypeTurnStatus, EventTypeTurnCompleted, EventTypeTurnFailed:
 		if strings.TrimSpace(event.TurnID) == "" {
