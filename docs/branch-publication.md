@@ -68,6 +68,12 @@ GitHub's HTTPS token convention is an adapter concern.
 
 That string exists in the GitHub adapter, not in `prfactory` or the public VCS contract.
 
+## Gitea / Forgejo
+
+`gateway.NewGiteaBranchPublisher` maps a Gitea/Forgejo username and access token onto the generic HTTPS publisher. The username is used for HTTP basic authentication and the access token is supplied as the password.
+
+This mapping stays in the forge adapter package; `packages/vcs` remains unaware of Gitea or Forgejo.
+
 ## PR factory
 
 `prfactory.Factory` depends only on `vcs.Publisher` for branch publication:
