@@ -248,7 +248,6 @@ func evidenceOutput(result *runtimes.CommandResult, err error) string {
 	return output
 }
 
-
 func verificationCommand(profile repoprotocol.VerificationProfile) (repoprotocol.VerificationKind, string) {
 	if profile.Browser != nil {
 		return repoprotocol.VerificationKindBrowser, profile.Browser.Command
