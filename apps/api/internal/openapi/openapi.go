@@ -862,7 +862,7 @@ func buildComponents() Components {
 				Type:     "object",
 				Required: []string{"change_set_id", "publication_status", "members"},
 				Properties: map[string]*Schema{
-					"change_set_id":       {Type: "string"},
+					"change_set_id":      {Type: "string"},
 					"publication_status": {Type: "string", Enum: []interface{}{"pending", "publishing", "completed", "blocked"}},
 					"members":            {Type: "array", Items: &Schema{Ref: "#/components/schemas/ChangeSetPublicationMember"}},
 				},
