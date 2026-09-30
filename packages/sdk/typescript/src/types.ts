@@ -216,6 +216,7 @@ export interface AgentRun {
   model?: string;
   provider?: string;
   status: RunStatus;
+  state_version: number;
   outcome?: ExecutionOutcome;
   execution_snapshot?: ExecutionSnapshot;
   execution_snapshot_digest?: string;
