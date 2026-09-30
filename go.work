@@ -11,6 +11,7 @@ use (
 	./packages/agents
 	./packages/crypto
 	./packages/db
+	./packages/decisionpacket
 	./packages/events
 	./packages/gateway
 	./packages/models
