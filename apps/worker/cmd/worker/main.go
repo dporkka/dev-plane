@@ -189,7 +189,7 @@ func main() {
 		logger.Debug("received change set publication request")
 		if err := changeSetPublicationHandler.HandlePublishRequested(msg); err != nil {
 			logger.Error("failed to handle change set publication request", "error", err)
-			if nakErr := msg.Nak(); nakErr != nil {
+			if nakErr := msg.NakWithDelay(5 * time.Second); nakErr != nil {
 				logger.Error("failed to negatively acknowledge change set publication request", "error", nakErr)
 			}
 		}
