@@ -177,6 +177,7 @@ func TestGiteaGatewayNormalizesProviderErrors(t *testing.T) {
 		{name: "validation", status: http.StatusUnprocessableEntity, target: forge.ErrInvalidRequest},
 		{name: "missing", status: http.StatusNotFound, target: forge.ErrNotFound},
 		{name: "conflict", status: http.StatusConflict, target: forge.ErrConflict},
+		{name: "method not allowed", status: http.StatusMethodNotAllowed, target: forge.ErrConflict},
 		{name: "archived", status: http.StatusLocked, target: forge.ErrConflict},
 	}
 
