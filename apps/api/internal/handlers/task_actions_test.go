@@ -218,7 +218,7 @@ func TestStartRun(t *testing.T) {
 
 	// Insert agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Update task status to running
@@ -297,8 +297,13 @@ func TestRetryRun(t *testing.T) {
 	// Get failed run details
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status"}).
-			AddRow(taskID, nil, "implementer", nil, nil, "failed"))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"task_id", "workspace_id", "agent_role", "model", "provider", "status",
+			"attempt", "execution_snapshot", "execution_snapshot_digest",
+		}).AddRow(
+			taskID, nil, "implementer", nil, nil, "failed",
+			2, `{"recipe_version":"agent-run/v1"}`, "sha256:original",
+		))
 
 	// Get task status - must be failed/reviewing/pr_created
 	mock.ExpectQuery("SELECT status FROM tasks").
@@ -307,7 +312,10 @@ func TestRetryRun(t *testing.T) {
 
 	// Insert new agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, nil, "implementer", "gpt-4o", "openai", sqlmock.AnyArg()).
+		WithArgs(
+			sqlmock.AnyArg(), taskID, runID, nil, 3, "implementer", "gpt-4o", "openai",
+			`{"recipe_version":"agent-run/v1"}`, "sha256:original", sqlmock.AnyArg(),
+		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Update task status to running
@@ -343,6 +351,12 @@ func TestRetryRun(t *testing.T) {
 	if resp["original_run_id"] != runID {
 		t.Errorf("expected original_run_id %q, got %q", runID, resp["original_run_id"])
 	}
+	if resp["parent_run_id"] != runID {
+		t.Errorf("expected parent_run_id %q, got %q", runID, resp["parent_run_id"])
+	}
+	if resp["attempt"] != float64(3) {
+		t.Errorf("expected attempt 3, got %v", resp["attempt"])
+	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
@@ -360,8 +374,13 @@ func TestRetryRun_NotFailed(t *testing.T) {
 	// Get run details - status is completed, not failed
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status"}).
-			AddRow(taskID, nil, "implementer", nil, nil, "completed"))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"task_id", "workspace_id", "agent_role", "model", "provider", "status",
+			"attempt", "execution_snapshot", "execution_snapshot_digest",
+		}).AddRow(
+			taskID, nil, "implementer", nil, nil, "completed",
+			1, `{"recipe_version":"agent-run/v1"}`, "sha256:original",
+		))
 
 	req := httptest.NewRequest(http.MethodPost, "/runs/"+runID+"/retry", nil)
 	rctx := chi.NewRouteContext()
@@ -398,8 +417,13 @@ func TestRetryRun_TaskNotRetryable(t *testing.T) {
 	// Get failed run details
 	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status"}).
-			AddRow(taskID, nil, "implementer", nil, nil, "failed"))
+		WillReturnRows(sqlmock.NewRows([]string{
+			"task_id", "workspace_id", "agent_role", "model", "provider", "status",
+			"attempt", "execution_snapshot", "execution_snapshot_digest",
+		}).AddRow(
+			taskID, nil, "implementer", nil, nil, "failed",
+			2, `{"recipe_version":"agent-run/v1"}`, "sha256:original",
+		))
 
 	// Get task status - backlog does not allow retry
 	mock.ExpectQuery("SELECT status FROM tasks").
