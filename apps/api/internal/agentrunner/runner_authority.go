@@ -142,4 +142,3 @@ func (r *Runner) consumeApprovedAuthority(ctx context.Context, runID string, req
 
 	return false, nil
 }
-
