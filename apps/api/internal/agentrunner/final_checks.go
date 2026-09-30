@@ -54,9 +54,13 @@ func (r *Runner) executeFinalChecks(
 		return finalCheckReport{}, err
 	}
 
-	beforeRevision, err := r.workspaceSubjectRevision(ctx, workspace, workspacePath)
-	if err != nil {
-		return finalCheckReport{}, fmt.Errorf("capture pre-verification subject revision: %w", err)
+	bindRevision := r.completionObserver != nil
+	beforeRevision := ""
+	if bindRevision {
+		beforeRevision, err = r.workspaceSubjectRevision(ctx, workspace, workspacePath)
+		if err != nil {
+			return finalCheckReport{}, fmt.Errorf("capture pre-verification subject revision: %w", err)
+		}
 	}
 
 	report := finalCheckReport{
@@ -108,20 +112,22 @@ func (r *Runner) executeFinalChecks(
 		}
 	}
 
-	afterRevision, err := r.workspaceSubjectRevision(ctx, workspace, workspacePath)
-	if err != nil {
-		return finalCheckReport{}, fmt.Errorf("capture post-verification subject revision: %w", err)
-	}
-	if beforeRevision != afterRevision {
-		return finalCheckReport{}, fmt.Errorf(
-			"workspace changed during final verification: revision %s became %s",
-			beforeRevision,
-			afterRevision,
-		)
-	}
-	report.SubjectRevision = afterRevision
-	for i := range report.Evidence {
-		report.Evidence[i].SubjectRevision = afterRevision
+	if bindRevision {
+		afterRevision, err := r.workspaceSubjectRevision(ctx, workspace, workspacePath)
+		if err != nil {
+			return finalCheckReport{}, fmt.Errorf("capture post-verification subject revision: %w", err)
+		}
+		if beforeRevision != afterRevision {
+			return finalCheckReport{}, fmt.Errorf(
+				"workspace changed during final verification: revision %s became %s",
+				beforeRevision,
+				afterRevision,
+			)
+		}
+		report.SubjectRevision = afterRevision
+		for i := range report.Evidence {
+			report.Evidence[i].SubjectRevision = afterRevision
+		}
 	}
 	return report, nil
 }
@@ -154,6 +160,13 @@ func (r *Runner) loadVerificationPlan(
 		return readiness.BuildVerificationPlan("", "", "", ""), nil
 	}
 	if err != nil {
+		// Older/minimal runner contexts may not have the detection schema. They
+		// retain the legacy auto-detected test path unless a durable completion
+		// observer is installed, in which case missing configuration is an
+		// authority-path error and must fail closed.
+		if r.completionObserver == nil && strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return readiness.BuildVerificationPlan("", "", "", ""), nil
+		}
 		return nil, fmt.Errorf("load final verification commands: %w", err)
 	}
 	return readiness.BuildVerificationPlan(
