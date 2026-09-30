@@ -10,6 +10,12 @@ import { ArrowLeft, Terminal } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
+function runListHasActiveRuns(runs: AgentRun[]): boolean {
+  return runs.some((run) =>
+    ["pending", "queued", "running", "paused"].includes(run.status),
+  );
+}
+
 export default function RunTimelinePage() {
   const params = useParams();
   const taskId = params.id as string;
@@ -23,6 +29,13 @@ export default function RunTimelinePage() {
     queryKey: ["runs", taskId],
     queryFn: () => api.listRuns(taskId),
     enabled: !!taskId,
+  });
+
+  const { data: executionEvidence } = useQuery({
+    queryKey: ["execution-evidence", taskId],
+    queryFn: () => api.getTaskExecutionEvidence(taskId),
+    enabled: !!taskId,
+    refetchInterval: runListHasActiveRuns(runs?.data || runs || []) ? 5000 : false,
   });
 
   if (taskLoading || runsLoading) return <Loading />;
@@ -60,7 +73,7 @@ export default function RunTimelinePage() {
                 Parent/child execution structure across retries, handoffs, and review repairs.
               </p>
             </div>
-            <TaskExecutionGraph runs={runList} />
+            <TaskExecutionGraph runs={runList} evidence={executionEvidence?.runs || {}} />
           </section>
 
           <section className="space-y-4">
