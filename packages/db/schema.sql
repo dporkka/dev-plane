@@ -192,6 +192,9 @@ CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_id ON agent_runs(workspace_i
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_outcome ON agent_runs(outcome);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_attempt ON agent_runs(task_id, attempt);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_parent_attempt_role
+    ON agent_runs(parent_run_id, attempt, agent_role)
+    WHERE parent_run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 
 -- =====================================================
