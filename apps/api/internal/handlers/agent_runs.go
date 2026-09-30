@@ -27,16 +27,16 @@ type AgentRun struct {
 	Outcome                 *string         `json:"outcome,omitempty"`
 	ExecutionSnapshot       json.RawMessage `json:"execution_snapshot,omitempty"`
 	ExecutionSnapshotDigest *string         `json:"execution_snapshot_digest,omitempty"`
-	StartedAt        *time.Time      `json:"started_at,omitempty"`
-	CompletedAt      *time.Time      `json:"completed_at,omitempty"`
-	PromptTokens     int             `json:"prompt_tokens"`
-	CompletionTokens int             `json:"completion_tokens"`
-	TotalCost        float64         `json:"total_cost"`
-	ErrorMessage     *string         `json:"error_message,omitempty"`
-	Summary          *string         `json:"summary,omitempty"`
-	Metadata         json.RawMessage `json:"metadata,omitempty"`
-	CreatedAt        time.Time       `json:"created_at"`
-	UpdatedAt        time.Time       `json:"updated_at"`
+	StartedAt               *time.Time      `json:"started_at,omitempty"`
+	CompletedAt             *time.Time      `json:"completed_at,omitempty"`
+	PromptTokens            int             `json:"prompt_tokens"`
+	CompletionTokens        int             `json:"completion_tokens"`
+	TotalCost               float64         `json:"total_cost"`
+	ErrorMessage            *string         `json:"error_message,omitempty"`
+	Summary                 *string         `json:"summary,omitempty"`
+	Metadata                json.RawMessage `json:"metadata,omitempty"`
+	CreatedAt               time.Time       `json:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at"`
 }
 
 // AgentStep represents an agent step record.
