@@ -197,6 +197,72 @@ func (h *Handler) GetPullRequest(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, pr)
 }
 
+// DecisionPacketResponse is the immutable approval snapshot bound to a verified candidate.
+type DecisionPacketResponse struct {
+	ID          string                `json:"id"`
+	CandidateID string                `json:"candidate_id"`
+	Digest      string                `json:"digest"`
+	Packet      decisionpacket.Packet `json:"packet"`
+	CreatedAt   time.Time             `json:"created_at"`
+}
+
+// GetPullRequestDecisionPacket returns the immutable decision packet for a verified PR.
+func (h *Handler) GetPullRequestDecisionPacket(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	user, ok := authz.RequireUser(w, r)
+	if !ok {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		respond.Error(w, http.StatusBadRequest, errors.New("pull request id is required"))
+		return
+	}
+	if err := authz.AuthorizePullRequest(ctx, h.db, user, id); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("pull request not found"))
+		return
+	}
+
+	var response DecisionPacketResponse
+	var raw string
+	err := h.db.QueryRowContext(ctx, `
+		SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at
+		FROM decision_packets dp
+		JOIN change_candidates c ON c.id = dp.candidate_id
+		WHERE c.pull_request_id = $1
+		LIMIT 1
+	`, id).Scan(&response.ID, &response.CandidateID, &response.Digest, &raw, &response.CreatedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusNotFound, errors.New("decision packet not found"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if err := json.Unmarshal([]byte(raw), &response.Packet); err != nil {
+		respond.Error(w, http.StatusConflict, fmt.Errorf("decode decision packet: %w", err))
+		return
+	}
+	if err := response.Packet.Validate(); err != nil {
+		respond.Error(w, http.StatusConflict, fmt.Errorf("invalid decision packet: %w", err))
+		return
+	}
+	digest, err := response.Packet.Digest()
+	if err != nil {
+		respond.Error(w, http.StatusConflict, fmt.Errorf("digest decision packet: %w", err))
+		return
+	}
+	if digest != response.Digest || response.Packet.Candidate.ID != response.CandidateID || response.Packet.Candidate.PullRequestID != id {
+		respond.Error(w, http.StatusConflict, errors.New("decision packet integrity check failed"))
+		return
+	}
+
+	respond.JSON(w, http.StatusOK, response)
+}
+
 // CreatePullRequestRequest is the request body for creating a PR.
 type CreatePullRequestRequest struct {
 	Approved bool `json:"approved,omitempty"`
