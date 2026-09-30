@@ -168,7 +168,6 @@ func TestWorkItemValidateRejectsInvalidOwnershipPath(t *testing.T) {
 	}
 }
 
-
 func TestParseConfigYAMLRejectsUnknownFieldsAndValidates(t *testing.T) {
 	raw := []byte(`version: 1
 commands:
