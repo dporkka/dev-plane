@@ -188,6 +188,22 @@ export interface TaskSpec {
   generated_at: string;
 }
 
+export type ReadinessStatus = 'ready' | 'attention' | 'blocked';
+
+export interface ReadinessCheck {
+  id: string;
+  title: string;
+  status: ReadinessStatus;
+  critical: boolean;
+  evidence?: string[];
+  recommendation?: string;
+}
+
+export interface ReadinessReport {
+  status: ReadinessStatus;
+  checks: ReadinessCheck[];
+}
+
 export interface AgentRun {
   id: string;
   task_id: string;
