@@ -2,6 +2,8 @@ package readiness
 
 import "strings"
 
+const AdmissionPolicyVersion = "task-readiness-v1"
+
 type TaskAssessmentInput struct {
 	HasSpec            bool     `json:"has_spec"`
 	ImplementationPlan []string `json:"implementation_plan,omitempty"`
