@@ -299,15 +299,19 @@ func TestRetryRun(t *testing.T) {
 
 	expectAuthorizeAgentRun(mock, runID)
 	// Get failed run details
-	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status, metadata").
+	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
 		WithArgs(runID).
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status", "metadata"}).
-			AddRow(taskID, nil, "implementer", nil, nil, "failed", `{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}`))
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status"}).
+			AddRow(taskID, nil, "implementer", nil, nil, "failed"))
 
 	// Get task status - must be failed/reviewing/pr_created
 	mock.ExpectQuery("SELECT status FROM tasks").
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("failed"))
+	mock.ExpectQuery("SELECT metadata FROM agent_runs").
+		WithArgs(runID).
+		WillReturnRows(sqlmock.NewRows([]string{"metadata"}).
+			AddRow(`{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}`))
 
 	// Insert new agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
