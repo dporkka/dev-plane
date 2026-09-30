@@ -102,17 +102,17 @@ type MediaType struct {
 
 // Schema describes the data type.
 type Schema struct {
-	Type        string             `json:"type,omitempty"`
-	Format      string             `json:"format,omitempty"`
-	Description string             `json:"description,omitempty"`
-	Nullable    bool               `json:"nullable,omitempty"`
-	Ref         string             `json:"$ref,omitempty"`
-	Items       *Schema            `json:"items,omitempty"`
+	Type                 string             `json:"type,omitempty"`
+	Format               string             `json:"format,omitempty"`
+	Description          string             `json:"description,omitempty"`
+	Nullable             bool               `json:"nullable,omitempty"`
+	Ref                  string             `json:"$ref,omitempty"`
+	Items                *Schema            `json:"items,omitempty"`
 	Properties           map[string]*Schema `json:"properties,omitempty"`
 	AdditionalProperties *Schema            `json:"additionalProperties,omitempty"`
 	Required             []string           `json:"required,omitempty"`
-	Enum        []interface{}      `json:"enum,omitempty"`
-	Example     interface{}        `json:"example,omitempty"`
+	Enum                 []interface{}      `json:"enum,omitempty"`
+	Example              interface{}        `json:"example,omitempty"`
 }
 
 // Components holds reusable schemas, parameters, responses, etc.
@@ -291,28 +291,28 @@ func buildComponents() Components {
 				Type:     "object",
 				Required: []string{"id", "task_id", "attempt", "agent_role", "status", "prompt_tokens", "completion_tokens", "total_cost", "created_at", "updated_at"},
 				Properties: map[string]*Schema{
-					"id":                {Type: "string", Format: "uuid"},
-					"task_id":                  {Type: "string", Format: "uuid"},
-					"parent_run_id":            {Type: "string", Format: "uuid", Nullable: true},
-					"workspace_id":             {Type: "string", Format: "uuid", Nullable: true},
-					"attempt":                  {Type: "integer"},
-					"agent_role":        {Type: "string", Enum: []interface{}{"planner", "implementer", "reviewer", "test_runner", "security_reviewer", "docs_writer", "release_manager"}},
-					"model":             {Type: "string", Nullable: true},
-					"provider":          {Type: "string", Nullable: true},
+					"id":                        {Type: "string", Format: "uuid"},
+					"task_id":                   {Type: "string", Format: "uuid"},
+					"parent_run_id":             {Type: "string", Format: "uuid", Nullable: true},
+					"workspace_id":              {Type: "string", Format: "uuid", Nullable: true},
+					"attempt":                   {Type: "integer"},
+					"agent_role":                {Type: "string", Enum: []interface{}{"planner", "implementer", "reviewer", "test_runner", "security_reviewer", "docs_writer", "release_manager"}},
+					"model":                     {Type: "string", Nullable: true},
+					"provider":                  {Type: "string", Nullable: true},
 					"status":                    {Type: "string", Enum: []interface{}{"pending", "queued", "running", "paused", "completed", "failed", "cancelled"}},
 					"outcome":                   {Type: "string", Nullable: true, Enum: []interface{}{"passed", "failed", "error", "cancelled", "skipped"}},
 					"execution_snapshot":        {Type: "object", Nullable: true},
 					"execution_snapshot_digest": {Type: "string", Nullable: true},
-					"started_at":        {Type: "string", Format: "date-time", Nullable: true},
-					"completed_at":      {Type: "string", Format: "date-time", Nullable: true},
-					"prompt_tokens":     {Type: "integer"},
-					"completion_tokens": {Type: "integer"},
-					"total_cost":        {Type: "number"},
-					"error_message":     {Type: "string", Nullable: true},
-					"summary":           {Type: "string", Nullable: true},
-					"metadata":          {Type: "object", Nullable: true},
-					"created_at":        {Type: "string", Format: "date-time"},
-					"updated_at":        {Type: "string", Format: "date-time"},
+					"started_at":                {Type: "string", Format: "date-time", Nullable: true},
+					"completed_at":              {Type: "string", Format: "date-time", Nullable: true},
+					"prompt_tokens":             {Type: "integer"},
+					"completion_tokens":         {Type: "integer"},
+					"total_cost":                {Type: "number"},
+					"error_message":             {Type: "string", Nullable: true},
+					"summary":                   {Type: "string", Nullable: true},
+					"metadata":                  {Type: "object", Nullable: true},
+					"created_at":                {Type: "string", Format: "date-time"},
+					"updated_at":                {Type: "string", Format: "date-time"},
 				},
 			},
 			"AgentStep": {
@@ -1014,12 +1014,12 @@ func buildComponents() Components {
 				Required: []string{"run_id", "artifacts"},
 				Properties: map[string]*Schema{
 					"run_id":       {Type: "string", Format: "uuid"},
-					"commit_hash":   {Type: "string", Nullable: true},
-					"verification":  {Ref: "#/components/schemas/RunVerificationEvidence", Nullable: true},
-					"review":        {Ref: "#/components/schemas/RunReviewEvidence", Nullable: true},
-					"pull_request":  {Ref: "#/components/schemas/RunPullRequestEvidence", Nullable: true},
-					"artifacts":     {Type: "array", Items: &Schema{Ref: "#/components/schemas/RunArtifactEvidence"}},
-					"failure":       {Ref: "#/components/schemas/RunFailureEvidence", Nullable: true},
+					"commit_hash":  {Type: "string", Nullable: true},
+					"verification": {Ref: "#/components/schemas/RunVerificationEvidence", Nullable: true},
+					"review":       {Ref: "#/components/schemas/RunReviewEvidence", Nullable: true},
+					"pull_request": {Ref: "#/components/schemas/RunPullRequestEvidence", Nullable: true},
+					"artifacts":    {Type: "array", Items: &Schema{Ref: "#/components/schemas/RunArtifactEvidence"}},
+					"failure":      {Ref: "#/components/schemas/RunFailureEvidence", Nullable: true},
 				},
 			},
 			"TaskExecutionEvidenceResponse": {
