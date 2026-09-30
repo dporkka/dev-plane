@@ -132,3 +132,41 @@ func TestParseRejectsComponentDependencyCycle(t *testing.T) {
 		t.Fatalf("error = %v, want cycle validation error", err)
 	}
 }
+
+
+func TestParseRejectsComponentsWithoutConservativeFallback(t *testing.T) {
+	_, err := Parse([]byte(`{
+		"schema_version": 1,
+		"components": {
+			"core": {
+				"paths": ["packages/core/**"],
+				"checks": {
+					"test": {"run": "cd packages/core && go test ./..."}
+				}
+			}
+		}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "fallback") {
+		t.Fatalf("error = %v, want conservative fallback validation error", err)
+	}
+}
+
+func TestParseRejectsMalformedComponentPathPattern(t *testing.T) {
+	_, err := Parse([]byte(`{
+		"schema_version": 1,
+		"commands": {
+			"test": {"run": "make test"}
+		},
+		"components": {
+			"core": {
+				"paths": ["apps/["],
+				"checks": {
+					"test": {"run": "go test ./..."}
+				}
+			}
+		}
+	}`))
+	if err == nil || !strings.Contains(err.Error(), "path pattern") {
+		t.Fatalf("error = %v, want invalid path pattern error", err)
+	}
+}
