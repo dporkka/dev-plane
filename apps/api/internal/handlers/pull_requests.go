@@ -1,4 +1,4 @@
-// Package handlers provides HTTP handlers for the API service.
+// Package handlers provides HTTP handlers for the API service.
 //
 // Pull request handlers manage PRs created by the agent system:
 //   - GET /projects/{projectID}/pull-requests  -> list PRs for a project
