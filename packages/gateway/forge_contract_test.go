@@ -61,7 +61,7 @@ func TestGitHubGatewayForgeContract(t *testing.T) {
 		return contracttest.Fixture{
 			Provider:   gateway,
 			Credential: forge.Credential{Token: "test-token"},
-			Repository: forge.Repository{Owner: "acme", Name: "widget"},
+			Repository: forge.Repository{Namespace: "acme", Name: "widget"},
 		}
 	})
 }
