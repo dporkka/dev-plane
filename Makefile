@@ -8,7 +8,7 @@
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
         test test-api test-cli test-packages test-race test-sdk \
-        lint lint-go lint-web lint-fix-web lint-sdk \
+        lint lint-go lint-web lint-fix-web lint-sdk typecheck \
         build build-api build-cli build-worker build-runner build-web build-sdk \
         clean help install-tools
 
@@ -50,7 +50,7 @@ GO_APPS          := $(filter apps/%,$(GO_MODULES))
 
 # Fallback explicit lists (used when workspace introspection is unavailable).
 ifeq ($(GO_PACKAGES),)
-GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/repo-manifest packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+GO_PACKAGES      := packages/db packages/agents packages/runtimes packages/repo-intel packages/repo-manifest packages/verification packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
 endif
 ifeq ($(GO_APPS),)
 GO_APPS          := apps/api apps/worker apps/runner
@@ -288,6 +288,12 @@ lint-sdk: ## Run TypeScript SDK typecheck
 	@echo "$(BLUE)[lint]$(RESET) Running SDK typecheck..."
 	cd packages/sdk/typescript && npm ci && npm run typecheck
 	@echo "$(GREEN)SDK lint complete.$(RESET)"
+
+typecheck: ## Run frontend and SDK type checks
+	@echo "$(BLUE)[typecheck]$(RESET) Running web typecheck..."
+	cd apps/web && npm run typecheck
+	@$(MAKE) lint-sdk
+	@echo "$(GREEN)Typechecks passed.$(RESET)"
 
 lint-fix: ## Run linters with auto-fix
 	@echo "$(BLUE)[lint]$(RESET) Running auto-fix..."
