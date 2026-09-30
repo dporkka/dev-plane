@@ -23,6 +23,7 @@ import (
 	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 // RunHandler handles agent run lifecycle events.
@@ -31,8 +32,10 @@ type RunHandler struct {
 	logger    *slog.Logger
 	eventBus  WorkerEventPublisher
 	executor  RunExecutor
-	reviewer  ReviewService
-	admission RunAdmission
+	reviewer        ReviewService
+	admission       RunAdmission
+	runtimeProvider runtimes.Provider
+	runtimeName     string
 }
 
 // RunExecutor executes queued agent runs.
@@ -79,6 +82,14 @@ func (h *RunHandler) WithRunAdmission(admission RunAdmission) *RunHandler {
 // WithReviewer enables completed-run review generation before approval flow.
 func (h *RunHandler) WithReviewer(reviewer ReviewService) *RunHandler {
 	h.reviewer = reviewer
+	return h
+}
+
+// WithRuntimeProvider enables isolated fresh-environment recovery for failures
+// that explicitly request retry_fresh_environment.
+func (h *RunHandler) WithRuntimeProvider(provider runtimes.Provider, name string) *RunHandler {
+	h.runtimeProvider = provider
+	h.runtimeName = strings.TrimSpace(name)
 	return h
 }
 
