@@ -10,6 +10,7 @@ use (
 	./infra/networking
 	./packages/agents
 	./packages/changegraph
+	./packages/changeset
 	./packages/crypto
 	./packages/db
 	./packages/decisionpacket

@@ -526,6 +526,10 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	if err := h.validateCandidateChangeSetPublication(ctx, verified.CandidateID, verified.ProjectID); err != nil {
+		respond.Error(w, http.StatusConflict, err)
+		return
+	}
 	if req.SHA != "" && req.SHA != verified.CommitSHA {
 		respond.Error(w, http.StatusConflict, errors.New("requested sha does not match verified candidate"))
 		return
