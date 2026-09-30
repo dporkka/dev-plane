@@ -148,6 +148,10 @@ func (s *Server) routes() {
 			r.Get("/organizations/{orgID}/projects", h.ListProjects)
 			r.Post("/organizations/{orgID}/projects", h.CreateProject)
 			r.Get("/projects/{id}", h.GetProject)
+			r.Post("/projects/{projectID}/change-sets", h.CreateChangeSet)
+			r.Get("/change-sets/{id}", h.GetChangeSet)
+			r.Post("/change-sets/{id}/candidates", h.AddChangeSetCandidate)
+			r.Post("/change-sets/{id}/authorize-publication", h.AuthorizeChangeSetPublication)
 
 			// Repositories
 			r.Get("/projects/{projectID}/repositories", h.ListRepositories)
