@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/events"
+	runfailure "github.com/ai-dev-control-plane/failure"
 	"github.com/ai-dev-control-plane/models"
 )
 func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
@@ -31,32 +32,93 @@ func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summ
 }
 
 func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) error {
-	r.logger.Error("agent run failed", "run_id", runID, "error", errorMsg)
+	classification := runfailure.Classify(runfailure.Signal{
+		Stage:  "execution",
+		Detail: errorMsg,
+	})
+	return r.failRunClassified(ctx, runID, errorMsg, classification)
+}
+
+func (r *Runner) failRunClassified(
+	ctx context.Context,
+	runID string,
+	errorMsg string,
+	classification runfailure.Classification,
+) error {
+	r.logger.Error(
+		"agent run failed",
+		"run_id", runID,
+		"error", errorMsg,
+		"failure_category", classification.Category,
+		"retryable", classification.Retryable,
+		"disposition", classification.Disposition,
+	)
 
 	if r.db != nil {
 		now := time.Now().UTC()
+		metadata := r.runMetadataWithFailure(ctx, runID, classification)
 		_, _ = r.db.ExecContext(ctx, `
 			UPDATE agent_runs
-			SET status = $1, error_message = $2, completed_at = $3, updated_at = $3
-			WHERE id = $4
-		`, models.AgentRunStatusFailed, errorMsg, now, runID)
+			SET status = $1, error_message = $2, metadata = $3,
+			    completed_at = $4, updated_at = $4
+			WHERE id = $5
+		`, models.AgentRunStatusFailed, errorMsg, metadata, now, runID)
 	}
 
-	// Publish run.failed event
+	failurePayload := map[string]any{
+		"taxonomy":    classification.Taxonomy,
+		"category":    classification.Category,
+		"retryable":   classification.Retryable,
+		"disposition": classification.Disposition,
+		"stage":       classification.Stage,
+		"source":      classification.Source,
+	}
+	now := time.Now().UTC()
+
+	// Publish run.failed event with the same structured failure metadata that is
+	// persisted on the agent run.
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
 		"run_id":    runID,
 		"status":    models.AgentRunStatusFailed,
 		"error":     errorMsg,
-		"timestamp": time.Now().UTC(),
+		"failure":   failurePayload,
+		"timestamp": now,
 	})
 	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, map[string]any{
 		"run_id":    runID,
 		"status":    models.AgentRunStatusFailed,
 		"error":     errorMsg,
-		"timestamp": time.Now().UTC(),
+		"failure":   failurePayload,
+		"timestamp": now,
 	})
 
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
+}
+
+func (r *Runner) runMetadataWithFailure(
+	ctx context.Context,
+	runID string,
+	classification runfailure.Classification,
+) string {
+	metadata := map[string]any{}
+	var raw string
+	if err := r.db.QueryRowContext(
+		ctx,
+		`SELECT COALESCE(metadata, '{}') FROM agent_runs WHERE id = $1`,
+		runID,
+	).Scan(&raw); err == nil && raw != "" {
+		if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+			r.logger.Warn("failed to decode run metadata before failure classification", "run_id", runID, "error", err)
+			metadata = map[string]any{"legacy_metadata_raw": raw}
+		}
+	}
+	metadata["failure"] = classification
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		r.logger.Warn("failed to encode classified run metadata", "run_id", runID, "error", err)
+		return `{"failure":{"taxonomy":"run-failure-v1","category":"unknown","retryable":false,"disposition":"investigate"}}`
+	}
+	return string(encoded)
 }
 
 func (r *Runner) pauseRun(ctx context.Context, runID string, reason string) error {
