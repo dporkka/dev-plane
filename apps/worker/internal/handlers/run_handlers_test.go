@@ -466,6 +466,9 @@ func TestHandleRunFailedTransitionsTaskAndPublishesFailedEvent(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed', state_version = 4 WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
 
 	publisher := &fakeWorkerEventPublisher{}
 	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
@@ -509,6 +512,9 @@ func TestHandleRunFailedReturnsPublishError(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed', state_version = 4 WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
 
 	publisher := &fakeWorkerEventPublisher{err: errors.New("nats disconnected")}
 	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
