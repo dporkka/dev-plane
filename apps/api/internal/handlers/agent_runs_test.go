@@ -14,14 +14,16 @@ import (
 )
 
 var agentRunCols = []string{
-	"id", "task_id", "workspace_id", "agent_role", "model", "provider", "status",
+	"id", "task_id", "parent_run_id", "workspace_id", "attempt", "agent_role", "model", "provider", "status",
+	"outcome", "execution_snapshot", "execution_snapshot_digest",
 	"started_at", "completed_at", "prompt_tokens", "completion_tokens",
 	"total_cost", "error_message", "summary", "metadata", "created_at", "updated_at",
 }
 
 func agentRunRow(id, taskID, role, status string, createdAt time.Time) *sqlmock.Rows {
 	return sqlmock.NewRows(agentRunCols).
-		AddRow(id, taskID, nil, role, nil, nil, status,
+		AddRow(id, taskID, nil, nil, 1, role, nil, nil, status,
+			"passed", "{}", "sha256:test",
 			nil, nil, 0, 0,
 			0.0, nil, nil, nil, createdAt, createdAt)
 }
@@ -35,14 +37,16 @@ func TestListAgentRuns(t *testing.T) {
 
 	expectAuthorizeTask(mock, taskID)
 	rows := sqlmock.NewRows(agentRunCols).
-		AddRow("run-1", taskID, nil, "implementer", nil, nil, "completed",
+		AddRow("run-1", taskID, nil, nil, 1, "implementer", nil, nil, "completed",
+			"passed", "{}", "sha256:run-1",
 			nil, nil, 100, 50,
 			0.05, nil, nil, nil, now, now).
-		AddRow("run-2", taskID, nil, "reviewer", nil, nil, "running",
+		AddRow("run-2", taskID, "run-1", nil, 2, "reviewer", nil, nil, "running",
+			nil, "{}", "sha256:run-2",
 			nil, nil, 0, 0,
 			0.0, nil, nil, nil, now, now)
 
-	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
+	mock.ExpectQuery("SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status").
 		WithArgs(taskID).
 		WillReturnRows(rows)
 
@@ -82,6 +86,12 @@ func TestListAgentRuns(t *testing.T) {
 	if runs[0].PromptTokens != 100 {
 		t.Errorf("expected first run prompt_tokens 100, got %d", runs[0].PromptTokens)
 	}
+	if runs[0].Outcome == nil || *runs[0].Outcome != "passed" {
+		t.Errorf("expected first run outcome passed, got %v", runs[0].Outcome)
+	}
+	if runs[1].ParentRunID == nil || *runs[1].ParentRunID != "run-1" || runs[1].Attempt != 2 {
+		t.Errorf("expected second run lineage parent=run-1 attempt=2, got parent=%v attempt=%d", runs[1].ParentRunID, runs[1].Attempt)
+	}
 
 	if runs[1].ID != "run-2" {
 		t.Errorf("expected second run ID 'run-2', got %q", runs[1].ID)
@@ -102,7 +112,7 @@ func TestGetAgentRun(t *testing.T) {
 	rows := agentRunRow(runID, taskID, "implementer", "completed", now)
 
 	expectAuthorizeAgentRun(mock, runID)
-	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
+	mock.ExpectQuery("SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status").
 		WithArgs(runID).
 		WillReturnRows(rows)
 
@@ -146,7 +156,7 @@ func TestGetAgentRun_NotFound(t *testing.T) {
 
 	runID := "nonexistent"
 	expectAuthorizeAgentRun(mock, runID)
-	mock.ExpectQuery("SELECT id, task_id, workspace_id, agent_role, model, provider, status").
+	mock.ExpectQuery("SELECT id, task_id, parent_run_id, workspace_id, attempt, agent_role, model, provider, status").
 		WithArgs(runID).
 		WillReturnError(sql.ErrNoRows)
 
@@ -176,18 +186,18 @@ func TestListAgentSteps(t *testing.T) {
 
 	expectAuthorizeAgentRun(mock, runID)
 	rows := sqlmock.NewRows([]string{
-		"id", "agent_run_id", "step_number", "step_type", "status", "content",
+		"id", "agent_run_id", "step_number", "step_type", "status", "outcome", "input", "output", "content",
 		"tool_name", "tool_input", "tool_output", "command", "command_output",
-		"exit_code", "file_path", "diff", "cost", "latency_ms", "created_at",
+		"exit_code", "file_path", "diff", "cost", "latency_ms", "started_at", "completed_at", "created_at",
 	}).
-		AddRow("step-1", runID, 1, "tool_call", "completed", nil,
+		AddRow("step-1", runID, 1, "tool_call", "completed", "passed", `{"path":"README.md"}`, `{"content":"ok"}`, nil,
 			nil, nil, nil, nil, nil,
-			nil, nil, nil, 0.01, 100, now).
-		AddRow("step-2", runID, 2, "command", "completed", nil,
+			nil, nil, nil, 0.01, 100, now, now, now).
+		AddRow("step-2", runID, 2, "command", "completed", "passed", nil, nil, nil,
 			nil, nil, nil, "ls -la", "output",
-			0, nil, nil, 0.0, 50, now)
+			0, nil, nil, 0.0, 50, now, now, now)
 
-	mock.ExpectQuery("SELECT id, agent_run_id, step_number, step_type, status, content").
+	mock.ExpectQuery("SELECT id, agent_run_id, step_number, step_type, status, outcome, input, output, content").
 		WithArgs(runID).
 		WillReturnRows(rows)
 
@@ -222,6 +232,12 @@ func TestListAgentSteps(t *testing.T) {
 
 	if steps[0].StepType != "tool_call" {
 		t.Errorf("expected first step type 'tool_call', got %q", steps[0].StepType)
+	}
+	if steps[0].Outcome == nil || *steps[0].Outcome != "passed" {
+		t.Errorf("expected first step outcome passed, got %v", steps[0].Outcome)
+	}
+	if string(steps[0].Input) != `{"path":"README.md"}` || string(steps[0].Output) != `{"content":"ok"}` {
+		t.Errorf("unexpected execution envelope input=%s output=%s", steps[0].Input, steps[0].Output)
 	}
 
 	if steps[1].ID != "step-2" {
