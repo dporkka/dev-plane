@@ -654,6 +654,7 @@ func (v verifiedCandidateForMerge) Validate() error {
 
 func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequestID string) (*verifiedCandidateForMerge, error) {
 	var verified verifiedCandidateForMerge
+	var packet string
 	err := h.db.QueryRowContext(ctx, `
 		SELECT c.commit_sha, c.tree_hash, e.tree_hash, e.contract_hash,
 		       e.environment_digest, e.runner_identity, e.completed_at,
@@ -675,12 +676,13 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 		&verified.CompletedAt,
 		&verified.CandidateID,
 		&verified.PacketDigest,
-		&verified.Packet,
+		&packet,
 		&verified.ProjectID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	verified.PullRequestID = pullRequestID
+	verified.Packet = json.RawMessage(packet)
 	return &verified, nil
 }
