@@ -338,6 +338,20 @@ CREATE INDEX IF NOT EXISTS idx_decision_packets_digest ON decision_packets(diges
 CREATE INDEX IF NOT EXISTS idx_decision_packets_created_at ON decision_packets(created_at);
 
 -- =====================================================
+-- 8g. candidate_dependencies
+-- =====================================================
+CREATE TABLE IF NOT EXISTS candidate_dependencies (
+    candidate_id            UUID NOT NULL REFERENCES change_candidates(id) ON DELETE CASCADE,
+    depends_on_candidate_id UUID NOT NULL REFERENCES change_candidates(id) ON DELETE CASCADE,
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (candidate_id, depends_on_candidate_id),
+    CHECK (candidate_id <> depends_on_candidate_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_candidate_dependencies_dependency
+    ON candidate_dependencies(depends_on_candidate_id);
+
+-- =====================================================
 -- 9. approvals
 -- =====================================================
 CREATE TABLE IF NOT EXISTS approvals (

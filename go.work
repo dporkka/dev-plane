@@ -9,6 +9,7 @@ use (
 	./apps/worker
 	./infra/networking
 	./packages/agents
+	./packages/changegraph
 	./packages/crypto
 	./packages/db
 	./packages/decisionpacket
