@@ -136,6 +136,11 @@ func TestHandleRunCompletedReviewsWhenNoHandoff(t *testing.T) {
 		RunID:      "run-1",
 		RiskLevel:  "low",
 		Approvable: true,
+		Findings: []reviewer.Finding{{
+			Severity: "medium",
+			Category: "testing",
+			Message:  "missing edge case",
+		}},
 	}}
 	handler := NewRunHandler(db, slog.Default(), nil).WithReviewer(reviewService)
 
@@ -152,6 +157,49 @@ func TestHandleRunCompletedReviewsWhenNoHandoff(t *testing.T) {
 	}
 	if status != "reviewing" {
 		t.Fatalf("task status = %q, want reviewing", status)
+	}
+
+	if err := handler.HandleRunCompleted(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}); err != nil {
+		t.Fatalf("HandleRunCompleted() replay error: %v", err)
+	}
+
+	var (
+		attempt       int
+		outcome       string
+		agentRunID    string
+		totalTokens   int
+		totalCost     float64
+		wallSeconds   int
+		reviewFinding int
+		strategy      string
+	)
+	if err := db.QueryRow(`
+		SELECT attempt, outcome, agent_run_id, total_tokens, total_cost,
+		       wall_clock_seconds, review_findings, strategy
+		FROM task_evaluations
+		WHERE task_id = 'task-1'
+	`).Scan(
+		&attempt, &outcome, &agentRunID, &totalTokens, &totalCost,
+		&wallSeconds, &reviewFinding, &strategy,
+	); err != nil {
+		t.Fatalf("query task evaluation: %v", err)
+	}
+	if attempt != 1 || outcome != "pending" || agentRunID != "run-1" {
+		t.Fatalf("evaluation identity = attempt:%d outcome:%q run:%q", attempt, outcome, agentRunID)
+	}
+	if totalTokens != 120 || totalCost != 0.42 || wallSeconds != 600 {
+		t.Fatalf("evaluation metrics = tokens:%d cost:%.2f wall:%d", totalTokens, totalCost, wallSeconds)
+	}
+	if reviewFinding != 1 || strategy != "dev-plane" {
+		t.Fatalf("evaluation review/strategy = findings:%d strategy:%q", reviewFinding, strategy)
+	}
+
+	var evaluationCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM task_evaluations WHERE task_id = 'task-1'`).Scan(&evaluationCount); err != nil {
+		t.Fatalf("count task evaluations: %v", err)
+	}
+	if evaluationCount != 1 {
+		t.Fatalf("evaluation count = %d, want 1 after replay", evaluationCount)
 	}
 }
 
@@ -828,10 +876,41 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 			model TEXT,
 			provider TEXT,
 			status TEXT NOT NULL,
+			started_at DATETIME,
+			completed_at DATETIME,
+			prompt_tokens INTEGER DEFAULT 0,
+			completion_tokens INTEGER DEFAULT 0,
 			total_cost REAL DEFAULT 0,
 			metadata TEXT DEFAULT '{}',
 			created_at DATETIME,
 			updated_at DATETIME
+		);
+		CREATE TABLE task_evaluations (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			agent_run_id TEXT UNIQUE,
+			attempt INTEGER NOT NULL,
+			outcome TEXT NOT NULL DEFAULT 'pending',
+			human_interventions INTEGER NOT NULL DEFAULT 0,
+			human_attention_seconds INTEGER NOT NULL DEFAULT 0,
+			wall_clock_seconds INTEGER NOT NULL DEFAULT 0,
+			agent_compute_seconds INTEGER NOT NULL DEFAULT 0,
+			total_tokens INTEGER NOT NULL DEFAULT 0,
+			total_cost REAL NOT NULL DEFAULT 0,
+			tests_passed INTEGER NOT NULL DEFAULT 0,
+			tests_failed INTEGER NOT NULL DEFAULT 0,
+			review_findings INTEGER NOT NULL DEFAULT 0,
+			human_change_lines INTEGER NOT NULL DEFAULT 0,
+			reverted_within_7d BOOLEAN NOT NULL DEFAULT false,
+			production_regression BOOLEAN NOT NULL DEFAULT false,
+			model TEXT,
+			provider TEXT,
+			prompt_version TEXT,
+			skill_version TEXT,
+			strategy TEXT,
+			metadata TEXT NOT NULL DEFAULT '{}',
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(task_id, attempt)
 		);
 		CREATE TABLE agent_messages (
 			id TEXT PRIMARY KEY,
@@ -859,9 +938,11 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 	_, err := db.Exec(`
 		INSERT INTO tasks (id, status) VALUES ('task-1', 'running');
 		INSERT INTO agent_runs (
-			id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata
+			id, task_id, workspace_id, agent_role, model, provider, status,
+			started_at, completed_at, prompt_tokens, completion_tokens, total_cost, metadata
 		) VALUES (
-			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed', 0,
+			'run-1', 'task-1', 'workspace-1', ?, 'gpt-4o', 'openai', 'completed',
+			'2026-09-30T16:00:00Z', '2026-09-30T16:10:00Z', 100, 20, 0.42,
 			'{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}'
 		);
 	`, role)

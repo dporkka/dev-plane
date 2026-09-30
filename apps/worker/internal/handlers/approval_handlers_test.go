@@ -20,6 +20,7 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	db := setupApprovalHandlerDB(t)
 	defer db.Close()
 	insertApprovalTaskFixture(t, db, "task-1", "reviewing")
+	insertEvaluationFixture(t, db, "eval-approved", "task-1", "run-1", "pending")
 
 	creator := &fakePullRequestCreator{
 		pr: &models.PullRequest{ID: "pr-1", TaskID: "task-1", Number: 42},
@@ -29,6 +30,7 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	err := handler.HandleApprovalApproved(&nats.Msg{Data: []byte(`{
 		"approval_id":"approval-1",
 		"task_id":"task-1",
+		"agent_run_id":"run-1",
 		"response":"approved",
 		"approval_type":"pr_create"
 	}`)})
@@ -37,6 +39,14 @@ func TestHandleApprovalApprovedCreatesPROnPRCreateApproval(t *testing.T) {
 	}
 	if creator.taskID != "task-1" {
 		t.Fatalf("creator taskID = %q, want task-1", creator.taskID)
+	}
+
+	var outcome string
+	if err := db.QueryRow(`SELECT outcome FROM task_evaluations WHERE id = 'eval-approved'`).Scan(&outcome); err != nil {
+		t.Fatalf("query approved evaluation: %v", err)
+	}
+	if outcome != "accepted" {
+		t.Fatalf("approved evaluation outcome = %q, want accepted", outcome)
 	}
 }
 
@@ -184,6 +194,7 @@ func TestHandleApprovalRejectedFailsTaskAndCompletedRun(t *testing.T) {
 	db := setupApprovalHandlerDB(t)
 	defer db.Close()
 	insertApprovalTaskFixture(t, db, "task-1", "reviewing")
+	insertEvaluationFixture(t, db, "eval-rejected", "task-1", "run-1", "pending")
 	_, err := db.Exec(`
 		INSERT INTO agent_runs (id, task_id, status, error_message, updated_at)
 		VALUES ('run-1', 'task-1', 'completed', NULL, NULL)
@@ -196,6 +207,7 @@ func TestHandleApprovalRejectedFailsTaskAndCompletedRun(t *testing.T) {
 	err = handler.HandleApprovalRejected(&nats.Msg{Data: []byte(`{
 		"approval_id":"approval-1",
 		"task_id":"task-1",
+		"agent_run_id":"run-1",
 		"response":"rejected",
 		"responder_id":"user-1",
 		"note":"needs changes"
@@ -221,6 +233,14 @@ func TestHandleApprovalRejectedFailsTaskAndCompletedRun(t *testing.T) {
 	}
 	if !strings.Contains(errorMessage, "needs changes") {
 		t.Fatalf("error_message = %q, want rejection note", errorMessage)
+	}
+
+	var outcome string
+	if err := db.QueryRow(`SELECT outcome FROM task_evaluations WHERE id = 'eval-rejected'`).Scan(&outcome); err != nil {
+		t.Fatalf("query rejected evaluation: %v", err)
+	}
+	if outcome != "rejected" {
+		t.Fatalf("rejected evaluation outcome = %q, want rejected", outcome)
 	}
 }
 
@@ -314,6 +334,13 @@ func setupApprovalHandlerDB(t *testing.T) *sql.DB {
 			agent_run_id TEXT,
 			approval_type TEXT NOT NULL
 		);
+		CREATE TABLE task_evaluations (
+			id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL,
+			agent_run_id TEXT UNIQUE,
+			attempt INTEGER NOT NULL,
+			outcome TEXT NOT NULL
+		);
 	`)
 	if err != nil {
 		_ = db.Close()
@@ -340,5 +367,16 @@ func insertApprovalFixture(t *testing.T, db *sql.DB, id, taskID, runID, approval
 	t.Helper()
 	if _, err := db.Exec(`INSERT INTO approvals (id, task_id, agent_run_id, approval_type) VALUES (?, ?, ?, ?)`, id, taskID, runID, approvalType); err != nil {
 		t.Fatalf("insert approval fixture: %v", err)
+	}
+}
+
+
+func insertEvaluationFixture(t *testing.T, db *sql.DB, id, taskID, runID, outcome string) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO task_evaluations (id, task_id, agent_run_id, attempt, outcome) VALUES (?, ?, ?, 1, ?)`,
+		id, taskID, runID, outcome,
+	); err != nil {
+		t.Fatalf("insert evaluation fixture: %v", err)
 	}
 }

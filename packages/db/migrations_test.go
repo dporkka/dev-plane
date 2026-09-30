@@ -43,6 +43,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"secret_references",
 		"secret_values",
 		"task_specs",
+		"task_evaluations",
 		"tasks",
 		"users",
 		"workspaces",
