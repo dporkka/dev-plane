@@ -2,13 +2,17 @@
 
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { CostBadge } from "@/components/run/CostBadge";
-import type { AgentRun } from "@/lib/types";
+import type { AgentRun, RunExecutionEvidence } from "@/lib/types";
 import { buildExecutionGraph } from "@/lib/execution-graph";
 import {
   AlertTriangle,
   Bot,
   CheckCircle,
   CircleDollarSign,
+  FileArchive,
+  FlaskConical,
+  GitCommit,
+  GitPullRequest,
   RotateCcw,
   Waypoints,
   XCircle,
@@ -30,6 +34,7 @@ import "reactflow/dist/style.css";
 interface ExecutionRunNodeData {
   run: AgentRun;
   orphaned: boolean;
+  evidence?: RunExecutionEvidence;
 }
 
 const outcomeClasses: Record<string, string> = {
@@ -52,7 +57,7 @@ function runTriggerLabel(run: AgentRun): string | null {
 }
 
 function ExecutionRunNode({ data }: { data: ExecutionRunNodeData }) {
-  const { run, orphaned } = data;
+  const { run, orphaned, evidence } = data;
   const trigger = runTriggerLabel(run);
   const RoleIcon = run.agent_role === "implementer" ? Zap : Bot;
 
@@ -101,6 +106,74 @@ function ExecutionRunNode({ data }: { data: ExecutionRunNodeData }) {
         )}
       </div>
 
+      {evidence && (
+        <div className="mt-3 space-y-1.5 border-t border-[#30363d] pt-2 text-[10px]">
+          <div className="flex flex-wrap gap-1.5">
+            {evidence.commit_hash && (
+              <EvidenceBadge
+                icon={GitCommit}
+                label={evidence.commit_hash.slice(0, 8)}
+                title={`commit ${evidence.commit_hash}`}
+              />
+            )}
+            {evidence.verification && (
+              <EvidenceBadge
+                icon={FlaskConical}
+                label={
+                  evidence.verification.passed
+                    ? `tests ✓${evidence.verification.total ? ` · ${evidence.verification.total}` : ""}`
+                    : `tests ✕${evidence.verification.failed ? ` · ${evidence.verification.failed} failed` : ""}`
+                }
+                tone={evidence.verification.passed ? "success" : "danger"}
+                title={`verification step ${evidence.verification.step_id}`}
+              />
+            )}
+            {evidence.review && (
+              <EvidenceBadge
+                icon={CheckCircle}
+                label={
+                  evidence.review.approvable
+                    ? `review ✓ · ${evidence.review.diff_summary.files_changed || 0} files`
+                    : `review changes · ${evidence.review.diff_summary.files_changed || 0} files`
+                }
+                tone={evidence.review.approvable ? "success" : "warning"}
+                title={evidence.review.summary}
+              />
+            )}
+            {evidence.pull_request && (
+              <EvidenceBadge
+                icon={GitPullRequest}
+                label={`PR #${evidence.pull_request.number} · ${evidence.pull_request.state}`}
+                tone="info"
+                title={evidence.pull_request.title}
+              />
+            )}
+            {evidence.artifacts.length > 0 && (
+              <EvidenceBadge
+                icon={FileArchive}
+                label={`${evidence.artifacts.length} artifact${evidence.artifacts.length === 1 ? "" : "s"}`}
+                title={evidence.artifacts.map((artifact) => artifact.file_name).join(", ")}
+              />
+            )}
+          </div>
+          {evidence.review?.diff_summary && (
+            <div className="text-gray-500">
+              diff {evidence.review.diff_summary.insertions >= 0 ? "+" : ""}
+              {evidence.review.diff_summary.insertions} / -
+              {Math.abs(evidence.review.diff_summary.deletions)}
+            </div>
+          )}
+          {evidence.failure && (
+            <div
+              className="truncate rounded border border-red-500/20 bg-red-500/5 px-2 py-1 text-red-300"
+              title={evidence.failure.message}
+            >
+              {evidence.failure.message}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 flex items-center justify-between gap-3 border-t border-[#30363d] pt-2 text-[11px] text-gray-500">
         <span className="truncate">{run.model || run.execution_snapshot?.model_route || "model pending"}</span>
         <CostBadge cost={run.total_cost || 0} />
@@ -119,7 +192,13 @@ const nodeTypes = {
   executionRun: ExecutionRunNode,
 };
 
-export function TaskExecutionGraph({ runs }: { runs: AgentRun[] }) {
+export function TaskExecutionGraph({
+  runs,
+  evidence = {},
+}: {
+  runs: AgentRun[];
+  evidence?: Record<string, RunExecutionEvidence>;
+}) {
   const router = useRouter();
   const graph = useMemo(() => buildExecutionGraph(runs), [runs]);
 
@@ -132,9 +211,10 @@ export function TaskExecutionGraph({ runs }: { runs: AgentRun[] }) {
         data: {
           run: node.run,
           orphaned: node.orphaned,
+          evidence: evidence[node.id],
         },
       })),
-    [graph.nodes],
+    [graph.nodes, evidence],
   );
 
   const edges: Edge[] = useMemo(
@@ -215,6 +295,36 @@ export function TaskExecutionGraph({ runs }: { runs: AgentRun[] }) {
         </ReactFlow>
       </div>
     </div>
+  );
+}
+
+function EvidenceBadge({
+  icon: Icon,
+  label,
+  title,
+  tone = "neutral",
+}: {
+  icon: typeof Waypoints;
+  label: string;
+  title?: string;
+  tone?: "neutral" | "success" | "warning" | "danger" | "info";
+}) {
+  const tones = {
+    neutral: "border-gray-600/30 bg-gray-600/10 text-gray-300",
+    success: "border-green-500/30 bg-green-500/10 text-green-300",
+    warning: "border-orange-500/30 bg-orange-500/10 text-orange-300",
+    danger: "border-red-500/30 bg-red-500/10 text-red-300",
+    info: "border-blue-500/30 bg-blue-500/10 text-blue-300",
+  };
+
+  return (
+    <span
+      className={`flex items-center gap-1 rounded border px-1.5 py-0.5 ${tones[tone]}`}
+      title={title}
+    >
+      <Icon className="h-3 w-3" />
+      {label}
+    </span>
   );
 }
 
