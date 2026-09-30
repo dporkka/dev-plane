@@ -251,6 +251,48 @@ func TestHandleRunCompletedSchedulesBoundedRepairForRejectedReview(t *testing.T)
 	}
 }
 
+func TestHandleRunCompletedRejectedReviewIsIdempotent(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+
+	handler := NewRunHandler(db, slog.Default(), nil).
+		WithReviewer(&fakeReviewer{report: &reviewer.ReviewReport{
+			RunID:      "run-1",
+			Summary:    "Needs repair.",
+			RiskLevel:  "high",
+			Approvable: false,
+		}}).
+		WithRepairLimit(2)
+
+	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)}
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("first HandleRunCompleted() error: %v", err)
+	}
+	if err := handler.HandleRunCompleted(msg); err != nil {
+		t.Fatalf("second HandleRunCompleted() error: %v", err)
+	}
+
+	var childCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs WHERE parent_run_id = 'run-1'`).Scan(&childCount); err != nil {
+		t.Fatalf("count repair children: %v", err)
+	}
+	if childCount != 1 {
+		t.Fatalf("repair child count = %d, want 1", childCount)
+	}
+
+	var feedbackCount int
+	if err := db.QueryRow(`
+		SELECT COUNT(*) FROM agent_messages
+		WHERE agent_run_id = 'run-1' AND message_type = 'review_comment'
+	`).Scan(&feedbackCount); err != nil {
+		t.Fatalf("count repair feedback: %v", err)
+	}
+	if feedbackCount != 1 {
+		t.Fatalf("repair feedback count = %d, want 1", feedbackCount)
+	}
+}
+
 func TestHandleRunCompletedStopsAfterRepairBudgetExhausted(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
