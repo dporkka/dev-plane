@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"time"
 )
 
 const (
@@ -107,20 +108,21 @@ type EvidenceBundle struct {
 }
 
 type WorkItem struct {
-	ID                 string    `json:"id"`
-	Repository         string    `json:"repository"`
-	Objective          string    `json:"objective"`
-	AcceptanceCriteria []string  `json:"acceptance_criteria,omitempty"`
-	ParentID           string    `json:"parent_id,omitempty"`
-	DiscoveredFromID   string    `json:"discovered_from_id,omitempty"`
-	DependsOn          []string  `json:"depends_on,omitempty"`
-	OwnershipPaths     []string  `json:"ownership_paths"`
-	Risk               RiskLevel `json:"risk"`
-	Cost               int       `json:"cost"`
-	RequiredGates      []string  `json:"required_gates,omitempty"`
-	BaseSHA            string    `json:"base_sha"`
-	ClaimedBy          string    `json:"claimed_by,omitempty"`
-	State              WorkState `json:"state"`
+	ID                 string     `json:"id"`
+	Repository         string     `json:"repository"`
+	Objective          string     `json:"objective"`
+	AcceptanceCriteria []string   `json:"acceptance_criteria,omitempty"`
+	ParentID           string     `json:"parent_id,omitempty"`
+	DiscoveredFromID   string     `json:"discovered_from_id,omitempty"`
+	DependsOn          []string   `json:"depends_on,omitempty"`
+	OwnershipPaths     []string   `json:"ownership_paths"`
+	Risk               RiskLevel  `json:"risk"`
+	Cost               int        `json:"cost"`
+	RequiredGates      []string   `json:"required_gates,omitempty"`
+	BaseSHA            string     `json:"base_sha"`
+	ClaimedBy          string     `json:"claimed_by,omitempty"`
+	LeaseUntil         *time.Time `json:"lease_until,omitempty"`
+	State              WorkState  `json:"state"`
 }
 
 func (c Config) Validate() error {
@@ -257,6 +259,14 @@ func (w WorkItem) Validate() error {
 	}
 	if !validWorkState(w.State) {
 		return fmt.Errorf("work item has invalid state %q", w.State)
+	}
+	if w.State == WorkClaimed {
+		if strings.TrimSpace(w.ClaimedBy) == "" {
+			return errors.New("claimed work item requires claimed_by")
+		}
+		if w.LeaseUntil == nil {
+			return errors.New("claimed work item requires lease_until")
+		}
 	}
 	return nil
 }
