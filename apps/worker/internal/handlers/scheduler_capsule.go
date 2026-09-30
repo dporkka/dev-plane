@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ai-dev-control-plane/readiness"
 	"github.com/ai-dev-control-plane/scheduler"
 )
 
@@ -35,16 +36,17 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 
 	var (
 		storedTaskID string
-		title string
-		rawMetadata string
-		workspaceID sql.NullString
-		agentRole string
-		model sql.NullString
-		provider sql.NullString
-		runStatus string
+		repositoryID string
+		title        string
+		rawMetadata  string
+		workspaceID  sql.NullString
+		agentRole    string
+		model        sql.NullString
+		provider     sql.NullString
+		runStatus    string
 	)
 	err := a.db.QueryRowContext(ctx, `
-		SELECT t.id, t.title, COALESCE(t.metadata, '{}'),
+		SELECT t.id, t.repository_id, t.title, COALESCE(t.metadata, '{}'),
 		       ar.workspace_id, ar.agent_role, ar.model, ar.provider, ar.status
 		FROM agent_runs ar
 		JOIN tasks t ON t.id = ar.task_id
@@ -53,6 +55,7 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		  AND t.deleted_at IS NULL
 	`, runID, taskID).Scan(
 		&storedTaskID,
+		&repositoryID,
 		&title,
 		&rawMetadata,
 		&workspaceID,
@@ -96,24 +99,24 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 		dependsOn = append(dependsOn, config.DependsOn...)
 	}
 
-	required, err := normalizeCapsuleEvidenceRequirements(requiredEvidence)
+	required, err := a.resolveCapsuleEvidenceRequirements(ctx, repositoryID, requiredEvidence)
 	if err != nil {
 		return scheduler.TaskCapsule{}, err
 	}
 
 	return scheduler.TaskCapsule{
-		Version: scheduler.TaskCapsuleVersion,
-		TaskID: taskID,
+		Version:     scheduler.TaskCapsuleVersion,
+		TaskID:      taskID,
 		WorkspaceID: strings.TrimSpace(workspaceID.String),
 		Agent: scheduler.AgentIdentity{
-			ID: runID,
-			Role: strings.TrimSpace(agentRole),
+			ID:       runID,
+			Role:     strings.TrimSpace(agentRole),
 			Provider: strings.TrimSpace(provider.String),
-			Model: strings.TrimSpace(model.String),
+			Model:    strings.TrimSpace(model.String),
 		},
-		Objective: strings.TrimSpace(title),
-		DependsOn: dependsOn,
-		Leases: leases,
+		Objective:        strings.TrimSpace(title),
+		DependsOn:        dependsOn,
+		Leases:           leases,
 		RequiredEvidence: required,
 	}, nil
 }
@@ -136,4 +139,42 @@ func normalizeCapsuleEvidenceRequirements(values []string) ([]string, error) {
 		out = append(out, value)
 	}
 	return out, nil
+}
+
+func (a *SchedulerAdmission) resolveCapsuleEvidenceRequirements(
+	ctx context.Context,
+	repositoryID string,
+	explicit []string,
+) ([]string, error) {
+	if len(explicit) > 0 {
+		return normalizeCapsuleEvidenceRequirements(explicit)
+	}
+
+	var testCommand, lintCommand, typecheckCommand, buildCommand sql.NullString
+	err := a.db.QueryRowContext(ctx, `
+		SELECT test_command, lint_command, typecheck_command, build_command
+		FROM project_configs
+		WHERE repository_id = $1
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, strings.TrimSpace(repositoryID)).Scan(
+		&testCommand,
+		&lintCommand,
+		&typecheckCommand,
+		&buildCommand,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("load project verification commands: %w", err)
+	}
+
+	plan := readiness.BuildVerificationPlan(readiness.VerificationCommands{
+		Test:      testCommand.String,
+		Lint:      lintCommand.String,
+		Typecheck: typecheckCommand.String,
+		Build:     buildCommand.String,
+	})
+	return plan.RequiredEvidence(), nil
 }
