@@ -78,3 +78,34 @@ func TestAgentRole_Constants(t *testing.T) {
 		})
 	}
 }
+
+
+func TestCanTransitionAgentRunStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		from string
+		to   string
+		want bool
+	}{
+		{name: "pending to queued", from: AgentRunStatusPending, to: AgentRunStatusQueued, want: true},
+		{name: "pending direct to running", from: AgentRunStatusPending, to: AgentRunStatusRunning, want: true},
+		{name: "queued to admitting", from: AgentRunStatusQueued, to: AgentRunStatusAdmitting, want: true},
+		{name: "admitting back to queued", from: AgentRunStatusAdmitting, to: AgentRunStatusQueued, want: true},
+		{name: "admitting to running", from: AgentRunStatusAdmitting, to: AgentRunStatusRunning, want: true},
+		{name: "running to paused", from: AgentRunStatusRunning, to: AgentRunStatusPaused, want: true},
+		{name: "paused to queued", from: AgentRunStatusPaused, to: AgentRunStatusQueued, want: true},
+		{name: "running to completed", from: AgentRunStatusRunning, to: AgentRunStatusCompleted, want: true},
+		{name: "running to failed", from: AgentRunStatusRunning, to: AgentRunStatusFailed, want: true},
+		{name: "completed cannot regress", from: AgentRunStatusCompleted, to: AgentRunStatusRunning, want: false},
+		{name: "failed cannot restart", from: AgentRunStatusFailed, to: AgentRunStatusQueued, want: false},
+		{name: "cancelled cannot fail", from: AgentRunStatusCancelled, to: AgentRunStatusFailed, want: false},
+		{name: "same state is not a transition", from: AgentRunStatusRunning, to: AgentRunStatusRunning, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := CanTransitionAgentRunStatus(tt.from, tt.to); got != tt.want {
+				t.Fatalf("CanTransitionAgentRunStatus(%q, %q) = %v, want %v", tt.from, tt.to, got, tt.want)
+			}
+		})
+	}
+}
