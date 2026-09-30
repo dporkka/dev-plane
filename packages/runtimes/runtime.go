@@ -59,6 +59,7 @@ type CreateRequest struct {
 	CloneURL     string            `json:"clone_url"`
 	Branch       string            `json:"branch"`
 	BaseBranch   string            `json:"base_branch"`
+	Revision     string            `json:"revision,omitempty"`
 	WorktreeName string            `json:"worktree_name"`
 	Env          map[string]string `json:"env,omitempty"`
 }
