@@ -1,10 +1,10 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -391,6 +391,3 @@ func jsonInt(value any) int {
 	}
 }
 
-func evidenceLoadError(kind string, err error) error {
-	return fmt.Errorf("load %s execution evidence: %w", kind, err)
-}
