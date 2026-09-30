@@ -268,11 +268,11 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 
 	// Get the failed run details
 	var run struct {
-		TaskID      string
-		WorkspaceID *string
-		AgentRole   string
-		Model       *string
-		Provider    *string
+		TaskID                  string
+		WorkspaceID             *string
+		AgentRole               string
+		Model                   *string
+		Provider                *string
 		Status                  string
 		Attempt                 int
 		ExecutionSnapshot       string
