@@ -49,11 +49,12 @@ type Lease struct {
 // Evidence records a machine-checkable completion signal. Artifact may point at
 // a log, report, trace, screenshot, or other persisted proof.
 type Evidence struct {
-	Name     string         `json:"name"`
-	Kind     string         `json:"kind"`
-	Status   EvidenceStatus `json:"status"`
-	Command  string         `json:"command,omitempty"`
-	Artifact string         `json:"artifact,omitempty"`
+	Name            string         `json:"name"`
+	Kind            string         `json:"kind"`
+	Status          EvidenceStatus `json:"status"`
+	Command         string         `json:"command,omitempty"`
+	Artifact        string         `json:"artifact,omitempty"`
+	SubjectRevision string         `json:"subject_revision,omitempty"`
 }
 
 // TaskCapsule is the portable handoff contract between scheduling, execution,
@@ -64,6 +65,7 @@ type TaskCapsule struct {
 	WorkspaceID      string        `json:"workspace_id"`
 	Agent            AgentIdentity `json:"agent"`
 	Objective        string        `json:"objective,omitempty"`
+	SubjectRevision  string        `json:"subject_revision,omitempty"`
 	DependsOn        []string      `json:"depends_on,omitempty"`
 	Leases           []Lease       `json:"leases"`
 	ContextRefs      []ContextRef  `json:"context_refs,omitempty"`
@@ -75,6 +77,7 @@ type CapsuleOptions struct {
 	Agent            AgentIdentity
 	WorkspaceID      string
 	Objective        string
+	SubjectRevision  string
 	ContextRefs      []ContextRef
 	RequiredEvidence []string
 }
@@ -149,6 +152,7 @@ func BuildTaskCapsule(manifest Manifest, state State, taskID string, options Cap
 		WorkspaceID:      strings.TrimSpace(options.WorkspaceID),
 		Agent:            normalizeAgentIdentity(options.Agent),
 		Objective:        strings.TrimSpace(options.Objective),
+		SubjectRevision:  strings.TrimSpace(options.SubjectRevision),
 		DependsOn:        append([]string(nil), selected.DependsOn...),
 		Leases:           leases,
 		ContextRefs:      append([]ContextRef(nil), options.ContextRefs...),
@@ -181,6 +185,7 @@ func VerifyCompletion(capsule TaskCapsule) error {
 		return err
 	}
 
+	subjectRevision := strings.TrimSpace(capsule.SubjectRevision)
 	latest := make(map[string]Evidence, len(capsule.Evidence))
 	for i, evidence := range capsule.Evidence {
 		name := strings.TrimSpace(evidence.Name)
@@ -192,13 +197,30 @@ func VerifyCompletion(capsule TaskCapsule) error {
 		default:
 			return fmt.Errorf("evidence %s has invalid status %q", name, evidence.Status)
 		}
+
 		evidence.Name = name
+		evidence.SubjectRevision = strings.TrimSpace(evidence.SubjectRevision)
+		if subjectRevision != "" {
+			if evidence.SubjectRevision == "" {
+				return fmt.Errorf("evidence %s subject revision is required", name)
+			}
+			if evidence.SubjectRevision != subjectRevision {
+				continue
+			}
+		}
 		latest[name] = evidence
 	}
 
 	for _, name := range required {
 		evidence, ok := latest[name]
 		if !ok {
+			if subjectRevision != "" {
+				return fmt.Errorf(
+					"required evidence %s is missing for current subject revision %s",
+					name,
+					subjectRevision,
+				)
+			}
 			return fmt.Errorf("required evidence %s is missing", name)
 		}
 		if evidence.Status != EvidenceStatusPassed {
