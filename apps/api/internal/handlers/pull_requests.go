@@ -514,6 +514,18 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusConflict, err)
 		return
 	}
+	blockers, err := h.candidateDependencyBlockers(ctx, verified.ProjectID, verified.CandidateID)
+	if err != nil {
+		respond.Error(w, http.StatusConflict, fmt.Errorf("evaluate change graph: %w", err))
+		return
+	}
+	if len(blockers) > 0 {
+		respond.JSON(w, http.StatusConflict, map[string]any{
+			"error":    "candidate dependencies are not merged",
+			"blockers": blockers,
+		})
+		return
+	}
 	if req.SHA != "" && req.SHA != verified.CommitSHA {
 		respond.Error(w, http.StatusConflict, errors.New("requested sha does not match verified candidate"))
 		return
@@ -574,6 +586,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 type verifiedCandidateForMerge struct {
 	PullRequestID     string
 	CandidateID       string
+	ProjectID         string
 	CommitSHA         string
 	CandidateTreeHash string
 	EvidenceTreeHash  string
@@ -644,10 +657,11 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 	err := h.db.QueryRowContext(ctx, `
 		SELECT c.commit_sha, c.tree_hash, e.tree_hash, e.contract_hash,
 		       e.environment_digest, e.runner_identity, e.completed_at,
-		       c.id, dp.digest, dp.packet
+		       c.id, dp.digest, dp.packet, t.project_id
 		FROM change_candidates c
 		JOIN verification_evidence e ON e.candidate_id = c.id
 		JOIN decision_packets dp ON dp.candidate_id = c.id
+		JOIN tasks t ON t.id = c.task_id
 		WHERE c.pull_request_id = $1
 		ORDER BY e.completed_at DESC
 		LIMIT 1
@@ -662,6 +676,7 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 		&verified.CandidateID,
 		&verified.PacketDigest,
 		&verified.Packet,
+		&verified.ProjectID,
 	)
 	if err != nil {
 		return nil, err
