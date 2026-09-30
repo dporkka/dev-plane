@@ -298,6 +298,28 @@ func (b *fakeSchedulerStartBudget) CheckRunStart(_ context.Context, runID string
 	return b.allowed, b.reason, b.err
 }
 
+func TestSchedulerAdmissionClaimsQueuedRun(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-a", "run-a", "queued", `{}`)
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 1, CPU: 1, MemoryMB: 512})
+	claimed, err := admission.claimRun(context.Background(), "run-a")
+	if err != nil {
+		t.Fatalf("claimRun() error: %v", err)
+	}
+	if !claimed {
+		t.Fatal("claimRun() = false, want true for queued run")
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-a'`).Scan(&status); err != nil {
+		t.Fatalf("query run status: %v", err)
+	}
+	if status != "admitting" {
+		t.Fatalf("run status = %q, want admitting", status)
+	}
+}
+
 func TestSchedulerAdmissionBlocksBudgetAfterAtomicClaim(t *testing.T) {
 	db := setupSchedulerAdmissionDB(t)
 	defer db.Close()

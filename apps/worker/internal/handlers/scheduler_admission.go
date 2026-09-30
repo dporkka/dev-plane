@@ -207,13 +207,13 @@ func (a *SchedulerAdmission) claimRun(ctx context.Context, runID string) (bool, 
 	staleBefore := now.Add(-schedulerAdmissionClaimTTL)
 	result, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'admitting', updated_at = $2
-		WHERE id = $1
+		SET status = 'admitting', updated_at = $1
+		WHERE id = $2
 		  AND (
 			status = 'queued'
 			OR (status = 'admitting' AND updated_at < $3)
 		  )
-	`, runID, now, staleBefore)
+	`, now, runID, staleBefore)
 	if err != nil {
 		return false, fmt.Errorf("claim scheduler run %s: %w", runID, err)
 	}
@@ -230,9 +230,9 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 	}
 	_, err := a.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = 'queued', updated_at = $2
-		WHERE id = $1 AND status = 'admitting'
-	`, runID, time.Now().UTC())
+		SET status = 'queued', updated_at = $1
+		WHERE id = $2 AND status = 'admitting'
+	`, time.Now().UTC(), runID)
 	if err != nil {
 		return fmt.Errorf("release scheduler run %s: %w", runID, err)
 	}
