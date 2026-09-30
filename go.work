@@ -18,6 +18,7 @@ use (
 	./packages/prfactory
 	./packages/readiness
 	./packages/repo-intel
+	./packages/repoprotocol
 	./packages/reviewer
 	./packages/runtimes
 	./packages/scheduler
