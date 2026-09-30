@@ -66,34 +66,66 @@ func (r *Runner) failRunClassified(
 		`, models.AgentRunStatusFailed, errorMsg, metadata, now, runID)
 	}
 
-	failurePayload := map[string]any{
-		"taxonomy":    classification.Taxonomy,
-		"category":    classification.Category,
-		"retryable":   classification.Retryable,
-		"disposition": classification.Disposition,
-		"stage":       classification.Stage,
-		"source":      classification.Source,
+	failedEvent, eventErr := r.buildFailedRunEvent(ctx, runID, errorMsg, classification)
+	if eventErr != nil {
+		r.logger.Warn("failed to build canonical run failure event", "run_id", runID, "error", eventErr)
+		failedEvent = events.AgentRunEvent{
+			RunID:  runID,
+			Status: models.AgentRunStatusFailed,
+		}
+		failedEvent.Data, _ = json.Marshal(map[string]any{
+			"error":   errorMsg,
+			"failure": classification,
+		})
 	}
 	now := time.Now().UTC()
+	payload := map[string]any{
+		"run_id":     failedEvent.RunID,
+		"task_id":    failedEvent.TaskID,
+		"agent_role": failedEvent.AgentRole,
+		"status":     failedEvent.Status,
+		"data":       failedEvent.Data,
+		"timestamp":  now,
+	}
 
-	// Publish run.failed event with the same structured failure metadata that is
-	// persisted on the agent run.
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"failure":   failurePayload,
-		"timestamp": now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"failure":   failurePayload,
-		"timestamp": now,
-	})
+	// Publish the same canonical AgentRunEvent envelope on both lifecycle
+	// subjects so worker consumers receive task identity and structured data.
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), payload)
+	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, payload)
 
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
+}
+
+
+func (r *Runner) buildFailedRunEvent(
+	ctx context.Context,
+	runID string,
+	errorMsg string,
+	classification runfailure.Classification,
+) (events.AgentRunEvent, error) {
+	event := events.AgentRunEvent{
+		RunID:  runID,
+		Status: models.AgentRunStatusFailed,
+	}
+	if r == nil || r.db == nil {
+		return event, fmt.Errorf("runner database is required")
+	}
+	if err := r.db.QueryRowContext(
+		ctx,
+		`SELECT task_id, agent_role FROM agent_runs WHERE id = $1`,
+		runID,
+	).Scan(&event.TaskID, &event.AgentRole); err != nil {
+		return event, fmt.Errorf("load failed run identity: %w", err)
+	}
+	data, err := json.Marshal(map[string]any{
+		"error":   errorMsg,
+		"failure": classification,
+	})
+	if err != nil {
+		return event, fmt.Errorf("marshal failed run data: %w", err)
+	}
+	event.Data = data
+	return event, nil
 }
 
 func (r *Runner) runMetadataWithFailure(
