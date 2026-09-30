@@ -49,14 +49,14 @@ func Load() (*Config, error) {
 		JWTSecret:             jwtSecret,
 		GitHubClientID:        EnvOrDefault("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:          EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
-		GitHubToken:           EnvOrDefault("GITHUB_TOKEN", ""),
+		GitHubToken:           EnvValueOrDefault("GITHUB_TOKEN", ""),
 		GitHubWebhookSecret:   EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
-		ForgeProvider:         strings.ToLower(EnvOrDefault("FORGE_PROVIDER", "github")),
-		ForgeGitRemote:        EnvOrDefault("FORGE_GIT_REMOTE", "origin"),
+		ForgeProvider:         strings.ToLower(EnvValueOrDefault("FORGE_PROVIDER", "github")),
+		ForgeGitRemote:        EnvValueOrDefault("FORGE_GIT_REMOTE", "origin"),
 		GiteaURL:              EnvOrDefault("GITEA_URL", ""),
-		GiteaToken:            EnvOrDefault("GITEA_TOKEN", ""),
-		GiteaUsername:         EnvOrDefault("GITEA_USERNAME", ""),
-		GiteaDraftTitlePrefix: EnvOrDefault("GITEA_DRAFT_TITLE_PREFIX", "WIP:"),
+		GiteaToken:            EnvValueOrDefault("GITEA_TOKEN", ""),
+		GiteaUsername:         EnvValueOrDefault("GITEA_USERNAME", ""),
+		GiteaDraftTitlePrefix: EnvValueOrDefault("GITEA_DRAFT_TITLE_PREFIX", "WIP:"),
 		LinearWebhookSecret:   EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
 		SlackSigningSecret:    EnvOrDefault("SLACK_SIGNING_SECRET", ""),
 		DiscordWebhookSecret:  EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),
@@ -69,6 +69,16 @@ func Load() (*Config, error) {
 		AgentVaultProject:     EnvOrDefault("AGENTVAULT_PROJECT", "dev-plane"),
 		SecretKeys:            EnvOrDefault("SECRET_ENCRYPTION_KEYS", ""),
 	}, nil
+}
+
+// EnvValueOrDefault reads and trims an environment value without changing its
+// internal or trailing characters. Use it for credentials, names, and other
+// non-URL configuration.
+func EnvValueOrDefault(key, defaultVal string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return defaultVal
 }
 
 // EnvOrDefault reads an environment variable, returning the default if unset or empty.
