@@ -201,6 +201,7 @@ test-packages: ## Run package tests only (no apps)
 		echo "$(BLUE)[test]$(RESET) $$pkg"; \
 		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; \
 	done
+
 test-portability: ## Verify Dev Plane against unbranded Go/TypeScript/Rust/Python repository fixtures
 	@echo "$(BLUE)[test]$(RESET) Running repository portability contract..."
 	cd apps/api && go test ./internal/tools -run 'PortableRepositoryFixtures|DetectPackageManager|DetectTestCommand|RunTestsRequiresDetectedOrExplicitCommand' -count=1
@@ -211,6 +212,7 @@ test-forge: ## Verify provider-neutral forge behavior and built-in adapter confo
 	cd packages/gateway && go test ./... -run 'ForgeContract|GiteaGateway' -count=1
 	cd packages/prfactory && go test ./... -run 'OpenForgeChange|WithForge|GitHubCompatibility' -count=1
 	cd apps/api && go test ./internal/config ./internal/server ./internal/handlers -run 'Forge|Gitea|MergePullRequest' -count=1
+	cd apps/worker && go test ./cmd/worker -run 'WorkerForgeSelection' -count=1
 
 test-publication: ## Verify branch publication transport and composition
 	@echo "$(BLUE)[test]$(RESET) Running branch publication contract..."
