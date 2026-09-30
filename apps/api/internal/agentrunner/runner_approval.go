@@ -12,6 +12,7 @@ import (
 	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 )
+
 func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
 	if r.db == nil {
 		return nil
