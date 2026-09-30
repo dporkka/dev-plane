@@ -27,8 +27,6 @@ type Check struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
 
-// Contract is the repository-owned definition of what must be verified before a
-// candidate can be trusted.
 // VerificationScope binds evidence to the exact affected-validation selection
 // that produced its checks, not merely to the repository-wide command set.
 type VerificationScope struct {
