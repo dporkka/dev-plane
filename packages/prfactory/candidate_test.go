@@ -1,12 +1,15 @@
 package prfactory
 
 import (
+	"encoding/json"
 	"context"
 	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+
+	"github.com/ai-dev-control-plane/models"
 )
 
 func TestLoadLatestVerificationEvidenceRequiresExactCandidateTree(t *testing.T) {
@@ -92,5 +95,149 @@ func TestLoadLatestVerificationEvidenceRejectsMissingEvidence(t *testing.T) {
 	factory := NewFactory(db, nil)
 	if _, err := factory.loadLatestVerificationEvidence(context.Background(), "run-1", "tree-a"); err == nil {
 		t.Fatal("loadLatestVerificationEvidence() error = nil, want missing evidence rejection")
+	}
+}
+
+
+func TestRecordPullRequestAllowsReviewWithoutVerificationEvidence(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, time.September, 30, 13, 30, 0, 0, time.UTC)
+	pr := testPullRequest(now)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO pull_requests").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").
+		WithArgs(now, pr.TaskID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	factory := NewFactory(db, nil)
+	if err := factory.recordPullRequest(context.Background(), pr); err != nil {
+		t.Fatalf("recordPullRequest() error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
+func TestRecordVerifiedPullRequestPersistsCandidateAndEvidenceAtomically(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, time.September, 30, 13, 30, 0, 0, time.UTC)
+	pr := testPullRequest(now)
+	workspaceID := "workspace-1"
+	candidate := verifiedCandidateRecord{
+		ID:            "candidate-1",
+		PullRequestID: pr.ID,
+		TaskID:        pr.TaskID,
+		RunID:         "run-1",
+		WorkspaceID:   &workspaceID,
+		RepositoryID:  pr.RepoID,
+		CommitSHA:     "commit-a",
+		TreeHash:      "tree-a",
+		Branch:        pr.Branch,
+		CreatedAt:     now,
+	}
+	evidence := &verificationEvidenceRecord{
+		ID:                "evidence-1",
+		CandidateID:       candidate.ID,
+		TreeHash:          "tree-a",
+		ContractHash:      "contract-a",
+		EnvironmentDigest: "env-a",
+		RunnerIdentity:    "runtime:runner-1",
+		Checks:            json.RawMessage(`[{"id":"unit","passed":true,"exit_code":0}]`),
+		StartedAt:         now.Add(-time.Minute),
+		CompletedAt:       now,
+	}
+
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO pull_requests").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO change_candidates").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO verification_evidence").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").
+		WithArgs(now, pr.TaskID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	factory := NewFactory(db, nil)
+	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence); err != nil {
+		t.Fatalf("recordVerifiedPullRequest() error: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
+func TestRecordVerifiedPullRequestRejectsTreeMismatchBeforeTransaction(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	defer db.Close()
+
+	now := time.Date(2026, time.September, 30, 13, 30, 0, 0, time.UTC)
+	pr := testPullRequest(now)
+	candidate := verifiedCandidateRecord{
+		ID:            "candidate-1",
+		PullRequestID: pr.ID,
+		TaskID:        pr.TaskID,
+		RunID:         "run-1",
+		RepositoryID:  pr.RepoID,
+		CommitSHA:     "commit-a",
+		TreeHash:      "tree-current",
+		Branch:        pr.Branch,
+		CreatedAt:     now,
+	}
+	evidence := &verificationEvidenceRecord{
+		ID:                "evidence-1",
+		CandidateID:       candidate.ID,
+		TreeHash:          "tree-verified",
+		ContractHash:      "contract-a",
+		EnvironmentDigest: "env-a",
+		RunnerIdentity:    "runtime:runner-1",
+		Checks:            json.RawMessage(`[{"id":"unit","passed":true,"exit_code":0}]`),
+		StartedAt:         now.Add(-time.Minute),
+		CompletedAt:       now,
+	}
+
+	factory := NewFactory(db, nil)
+	if err := factory.recordVerifiedPullRequest(context.Background(), pr, candidate, evidence); err == nil {
+		t.Fatal("recordVerifiedPullRequest() error = nil, want tree mismatch rejection")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unexpected database activity: %v", err)
+	}
+}
+
+func testPullRequest(now time.Time) *models.PullRequest {
+	runID := "run-1"
+	return &models.PullRequest{
+		ID:         "pr-1",
+		TaskID:     "task-1",
+		RunID:      &runID,
+		RepoID:     "repo-1",
+		Number:     42,
+		Title:      "Verified change",
+		Body:       "body",
+		Branch:     "agent/task-1",
+		BaseBranch: "main",
+		URL:        "https://github.com/owner/repo/pull/42",
+		State:      models.PRStateOpen,
+		CreatedBy:  "user-1",
+		CreatedAt:  now,
+		UpdatedAt:  now,
 	}
 }
