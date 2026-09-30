@@ -139,7 +139,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		WithEventPublisher(publisher).
 		WithRuntimeProvider(provider, "local")
 
-	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved"}`)})
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
 	if err != nil {
 		t.Fatalf("HandleTaskApproved() error: %v", err)
 	}
@@ -152,12 +152,20 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		t.Fatalf("task status/workspace = %q/%q, want running/non-empty", taskStatus, workspaceID)
 	}
 
-	var runID, runStatus string
-	if err := db.QueryRow(`SELECT id, status FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runID, &runStatus); err != nil {
+	var runID, runStatus, runMetadata string
+	if err := db.QueryRow(`SELECT id, status, metadata FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runID, &runStatus, &runMetadata); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
 	if runID == "" || runStatus != "queued" {
 		t.Fatalf("run id/status = %q/%q, want non-empty/queued", runID, runStatus)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(runMetadata), &metadata); err != nil {
+		t.Fatalf("unmarshal run metadata: %v", err)
+	}
+	admission, ok := metadata["admission"].(map[string]any)
+	if !ok || admission["policy"] != "task-readiness-v1" {
+		t.Fatalf("run metadata admission = %+v", metadata["admission"])
 	}
 	if publisher.subject != events.RunTriggered {
 		t.Fatalf("published subject = %q, want %s", publisher.subject, events.RunTriggered)
