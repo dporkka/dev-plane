@@ -257,6 +257,10 @@ func TestVerifyCompletionRequiresRevisionOnEvidenceForRevisionBoundCapsule(t *te
 func TestBuildTaskCapsuleCapturesSubjectRevision(t *testing.T) {
 	manifest := Manifest{
 		MaxParallel: 1,
+		Capacity: Capacity{
+			CPU:      1,
+			MemoryMB: 1,
+		},
 		Tasks: []Task{
 			{ID: "task-1", Owns: []string{"apps/api"}},
 		},
