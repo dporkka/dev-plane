@@ -203,3 +203,49 @@ risk:
 		t.Fatalf("ParseConfigYAML(unknown) error = %v, want strict unknown-field error", err)
 	}
 }
+
+
+func TestConfigValidateAcceptsBrowserVerificationProfile(t *testing.T) {
+	cfg := validConfig()
+	cfg.Verification["browser"] = VerificationProfile{
+		Browser: &BrowserVerificationProfile{
+			Command:       "pnpm exec playwright test tests/e2e/checkout.spec.ts",
+			ReportPath:    "artifacts/browser/report.json",
+			ArtifactPaths: []string{"artifacts/browser/checkout.png", "artifacts/browser/trace.zip"},
+		},
+	}
+
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+}
+
+func TestConfigValidateRejectsVerificationProfileWithCommandAndBrowser(t *testing.T) {
+	cfg := validConfig()
+	cfg.Verification["ambiguous"] = VerificationProfile{
+		Command: "make verify",
+		Browser: &BrowserVerificationProfile{
+			Command: "pnpm exec playwright test",
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "exactly one") {
+		t.Fatalf("Validate() error = %v, want exactly-one verification mode error", err)
+	}
+}
+
+func TestConfigValidateRejectsBrowserArtifactEscapingRepository(t *testing.T) {
+	cfg := validConfig()
+	cfg.Verification["browser"] = VerificationProfile{
+		Browser: &BrowserVerificationProfile{
+			Command:       "pnpm exec playwright test",
+			ArtifactPaths: []string{"../outside/trace.zip"},
+		},
+	}
+
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "repository-relative") {
+		t.Fatalf("Validate() error = %v, want repository-relative artifact path error", err)
+	}
+}
