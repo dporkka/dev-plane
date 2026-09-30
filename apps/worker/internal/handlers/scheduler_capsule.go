@@ -37,13 +37,13 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 	var (
 		storedTaskID string
 		repositoryID string
-		title string
-		rawMetadata string
-		workspaceID sql.NullString
-		agentRole string
-		model sql.NullString
-		provider sql.NullString
-		runStatus string
+		title        string
+		rawMetadata  string
+		workspaceID  sql.NullString
+		agentRole    string
+		model        sql.NullString
+		provider     sql.NullString
+		runStatus    string
 	)
 	err := a.db.QueryRowContext(ctx, `
 		SELECT t.id, t.repository_id, t.title, COALESCE(t.metadata, '{}'),
@@ -111,18 +111,18 @@ func (a *SchedulerAdmission) BuildAdmittedTaskCapsule(
 	}
 
 	return scheduler.TaskCapsule{
-		Version: scheduler.TaskCapsuleVersion,
-		TaskID: taskID,
+		Version:     scheduler.TaskCapsuleVersion,
+		TaskID:      taskID,
 		WorkspaceID: strings.TrimSpace(workspaceID.String),
 		Agent: scheduler.AgentIdentity{
-			ID: runID,
-			Role: strings.TrimSpace(agentRole),
+			ID:       runID,
+			Role:     strings.TrimSpace(agentRole),
 			Provider: strings.TrimSpace(provider.String),
-			Model: strings.TrimSpace(model.String),
+			Model:    strings.TrimSpace(model.String),
 		},
-		Objective: strings.TrimSpace(title),
-		DependsOn: dependsOn,
-		Leases: leases,
+		Objective:        strings.TrimSpace(title),
+		DependsOn:        dependsOn,
+		Leases:           leases,
 		RequiredEvidence: required,
 	}, nil
 }
@@ -146,7 +146,6 @@ func normalizeCapsuleEvidenceRequirements(values []string) ([]string, error) {
 	}
 	return out, nil
 }
-
 
 func (a *SchedulerAdmission) requiredEvidenceForRepository(ctx context.Context, repositoryID string) ([]string, error) {
 	var testCommand, lintCommand, typecheckCommand, buildCommand sql.NullString
