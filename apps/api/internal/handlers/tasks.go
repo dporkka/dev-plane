@@ -14,6 +14,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/readiness"
 )
 
 // Task represents a task record.
@@ -401,7 +402,7 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 			Status: "approved",
 			Data: mustRawMessage(map[string]any{
 				"admission": map[string]any{
-					"policy":    runAdmissionPolicyVersion,
+					"policy":    readiness.AdmissionPolicyVersion,
 					"readiness": readinessReport,
 				},
 			}),
