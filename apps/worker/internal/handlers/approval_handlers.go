@@ -8,8 +8,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
