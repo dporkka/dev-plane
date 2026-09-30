@@ -399,6 +399,12 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 		data, _ := json.Marshal(events.TaskEvent{
 			TaskID: id,
 			Status: "approved",
+			Data: mustRawMessage(map[string]any{
+				"admission": map[string]any{
+					"policy":    runAdmissionPolicyVersion,
+					"readiness": readinessReport,
+				},
+			}),
 		})
 		if pubErr := h.eventBus.Publish(events.TaskApproved, data); pubErr != nil {
 			h.logger.Warn("failed to publish task approved event", "task_id", id, "error", pubErr)
