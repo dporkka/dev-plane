@@ -34,6 +34,7 @@ type Evaluation struct {
 	Provider              string
 	PromptVersion         string
 	SkillVersion          string
+	Strategy              string
 	Metadata              string
 }
 
@@ -86,10 +87,10 @@ func (l *Ledger) Record(ctx context.Context, evaluation Evaluation) error {
 			agent_compute_seconds, total_tokens, total_cost, tests_passed,
 			tests_failed, review_findings, human_change_lines,
 			reverted_within_7d, production_regression, model, provider,
-			prompt_version, skill_version, metadata
+			prompt_version, skill_version, strategy, metadata
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-			$14, $15, $16, $17, $18, $19, $20, $21, $22, $23
+			$14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24
 		)
 	`,
 		evaluation.ID,
@@ -114,6 +115,7 @@ func (l *Ledger) Record(ctx context.Context, evaluation Evaluation) error {
 		nullableString(evaluation.Provider),
 		nullableString(evaluation.PromptVersion),
 		nullableString(evaluation.SkillVersion),
+		nullableString(evaluation.Strategy),
 		evaluation.Metadata,
 	)
 	if err != nil {
@@ -150,7 +152,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 	var evaluations []Evaluation
 	for rows.Next() {
 		var evaluation Evaluation
-		var agentRunID, model, provider, promptVersion, skillVersion sql.NullString
+		var agentRunID, model, provider, promptVersion, skillVersion, strategy sql.NullString
 
 		if err := rows.Scan(
 			&evaluation.ID,
@@ -175,6 +177,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 			&provider,
 			&promptVersion,
 			&skillVersion,
+			&strategy,
 			&evaluation.Metadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan task evaluation: %w", err)
@@ -185,6 +188,7 @@ func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, erro
 		evaluation.Provider = provider.String
 		evaluation.PromptVersion = promptVersion.String
 		evaluation.SkillVersion = skillVersion.String
+		evaluation.Strategy = strategy.String
 		evaluations = append(evaluations, evaluation)
 	}
 	if err := rows.Err(); err != nil {
@@ -241,6 +245,24 @@ func Summarize(evaluations []Evaluation) Summary {
 	}
 
 	return summary
+}
+
+
+func SummarizeByStrategy(evaluations []Evaluation) map[string]Summary {
+	grouped := make(map[string][]Evaluation)
+	for _, evaluation := range evaluations {
+		strategy := strings.TrimSpace(evaluation.Strategy)
+		if strategy == "" {
+			strategy = "unspecified"
+		}
+		grouped[strategy] = append(grouped[strategy], evaluation)
+	}
+
+	summaries := make(map[string]Summary, len(grouped))
+	for strategy, strategyEvaluations := range grouped {
+		summaries[strategy] = Summarize(strategyEvaluations)
+	}
+	return summaries
 }
 
 func validateEvaluation(evaluation Evaluation) error {
