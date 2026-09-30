@@ -149,5 +149,6 @@ Do not expose internal implementation structures merely to make extension conven
 See:
 
 - [Runtime Providers](docs/runtime-providers.md)
+- [Activity Sinks](docs/activity-sinks.md)
 - [Contributing](CONTRIBUTING.md)
 - [Maintainer Portfolio Integration Example](docs/platform-convergence.md)
