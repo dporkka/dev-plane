@@ -68,7 +68,7 @@ Not every integration seam is equally mature. Treat the following status as arch
 | Remote runtime transport | Public runner HTTP adapter | Keep semantics aligned with `runtimes.Provider` |
 | Model routing | Interface exists inside the API application | Experimental; do not treat as a stable external plugin API yet |
 | Forge operations | Adapters exist and are evolving | Experimental until a provider-neutral public contract is explicitly versioned |
-| Event/context sinks | Optional integrations exist | Experimental; core execution must not depend on them |
+| Lifecycle activity sinks | Public `packages/activity.Sink` | Initial provider-neutral contract; core execution must not depend on delivery |
 | Secrets | Multiple provider concepts exist | Experimental public boundary |
 
 When an experimental seam becomes stable, it should gain:
