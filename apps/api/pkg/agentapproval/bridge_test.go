@@ -83,6 +83,14 @@ func TestBridgeCreatesIdempotentApprovalFromRuntimeEvent(t *testing.T) {
 	if publisher.count != 1 || publisher.subject != events.ApprovalRequested {
 		t.Fatalf("publisher = count:%d subject:%q", publisher.count, publisher.subject)
 	}
+
+	var runStatus string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus); err != nil {
+		t.Fatalf("load run status: %v", err)
+	}
+	if runStatus != "paused" {
+		t.Fatalf("run status = %q, want paused", runStatus)
+	}
 }
 
 func TestBridgeIgnoresNonApprovalEvents(t *testing.T) {
