@@ -19,6 +19,8 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "inspect":
+		return runInspect(args[1:])
 	case "login":
 		return runLogin(args[1:])
 	case "tasks":
@@ -71,6 +73,7 @@ func printUsage() {
 	fmt.Println(`dev-plane CLI
 
 Usage:
+  dev-plane inspect [--path=<repo>] [--json]
   dev-plane login --base-url=<url>
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
