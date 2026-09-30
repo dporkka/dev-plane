@@ -24,6 +24,7 @@ type Runtime interface {
 
 type EvidenceStore interface {
 	PutEvidenceBundle(ctx context.Context, bundle repoprotocol.EvidenceBundle) error
+	PutWorkItem(ctx context.Context, item repoprotocol.WorkItem) error
 }
 
 type Request struct {
@@ -36,6 +37,7 @@ type Request struct {
 type Result struct {
 	Evidence     repoprotocol.EvidenceBundle
 	PendingGates []string
+	NextState    repoprotocol.WorkState
 }
 
 type Verifier struct {
@@ -131,6 +133,18 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 			return Result{}, fmt.Errorf("persist verification evidence: %w", err)
 		}
 	}
+
+	nextState := repoprotocol.WorkReadyToLand
+	if len(result.PendingGates) > 0 {
+		nextState = repoprotocol.WorkReviewing
+	}
+	req.WorkItem.State = nextState
+	req.WorkItem.ClaimedBy = ""
+	req.WorkItem.LeaseUntil = nil
+	if err := v.store.PutWorkItem(ctx, req.WorkItem); err != nil {
+		return Result{}, fmt.Errorf("persist post-verification work state: %w", err)
+	}
+	result.NextState = nextState
 	return result, nil
 }
 
