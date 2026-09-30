@@ -42,8 +42,8 @@ type Config struct {
 
 // Provider adapts Codex app-server to the provider-neutral agent runtime contract.
 type Provider struct {
-	client            RPCClient
-	config            Config
+	client           RPCClient
+	config           Config
 	pendingApprovals approvalRequestStore
 }
 
