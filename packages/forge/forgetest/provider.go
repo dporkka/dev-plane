@@ -43,7 +43,7 @@ func (p *Provider) OpenChange(_ context.Context, _ forge.Credential, repository 
 		Number:       number,
 		Title:        req.Title,
 		Body:         req.Body,
-		URL:          fmt.Sprintf("https://forge.invalid/%s/%s/changes/%d", repository.Owner, repository.Name, number),
+		URL:          fmt.Sprintf("https://forge.invalid/%s/%s/changes/%d", repository.Namespace, repository.Name, number),
 		State:        forge.ChangeStateOpen,
 		Head:         req.Head,
 		Base:         req.Base,
