@@ -1,7 +1,7 @@
-// Package prfactory creates pull requests for completed agent tasks.
+// Package prfactory creates code-review requests for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive change descriptions and publish them through a forge provider.
 package prfactory
 
 import (
@@ -18,16 +18,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
-
+	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
 )
-
-type githubPRCreator interface {
-	CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr gateway.NewPR) (*gateway.GitHubPR, error)
-}
 
 // shortID returns the first n bytes of id, or the full id if shorter.
 func shortID(id string, n int) string {
@@ -39,10 +34,11 @@ func shortID(id string, n int) string {
 
 // Factory creates pull requests for completed tasks.
 type Factory struct {
-	db          *sql.DB
-	logger      *slog.Logger
-	github      githubPRCreator
-	githubToken string
+	db              *sql.DB
+	logger          *slog.Logger
+	forgeProvider   forge.Provider
+	forgeCredential forge.Credential
+	gitPushToken    string
 }
 
 // NewFactory creates a PR factory.
@@ -50,30 +46,46 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 	f := &Factory{
-		db:          db,
-		logger:      logger,
-		githubToken: strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
+		db:              db,
+		logger:          logger,
+		forgeCredential: forge.Credential{Token: token},
+		gitPushToken:    token,
 	}
-	if f.githubToken != "" {
-		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+	if token != "" {
+		f.forgeProvider = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
 	return f
 }
 
-// WithGitHubGateway adds a GitHub gateway for creating actual PRs.
+// WithForgeProvider configures the provider used to open code change requests.
+func (f *Factory) WithForgeProvider(provider forge.Provider) *Factory {
+	f.forgeProvider = provider
+	return f
+}
+
+// WithForgeCredential configures the API credential passed to the forge provider.
+func (f *Factory) WithForgeCredential(token string) *Factory {
+	f.forgeCredential = forge.Credential{Token: strings.TrimSpace(token)}
+	return f
+}
+
+// WithGitHubGateway is a compatibility shim that configures GitHub as the forge provider.
 func (f *Factory) WithGitHubGateway(gh *gateway.GitHubGateway) *Factory {
-	f.github = gh
-	return f
+	return f.WithForgeProvider(gh)
 }
 
-// WithGitHubToken configures the token used for branch pushes and GitHub PR creation.
+// WithGitHubToken is a compatibility shim for existing callers. It configures
+// both forge API authentication and the existing Git-over-HTTPS push helper.
 func (f *Factory) WithGitHubToken(token string) *Factory {
-	f.githubToken = strings.TrimSpace(token)
+	token = strings.TrimSpace(token)
+	f.forgeCredential = forge.Credential{Token: token}
+	f.gitPushToken = token
 	return f
 }
 
-// CreatePullRequest opens a GitHub PR for completed task changes.
+// CreatePullRequest opens a forge-backed review request for completed task changes.
 //
 // Steps:
 //  1. Load task, workspace, agent run from DB
@@ -81,7 +93,7 @@ func (f *Factory) WithGitHubToken(token string) *Factory {
 //  3. Get git diff and review report
 //  4. Build comprehensive PR body
 //  5. Push branch to origin (if not already pushed)
-//  6. Create PR via GitHub API
+//  6. Open a change request through the configured forge provider
 //  7. Save PR record in DB
 //  8. Update task status to "pr_created"
 //  9. Publish pr.created event
@@ -169,9 +181,9 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.createGitHubPR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.openForgeChange(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
-		return nil, fmt.Errorf("create github pull request: %w", err)
+		return nil, fmt.Errorf("open forge change: %w", err)
 	}
 
 	// 8. Create PR record
@@ -185,7 +197,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		Body:       prBody,
 		Branch:     workspaceBranch,
 		BaseBranch: branch,
-		URL:        created.HTMLURL,
+		URL:        created.URL,
 		State:      models.PRStateOpen,
 		Draft:      draft,
 		CreatedBy:  task.CreatedBy,
@@ -373,7 +385,7 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 
 	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "push", "origin", branch)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cleanup, err := configureGitAskPass(cmd, f.githubToken)
+	cleanup, err := configureGitAskPass(cmd, f.gitPushToken)
 	if err != nil {
 		return err
 	}
@@ -386,15 +398,18 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 	return nil
 }
 
-// createGitHubPR creates a PR via the GitHub API.
-func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, head, base string, draft bool) (*gateway.GitHubPR, error) {
-	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured")
+// openForgeChange opens a review request through the provider-neutral forge contract.
+func (f *Factory) openForgeChange(ctx context.Context, owner, name, title, body, head, base string, draft bool) (*forge.Change, error) {
+	if f.forgeProvider == nil {
+		return nil, fmt.Errorf("forge provider is not configured")
 	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
+	if strings.TrimSpace(f.forgeCredential.Token) == "" {
+		return nil, fmt.Errorf("forge credential is not configured")
 	}
-	return f.github.CreatePR(ctx, &oauth2.Token{AccessToken: f.githubToken, TokenType: "Bearer"}, owner, name, gateway.NewPR{
+	return f.forgeProvider.OpenChange(ctx, f.forgeCredential, forge.Repository{
+		Owner: owner,
+		Name:  name,
+	}, forge.OpenChangeRequest{
 		Title: title,
 		Body:  body,
 		Head:  head,
