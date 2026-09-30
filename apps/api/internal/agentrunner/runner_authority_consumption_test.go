@@ -2,6 +2,7 @@ package agentrunner
 
 import (
 	"context"
+	"errors"
 	"database/sql"
 	"encoding/json"
 	"testing"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/execution"
+	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
 
