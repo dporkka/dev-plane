@@ -125,7 +125,7 @@ func createFailureProjectConfigTable(t *testing.T, db interface {
 }, testCommand string) {
 	t.Helper()
 	_, err := db.Exec(`
-		CREATE TABLE project_configs (
+		CREATE TABLE IF NOT EXISTS project_configs (
 			id TEXT PRIMARY KEY,
 			repository_id TEXT NOT NULL,
 			test_command TEXT,

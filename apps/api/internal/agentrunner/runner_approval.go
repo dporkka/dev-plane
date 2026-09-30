@@ -37,13 +37,38 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 		Stage:  "execution",
 		Detail: errorMsg,
 	})
-	return r.failRunClassified(ctx, runID, errorMsg, classification)
+	return r.failRunClassifiedWithData(ctx, runID, "", errorMsg, nil, classification)
+}
+
+func (r *Runner) failRunWithData(
+	ctx context.Context,
+	runID string,
+	taskID string,
+	errorMsg string,
+	data any,
+) error {
+	classification := runfailure.Classify(runfailure.Signal{
+		Stage:  "execution",
+		Detail: errorMsg,
+	})
+	return r.failRunClassifiedWithData(ctx, runID, taskID, errorMsg, data, classification)
 }
 
 func (r *Runner) failRunClassified(
 	ctx context.Context,
 	runID string,
 	errorMsg string,
+	classification runfailure.Classification,
+) error {
+	return r.failRunClassifiedWithData(ctx, runID, "", errorMsg, nil, classification)
+}
+
+func (r *Runner) failRunClassifiedWithData(
+	ctx context.Context,
+	runID string,
+	taskID string,
+	errorMsg string,
+	data any,
 	classification runfailure.Classification,
 ) error {
 	r.logger.Error(
@@ -74,24 +99,22 @@ func (r *Runner) failRunClassified(
 		"stage":       classification.Stage,
 		"source":      classification.Source,
 	}
-	now := time.Now().UTC()
+	payload := map[string]any{
+		"run_id":    runID,
+		"status":    models.AgentRunStatusFailed,
+		"error":     errorMsg,
+		"failure":   failurePayload,
+		"timestamp": time.Now().UTC(),
+	}
+	if taskID != "" {
+		payload["task_id"] = taskID
+	}
+	if data != nil {
+		payload["data"] = data
+	}
 
-	// Publish run.failed event with the same structured failure metadata that is
-	// persisted on the agent run.
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"failure":   failurePayload,
-		"timestamp": now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"failure":   failurePayload,
-		"timestamp": now,
-	})
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), payload)
+	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, payload)
 
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
 }
