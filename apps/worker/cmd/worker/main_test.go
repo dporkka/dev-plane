@@ -107,7 +107,6 @@ func TestStartHealthServer_Shutdown(t *testing.T) {
 	}
 }
 
-
 func TestInitRuntimeProvider_UsesNulangProviderWhenConfigured(t *testing.T) {
 	provider, name, err := initRuntimeProvider("nulang", "/tmp/workspaces", "http://localhost:8096", "internal-token")
 	if err != nil {
