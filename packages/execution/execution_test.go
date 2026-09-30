@@ -195,3 +195,37 @@ func TestRecoverEffectReplaysMatchingReceiptAndRejectsConflicts(t *testing.T) {
 		t.Fatalf("MergeReceipt(idempotent) = %#v, want %#v", same, receipt)
 	}
 }
+
+
+func TestMergeIntentIsIdempotentButRejectsChangedPayloadForSameOperation(t *testing.T) {
+	activation := Activation{RunID: "run-1", ID: "activation-1", Epoch: 1}
+	grant := Grant{Operation: "forge.merge", Resource: "repo:dporkka/dev-plane/pr:123", Revision: "abc123"}
+
+	first, err := NewEffectIntent(activation, 5, grant, []byte("authorized payload"))
+	if err != nil {
+		t.Fatalf("NewEffectIntent(first) error = %v", err)
+	}
+	same, err := NewEffectIntent(activation, 5, grant, []byte("authorized payload"))
+	if err != nil {
+		t.Fatalf("NewEffectIntent(same) error = %v", err)
+	}
+	merged, err := MergeIntent(first, same)
+	if err != nil {
+		t.Fatalf("MergeIntent(idempotent) error = %v", err)
+	}
+	if merged != first {
+		t.Fatalf("MergeIntent(idempotent) = %#v, want %#v", merged, first)
+	}
+
+	changed, err := NewEffectIntent(activation, 5, grant, []byte("different payload"))
+	if err != nil {
+		t.Fatalf("NewEffectIntent(changed) error = %v", err)
+	}
+	if changed.ID != first.ID {
+		t.Fatal("same logical ordinal must retain one operation ID so payload drift is detectable")
+	}
+	_, err = MergeIntent(first, changed)
+	if !errors.Is(err, ErrIntentConflict) {
+		t.Fatalf("MergeIntent(changed payload) error = %v, want %v", err, ErrIntentConflict)
+	}
+}
