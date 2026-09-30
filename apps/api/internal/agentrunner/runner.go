@@ -36,7 +36,8 @@ type Runner struct {
 	kernel   *capability.Kernel
 	eventBus *events.Bus
 	logger   *slog.Logger
-	runtimes map[string]runtimes.Provider
+	runtimes           map[string]runtimes.Provider
+	completionObserver RunCompletionObserver
 }
 
 // NewRunner creates an agent runner with all required dependencies.
@@ -326,9 +327,27 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		}
 	}
 
-	// 6. Run lint/typecheck/tests via test runner
+	// 6. Run the repository's canonical verification plan and bind the
+	// resulting evidence to the exact verified workspace tree.
 	r.logger.Info("running final checks", "run_id", runID)
-	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
+	finalChecks, err := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
+	if err != nil {
+		return r.failRun(ctx, runID, fmt.Sprintf("final verification: %v", err))
+	}
+	if !finalChecks.Passed {
+		return r.failRun(ctx, runID, "final verification failed")
+	}
+	if r.completionObserver != nil {
+		if err := r.completionObserver.RecordRunCompletion(
+			ctx,
+			runID,
+			finalChecks.SubjectRevision,
+			finalChecks.Evidence,
+		); err != nil {
+			return r.failRun(ctx, runID, fmt.Sprintf("completion evidence rejected: %v", err))
+		}
+	}
+	testResults := finalChecks.Results
 
 	// 7. Get git diff for summary
 	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
@@ -767,18 +786,16 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 }
 
 
-// runFinalChecks executes lint, typecheck, and tests via the test runner.
-func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath string) map[string]any {
-	results := make(map[string]any)
-
-	// Run tests
-	testOutput, testErr := r.executeTool(ctx, run, task, workspace, workspacePath, "run_tests", json.RawMessage(`{}`))
-	results["tests"] = map[string]any{
-		"output": string(testOutput),
-		"error":  fmt.Sprintf("%v", testErr),
-	}
-
-	return results
+// runFinalChecks executes the repository's canonical verification plan and
+// returns authority-bearing evidence for the exact workspace tree.
+func (r *Runner) runFinalChecks(
+	ctx context.Context,
+	run *models.AgentRun,
+	task *models.Task,
+	workspace *models.Workspace,
+	workspacePath string,
+) (finalCheckReport, error) {
+	return r.executeFinalChecks(ctx, run, task, workspace, workspacePath)
 }
 
 // buildSummary creates a human-readable summary of the run.
