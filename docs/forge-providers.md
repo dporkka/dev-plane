@@ -162,13 +162,63 @@ Credential.Token           -> OAuth bearer token
 
 The GitHub implementation runs the same forge conformance contract through a local `httptest` server, so the contract does not require a live GitHub account.
 
+### Gitea / Forgejo
+
+`gateway.GiteaGateway` implements the same `forge.Provider` contract against the Gitea-compatible API v1 surface used by Gitea and Forgejo deployments.
+
+The adapter translates:
+
+```text
+forge.Repository.Namespace -> Gitea owner / organization
+OpenChange                 -> POST /api/v1/repos/{owner}/{repo}/pulls
+MergeChange                -> POST /api/v1/repos/{owner}/{repo}/pulls/{index}/merge
+ExpectedHeadRevision       -> head_commit_id
+Credential.Token           -> Authorization: token <token>
+```
+
+Gitea-compatible pull-request creation does not expose a portable draft input field. The adapter therefore maps `Draft=true` to the instance's configured work-in-progress title prefix, defaulting to `WIP:`. Configure a different prefix with `GITEA_DRAFT_TITLE_PREFIX` when the instance has customized that setting.
+
+The merge endpoint returns an empty success response, so the adapter reads the pull request after merge to obtain the authoritative merged state and merge revision.
+
+Gitea repository ownership is one owner or organization segment. A nested neutral namespace such as `group/subgroup` is therefore rejected by this adapter rather than incorrectly flattening it. Other providers, such as a future GitLab adapter, may support nested namespaces.
+
+Configure the application with:
+
+```sh
+FORGE_PROVIDER=gitea        # or forgejo
+GITEA_URL=https://code.example.com
+GITEA_TOKEN=...
+GITEA_USERNAME=alice        # needed for Dev Plane-managed HTTPS git push
+FORGE_GIT_REMOTE=origin
+```
+
+`gateway.NewGiteaBranchPublisher` uses the username plus access token as the HTTPS Git credential while keeping that transport authentication separate from the forge API contract.
+
+The Gitea adapter runs `forge/contracttest` plus deterministic HTTP tests for draft translation, optimistic merge revision checks, provider error normalization, and HTTPS publication credential mapping.
+
+For an actual disposable Gitea/Forgejo instance, the integration-tag suite can open a draft review change and close it during test cleanup:
+
+```sh
+export GITEA_INTEGRATION_ALLOW_MUTATION=1
+export GITEA_URL=https://code.example.com
+export GITEA_TOKEN=...
+export GITEA_TEST_OWNER=acme
+export GITEA_TEST_REPO=widget
+export GITEA_TEST_HEAD=dev-plane-integration
+export GITEA_TEST_BASE=main   # optional; defaults to main
+
+make integration-test
+```
+
+The head branch must already exist. The mutation gate is intentionally explicit because this test creates a real review change even though cleanup closes it afterward.
+
 ## Adding another forge
 
 A new adapter should normally require no changes to `packages/forge`.
 
 Before changing the contract to accommodate a provider, determine whether the requested concept is genuinely shared by multiple forges. Provider-only metadata belongs in the adapter.
 
-A proposed GitLab or Gitea implementation should:
+A proposed additional forge implementation should:
 
 1. implement `forge.Provider`;
 2. pass `forge/contracttest`;

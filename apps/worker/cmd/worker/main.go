@@ -155,6 +155,10 @@ func main() {
 		WithRunAdmission(runAdmission).
 		WithReviewer(reviewService)
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
+	if err := configureApprovalForge(approvalHandler, database.DB, logger); err != nil {
+		logger.Error("failed to configure forge integration", "error", err)
+		os.Exit(1)
+	}
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
 

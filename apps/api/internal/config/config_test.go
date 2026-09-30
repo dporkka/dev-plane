@@ -137,3 +137,62 @@ func TestLoad_RejectsShortJWTSecret(t *testing.T) {
 		t.Fatal("expected error for short JWT_SECRET")
 	}
 }
+
+func TestLoad_ForgeDefaults(t *testing.T) {
+	setValidJWTSecret(t)
+	t.Setenv("FORGE_PROVIDER", "")
+	t.Setenv("FORGE_GIT_REMOTE", "")
+	t.Setenv("GITEA_URL", "")
+	t.Setenv("GITEA_TOKEN", "")
+	t.Setenv("GITEA_USERNAME", "")
+	t.Setenv("GITEA_DRAFT_TITLE_PREFIX", "")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	assertEqual(t, cfg.ForgeProvider, "github")
+	assertEqual(t, cfg.ForgeGitRemote, "origin")
+	assertEqual(t, cfg.GiteaURL, "")
+	assertEqual(t, cfg.GiteaToken, "")
+	assertEqual(t, cfg.GiteaUsername, "")
+	assertEqual(t, cfg.GiteaDraftTitlePrefix, "WIP:")
+}
+
+func TestLoad_GiteaForgeConfig(t *testing.T) {
+	setValidJWTSecret(t)
+	t.Setenv("FORGE_PROVIDER", " GITEA ")
+	t.Setenv("FORGE_GIT_REMOTE", " review ")
+	t.Setenv("GITEA_URL", " https://code.example.com/ ")
+	t.Setenv("GITEA_TOKEN", " secret-token ")
+	t.Setenv("GITEA_USERNAME", " alice ")
+	t.Setenv("GITEA_DRAFT_TITLE_PREFIX", " [Draft] ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	assertEqual(t, cfg.ForgeProvider, "gitea")
+	assertEqual(t, cfg.ForgeGitRemote, "review")
+	assertEqual(t, cfg.GiteaURL, "https://code.example.com")
+	assertEqual(t, cfg.GiteaToken, "secret-token")
+	assertEqual(t, cfg.GiteaUsername, "alice")
+	assertEqual(t, cfg.GiteaDraftTitlePrefix, "[Draft]")
+}
+
+func TestLoad_ForgeCredentialsPreserveTrailingSlash(t *testing.T) {
+	setValidJWTSecret(t)
+	t.Setenv("GITHUB_TOKEN", " github-secret/ ")
+	t.Setenv("GITEA_TOKEN", " gitea-secret/ ")
+	t.Setenv("GITEA_USERNAME", " alice/ ")
+	t.Setenv("GITEA_URL", " https://code.example.com/ ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() unexpected error: %v", err)
+	}
+	assertEqual(t, cfg.GitHubToken, "github-secret/")
+	assertEqual(t, cfg.GiteaToken, "gitea-secret/")
+	assertEqual(t, cfg.GiteaUsername, "alice/")
+	assertEqual(t, cfg.GiteaURL, "https://code.example.com")
+}

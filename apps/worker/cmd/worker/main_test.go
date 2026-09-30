@@ -104,3 +104,33 @@ func TestStartHealthServer_Shutdown(t *testing.T) {
 		t.Fatal("expected error after shutdown")
 	}
 }
+
+func TestWorkerForgeSelectionUsesGiteaEnvironment(t *testing.T) {
+	t.Setenv("FORGE_PROVIDER", "forgejo")
+	t.Setenv("FORGE_GIT_REMOTE", "review")
+	t.Setenv("GITEA_URL", "https://forge.example.com")
+	t.Setenv("GITEA_TOKEN", "secret-token")
+	t.Setenv("GITEA_USERNAME", "alice")
+	t.Setenv("GITEA_DRAFT_TITLE_PREFIX", "[Draft]")
+
+	selection, err := buildWorkerForgeSelection()
+	if err != nil {
+		t.Fatalf("buildWorkerForgeSelection() error: %v", err)
+	}
+	if selection == nil || selection.Provider.Name() != "gitea" {
+		t.Fatalf("selection = %#v, want Gitea-compatible provider", selection)
+	}
+	if selection.Credential.Token != "secret-token" {
+		t.Fatalf("credential = %q", selection.Credential.Token)
+	}
+	if selection.Remote != "review" {
+		t.Fatalf("remote = %q, want review", selection.Remote)
+	}
+}
+
+func TestWorkerForgeSelectionRejectsUnknownProvider(t *testing.T) {
+	t.Setenv("FORGE_PROVIDER", "unknown")
+	if _, err := buildWorkerForgeSelection(); err == nil {
+		t.Fatal("expected unsupported forge provider error")
+	}
+}

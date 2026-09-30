@@ -123,7 +123,13 @@ make db-reset
 | `SECRET_ENCRYPTION_KEYS` | `` | Comma-separated `key-id:base64-32-byte-key` specs |
 | `GITHUB_CLIENT_ID` | `` | GitHub OAuth app client ID |
 | `GITHUB_CLIENT_SECRET` | `` | GitHub OAuth app secret |
-| `GITHUB_TOKEN` | `` | Token used by PR factory for branch push/PR creation |
+| `FORGE_PROVIDER` | `github` | Review-change provider: `github`, `gitea`, or `forgejo` |
+| `FORGE_GIT_REMOTE` | `origin` | Git/Jujutsu remote used for branch publication |
+| `GITHUB_TOKEN` | `` | GitHub API/push credential when `FORGE_PROVIDER=github` |
+| `GITEA_URL` | `` | Gitea/Forgejo instance root, e.g. `https://code.example.com` |
+| `GITEA_TOKEN` | `` | Gitea/Forgejo API token and HTTPS Git password |
+| `GITEA_USERNAME` | `` | Username for authenticated Git-over-HTTPS publication |
+| `GITEA_DRAFT_TITLE_PREFIX` | `WIP:` | Instance work-in-progress title prefix |
 | `GITHUB_APP_PRIVATE_KEY` | `` | GitHub App private key (PEM) |
 | `GITHUB_APP_WEBHOOK_SECRET` | `` | Required; API rejects GitHub webhooks when unset |
 | `LINEAR_WEBHOOK_SECRET` | `` | Linear webhook signing secret |

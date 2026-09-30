@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
-	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -24,8 +22,6 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	events "github.com/ai-dev-control-plane/events"
-	"github.com/ai-dev-control-plane/gateway"
-	"github.com/ai-dev-control-plane/prfactory"
 )
 
 // Server is the HTTP server for the API service.
@@ -95,18 +91,16 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
-	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
-		githubForge := gateway.NewGitHubGateway(s.config.GitHubClientID, s.config.GitHubSecret)
-		changeCreator := prfactory.NewFactory(s.db, s.logger).
-			WithForgeProvider(githubForge).
-			WithForgeCredential(token).
-			WithBranchPublisher(gateway.NewGitHubBranchPublisher(nil, token))
+	forgeIntegration, err := buildForgeIntegration(s.config, s.db, s.logger)
+	if err != nil {
+		s.logger.Warn("forge integration disabled", "error", err)
+	} else if forgeIntegration != nil {
 		h = h.
-			WithForgeProvider(githubForge).
-			WithForgeCredential(token).
-			WithPullRequestCreator(changeCreator)
+			WithForgeProvider(forgeIntegration.provider).
+			WithForgeCredential(forgeIntegration.credential.Token).
+			WithPullRequestCreator(forgeIntegration.creator)
 	} else {
-		s.logger.Warn("GITHUB_TOKEN not configured; default GitHub forge operations are disabled")
+		s.logger.Warn("forge integration is not configured; review change operations are disabled")
 	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
