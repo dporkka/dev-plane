@@ -37,9 +37,9 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 		now := time.Now().UTC()
 		_, _ = r.db.ExecContext(ctx, `
 			UPDATE agent_runs
-			SET status = $1, error_message = $2, completed_at = $3, updated_at = $3
-			WHERE id = $4
-		`, models.AgentRunStatusFailed, errorMsg, now, runID)
+			SET status = $1, outcome = $2, error_message = $3, completed_at = $4, updated_at = $4
+			WHERE id = $5
+		`, models.AgentRunStatusFailed, models.OutcomeError, errorMsg, now, runID)
 	}
 
 	// Publish run.failed event
@@ -185,9 +185,9 @@ func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE agent_runs
-		SET status = $1, summary = $2, total_cost = $3,
-		    completed_at = $4, updated_at = $4
-		WHERE id = $5
-	`, status, summary, state.CostSoFar, now, runID)
+		SET status = $1, outcome = $2, summary = $3, total_cost = $4,
+		    completed_at = $5, updated_at = $5
+		WHERE id = $6
+	`, status, models.OutcomePassed, summary, state.CostSoFar, now, runID)
 	return err
 }
