@@ -115,8 +115,8 @@ export function buildExecutionGraph(runs: AgentRun[]): ExecutionGraph {
         depth,
         orphaned: Boolean(run.parent_run_id && !byID.has(run.parent_run_id)),
         position: {
-          x: depth * 320,
-          y: (rowIndex.get(run.id) ?? 0) * 180,
+          x: depth * 360,
+          y: (rowIndex.get(run.id) ?? 0) * 250,
         },
       };
     })
