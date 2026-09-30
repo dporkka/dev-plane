@@ -217,6 +217,35 @@ func (l *Ledger) RecordNextAttempt(ctx context.Context, evaluation Evaluation) (
 	return attempt, nil
 }
 
+
+// SetOutcomeByRun records the human disposition for an evaluated agent run.
+// Missing evaluations are tolerated so deployments can process pre-ledger tasks.
+func (l *Ledger) SetOutcomeByRun(ctx context.Context, agentRunID string, outcome Outcome) (bool, error) {
+	if l == nil || l.db == nil {
+		return false, errors.New("evaluation ledger database is required")
+	}
+	if strings.TrimSpace(agentRunID) == "" {
+		return false, errors.New("agent run ID is required")
+	}
+	if outcome != OutcomeAccepted && outcome != OutcomeRejected {
+		return false, fmt.Errorf("outcome %q is not a terminal disposition", outcome)
+	}
+
+	result, err := l.db.ExecContext(ctx, `
+		UPDATE task_evaluations
+		SET outcome = $1
+		WHERE agent_run_id = $2
+	`, outcome, agentRunID)
+	if err != nil {
+		return false, fmt.Errorf("update task evaluation outcome: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("check task evaluation outcome update: %w", err)
+	}
+	return rows > 0, nil
+}
+
 func (l *Ledger) GetTask(ctx context.Context, taskID string) ([]Evaluation, error) {
 	if l == nil || l.db == nil {
 		return nil, errors.New("evaluation ledger database is required")
