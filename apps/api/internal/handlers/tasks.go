@@ -397,7 +397,7 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var repositoryID, riskLevel, currentStatus string
-	err := h.db.QueryRowContext(ctx, `
+	err = h.db.QueryRowContext(ctx, `
 		SELECT repository_id, risk_level, status
 		FROM tasks
 		WHERE id = $1 AND deleted_at IS NULL
