@@ -121,7 +121,7 @@ func newTestEnv(t *testing.T) *testEnv {
 
 	// Purge streams so stale messages from prior failed/aborted runs are not
 	// redelivered to durable consumers created by this test.
-	for _, stream := range []string{events.StreamTasks, events.StreamAgents, events.StreamRuns, events.StreamWebhooks, events.StreamAudit} {
+	for _, stream := range []string{events.StreamTasks, events.StreamAgents, events.StreamRuns, events.StreamWebhooks, events.StreamAudit, events.StreamChangeSets} {
 		if err := eventBus.JetStream().PurgeStream(stream); err != nil {
 			t.Logf("purge stream %s: %v", stream, err)
 		}
