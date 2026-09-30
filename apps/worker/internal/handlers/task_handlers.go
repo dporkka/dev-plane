@@ -179,7 +179,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 
 	result, err := tx.Exec(`
 		UPDATE tasks
-		SET workspace_id = $1, updated_at = $2
+		SET workspace_id = $1, started_at = COALESCE(started_at, $2), updated_at = $2
 		WHERE id = $3 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
 	`, workspaceID, now, task.ID)
 	if err != nil {
@@ -253,7 +253,7 @@ type provisionedWorkspace struct {
 func (h *TaskHandler) claimApprovedTaskForInitialRun(ctx context.Context, taskID string, now time.Time) (bool, error) {
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE tasks
-		SET status = 'running', started_at = COALESCE(started_at, $1), updated_at = $1
+		SET status = 'running', updated_at = $1
 		WHERE id = $2 AND status = 'approved' AND workspace_id IS NULL AND deleted_at IS NULL
 	`, now, taskID)
 	if err != nil {
@@ -269,7 +269,7 @@ func (h *TaskHandler) claimApprovedTaskForInitialRun(ctx context.Context, taskID
 func (h *TaskHandler) releaseInitialRunClaim(ctx context.Context, taskID string) error {
 	_, err := h.db.ExecContext(ctx, `
 		UPDATE tasks
-		SET status = 'approved', started_at = NULL, updated_at = $1
+		SET status = 'approved', updated_at = $1
 		WHERE id = $2 AND status = 'running' AND workspace_id IS NULL AND deleted_at IS NULL
 	`, time.Now().UTC(), taskID)
 	if err != nil {
