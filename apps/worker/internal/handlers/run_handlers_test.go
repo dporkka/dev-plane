@@ -1193,7 +1193,6 @@ func TestHandleRunFailedDoesNotAutoRetryWithoutEventPublisher(t *testing.T) {
 	}
 }
 
-
 func TestHandleRunFailedRedeliveryDoesNotRegressAdvancedTaskStatus(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
