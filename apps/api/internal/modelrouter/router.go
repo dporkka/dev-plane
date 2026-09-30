@@ -19,6 +19,20 @@ const (
 	TaskTypeSimple       = "simple"       // simple/completion tasks
 )
 
+// Semantic model routes keep callers stable while provider/model catalogs evolve.
+const (
+	RouteUltraLowLatency    = "ultra_low_latency"
+	RouteCheapClassification = "cheap_classification"
+	RouteCheapSummary        = "cheap_summary"
+	RouteBalancedChat        = "balanced_chat"
+	RouteCodingFast          = "coding_fast"
+	RouteCodingDeep          = "coding_deep"
+	RouteAgenticLongHorizon  = "agentic_long_horizon"
+	RouteReasoningHigh       = "reasoning_high"
+	RouteSecurityReview      = "security_review"
+	RouteFallback            = "fallback"
+)
+
 // LatencyRequirement constants.
 const (
 	LatencyFast   = "fast"    // < 2s
@@ -38,6 +52,56 @@ const (
 type Message struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
+}
+
+type RoutePolicy struct {
+	TaskType   string
+	Difficulty string
+	LatencyReq string
+	CostCap    float64
+}
+
+var semanticRoutePolicies = map[string]RoutePolicy{
+	RouteUltraLowLatency:     {TaskType: TaskTypeSimple, Difficulty: DifficultyEasy, LatencyReq: LatencyFast},
+	RouteCheapClassification: {TaskType: TaskTypeSimple, Difficulty: DifficultyEasy, LatencyReq: LatencyFast, CostCap: 0.002},
+	RouteCheapSummary:        {TaskType: TaskTypeDocs, Difficulty: DifficultyEasy, LatencyReq: LatencyNormal, CostCap: 0.004},
+	RouteBalancedChat:        {TaskType: TaskTypeSimple, Difficulty: DifficultyMedium, LatencyReq: LatencyNormal},
+	RouteCodingFast:          {TaskType: TaskTypeCode, Difficulty: DifficultyMedium, LatencyReq: LatencyFast},
+	RouteCodingDeep:          {TaskType: TaskTypeCode, Difficulty: DifficultyHard, LatencyReq: LatencySlowOK},
+	RouteAgenticLongHorizon:  {TaskType: TaskTypeArchitecture, Difficulty: DifficultyHard, LatencyReq: LatencySlowOK},
+	RouteReasoningHigh:       {TaskType: TaskTypeArchitecture, Difficulty: DifficultyExpert, LatencyReq: LatencySlowOK},
+	RouteSecurityReview:      {TaskType: TaskTypeReview, Difficulty: DifficultyHard, LatencyReq: LatencyNormal},
+	RouteFallback:            {TaskType: TaskTypeCode, Difficulty: DifficultyMedium, LatencyReq: LatencyNormal},
+}
+
+func SemanticRoutePolicy(route string) (RoutePolicy, bool) {
+	policy, ok := semanticRoutePolicies[strings.TrimSpace(route)]
+	return policy, ok
+}
+
+func applySemanticRoute(req CallRequest) (CallRequest, error) {
+	route := strings.TrimSpace(req.Route)
+	if route == "" {
+		return req, nil
+	}
+	policy, ok := SemanticRoutePolicy(route)
+	if !ok {
+		return CallRequest{}, fmt.Errorf("unknown semantic route %q", route)
+	}
+	req.Route = route
+	if req.TaskType == "" {
+		req.TaskType = policy.TaskType
+	}
+	if req.Difficulty == "" {
+		req.Difficulty = policy.Difficulty
+	}
+	if req.LatencyReq == "" {
+		req.LatencyReq = policy.LatencyReq
+	}
+	if req.CostCap == 0 && policy.CostCap > 0 {
+		req.CostCap = policy.CostCap
+	}
+	return req, nil
 }
 
 // Router selects the best model/provider for a given task.
@@ -93,6 +157,7 @@ type ModelInfo struct {
 
 // CallRequest is a request to call a model.
 type CallRequest struct {
+	Route          string
 	TaskType       string
 	Difficulty     string
 	LatencyReq     string // fast, normal, slow_ok
@@ -192,6 +257,10 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 
 // RouteCall selects the best model and executes the call.
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
+	req, err := applySemanticRoute(req)
+	if err != nil {
+		return nil, err
+	}
 	modelInfo, err := r.SelectModel(ctx, req.TaskType, req.Difficulty, req.LatencyReq, req.ContextSize, req.CostCap)
 	if err != nil {
 		return nil, fmt.Errorf("select model: %w", err)
