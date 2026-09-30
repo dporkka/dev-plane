@@ -211,3 +211,33 @@ func withChangedCommand(contract Contract) Contract {
 	updated.Checks[0].Command = "go test -race ./..."
 	return updated
 }
+
+
+func TestArtifactValidateBindsEmbeddedContractToEvidenceHash(t *testing.T) {
+	contract := testContract()
+	evidence, err := NewEvidence(EvidenceInput{
+		TreeHash:          "tree-a",
+		Contract:          contract,
+		EnvironmentDigest: "env-a",
+		RunnerIdentity:    "runner-a",
+		Checks: []CheckResult{
+			{ID: "unit", Passed: true},
+			{ID: "lint", Passed: true},
+		},
+		StartedAt:   time.Date(2026, time.September, 30, 12, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2026, time.September, 30, 12, 1, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifact := Artifact{Version: ArtifactVersion, Contract: contract, Evidence: evidence}
+	if err := artifact.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v", err)
+	}
+
+	artifact.Contract.Checks[0].Command = "go test -race ./..."
+	if err := artifact.Validate(); err == nil || !strings.Contains(err.Error(), "contract hash") {
+		t.Fatalf("Validate() error = %v, want contract hash mismatch", err)
+	}
+}
