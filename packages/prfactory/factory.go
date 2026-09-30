@@ -12,8 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -22,6 +20,7 @@ import (
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
+	"github.com/ai-dev-control-plane/vcs"
 )
 
 // shortID returns the first n bytes of id, or the full id if shorter.
@@ -38,7 +37,8 @@ type Factory struct {
 	logger          *slog.Logger
 	forgeProvider   forge.Provider
 	forgeCredential forge.Credential
-	gitPushToken    string
+	branchPublisher vcs.Publisher
+	branchRemote    string
 }
 
 // NewFactory creates a PR factory.
@@ -47,14 +47,17 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 		logger = slog.Default()
 	}
 	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	basePublisher := vcs.Publisher(vcs.NewGitBackend(nil))
 	f := &Factory{
 		db:              db,
 		logger:          logger,
 		forgeCredential: forge.Credential{Token: token},
-		gitPushToken:    token,
+		branchPublisher: basePublisher,
+		branchRemote:    "origin",
 	}
 	if token != "" {
 		f.forgeProvider = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+		f.branchPublisher = gateway.NewGitHubBranchPublisher(basePublisher, token)
 	}
 	return f
 }
@@ -76,12 +79,33 @@ func (f *Factory) WithGitHubGateway(gh *gateway.GitHubGateway) *Factory {
 	return f.WithForgeProvider(gh)
 }
 
+// WithBranchPublisher configures the transport used to publish workspace refs.
+func (f *Factory) WithBranchPublisher(publisher vcs.Publisher) *Factory {
+	f.branchPublisher = publisher
+	return f
+}
+
+// WithBranchRemote configures the remote name used for branch publication.
+// Blank values leave the current remote unchanged.
+func (f *Factory) WithBranchRemote(remote string) *Factory {
+	if remote = strings.TrimSpace(remote); remote != "" {
+		f.branchRemote = remote
+	}
+	return f
+}
+
 // WithGitHubToken is a compatibility shim for existing callers. It configures
-// both forge API authentication and the existing Git-over-HTTPS push helper.
+// forge API authentication and GitHub HTTPS branch publication using the
+// default Git backend. Custom transports should use WithBranchPublisher.
 func (f *Factory) WithGitHubToken(token string) *Factory {
 	token = strings.TrimSpace(token)
 	f.forgeCredential = forge.Credential{Token: token}
-	f.gitPushToken = token
+	basePublisher := vcs.Publisher(vcs.NewGitBackend(nil))
+	if token == "" {
+		f.branchPublisher = basePublisher
+		return f
+	}
+	f.branchPublisher = gateway.NewGitHubBranchPublisher(basePublisher, token)
 	return f
 }
 
@@ -172,8 +196,8 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
 	if workspacePath != "" {
-		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
-			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
+		if err := f.publishBranch(ctx, workspacePath, workspaceBranch); err != nil {
+			return nil, fmt.Errorf("publish branch %s: %w", workspaceBranch, err)
 		}
 	}
 
@@ -371,28 +395,23 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 	return nil
 }
 
-// pushBranch pushes the workspace branch to origin.
-func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) error {
+// publishBranch delegates branch publication to the configured VCS publisher.
+func (f *Factory) publishBranch(ctx context.Context, workspacePath, branch string) error {
 	if strings.TrimSpace(workspacePath) == "" {
 		return fmt.Errorf("workspace path is required")
 	}
 	if strings.TrimSpace(branch) == "" {
 		return fmt.Errorf("branch is required")
 	}
-
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "push", "origin", branch)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cleanup, err := configureGitAskPass(cmd, f.gitPushToken)
-	if err != nil {
-		return err
+	if f.branchPublisher == nil {
+		return fmt.Errorf("branch publisher is not configured")
 	}
-	defer cleanup()
 
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git push failed: %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return f.branchPublisher.Publish(ctx, vcs.PublishRequest{
+		WorkspacePath: workspacePath,
+		Ref:           branch,
+		Remote:        f.branchRemote,
+	})
 }
 
 // openForgeChange opens a review request through the provider-neutral forge contract.
@@ -410,24 +429,6 @@ func (f *Factory) openForgeChange(ctx context.Context, owner, name, title, body,
 		Base:  base,
 		Draft: draft,
 	})
-}
-
-func configureGitAskPass(cmd *exec.Cmd, token string) (func(), error) {
-	if strings.TrimSpace(token) == "" {
-		return func() {}, nil
-	}
-	dir, err := os.MkdirTemp("", "dev-plane-git-askpass-*")
-	if err != nil {
-		return nil, fmt.Errorf("create git askpass dir: %w", err)
-	}
-	cleanup := func() { _ = os.RemoveAll(dir) }
-	script := filepath.Join(dir, "askpass.sh")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s\\n' x-access-token ;;\n*) printf '%s\\n' \"$GITHUB_TOKEN\" ;;\nesac\n"), 0o700); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("write git askpass helper: %w", err)
-	}
-	cmd.Env = append(cmd.Env, "GIT_ASKPASS="+script, "GITHUB_TOKEN="+token)
-	return cleanup, nil
 }
 
 // loadTask loads a task from the database.
