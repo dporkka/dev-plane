@@ -324,6 +324,20 @@ CREATE INDEX IF NOT EXISTS idx_verification_evidence_tree_hash ON verification_e
 CREATE INDEX IF NOT EXISTS idx_verification_evidence_completed_at ON verification_evidence(completed_at);
 
 -- =====================================================
+-- 8f. decision_packets
+-- =====================================================
+CREATE TABLE IF NOT EXISTS decision_packets (
+    id              UUID PRIMARY KEY,
+    candidate_id    UUID NOT NULL UNIQUE REFERENCES change_candidates(id) ON DELETE CASCADE,
+    digest          TEXT NOT NULL,
+    packet          JSONB NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_packets_digest ON decision_packets(digest);
+CREATE INDEX IF NOT EXISTS idx_decision_packets_created_at ON decision_packets(created_at);
+
+-- =====================================================
 -- 9. approvals
 -- =====================================================
 CREATE TABLE IF NOT EXISTS approvals (
