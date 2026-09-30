@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/oauth2"
 
+	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
@@ -221,7 +222,11 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		candidate.PullRequestID = pr.ID
 		evidence.ID = uuid.New().String()
 		evidence.CandidateID = candidate.ID
-		if err := f.recordVerifiedPullRequest(ctx, pr, *candidate, evidence); err != nil {
+		packet, err := buildDecisionPacket(task, report, pr, *candidate, evidence)
+		if err != nil {
+			return nil, fmt.Errorf("build decision packet: %w", err)
+		}
+		if err := f.recordVerifiedPullRequest(ctx, pr, *candidate, evidence, packet); err != nil {
 			return nil, fmt.Errorf("save verified pull request: %w", err)
 		}
 	} else if err := f.recordPullRequest(ctx, pr); err != nil {
@@ -388,6 +393,84 @@ type verificationEvidenceRecord struct {
 	CompletedAt       time.Time
 }
 
+type decisionPacketRecord struct {
+	ID          string
+	CandidateID string
+	Digest      string
+	Packet      json.RawMessage
+	CreatedAt   time.Time
+}
+
+func buildDecisionPacket(task *models.Task, report *reviewer.ReviewReport, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord) (decisionPacketRecord, error) {
+	if task == nil || report == nil || pr == nil || evidence == nil {
+		return decisionPacketRecord{}, errors.New("decision packet inputs are required")
+	}
+	findings, err := json.Marshal(report.Findings)
+	if err != nil {
+		return decisionPacketRecord{}, fmt.Errorf("marshal review findings: %w", err)
+	}
+	diffSummary, err := json.Marshal(report.DiffSummary)
+	if err != nil {
+		return decisionPacketRecord{}, fmt.Errorf("marshal diff summary: %w", err)
+	}
+	description := ""
+	if task.Description != nil {
+		description = *task.Description
+	}
+	packet, err := decisionpacket.New(decisionpacket.Input{
+		Candidate: decisionpacket.Candidate{
+			ID:            candidate.ID,
+			PullRequestID: pr.ID,
+			TaskID:        pr.TaskID,
+			RunID:         candidate.RunID,
+			RepositoryID:  pr.RepoID,
+			CommitSHA:     candidate.CommitSHA,
+			TreeHash:      candidate.TreeHash,
+			Branch:        candidate.Branch,
+		},
+		Task: decisionpacket.TaskSnapshot{
+			Title:                task.Title,
+			Description:          description,
+			AcceptanceCriteria:   task.AcceptanceCriteria,
+			ApprovalRequirements: task.ApprovalRequirements,
+		},
+		Review: decisionpacket.ReviewSnapshot{
+			Summary:       report.Summary,
+			RiskLevel:     report.RiskLevel,
+			Approvable:    report.Approvable,
+			TestCoverage:  report.TestCoverage,
+			SecurityNotes: report.SecurityNotes,
+			Findings:      findings,
+			DiffSummary:   diffSummary,
+		},
+		Verification: decisionpacket.VerificationSnapshot{
+			ContractHash:      evidence.ContractHash,
+			EnvironmentDigest: evidence.EnvironmentDigest,
+			RunnerIdentity:    evidence.RunnerIdentity,
+			Checks:            evidence.Checks,
+		},
+		CreatedAt: candidate.CreatedAt,
+	})
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	digest, err := packet.Digest()
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	data, err := packet.Marshal()
+	if err != nil {
+		return decisionPacketRecord{}, err
+	}
+	return decisionPacketRecord{
+		ID:          uuid.New().String(),
+		CandidateID: candidate.ID,
+		Digest:      digest,
+		Packet:      data,
+		CreatedAt:   candidate.CreatedAt,
+	}, nil
+}
+
 func (f *Factory) loadLatestVerificationEvidence(ctx context.Context, runID, candidateTreeHash string) (*verificationEvidenceRecord, error) {
 	rows, err := f.db.QueryContext(ctx, `
 		SELECT tool_output
@@ -514,7 +597,7 @@ func (f *Factory) recordPullRequest(ctx context.Context, pr *models.PullRequest)
 	return nil
 }
 
-func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord) error {
+func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord, packet decisionPacketRecord) error {
 	if err := pr.Validate(); err != nil {
 		return fmt.Errorf("validate PR: %w", err)
 	}
@@ -526,6 +609,26 @@ func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.Pull
 	}
 	if candidate.TreeHash != evidence.TreeHash {
 		return fmt.Errorf("candidate tree does not match verification evidence")
+	}
+	if packet.CandidateID != candidate.ID || strings.TrimSpace(packet.ID) == "" {
+		return fmt.Errorf("decision packet relationship is inconsistent")
+	}
+	var decision decisionpacket.Packet
+	if err := json.Unmarshal(packet.Packet, &decision); err != nil {
+		return fmt.Errorf("decode decision packet: %w", err)
+	}
+	if err := decision.Validate(); err != nil {
+		return fmt.Errorf("validate decision packet: %w", err)
+	}
+	if decision.Candidate.ID != candidate.ID || decision.Candidate.CommitSHA != candidate.CommitSHA || decision.Candidate.TreeHash != candidate.TreeHash {
+		return fmt.Errorf("decision packet candidate identity is stale")
+	}
+	digest, err := decision.Digest()
+	if err != nil {
+		return fmt.Errorf("digest decision packet: %w", err)
+	}
+	if digest != packet.Digest {
+		return fmt.Errorf("decision packet digest mismatch")
 	}
 
 	tx, err := f.db.BeginTx(ctx, nil)
@@ -570,6 +673,13 @@ func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.Pull
 		evidence.StartedAt, evidence.CompletedAt, candidate.CreatedAt,
 	); err != nil {
 		return fmt.Errorf("insert verification evidence: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO decision_packets (id, candidate_id, digest, packet, created_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, packet.ID, packet.CandidateID, packet.Digest, string(packet.Packet), packet.CreatedAt); err != nil {
+		return fmt.Errorf("insert decision packet: %w", err)
 	}
 
 	result, err := tx.ExecContext(ctx, `
