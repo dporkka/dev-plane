@@ -126,8 +126,10 @@ func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
 			}`),
 		},
 		commandResults: []*runtimes.CommandResult{
+			{Stdout: "tree-a\n", ExitCode: 0},
 			{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
 			{Stdout: "", ExitCode: 0},
+			{Stdout: "tree-a\n", ExitCode: 0},
 		},
 	}
 	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
@@ -146,21 +148,32 @@ func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeTool() error: %v", err)
 	}
-	if len(provider.commands) != 2 {
-		t.Fatalf("commands = %#v, want 2 contract checks", provider.commands)
+	if len(provider.commands) != 4 {
+		t.Fatalf("commands = %#v, want tree identity + 2 contract checks + tree identity", provider.commands)
 	}
-	if provider.commands[0].Command != "go test ./..." || provider.commands[0].Timeout.String() != "2m0s" {
-		t.Fatalf("first command = %#v, want contract unit check", provider.commands[0])
+	if !strings.Contains(provider.commands[0].Command, "git write-tree") {
+		t.Fatalf("first command = %q, want working-tree hash", provider.commands[0].Command)
 	}
-	if provider.commands[1].Command != "go vet ./..." || provider.commands[1].Timeout.String() != "1m0s" {
-		t.Fatalf("second command = %#v, want contract lint check", provider.commands[1])
+	if provider.commands[1].Command != "go test ./..." || provider.commands[1].Timeout.String() != "2m0s" {
+		t.Fatalf("second command = %#v, want contract unit check", provider.commands[1])
+	}
+	if provider.commands[2].Command != "go vet ./..." || provider.commands[2].Timeout.String() != "1m0s" {
+		t.Fatalf("third command = %#v, want contract lint check", provider.commands[2])
+	}
+	if !strings.Contains(provider.commands[3].Command, "git write-tree") {
+		t.Fatalf("fourth command = %q, want post-verification working-tree hash", provider.commands[3].Command)
 	}
 
 	var decoded struct {
-		Passed       bool `json:"passed"`
-		Failed       int `json:"failed"`
-		ContractHash string `json:"contract_hash"`
-		Checks       []struct {
+		Passed            bool      `json:"passed"`
+		Failed            int       `json:"failed"`
+		ContractHash      string    `json:"contract_hash"`
+		TreeHash          string    `json:"tree_hash"`
+		EnvironmentDigest string    `json:"environment_digest"`
+		RunnerIdentity    string    `json:"runner_identity"`
+		StartedAt         time.Time `json:"started_at"`
+		CompletedAt       time.Time `json:"completed_at"`
+		Checks            []struct {
 			ID     string `json:"id"`
 			Passed bool   `json:"passed"`
 		} `json:"checks"`
@@ -174,8 +187,43 @@ func TestRuntimeRunTestsUsesVerificationContractWhenPresent(t *testing.T) {
 	if decoded.ContractHash == "" {
 		t.Fatal("contract_hash is empty")
 	}
+	if decoded.TreeHash != "tree-a" {
+		t.Fatalf("tree_hash = %q, want tree-a", decoded.TreeHash)
+	}
+	if decoded.EnvironmentDigest == "" {
+		t.Fatal("environment_digest is empty")
+	}
+	if decoded.RunnerIdentity != "runtime:runtime-1" {
+		t.Fatalf("runner_identity = %q, want runtime:runtime-1", decoded.RunnerIdentity)
+	}
+	if decoded.StartedAt.IsZero() || decoded.CompletedAt.IsZero() || decoded.CompletedAt.Before(decoded.StartedAt) {
+		t.Fatalf("verification timestamps = %s..%s", decoded.StartedAt, decoded.CompletedAt)
+	}
 	if len(decoded.Checks) != 2 || decoded.Checks[0].ID != "unit" || decoded.Checks[1].ID != "lint" {
 		t.Fatalf("checks = %#v, want unit and lint", decoded.Checks)
+	}
+}
+
+func TestRuntimeRunTestsRejectsWorkspaceMutationDuringVerification(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			".devplane.json": []byte(`{
+				"version": 1,
+				"checks": [
+					{"id":"unit","command":"go test ./...","required":true}
+				]
+			}`),
+		},
+		commandResults: []*runtimes.CommandResult{
+			{Stdout: "tree-before\n", ExitCode: 0},
+			{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
+			{Stdout: "tree-after\n", ExitCode: 0},
+		},
+	}
+
+	_, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{}`))
+	if err == nil || !strings.Contains(err.Error(), "workspace changed during verification") {
+		t.Fatalf("runtimeRunTests() error = %v, want workspace mutation error", err)
 	}
 }
 
