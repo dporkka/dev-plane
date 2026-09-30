@@ -3,8 +3,8 @@ module github.com/ai-dev-control-plane/api
 go 1.26.0
 
 require (
-	github.com/ai-dev-control-plane/activity v0.0.0
 	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/ai-dev-control-plane/activity v0.0.0
 	github.com/ai-dev-control-plane/crypto v0.0.0
 	github.com/ai-dev-control-plane/events v0.0.0
 	github.com/ai-dev-control-plane/gateway v0.0.0
