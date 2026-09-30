@@ -61,8 +61,8 @@ func TestHandleAgentRuntimeApprovalApprovedRespondsProviderWithoutRequeue(t *tes
 	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
-	if runStatus != models.AgentRunStatusPaused {
-		t.Fatalf("run status = %q, want paused; provider turn is resumed directly", runStatus)
+	if runStatus != models.AgentRunStatusRunning {
+		t.Fatalf("run status = %q, want running after provider response", runStatus)
 	}
 }
 
@@ -100,8 +100,8 @@ func TestHandleAgentRuntimeApprovalRejectedDeniesSingleActionWithoutFailingTask(
 	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&runStatus); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
-	if taskStatus != "running" || runStatus != models.AgentRunStatusPaused {
-		t.Fatalf("task/run status = %q/%q, want running/paused", taskStatus, runStatus)
+	if taskStatus != "running" || runStatus != models.AgentRunStatusRunning {
+		t.Fatalf("task/run status = %q/%q, want running/running", taskStatus, runStatus)
 	}
 }
 
