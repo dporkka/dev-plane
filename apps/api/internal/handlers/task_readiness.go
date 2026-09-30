@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -48,10 +49,19 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	report, err := h.assessTaskReadiness(ctx, taskID, repositoryID, riskLevel)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	respond.JSON(w, http.StatusOK, report)
+}
+
+func (h *Handler) assessTaskReadiness(ctx context.Context, taskID, repositoryID, riskLevel string) (readiness.Report, error) {
 	input := readiness.TaskAssessmentInput{RiskLevel: riskLevel}
 	var implementationPlan, filesToChange, filesToCreate, acceptanceCriteria sql.NullString
 	var testPlan, rollbackPlan, requiredApprovals sql.NullString
-	err = h.db.QueryRowContext(ctx, `
+	err := h.db.QueryRowContext(ctx, `
 		SELECT implementation_plan, files_to_change, files_to_create, acceptance_criteria,
 		       test_plan, rollback_plan, required_approvals
 		FROM task_specs
@@ -66,35 +76,28 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 		&requiredApprovals,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		respond.JSON(w, http.StatusOK, readiness.AssessTask(input))
-		return
+		return readiness.AssessTask(input), nil
 	}
 	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
+		return readiness.Report{}, err
 	}
 
 	input.HasSpec = true
 	var decodeErr error
 	if input.ImplementationPlan, decodeErr = decodeReadinessList(implementationPlan); decodeErr != nil {
-		respond.Error(w, http.StatusInternalServerError, decodeErr)
-		return
+		return readiness.Report{}, decodeErr
 	}
 	if input.FilesToChange, decodeErr = decodeReadinessList(filesToChange); decodeErr != nil {
-		respond.Error(w, http.StatusInternalServerError, decodeErr)
-		return
+		return readiness.Report{}, decodeErr
 	}
 	if input.FilesToCreate, decodeErr = decodeReadinessList(filesToCreate); decodeErr != nil {
-		respond.Error(w, http.StatusInternalServerError, decodeErr)
-		return
+		return readiness.Report{}, decodeErr
 	}
 	if input.AcceptanceCriteria, decodeErr = decodeReadinessList(acceptanceCriteria); decodeErr != nil {
-		respond.Error(w, http.StatusInternalServerError, decodeErr)
-		return
+		return readiness.Report{}, decodeErr
 	}
 	if input.RequiredApprovals, decodeErr = decodeReadinessList(requiredApprovals); decodeErr != nil {
-		respond.Error(w, http.StatusInternalServerError, decodeErr)
-		return
+		return readiness.Report{}, decodeErr
 	}
 	if testPlan.Valid {
 		input.TestPlan = testPlan.String
@@ -113,8 +116,7 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 			LIMIT 1
 		`, repositoryID).Scan(&testCommand, &lintCommand, &typecheckCommand, &buildCommand)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
+			return readiness.Report{}, err
 		}
 		if testCommand.Valid {
 			input.TestCommand = testCommand.String
@@ -130,7 +132,7 @@ func (h *Handler) GetTaskReadiness(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	respond.JSON(w, http.StatusOK, readiness.AssessTask(input))
+	return readiness.AssessTask(input), nil
 }
 
 func decodeReadinessList(raw sql.NullString) ([]string, error) {
