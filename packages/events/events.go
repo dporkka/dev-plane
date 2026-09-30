@@ -62,6 +62,26 @@ const (
 	PRMerged  = "pr.merged"
 )
 
+// Change Set publication event subject constants.
+const (
+	ChangeSetPublishRequested      = "changesets.publish_requested"
+	ChangeSetPublicationStarted    = "changesets.publication_started"
+	ChangeSetPublicationCompleted  = "changesets.publication_completed"
+	ChangeSetPublicationBlocked    = "changesets.publication_blocked"
+)
+
+// ChangeSetPublicationEvent is the payload for coordinated publication events.
+type ChangeSetPublicationEvent struct {
+	ChangeSetID    string          `json:"change_set_id"`
+	ProjectID      string          `json:"project_id"`
+	ActorID        string          `json:"actor_id,omitempty"`
+	OrganizationID string          `json:"organization_id,omitempty"`
+	Status         string          `json:"status"`
+	CandidateID    string          `json:"candidate_id,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	Data           json.RawMessage `json:"data,omitempty"`
+}
+
 // Deploy event subject constants.
 const (
 	DeployTriggered = "deploy.triggered"
