@@ -167,27 +167,43 @@ func containsAny(value string, patterns ...string) bool {
 	return false
 }
 
+type RetryMode string
+
+const (
+	RetryModeSameEnvironment  RetryMode = "same_environment"
+	RetryModeFreshEnvironment RetryMode = "fresh_environment"
+)
+
 type AutoRetryDecision struct {
-	Retry       bool   `json:"retry"`
-	NextAttempt int    `json:"next_attempt,omitempty"`
-	Reason      string `json:"reason"`
+	Retry       bool      `json:"retry"`
+	Mode        RetryMode `json:"mode,omitempty"`
+	NextAttempt int       `json:"next_attempt,omitempty"`
+	Reason      string    `json:"reason"`
 }
 
-// DecideAutoRetry allows automatic retries only for failures explicitly marked
-// retryable with the same-environment retry disposition. Attempts are the
-// number of automatic retries already performed, not total executions.
+// DecideAutoRetry selects a bounded automatic recovery mode for classifications
+// that explicitly opt in to retry. Attempts are the number of automatic retries
+// already performed, not total executions.
 func DecideAutoRetry(classification Classification, attempts, maxAttempts int) AutoRetryDecision {
 	if !classification.Retryable {
 		return AutoRetryDecision{Reason: "not-retryable"}
 	}
-	if classification.Disposition != DispositionRetry {
-		return AutoRetryDecision{Reason: "manual-recovery-required"}
-	}
 	if maxAttempts <= 0 || attempts >= maxAttempts {
 		return AutoRetryDecision{Reason: "retry-budget-exhausted"}
 	}
+
+	var mode RetryMode
+	switch classification.Disposition {
+	case DispositionRetry:
+		mode = RetryModeSameEnvironment
+	case DispositionRetryFreshEnvironment:
+		mode = RetryModeFreshEnvironment
+	default:
+		return AutoRetryDecision{Reason: "manual-recovery-required"}
+	}
 	return AutoRetryDecision{
 		Retry:       true,
+		Mode:        mode,
 		NextAttempt: attempts + 1,
 		Reason:      "retryable",
 	}
