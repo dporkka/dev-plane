@@ -10,6 +10,7 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
+	"github.com/ai-dev-control-plane/verification"
 )
 
 type runtimeAttacher interface {
@@ -389,6 +390,17 @@ func runtimeRunTests(ctx context.Context, provider runtimes.Provider, sessionID 
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, fmt.Errorf("invalid input for run_tests: %w", err)
 	}
+
+	if req.Command == "" {
+		if contractData, err := provider.ReadFile(ctx, sessionID, ".devplane.json"); err == nil {
+			contract, err := verification.ParseContract(contractData)
+			if err != nil {
+				return nil, fmt.Errorf("verification contract: %w", err)
+			}
+			return runtimeRunVerificationContract(ctx, provider, sessionID, contract)
+		}
+	}
+
 	testCommand := req.Command
 	if testCommand == "" {
 		testCommand = runtimeDetectTestCommand(ctx, provider, sessionID)
@@ -419,6 +431,94 @@ func runtimeRunTests(ctx context.Context, provider runtimes.Provider, sessionID 
 		"duration_ms": int(result.Duration.Milliseconds()),
 		"output":      output,
 		"exit_code":   result.ExitCode,
+	})
+}
+
+type runtimeVerificationCheckResult struct {
+	ID         string `json:"id"`
+	Passed     bool   `json:"passed"`
+	ExitCode   int    `json:"exit_code"`
+	DurationMs int    `json:"duration_ms"`
+	Output     string `json:"output,omitempty"`
+}
+
+func runtimeRunVerificationContract(ctx context.Context, provider runtimes.Provider, sessionID string, contract verification.Contract) (json.RawMessage, error) {
+	contractHash, err := contract.Digest()
+	if err != nil {
+		return nil, err
+	}
+
+	results := make([]runtimeVerificationCheckResult, 0, len(contract.Checks))
+	failed := 0
+	requiredFailed := false
+	totalDurationMs := 0
+	var combinedOutput strings.Builder
+
+	for _, check := range contract.Checks {
+		if err := rejectDangerousRuntimeCommand(check.Command); err != nil {
+			return nil, fmt.Errorf("verification check %q: %w", check.ID, err)
+		}
+		timeoutSec := check.TimeoutSeconds
+		if timeoutSec <= 0 {
+			timeoutSec = 300
+		}
+		if timeoutSec > 600 {
+			timeoutSec = 600
+		}
+
+		result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
+			Command:     check.Command,
+			Timeout:     time.Duration(timeoutSec) * time.Second,
+			UnsafeShell: true,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("verification check %q: %w", check.ID, err)
+		}
+
+		output := truncateRuntimeString(result.Stdout+result.Stderr, 50000)
+		passed := result.ExitCode == 0
+		if !passed {
+			failed++
+			if check.Required {
+				requiredFailed = true
+			}
+		}
+		durationMs := int(result.Duration.Milliseconds())
+		totalDurationMs += durationMs
+		results = append(results, runtimeVerificationCheckResult{
+			ID:         check.ID,
+			Passed:     passed,
+			ExitCode:   result.ExitCode,
+			DurationMs: durationMs,
+			Output:     output,
+		})
+
+		if output != "" {
+			if combinedOutput.Len() > 0 {
+				combinedOutput.WriteString("\n")
+			}
+			combinedOutput.WriteString("[")
+			combinedOutput.WriteString(check.ID)
+			combinedOutput.WriteString("]\n")
+			combinedOutput.WriteString(output)
+		}
+	}
+
+	exitCode := 0
+	if requiredFailed {
+		exitCode = 1
+	}
+	return json.Marshal(map[string]any{
+		"passed":          !requiredFailed,
+		"total":           len(results),
+		"failed":          failed,
+		"skipped":         0,
+		"duration_ms":     totalDurationMs,
+		"output":          combinedOutput.String(),
+		"exit_code":       exitCode,
+		"contract_hash":   contractHash,
+		"source":          "verification_contract",
+		"checks":          results,
 	})
 }
 
