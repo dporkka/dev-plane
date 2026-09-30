@@ -10,8 +10,8 @@ import (
 
 type suspendedRunTestError struct{}
 
-func (suspendedRunTestError) Error() string       { return "external agent waiting for approval" }
-func (suspendedRunTestError) RunSuspended() bool  { return true }
+func (suspendedRunTestError) Error() string      { return "external agent waiting for approval" }
+func (suspendedRunTestError) RunSuspended() bool { return true }
 
 type suspendedRunExecutor struct {
 	runID string
