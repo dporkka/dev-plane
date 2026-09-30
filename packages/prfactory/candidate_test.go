@@ -52,6 +52,42 @@ func TestLoadLatestVerificationEvidenceRequiresExactCandidateTree(t *testing.T) 
 	}
 }
 
+func TestLoadLatestVerificationEvidenceSkipsNewerNonContractTestStep(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New() error: %v", err)
+	}
+	defer db.Close()
+
+	smoke := `{"passed":true,"total":1,"source":"explicit_test"}`
+	contract := `{
+		"source":"verification_contract",
+		"passed":true,
+		"tree_hash":"tree-a",
+		"contract_hash":"contract-a",
+		"environment_digest":"env-a",
+		"runner_identity":"runtime:runner-1",
+		"checks":[{"id":"unit","passed":true,"exit_code":0}],
+		"started_at":"2026-09-30T12:59:00Z",
+		"completed_at":"2026-09-30T13:00:00Z"
+	}`
+
+	mock.ExpectQuery("SELECT tool_output").
+		WithArgs("run-1").
+		WillReturnRows(sqlmock.NewRows([]string{"tool_output"}).
+			AddRow(smoke).
+			AddRow(contract))
+
+	factory := NewFactory(db, nil)
+	evidence, err := factory.loadLatestVerificationEvidence(context.Background(), "run-1", "tree-a")
+	if err != nil {
+		t.Fatalf("loadLatestVerificationEvidence() error: %v", err)
+	}
+	if evidence.ContractHash != "contract-a" || evidence.TreeHash != "tree-a" {
+		t.Fatalf("evidence = %#v", evidence)
+	}
+}
+
 func TestLoadLatestVerificationEvidenceRejectsStaleTree(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
