@@ -1,6 +1,7 @@
 package forge_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ai-dev-control-plane/forge"
@@ -23,7 +24,7 @@ func TestMemoryProviderRejectsInvalidMergeMethod(t *testing.T) {
 	provider := forgetest.NewProvider()
 
 	_, err := provider.MergeChange(
-		t.Context(),
+		context.Background(),
 		forge.Credential{Token: "test-token"},
 		forge.Repository{Namespace: "acme", Name: "widget"},
 		1,
