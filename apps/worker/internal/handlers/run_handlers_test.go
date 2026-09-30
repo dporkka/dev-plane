@@ -889,7 +889,6 @@ func contains(value, substr string) bool {
 	return strings.Contains(value, substr)
 }
 
-
 func TestHandleRunFailedSchedulesBoundedAutomaticRetry(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
@@ -935,7 +934,7 @@ func TestHandleRunFailedSchedulesBoundedAutomaticRetry(t *testing.T) {
 	}
 	var metadata struct {
 		Failure any `json:"failure"`
-		Retry struct {
+		Retry   struct {
 			OriginalRunID string                    `json:"original_run_id"`
 			AutoAttempt   int                       `json:"auto_attempt"`
 			Previous      runfailure.Classification `json:"previous_failure"`
@@ -1062,7 +1061,6 @@ func failedRunMessage(t *testing.T, runID, taskID string, classification runfail
 	}
 	return &nats.Msg{Data: event}
 }
-
 
 func TestHandleRunFailedAutomaticRetryIsIdempotentAcrossRedelivery(t *testing.T) {
 	db := setupRunHandlerDB(t)
