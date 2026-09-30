@@ -163,11 +163,11 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		prTitle = prTitle[:253] + "..."
 	}
 
-	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured; set GITHUB_TOKEN or inject a GitHub gateway")
+	if f.forgeProvider == nil {
+		return nil, fmt.Errorf("forge provider is not configured")
 	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
+	if strings.TrimSpace(f.forgeCredential.Token) == "" {
+		return nil, fmt.Errorf("forge credential is not configured")
 	}
 
 	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
