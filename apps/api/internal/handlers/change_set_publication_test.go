@@ -85,6 +85,52 @@ func expectAuthorizedSingleCandidateChangeSet(t *testing.T, mock sqlmock.Sqlmock
 	return
 }
 
+func TestGetChangeSetPublicationReturnsCheckpointProgress(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	now := time.Now().UTC()
+	decisionDigest, _ := decisionPacketFixture(t, "pr-1", "candidate-sha", "tree-a", now)
+	setDigest, setManifest := authorizedChangeSetManifestFixture(t, decisionDigest)
+
+	mock.ExpectQuery("SELECT id, project_id, name, description, status").
+		WithArgs("set-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "project_id", "name", "description", "status", "publication_status",
+			"publication_digest", "publication_manifest", "authorized_at", "authorized_by",
+			"created_by", "created_at", "updated_at",
+		}).AddRow(
+			"set-1", "project-1", "Release 1", nil, "authorized", "blocked",
+			setDigest, setManifest, now, testUserID, testUserID, now, now,
+		))
+	expectAuthorizeProject(mock, "project-1")
+	mock.ExpectQuery("SELECT cp.candidate_id, cp.ordinal, cp.status").
+		WithArgs("set-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"candidate_id", "ordinal", "status", "attempt_count", "merge_sha", "last_error",
+			"pull_request_id", "commit_sha", "task_id", "pr_state", "pr_number", "owner", "name",
+		}).AddRow(
+			"candidate-1", 0, "blocked", 2, nil, "merge conflict",
+			"pr-1", "candidate-sha", "task-1", "open", 42, "owner", "repo",
+		))
+
+	rec := httptest.NewRecorder()
+	h.GetChangeSetPublication(rec, newChangeSetRequest(
+		http.MethodGet, "/change-sets/set-1/publication", "id", "set-1", "",
+	))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "\"publication_status\":\"blocked\"") ||
+		!strings.Contains(rec.Body.String(), "\"attempt_count\":2") ||
+		!strings.Contains(rec.Body.String(), "merge conflict") {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
 func TestPublishChangeSet_ReconcilesRemoteMergedMemberAndCompletes(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
