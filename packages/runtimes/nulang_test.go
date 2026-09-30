@@ -88,12 +88,12 @@ func TestNulangCloudProviderReturnsRuntimeUsage(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(RuntimeUsage{
-			CPUMilliseconds:     1500,
-			MemoryMBSeconds:     8192,
-			StorageByteSeconds:  4096,
-			EgressBytes:         1024,
-			SnapshotBytes:       2048,
-			RuntimeCostUSD:      0.021,
+			CPUMilliseconds:    1500,
+			MemoryMBSeconds:    8192,
+			StorageByteSeconds: 4096,
+			EgressBytes:        1024,
+			SnapshotBytes:      2048,
+			RuntimeCostUSD:     0.021,
 		})
 	}))
 	defer server.Close()
