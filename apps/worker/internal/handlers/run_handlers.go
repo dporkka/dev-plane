@@ -20,6 +20,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/evaluation"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
 )
@@ -125,6 +126,9 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 	if err != nil {
 		return fmt.Errorf("review completed run %s: %w", event.RunID, err)
 	}
+	if err := h.recordPendingEvaluation(context.Background(), event, report); err != nil {
+		return fmt.Errorf("record pending evaluation for run %s: %w", event.RunID, err)
+	}
 	if h.eventBus != nil {
 		reviewCompletedEvent := map[string]interface{}{
 			"run_id":     event.RunID,
@@ -146,6 +150,98 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		"approvable", report.Approvable,
 	)
 	return ackMessage(msg)
+}
+
+
+func (h *RunHandler) recordPendingEvaluation(ctx context.Context, event events.AgentRunEvent, report *reviewer.ReviewReport) error {
+	if h.db == nil {
+		return errors.New("evaluation database is not configured")
+	}
+
+	var (
+		taskID           string
+		model            sql.NullString
+		provider         sql.NullString
+		metadata         sql.NullString
+		promptTokens     sql.NullInt64
+		completionTokens sql.NullInt64
+		totalCost        sql.NullFloat64
+		startedAt        sql.NullTime
+		completedAt      sql.NullTime
+	)
+	err := h.db.QueryRowContext(ctx, `
+		SELECT task_id, model, provider, prompt_tokens, completion_tokens,
+		       total_cost, started_at, completed_at, metadata
+		FROM agent_runs
+		WHERE id = $1
+	`, event.RunID).Scan(
+		&taskID,
+		&model,
+		&provider,
+		&promptTokens,
+		&completionTokens,
+		&totalCost,
+		&startedAt,
+		&completedAt,
+		&metadata,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("completed run %s not found", event.RunID)
+		}
+		return fmt.Errorf("load completed run telemetry: %w", err)
+	}
+	if event.TaskID != "" && event.TaskID != taskID {
+		return fmt.Errorf("completed run %s belongs to task %s, event referenced task %s", event.RunID, taskID, event.TaskID)
+	}
+
+	wallClockSeconds := 0
+	if startedAt.Valid && completedAt.Valid && !completedAt.Time.Before(startedAt.Time) {
+		wallClockSeconds = int(completedAt.Time.Sub(startedAt.Time).Seconds())
+	}
+
+	strategy := "dev-plane"
+	promptVersion := ""
+	skillVersion := ""
+	if metadata.Valid && strings.TrimSpace(metadata.String) != "" {
+		var values map[string]any
+		if err := json.Unmarshal([]byte(metadata.String), &values); err == nil {
+			if value, ok := values["evaluation_strategy"].(string); ok && strings.TrimSpace(value) != "" {
+				strategy = strings.TrimSpace(value)
+			}
+			if value, ok := values["prompt_version"].(string); ok {
+				promptVersion = strings.TrimSpace(value)
+			}
+			if value, ok := values["skill_version"].(string); ok {
+				skillVersion = strings.TrimSpace(value)
+			}
+		}
+	}
+
+	reviewFindings := 0
+	if report != nil {
+		reviewFindings = len(report.Findings)
+	}
+
+	ledger := evaluation.NewLedger(h.db)
+	_, err = ledger.RecordNextAttempt(ctx, evaluation.Evaluation{
+		TaskID:           taskID,
+		AgentRunID:       event.RunID,
+		Outcome:          evaluation.OutcomePending,
+		WallClockSeconds: wallClockSeconds,
+		TotalTokens:      int(promptTokens.Int64 + completionTokens.Int64),
+		TotalCost:        totalCost.Float64,
+		ReviewFindings:   reviewFindings,
+		Model:            model.String,
+		Provider:         provider.String,
+		PromptVersion:    promptVersion,
+		SkillVersion:     skillVersion,
+		Strategy:         strategy,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // HandleRunFailed processes agents.run.failed events.
