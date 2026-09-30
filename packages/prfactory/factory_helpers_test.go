@@ -220,7 +220,7 @@ func TestWithGitHubCompatibilityShims(t *testing.T) {
 	}
 }
 
-func TestGetRepoOwnerName(t *testing.T) {
+func TestGetRepoNamespaceName(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create mock db: %v", err)
@@ -232,12 +232,12 @@ func TestGetRepoOwnerName(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"full_name"}).AddRow("acme/app"))
 
 	factory := NewFactory(db, nil)
-	owner, name, err := factory.getRepoOwnerName(context.Background(), "repo-1")
+	namespace, name, err := factory.getRepoNamespaceName(context.Background(), "repo-1")
 	if err != nil {
-		t.Fatalf("getRepoOwnerName: %v", err)
+		t.Fatalf("getRepoNamespaceName: %v", err)
 	}
-	if owner != "acme" || name != "app" {
-		t.Errorf("owner/name = %s/%s, want acme/app", owner, name)
+	if namespace != "acme" || name != "app" {
+		t.Errorf("namespace/name = %s/%s, want acme/app", namespace, name)
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -245,7 +245,28 @@ func TestGetRepoOwnerName(t *testing.T) {
 	}
 }
 
-func TestGetRepoOwnerName_InvalidFullName(t *testing.T) {
+func TestGetRepoNamespaceName_NestedNamespace(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create mock db: %v", err)
+	}
+	defer db.Close()
+
+	mock.ExpectQuery("SELECT full_name FROM repositories").
+		WithArgs("repo-1").
+		WillReturnRows(sqlmock.NewRows([]string{"full_name"}).AddRow("acme/platform/app"))
+
+	factory := NewFactory(db, nil)
+	namespace, name, err := factory.getRepoNamespaceName(context.Background(), "repo-1")
+	if err != nil {
+		t.Fatalf("getRepoNamespaceName: %v", err)
+	}
+	if namespace != "acme/platform" || name != "app" {
+		t.Fatalf("namespace/name = %s/%s, want acme/platform/app", namespace, name)
+	}
+}
+
+func TestGetRepoNamespaceName_InvalidFullName(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create mock db: %v", err)
@@ -257,7 +278,7 @@ func TestGetRepoOwnerName_InvalidFullName(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"full_name"}).AddRow("invalid"))
 
 	factory := NewFactory(db, nil)
-	_, _, err = factory.getRepoOwnerName(context.Background(), "repo-1")
+	_, _, err = factory.getRepoNamespaceName(context.Background(), "repo-1")
 	if err == nil {
 		t.Fatal("expected error for invalid full_name")
 	}
@@ -266,7 +287,7 @@ func TestGetRepoOwnerName_InvalidFullName(t *testing.T) {
 	}
 }
 
-func TestGetRepoOwnerName_DBError(t *testing.T) {
+func TestGetRepoNamespaceName_DBError(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create mock db: %v", err)
@@ -278,7 +299,7 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 		WillReturnError(sqlmock.ErrCancelled)
 
 	factory := NewFactory(db, nil)
-	_, _, err = factory.getRepoOwnerName(context.Background(), "repo-1")
+	_, _, err = factory.getRepoNamespaceName(context.Background(), "repo-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
