@@ -32,12 +32,19 @@ type PullRequestCreator interface {
 	CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error)
 }
 
+// AgentRuntimeApprovalResponder answers a provider-native approval request
+// without requeueing the enclosing Dev Plane run.
+type AgentRuntimeApprovalResponder interface {
+	RespondAgentApproval(ctx context.Context, threadID, turnID, itemID string, approved bool, note string) error
+}
+
 // ApprovalHandler handles approval response events.
 type ApprovalHandler struct {
 	db       *sql.DB
 	logger   *slog.Logger
-	eventBus WorkerEventPublisher
-	factory  PullRequestCreator
+	eventBus                  WorkerEventPublisher
+	factory                   PullRequestCreator
+	agentRuntimeApprovalReply AgentRuntimeApprovalResponder
 }
 
 // NewApprovalHandler creates a new approval handler.
@@ -63,6 +70,12 @@ func (h *ApprovalHandler) WithPullRequestCreator(factory PullRequestCreator) *Ap
 	return h
 }
 
+// WithAgentRuntimeApprovalResponder configures direct provider approval responses.
+func (h *ApprovalHandler) WithAgentRuntimeApprovalResponder(responder AgentRuntimeApprovalResponder) *ApprovalHandler {
+	h.agentRuntimeApprovalReply = responder
+	return h
+}
+
 // HandleApprovalApproved processes approval.approved events.
 // If approval type is "pr_create", trigger PR creation.
 func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
@@ -85,6 +98,12 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 		"agent_run_id", payload.AgentRunID,
 		"type", payload.ApprovalType,
 	)
+	if payload.ApprovalType == models.ApprovalTypeAgentRuntime {
+		if err := h.respondAgentRuntimeApproval(context.Background(), payload.ApprovalID, payload.TaskID, payload.AgentRunID, true, payload.Note); err != nil {
+			return err
+		}
+		return ackMessage(msg)
+	}
 	if isAgentResumeApproval(payload.ApprovalType) {
 		if err := h.resumePausedRun(context.Background(), payload.ApprovalID, payload.TaskID, payload.AgentRunID); err != nil {
 			return err
@@ -170,8 +189,9 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 		TaskID      string `json:"task_id"`
 		AgentRunID  string `json:"agent_run_id"`
 		Response    string `json:"response"`
-		ResponderID string `json:"responder_id"`
-		Note        string `json:"note"`
+		ResponderID  string `json:"responder_id"`
+		ApprovalType string `json:"approval_type"`
+		Note         string `json:"note"`
 	}
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		return fmt.Errorf("unmarshal approval rejected event: %w", err)
@@ -182,6 +202,13 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 		"task_id", payload.TaskID,
 		"responder_id", payload.ResponderID,
 	)
+
+	if payload.ApprovalType == models.ApprovalTypeAgentRuntime {
+		if err := h.respondAgentRuntimeApproval(context.Background(), payload.ApprovalID, payload.TaskID, payload.AgentRunID, false, payload.Note); err != nil {
+			return err
+		}
+		return ackMessage(msg)
+	}
 
 	now := time.Now().UTC()
 
@@ -233,6 +260,81 @@ func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 	}
 
 	return ackMessage(msg)
+}
+
+type agentRuntimeApprovalMetadata struct {
+	ThreadID string `json:"thread_id"`
+	TurnID   string `json:"turn_id"`
+	ItemID   string `json:"item_id"`
+}
+
+func (h *ApprovalHandler) respondAgentRuntimeApproval(ctx context.Context, approvalID, eventTaskID, eventRunID string, approved bool, note string) error {
+	if h.agentRuntimeApprovalReply == nil {
+		return fmt.Errorf("agent runtime approval responder is not configured")
+	}
+
+	var taskID string
+	var runID sql.NullString
+	var approvalType string
+	var metadataRaw []byte
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT task_id, agent_run_id, approval_type, metadata
+		FROM approvals
+		WHERE id = $1
+	`, approvalID).Scan(&taskID, &runID, &approvalType, &metadataRaw); err != nil {
+		return fmt.Errorf("load agent runtime approval %s: %w", approvalID, err)
+	}
+	if approvalType != models.ApprovalTypeAgentRuntime {
+		return fmt.Errorf("approval %s is type %q, want %q", approvalID, approvalType, models.ApprovalTypeAgentRuntime)
+	}
+	if strings.TrimSpace(eventTaskID) != "" && eventTaskID != taskID {
+		return fmt.Errorf("approval %s task mismatch", approvalID)
+	}
+	resolvedRunID := ""
+	if runID.Valid {
+		resolvedRunID = strings.TrimSpace(runID.String)
+	}
+	if strings.TrimSpace(eventRunID) != "" && resolvedRunID != "" && eventRunID != resolvedRunID {
+		return fmt.Errorf("approval %s run mismatch", approvalID)
+	}
+
+	var metadata agentRuntimeApprovalMetadata
+	if err := json.Unmarshal(metadataRaw, &metadata); err != nil {
+		return fmt.Errorf("decode agent runtime approval metadata: %w", err)
+	}
+	if strings.TrimSpace(metadata.ThreadID) == "" || strings.TrimSpace(metadata.TurnID) == "" || strings.TrimSpace(metadata.ItemID) == "" {
+		return fmt.Errorf("approval %s is missing runtime thread/turn/item metadata", approvalID)
+	}
+
+	if err := h.agentRuntimeApprovalReply.RespondAgentApproval(
+		ctx,
+		metadata.ThreadID,
+		metadata.TurnID,
+		metadata.ItemID,
+		approved,
+		note,
+	); err != nil {
+		return fmt.Errorf("respond to agent runtime approval %s: %w", approvalID, err)
+	}
+
+	now := time.Now().UTC()
+	if resolvedRunID != "" {
+		if _, err := h.db.ExecContext(ctx, `
+			UPDATE agent_runs
+			SET status = 'running', error_message = NULL, updated_at = $1
+			WHERE id = $2 AND task_id = $3 AND status = 'paused'
+		`, now, resolvedRunID, taskID); err != nil {
+			return fmt.Errorf("resume direct agent runtime run %s: %w", resolvedRunID, err)
+		}
+	}
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, now, taskID); err != nil {
+		return fmt.Errorf("resume agent runtime task %s: %w", taskID, err)
+	}
+	return nil
 }
 
 func isAgentResumeApproval(approvalType string) bool {
