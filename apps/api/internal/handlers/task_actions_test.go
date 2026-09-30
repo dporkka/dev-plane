@@ -220,15 +220,14 @@ func TestStartRun(t *testing.T) {
 
 	expectReadyTaskReadiness(mock, taskID)
 
-	// Insert agent run
-	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, admissionMetadataMatcher{}, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	// Update task status to running
+	mock.ExpectBegin()
 	mock.ExpectExec("UPDATE tasks SET status = 'running'").
 		WithArgs(sqlmock.AnyArg(), taskID).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO agent_runs").
+		WithArgs(sqlmock.AnyArg(), taskID, workspaceID, admissionMetadataMatcher{}, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 
 	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
 	rctx := chi.NewRouteContext()
@@ -255,6 +254,47 @@ func TestStartRun(t *testing.T) {
 		t.Error("expected run_id in response")
 	}
 
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestStartRunRejectsConcurrentInitialRunClaim(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status", "project_id", "repository_id", "workspace_id", "target_branch", "risk_level"}).
+			AddRow("approved", "proj-1", "repo-1", nil, "main", "low"))
+	expectReadyTaskReadiness(mock, taskID)
+
+	mock.ExpectBegin()
+	mock.ExpectExec("UPDATE tasks SET status = 'running'").
+		WithArgs(sqlmock.AnyArg(), taskID).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/"+taskID+"/start-run", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.StartRun(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusConflict, rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp["error"] != "initial run already claimed" {
+		t.Fatalf("error = %q, want initial run already claimed", resp["error"])
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
