@@ -54,13 +54,42 @@ type Provider interface {
 }
 
 // CreateRequest contains parameters for creating a new workspace session.
+type ResourceLimits struct {
+	CPUMillis       int `json:"cpu_millis,omitempty"`
+	MemoryMB        int `json:"memory_mb,omitempty"`
+	DiskMB          int `json:"disk_mb,omitempty"`
+	WallTimeSeconds int `json:"wall_time_seconds,omitempty"`
+}
+
+type RuntimeCapabilities struct {
+	Network bool     `json:"network"`
+	Secrets []string `json:"secrets,omitempty"`
+}
+
+type RuntimeUsage struct {
+	CPUMilliseconds    int64   `json:"cpu_ms"`
+	MemoryMBSeconds    int64   `json:"memory_mb_seconds"`
+	StorageByteSeconds int64   `json:"storage_byte_seconds"`
+	EgressBytes        int64   `json:"egress_bytes"`
+	SnapshotBytes      int64   `json:"snapshot_bytes"`
+	RuntimeCostUSD     float64 `json:"runtime_cost_usd"`
+}
+
+type UsageProvider interface {
+	GetUsage(ctx context.Context, sessionID string) (*RuntimeUsage, error)
+}
+
 type CreateRequest struct {
-	RepositoryID string            `json:"repository_id"`
-	CloneURL     string            `json:"clone_url"`
-	Branch       string            `json:"branch"`
-	BaseBranch   string            `json:"base_branch"`
-	WorktreeName string            `json:"worktree_name"`
-	Env          map[string]string `json:"env,omitempty"`
+	RepositoryID  string              `json:"repository_id"`
+	CloneURL      string              `json:"clone_url"`
+	Branch        string              `json:"branch"`
+	BaseBranch    string              `json:"base_branch"`
+	WorktreeName  string              `json:"worktree_name"`
+	Env           map[string]string   `json:"env,omitempty"`
+	Limits        ResourceLimits      `json:"limits,omitempty"`
+	Capabilities  RuntimeCapabilities `json:"capabilities,omitempty"`
+	Metadata      map[string]string   `json:"metadata,omitempty"`
+	IdempotencyKey string             `json:"idempotency_key,omitempty"`
 }
 
 // Session represents an active workspace runtime session.
