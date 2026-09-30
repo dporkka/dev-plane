@@ -227,6 +227,8 @@ func TestPublishOpenMemberUsesSharedMergeAuthorityAndConfirmsRemoteState(t *test
 	now := time.Now().UTC()
 	expectAuthoritySnapshot(t, mock, now)
 	expectExecutionPlan(mock)
+	mock.ExpectExec("UPDATE change_sets").
+		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE change_set_publications SET status = 'merged'").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec("UPDATE change_sets").
