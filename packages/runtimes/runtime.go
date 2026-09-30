@@ -53,20 +53,19 @@ type Provider interface {
 	StreamLogs(ctx context.Context, sessionID string) (<-chan LogLine, error)
 }
 
-// CreateRequest contains parameters for creating a new workspace session.
-type ResourceLimits struct {
+// ResourceLimits declares provider-neutral workspace resource ceilings.\ntype ResourceLimits struct {
 	CPUMillis       int `json:"cpu_millis,omitempty"`
 	MemoryMB        int `json:"memory_mb,omitempty"`
 	DiskMB          int `json:"disk_mb,omitempty"`
 	WallTimeSeconds int `json:"wall_time_seconds,omitempty"`
 }
 
-type RuntimeCapabilities struct {
+// RuntimeCapabilities declares authority granted to the runtime session.\ntype RuntimeCapabilities struct {
 	Network bool     `json:"network"`
 	Secrets []string `json:"secrets,omitempty"`
 }
 
-type RuntimeUsage struct {
+// RuntimeUsage reports provider-neutral compute and storage consumption.\ntype RuntimeUsage struct {
 	CPUMilliseconds    int64   `json:"cpu_ms"`
 	MemoryMBSeconds    int64   `json:"memory_mb_seconds"`
 	StorageByteSeconds int64   `json:"storage_byte_seconds"`
@@ -75,11 +74,11 @@ type RuntimeUsage struct {
 	RuntimeCostUSD     float64 `json:"runtime_cost_usd"`
 }
 
-type UsageProvider interface {
+// UsageProvider is implemented by runtimes that expose reconciled usage.\ntype UsageProvider interface {
 	GetUsage(ctx context.Context, sessionID string) (*RuntimeUsage, error)
 }
 
-type CreateRequest struct {
+// CreateRequest contains parameters for creating a new workspace session.\ntype CreateRequest struct {
 	RepositoryID  string              `json:"repository_id"`
 	CloneURL      string              `json:"clone_url"`
 	Branch        string              `json:"branch"`
