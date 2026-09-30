@@ -81,7 +81,6 @@ func TestContractFromManifestDefaultsAllValidationCommandsToRequired(t *testing.
 	}
 }
 
-
 func TestContractFromPlanBindsAffectedScopeAndRequiresEveryPlannedCheck(t *testing.T) {
 	plan := repomanifest.CheckPlan{
 		ChangedFiles:       []string{"apps/api/routes.go", "packages/shared/schema.go"},
