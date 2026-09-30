@@ -10,8 +10,7 @@ CREATE TABLE IF NOT EXISTS change_candidates (
     commit_sha      TEXT NOT NULL,
     tree_hash       TEXT NOT NULL,
     branch          TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(repository_id, commit_sha)
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_change_candidates_task_id ON change_candidates(task_id);
