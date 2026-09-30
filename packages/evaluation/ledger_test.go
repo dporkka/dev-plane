@@ -297,3 +297,49 @@ func TestLedgerRecordNextAttemptIsIdempotentByRun(t *testing.T) {
 		t.Fatalf("GetTask() len = %d, want 2 after replay", len(got))
 	}
 }
+
+
+func TestLedgerSetOutcomeByRun(t *testing.T) {
+	db := openTestDB(t)
+	if _, err := db.Exec(`CREATE UNIQUE INDEX idx_task_evaluations_run_unique ON task_evaluations(agent_run_id)`); err != nil {
+		t.Fatalf("create agent-run uniqueness index: %v", err)
+	}
+	ledger := NewLedger(db)
+	ctx := context.Background()
+
+	if _, err := ledger.RecordNextAttempt(ctx, Evaluation{
+		TaskID:     "task-1",
+		AgentRunID: "run-1",
+		Outcome:    OutcomePending,
+	}); err != nil {
+		t.Fatalf("RecordNextAttempt() error: %v", err)
+	}
+
+	updated, err := ledger.SetOutcomeByRun(ctx, "run-1", OutcomeAccepted)
+	if err != nil {
+		t.Fatalf("SetOutcomeByRun() error: %v", err)
+	}
+	if !updated {
+		t.Fatal("SetOutcomeByRun() updated = false, want true")
+	}
+
+	got, err := ledger.GetTask(ctx, "task-1")
+	if err != nil {
+		t.Fatalf("GetTask() error: %v", err)
+	}
+	if len(got) != 1 || got[0].Outcome != OutcomeAccepted {
+		t.Fatalf("evaluation outcome = %+v, want accepted", got)
+	}
+
+	updated, err = ledger.SetOutcomeByRun(ctx, "missing-run", OutcomeRejected)
+	if err != nil {
+		t.Fatalf("SetOutcomeByRun(missing) error: %v", err)
+	}
+	if updated {
+		t.Fatal("SetOutcomeByRun(missing) updated = true, want false")
+	}
+
+	if _, err := ledger.SetOutcomeByRun(ctx, "run-1", OutcomePending); err == nil {
+		t.Fatal("SetOutcomeByRun(pending) error = nil, want disposition validation error")
+	}
+}
