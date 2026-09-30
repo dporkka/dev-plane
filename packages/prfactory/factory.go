@@ -191,7 +191,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("forge provider is not configured")
 	}
 
-	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
+	repoNamespace, repoName, err := f.getRepoNamespaceName(ctx, task.RepositoryID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
@@ -202,7 +202,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.openForgeChange(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.openForgeChange(ctx, repoNamespace, repoName, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
 		return nil, fmt.Errorf("open forge change: %w", err)
 	}
@@ -590,8 +590,10 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 	return &ws, nil
 }
 
-// getRepoOwnerName extracts owner and name from repository record.
-func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
+// getRepoNamespaceName extracts a forge namespace and repository name from the
+// canonical full_name. Splitting on the final slash supports nested namespaces
+// such as GitLab groups/subgroups while preserving GitHub owner/name semantics.
+func (f *Factory) getRepoNamespaceName(ctx context.Context, repoID string) (namespace, name string, err error) {
 	var fullName string
 	err = f.db.QueryRowContext(ctx, `
 		SELECT full_name FROM repositories WHERE id = $1
@@ -600,9 +602,10 @@ func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, n
 		return "", "", fmt.Errorf("get repository: %w", err)
 	}
 
-	parts := strings.SplitN(fullName, "/", 2)
-	if len(parts) != 2 {
+	fullName = strings.TrimSpace(fullName)
+	separator := strings.LastIndex(fullName, "/")
+	if separator <= 0 || separator == len(fullName)-1 {
 		return "", "", fmt.Errorf("invalid repository full_name: %s", fullName)
 	}
-	return parts[0], parts[1], nil
+	return fullName[:separator], fullName[separator+1:], nil
 }
