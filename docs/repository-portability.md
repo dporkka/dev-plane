@@ -23,13 +23,13 @@ For each fixture, Dev Plane must be able to inspect the repository and determine
 - the repository-native test command is inferred;
 - the ecosystem manifest is surfaced as a key file.
 
-The suite also verifies deterministic precedence when generic manifests coexist with more specific lockfiles. For example:
+The suite also verifies deterministic precedence when generic manifests coexist with more specific lockfiles. Test-command inference is deliberately conservative: a JavaScript manifest must declare a `test` script, and Python must expose a pytest signal such as pytest configuration or dependency metadata. A bare manifest is never treated as proof that tests exist. For example:
 
 - `pnpm-lock.yaml` wins over `package.json`;
 - `yarn.lock` wins over `package.json`;
 - `uv.lock` wins over a generic `pyproject.toml`;
 - `poetry.lock` wins over a generic `pyproject.toml`;
-- a lone `pyproject.toml` means generic Python, not Poetry.
+- a lone `pyproject.toml` means generic Python, not Poetry, and does not by itself imply pytest.
 
 ## Run it
 
