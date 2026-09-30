@@ -29,12 +29,21 @@ type Check struct {
 
 // Contract is the repository-owned definition of what must be verified before a
 // candidate can be trusted.
+// VerificationScope binds evidence to the exact affected-validation selection
+// that produced its checks, not merely to the repository-wide command set.
+type VerificationScope struct {
+	ChangedFiles       []string `json:"changed_files,omitempty"`
+	ChangedComponents  []string `json:"changed_components,omitempty"`
+	AffectedComponents []string `json:"affected_components,omitempty"`
+}
+
 type Contract struct {
-	Version        int         `json:"version"`
-	Environment    Environment `json:"environment,omitempty"`
-	Checks         []Check     `json:"checks,omitempty"`
-	ProtectedPaths []string    `json:"protected_paths,omitempty"`
-	Artifacts      []string    `json:"artifacts,omitempty"`
+	Version        int                `json:"version"`
+	Environment    Environment        `json:"environment,omitempty"`
+	Checks         []Check            `json:"checks,omitempty"`
+	Scope          *VerificationScope `json:"scope,omitempty"`
+	ProtectedPaths []string           `json:"protected_paths,omitempty"`
+	Artifacts      []string           `json:"artifacts,omitempty"`
 }
 
 // ParseContract parses a strict JSON verification contract.
