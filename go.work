@@ -24,4 +24,5 @@ use (
 	./packages/scheduler
 	./packages/securityscan
 	./packages/vcs
+	./packages/verifier
 )
