@@ -432,9 +432,28 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	if gh == nil {
 		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
+
+	verified, err := h.loadVerifiedCandidateForMerge(ctx, id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respond.Error(w, http.StatusConflict, errors.New("pull request has no verified candidate evidence"))
+			return
+		}
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load verified candidate: %w", err))
+		return
+	}
+	if err := verified.Validate(); err != nil {
+		respond.Error(w, http.StatusConflict, err)
+		return
+	}
+	if req.SHA != "" && req.SHA != verified.CommitSHA {
+		respond.Error(w, http.StatusConflict, errors.New("requested sha does not match verified candidate"))
+		return
+	}
+
 	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
 		Method: req.Method,
-		SHA:    req.SHA,
+		SHA:    verified.CommitSHA,
 	})
 	if err != nil {
 		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
@@ -482,4 +501,61 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	pr.UpdatedAt = now
 
 	respond.JSON(w, http.StatusOK, pr)
+}
+
+type verifiedCandidateForMerge struct {
+	CommitSHA         string
+	CandidateTreeHash string
+	EvidenceTreeHash  string
+	ContractHash      string
+	EnvironmentDigest string
+	RunnerIdentity    string
+	CompletedAt       time.Time
+}
+
+func (v verifiedCandidateForMerge) Validate() error {
+	if strings.TrimSpace(v.CommitSHA) == "" {
+		return errors.New("verified candidate is missing commit sha")
+	}
+	if strings.TrimSpace(v.CandidateTreeHash) == "" || strings.TrimSpace(v.EvidenceTreeHash) == "" {
+		return errors.New("verified candidate is missing tree identity")
+	}
+	if v.CandidateTreeHash != v.EvidenceTreeHash {
+		return errors.New("verification evidence is stale for the candidate tree")
+	}
+	if strings.TrimSpace(v.ContractHash) == "" {
+		return errors.New("verification evidence is missing contract identity")
+	}
+	if strings.TrimSpace(v.EnvironmentDigest) == "" || strings.TrimSpace(v.RunnerIdentity) == "" {
+		return errors.New("verification evidence is missing runtime identity")
+	}
+	if v.CompletedAt.IsZero() {
+		return errors.New("verification evidence is missing completion time")
+	}
+	return nil
+}
+
+func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequestID string) (*verifiedCandidateForMerge, error) {
+	var verified verifiedCandidateForMerge
+	err := h.db.QueryRowContext(ctx, `
+		SELECT c.commit_sha, c.tree_hash, e.tree_hash, e.contract_hash,
+		       e.environment_digest, e.runner_identity, e.completed_at
+		FROM change_candidates c
+		JOIN verification_evidence e ON e.candidate_id = c.id
+		WHERE c.pull_request_id = $1
+		ORDER BY e.completed_at DESC
+		LIMIT 1
+	`, pullRequestID).Scan(
+		&verified.CommitSHA,
+		&verified.CandidateTreeHash,
+		&verified.EvidenceTreeHash,
+		&verified.ContractHash,
+		&verified.EnvironmentDigest,
+		&verified.RunnerIdentity,
+		&verified.CompletedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &verified, nil
 }
