@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/api/pkg/changeauthority"
 	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
@@ -404,7 +405,6 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, errors.New("pull request id is required"))
 		return
 	}
-
 	if err := authz.AuthorizePullRequest(ctx, h.db, user, id); err != nil {
 		respond.Error(w, http.StatusNotFound, errors.New("pull request not found"))
 		return
@@ -415,176 +415,46 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
 
-	var pr PullRequestResponse
-	var runID sql.NullString
-	var mergedAt sql.NullTime
-	var repoOwner, repoName, taskID, taskStatus string
-
-	err := h.db.QueryRowContext(ctx, `
-		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
-		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by, pr.merged_at,
-		       pr.created_at, pr.updated_at, r.owner, r.name, t.status
-		FROM pull_requests pr
-		JOIN repositories r ON r.id = pr.repository_id
-		JOIN tasks t ON t.id = pr.task_id
-		WHERE pr.id = $1
-	`, id).Scan(
-		&pr.ID, &taskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
-		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			respond.Error(w, http.StatusNotFound, errors.New("pull request not found"))
-			return
-		}
-		respond.Error(w, http.StatusInternalServerError, err)
-		return
-	}
-	pr.TaskID = taskID
-	if runID.Valid {
-		pr.RunID = &runID.String
-	}
-	if mergedAt.Valid {
-		pr.MergedAt = &mergedAt.Time
+	authority := changeauthority.New(h.db, h.logger).
+		WithCapabilityKernel(h.kernel()).
+		WithGitHubToken(h.githubToken).
+		WithEventPublisher(h.eventBus)
+	if h.githubGateway != nil {
+		authority.WithGitHubGateway(h.githubGateway)
 	}
 
-	if pr.State == "merged" {
-		respond.Error(w, http.StatusConflict, errors.New("pull request is already merged"))
-		return
-	}
-	if taskStatus != "pr_created" {
-		respond.Error(w, http.StatusBadRequest,
-			fmt.Errorf("task must be in 'pr_created' status, current: %s", taskStatus))
-		return
-	}
-
-	// Capability kernel authorization. Merge is admin-only by default.
-	result, err := h.kernel().Evaluate(ctx, capability.Request{
-		ActorType: "human",
-		User: &models.User{
-			ID:             user.UserID,
-			OrganizationID: user.OrgID,
-			Role:           user.Role,
-		},
-		Operation: capability.OpMergePR,
-		Resource:  fmt.Sprintf("%s/%s#%d", repoOwner, repoName, pr.Number),
-		Details: map[string]any{
-			"organization_id": user.OrgID,
-			"pull_request_id": id,
-		},
+	pr, err := authority.Merge(ctx, changeauthority.Actor{
+		UserID:         user.UserID,
+		OrganizationID: user.OrgID,
+		Role:           user.Role,
+	}, changeauthority.Request{
+		PullRequestID: id,
+		Method:        req.Method,
+		SHA:           req.SHA,
 	})
 	if err != nil {
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("authorize merge: %w", err))
-		return
-	}
-	if result.Effect == policies.EffectDeny {
-		respond.Error(w, http.StatusForbidden, errors.New(result.Reason))
-		return
-	}
-	if result.RequiredApproval {
-		respond.Error(w, http.StatusLocked, errors.New(result.Reason))
+		respond.Error(w, changeauthority.StatusCode(err), err)
 		return
 	}
 
-	token := strings.TrimSpace(h.githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
-		return
-	}
-
-	gh := h.githubGateway
-	if gh == nil {
-		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
-	}
-
-	verified, err := h.loadVerifiedCandidateForMerge(ctx, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			respond.Error(w, http.StatusConflict, errors.New("pull request has no verified candidate evidence"))
-			return
-		}
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("load verified candidate: %w", err))
-		return
-	}
-	if err := verified.Validate(); err != nil {
-		respond.Error(w, http.StatusConflict, err)
-		return
-	}
-	blockers, err := h.candidateDependencyBlockers(ctx, verified.ProjectID, verified.CandidateID)
-	if err != nil {
-		respond.Error(w, http.StatusConflict, fmt.Errorf("evaluate change graph: %w", err))
-		return
-	}
-	if len(blockers) > 0 {
-		respond.JSON(w, http.StatusConflict, map[string]any{
-			"error":    "candidate dependencies are not merged",
-			"blockers": blockers,
-		})
-		return
-	}
-	if err := h.validateCandidateChangeSetPublication(ctx, verified.CandidateID, verified.ProjectID); err != nil {
-		respond.Error(w, http.StatusConflict, err)
-		return
-	}
-	if req.SHA != "" && req.SHA != verified.CommitSHA {
-		respond.Error(w, http.StatusConflict, errors.New("requested sha does not match verified candidate"))
-		return
-	}
-
-	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
-		Method: req.Method,
-		SHA:    verified.CommitSHA,
+	respond.JSON(w, http.StatusOK, PullRequestResponse{
+		ID:         pr.ID,
+		TaskID:     pr.TaskID,
+		RunID:      pr.RunID,
+		RepoID:     pr.RepoID,
+		Number:     pr.Number,
+		Title:      pr.Title,
+		Body:       pr.Body,
+		Branch:     pr.Branch,
+		BaseBranch: pr.BaseBranch,
+		URL:        pr.URL,
+		State:      pr.State,
+		Draft:      pr.Draft,
+		CreatedBy:  pr.CreatedBy,
+		MergedAt:   pr.MergedAt,
+		CreatedAt:  pr.CreatedAt,
+		UpdatedAt:  pr.UpdatedAt,
 	})
-	if err != nil {
-		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
-		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
-		return
-	}
-	if !mergeResult.Merged {
-		respond.Error(w, http.StatusConflict, errors.New(mergeResult.Message))
-		return
-	}
-
-	now := time.Now().UTC()
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE pull_requests SET state = 'merged', merged_at = $1, updated_at = $1
-		WHERE id = $2
-	`, now, id); err != nil {
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("update pull request: %w", err))
-		return
-	}
-
-	if _, err := h.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'done', completed_at = $1, updated_at = $1
-		WHERE id = $2
-	`, now, taskID); err != nil {
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("update task: %w", err))
-		return
-	}
-
-	if h.eventBus != nil {
-		event := map[string]interface{}{
-			"pr_id":     id,
-			"task_id":   taskID,
-			"pr_number": pr.Number,
-			"sha":       mergeResult.SHA,
-			"timestamp": now.Format(time.RFC3339),
-		}
-		data, _ := json.Marshal(event)
-		if pubErr := h.eventBus.Publish(events.PRMerged, data); pubErr != nil {
-			h.logger.Warn("failed to publish pr.merged event", "error", pubErr)
-		}
-	}
-
-	pr.State = "merged"
-	pr.MergedAt = &now
-	pr.UpdatedAt = now
-
-	respond.JSON(w, http.StatusOK, pr)
 }
 
 type verifiedCandidateForMerge struct {
