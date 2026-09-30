@@ -299,10 +299,10 @@ func TestRetryRun(t *testing.T) {
 
 	expectAuthorizeAgentRun(mock, runID)
 	// Get failed run details
-	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status").
+	mock.ExpectQuery("SELECT task_id, workspace_id, agent_role, model, provider, status, metadata").
 		WithArgs(runID).
-		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status"}).
-			AddRow(taskID, nil, "implementer", nil, nil, "failed"))
+		WillReturnRows(sqlmock.NewRows([]string{"task_id", "workspace_id", "agent_role", "model", "provider", "status", "metadata"}).
+			AddRow(taskID, nil, "implementer", nil, nil, "failed", `{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}`))
 
 	// Get task status - must be failed/reviewing/pr_created
 	mock.ExpectQuery("SELECT status FROM tasks").
@@ -311,7 +311,7 @@ func TestRetryRun(t *testing.T) {
 
 	// Insert new agent run
 	mock.ExpectExec("INSERT INTO agent_runs").
-		WithArgs(sqlmock.AnyArg(), taskID, nil, "implementer", "gpt-4o", "openai", sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), taskID, nil, "implementer", "gpt-4o", "openai", retryAdmissionMetadataMatcher{originalRunID: runID}, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// Update task status to running
@@ -516,4 +516,34 @@ func TestStartRunBlockedByTaskReadiness(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
+}
+
+
+type retryAdmissionMetadataMatcher struct {
+	originalRunID string
+}
+
+func (m retryAdmissionMetadataMatcher) Match(value driver.Value) bool {
+	var data []byte
+	switch typed := value.(type) {
+	case string:
+		data = []byte(typed)
+	case []byte:
+		data = typed
+	default:
+		return false
+	}
+	var metadata struct {
+		Admission struct {
+			Policy string `json:"policy"`
+		} `json:"admission"`
+		Retry struct {
+			OriginalRunID string `json:"original_run_id"`
+		} `json:"retry"`
+	}
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return false
+	}
+	return metadata.Admission.Policy == "task-readiness-v1" &&
+		metadata.Retry.OriginalRunID == m.originalRunID
 }
