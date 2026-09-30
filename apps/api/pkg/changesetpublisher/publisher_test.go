@@ -166,6 +166,24 @@ func expectExecutionPlan(mock sqlmock.Sqlmock) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
+func TestPublishLifecyclePreservesActorProvenance(t *testing.T) {
+	eventBus := &fakePublisher{}
+	publisher := New(nil, slog.Default()).WithEventPublisher(eventBus)
+	record := &changeSetRecord{ID: "set-1", ProjectID: "project-1"}
+	actor := changeauthority.Actor{UserID: "user-1", OrganizationID: "org-1", Role: models.RoleOwner}
+
+	publisher.publishLifecycle(events.ChangeSetPublicationBlocked, record, actor, "candidate-1", "blocked")
+
+	if len(eventBus.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(eventBus.events))
+	}
+	event := eventBus.events[0]
+	if event.ActorID != "user-1" || event.OrganizationID != "org-1" ||
+		event.CandidateID != "candidate-1" || event.Status != "blocked" {
+		t.Fatalf("event = %#v", event)
+	}
+}
+
 func TestPublishReconcilesAlreadyMergedRemoteMember(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
