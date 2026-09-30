@@ -20,6 +20,7 @@ var (
 type Manager struct {
 	registry *Registry
 	store    Store
+	sink     EventSink
 	now      func() time.Time
 }
 
@@ -43,6 +44,15 @@ func NewManager(registry *Registry, store Store) (*Manager, error) {
 		store:    store,
 		now:      func() time.Time { return time.Now().UTC() },
 	}, nil
+}
+
+// WithEventSink registers a control-plane sink for durably persisted runtime events.
+func (m *Manager) WithEventSink(sink EventSink) *Manager {
+	if m == nil {
+		return m
+	}
+	m.sink = sink
+	return m
 }
 
 // CreateThread starts a provider thread and persists its durable identity before
@@ -188,6 +198,13 @@ func (m *Manager) recordRun(
 				return
 			}
 			currentTurn = nextTurn
+			if m.sink != nil {
+				if err := m.sink.HandleEvent(ctx, thread, event); err != nil {
+					cancel()
+					errs <- err
+					return
+				}
+			}
 
 			select {
 			case <-ctx.Done():
