@@ -580,8 +580,8 @@ func (m retryAdmissionMetadataMatcher) Match(value driver.Value) bool {
 			Policy string `json:"policy"`
 		} `json:"admission"`
 		Failure any `json:"failure"`
-		Retry struct {
-			OriginalRunID string `json:"original_run_id"`
+		Retry   struct {
+			OriginalRunID   string `json:"original_run_id"`
 			PreviousFailure struct {
 				Category    string `json:"category"`
 				Retryable   bool   `json:"retryable"`
