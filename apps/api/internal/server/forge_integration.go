@@ -4,14 +4,11 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
-	"strings"
 
 	"github.com/ai-dev-control-plane/api/internal/config"
 	"github.com/ai-dev-control-plane/forge"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/prfactory"
-	"github.com/ai-dev-control-plane/vcs"
 )
 
 type forgeIntegration struct {
@@ -28,67 +25,33 @@ func buildForgeIntegration(cfg *config.Config, db *sql.DB, logger *slog.Logger) 
 		logger = slog.Default()
 	}
 
-	providerName := strings.ToLower(strings.TrimSpace(cfg.ForgeProvider))
-	if providerName == "" {
-		providerName = "github"
+	selection, err := gateway.SelectForge(gateway.ForgeSettings{
+		Provider:              cfg.ForgeProvider,
+		GitRemote:             cfg.ForgeGitRemote,
+		GitHubClientID:        cfg.GitHubClientID,
+		GitHubClientSecret:    cfg.GitHubSecret,
+		GitHubToken:           cfg.GitHubToken,
+		GiteaURL:              cfg.GiteaURL,
+		GiteaToken:            cfg.GiteaToken,
+		GiteaUsername:         cfg.GiteaUsername,
+		GiteaDraftTitlePrefix: cfg.GiteaDraftTitlePrefix,
+	})
+	if err != nil {
+		return nil, err
 	}
-	remote := strings.TrimSpace(cfg.ForgeGitRemote)
-	if remote == "" {
-		remote = "origin"
+	if selection == nil {
+		return nil, nil
 	}
 
-	basePublisher := vcs.Publisher(vcs.NewGitBackend(nil))
+	creator := prfactory.NewFactory(db, logger).
+		WithForgeProvider(selection.Provider).
+		WithForgeCredential(selection.Credential.Token).
+		WithBranchPublisher(selection.Publisher).
+		WithBranchRemote(selection.Remote)
 
-	switch providerName {
-	case "github":
-		token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-		if token == "" {
-			return nil, nil
-		}
-		provider := gateway.NewGitHubGateway(cfg.GitHubClientID, cfg.GitHubSecret)
-		publisher := gateway.NewGitHubBranchPublisher(basePublisher, token)
-		creator := prfactory.NewFactory(db, logger).
-			WithForgeProvider(provider).
-			WithForgeCredential(token).
-			WithBranchPublisher(publisher).
-			WithBranchRemote(remote)
-		return &forgeIntegration{
-			provider:   provider,
-			credential: forge.Credential{Token: token},
-			creator:    creator,
-		}, nil
-
-	case "gitea", "forgejo":
-		if strings.TrimSpace(cfg.GiteaURL) == "" {
-			return nil, fmt.Errorf("%s forge provider requires GITEA_URL", providerName)
-		}
-
-		provider := gateway.NewGiteaGateway(cfg.GiteaURL)
-		if prefix := strings.TrimSpace(cfg.GiteaDraftTitlePrefix); prefix != "" {
-			provider.WithDraftTitlePrefix(prefix)
-		}
-
-		publisher := basePublisher
-		token := strings.TrimSpace(cfg.GiteaToken)
-		username := strings.TrimSpace(cfg.GiteaUsername)
-		if username != "" && token != "" {
-			publisher = gateway.NewGiteaBranchPublisher(basePublisher, username, token)
-		} else if token != "" && username == "" {
-			logger.Warn("GITEA_USERNAME not configured; branch publication will use ambient Git credentials")
-		}
-
-		creator := prfactory.NewFactory(db, logger).
-			WithForgeProvider(provider).
-			WithForgeCredential(token).
-			WithBranchPublisher(publisher).
-			WithBranchRemote(remote)
-		return &forgeIntegration{
-			provider:   provider,
-			credential: forge.Credential{Token: token},
-			creator:    creator,
-		}, nil
-
-	default:
-		return nil, fmt.Errorf("unsupported forge provider %q", providerName)
-	}
+	return &forgeIntegration{
+		provider:   selection.Provider,
+		credential: selection.Credential,
+		creator:    creator,
+	}, nil
 }
