@@ -293,6 +293,7 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
 			now, now, "owner", "repo", "pr_created",
 		))
+	expectVerifiedCandidateEvidence(mock, prID, "candidate-sha", "tree-a", now)
 
 	rec := httptest.NewRecorder()
 	h.MergePullRequest(rec, newMergeRequest(prID, ""))
