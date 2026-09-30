@@ -742,7 +742,6 @@ func containsSubstr(s, substr string) bool {
 	return false
 }
 
-
 func TestKernel_EvaluateBindsExactRequestedGrant(t *testing.T) {
 	ctx := context.Background()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
