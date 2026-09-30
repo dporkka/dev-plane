@@ -175,6 +175,39 @@ func TestAuthorizeChangeSetPublication(t *testing.T) {
 	}
 }
 
+func TestAuthorizeChangeSetPublicationBlocksMemberMissingDecisionPacket(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	expectDraftChangeSet(mock, "set-1")
+	expectAuthorizeProject(mock, "project-1")
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("set-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash",
+			"decision_digest", "packet", "state",
+		}).AddRow("candidate-api", "pr-api", "repo-api", "sha-api", "tree-api", nil, nil, "open"))
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state", "depends_on_candidate_id",
+		}).AddRow("candidate-api", "pr-api", "repo-api", "sha-api", "tree-api", "open", nil))
+
+	rec := httptest.NewRecorder()
+	h.AuthorizeChangeSetPublication(rec, newChangeSetRequest(
+		http.MethodPost, "/change-sets/set-1/authorize-publication", "id", "set-1", "",
+	))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "missing-authority") {
+		t.Fatalf("body = %s, want missing-authority blocker", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
 func TestAuthorizeChangeSetPublicationBlocksExternalFrontier(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
