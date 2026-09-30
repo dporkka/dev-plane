@@ -1,7 +1,7 @@
-// Package prfactory creates pull requests for completed agent tasks.
+// Package prfactory publishes review changes for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive review descriptions and open them through a forge provider.
 module github.com/ai-dev-control-plane/prfactory
 
 go 1.25.11
