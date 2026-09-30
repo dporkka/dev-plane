@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/oauth2"
 
+	"github.com/ai-dev-control-plane/api/internal/audit"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/changegraph"
 	"github.com/ai-dev-control-plane/changeset"
@@ -61,7 +62,7 @@ func New(db *sql.DB, logger *slog.Logger) *Service {
 	return &Service{
 		db:     db,
 		logger: logger,
-		kernel: capability.NewKernel(nil, nil, nil, logger),
+		kernel: capability.NewKernel(nil, nil, audit.NewLogger(db, logger), logger),
 	}
 }
 
