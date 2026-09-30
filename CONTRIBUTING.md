@@ -26,7 +26,7 @@ make test
 make build
 ```
 
-For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete. Changes to repository inspection, ecosystem detection, or inferred validation commands should also run `make test-portability`.
+For a focused Go module, run that module's own tests while iterating, then run the repository-level gate before considering the change complete. Changes to repository inspection, ecosystem detection, or inferred validation commands should also run `make test-portability`. Changes to forge contracts or adapters should run `make test-forge`.
 
 Behavior changes should be test-driven: add or update the test that describes the desired behavior before changing production logic.
 
@@ -52,6 +52,14 @@ contracttest.Run(t, providerFactory, repositoryFixture)
 from `github.com/ai-dev-control-plane/runtimes/contracttest`.
 
 Provider-specific security properties should have additional tests. Passing the generic contract does not by itself certify isolation.
+
+### Forge providers
+
+Code-forge review adapters should implement `github.com/ai-dev-control-plane/forge.Provider` and run the reusable suite from `github.com/ai-dev-control-plane/forge/contracttest`.
+
+Keep forge API operations separate from Git transport. Opening or merging a review request belongs to the forge provider; publishing a branch with `git push` has different authentication and transport semantics and should not be smuggled into the provider contract.
+
+See [Forge Providers](docs/forge-providers.md) and run `make test-forge` for forge-boundary changes.
 
 ## Public contract changes
 
