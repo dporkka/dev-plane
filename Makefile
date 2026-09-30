@@ -7,7 +7,7 @@
 .PHONY: dev dev-web dev-api dev-worker dev-runner \
         docker-up docker-down docker-logs docker-status \
         migrate db-reset gen-db \
-        test test-api test-cli test-packages test-portability test-forge test-race test-sdk \
+        test test-api test-cli test-packages test-portability test-forge test-publication test-race test-sdk \
         lint lint-go lint-web lint-fix-web lint-sdk \
         build build-api build-cli build-worker build-runner build-web build-sdk \
         clean help install-tools
@@ -50,7 +50,7 @@ GO_APPS          := $(filter apps/%,$(GO_MODULES))
 
 # Fallback explicit lists (used when workspace introspection is unavailable).
 ifeq ($(GO_PACKAGES),)
-GO_PACKAGES      := packages/db packages/activity packages/agents packages/forge packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan
+GO_PACKAGES      := packages/db packages/activity packages/agents packages/forge packages/runtimes packages/repo-intel packages/events packages/models packages/policies packages/gateway packages/prfactory packages/reviewer packages/securityscan packages/vcs
 endif
 ifeq ($(GO_APPS),)
 GO_APPS          := apps/api apps/worker apps/runner
@@ -212,6 +212,13 @@ test-forge: ## Verify provider-neutral forge behavior and GitHub adapter conform
 	cd packages/gateway && go test ./... -run 'ForgeContract' -count=1
 	cd packages/prfactory && go test ./... -run 'OpenForgeChange|WithForge|GitHubCompatibility' -count=1
 	cd apps/api && go test ./internal/handlers -run 'MergePullRequest' -count=1
+
+test-publication: ## Verify branch publication transport and composition
+	@echo "$(BLUE)[test]$(RESET) Running branch publication contract..."
+	cd packages/vcs && go test ./... -run 'Publish|HTTPBasic' -count=1
+	cd packages/gateway && go test ./... -run 'GitHubBranchPublisher' -count=1
+	cd packages/prfactory && go test ./... -run 'PublishBranch|BranchRemote|GitHubCompatibility|RepoNamespace' -count=1
+	cd apps/api && go test ./internal/handlers -run 'CreatePullRequestUsesConfiguredCreator|MergePullRequest' -count=1
 
 test-race: ## Run Go tests with race detector
 	@echo "$(GREEN)Running tests with race detector...$(RESET)"
