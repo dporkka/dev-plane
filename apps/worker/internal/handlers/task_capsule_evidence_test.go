@@ -192,3 +192,85 @@ func TestRecordTaskCapsuleEvidencePropagatesStoreFailure(t *testing.T) {
 		t.Fatalf("expected wrapped store failure, got %v", err)
 	}
 }
+
+
+func TestRecordTaskCapsuleEvidenceRejectsStaleSubjectRevision(t *testing.T) {
+	capsule := scheduler.TaskCapsule{
+		Version:         scheduler.TaskCapsuleVersion,
+		TaskID:          "task-1",
+		WorkspaceID:     "workspace-1",
+		Agent:           scheduler.AgentIdentity{ID: "agent-1", Role: "implementer"},
+		SubjectRevision: "git:revision-b",
+	}
+	store := &memoryCapsuleEvidenceStore{
+		record: capsuleRecordForTest(t, "run-1", capsule),
+	}
+
+	_, err := recordTaskCapsuleEvidence(context.Background(), store, "run-1", scheduler.Evidence{
+		Name:            "tests",
+		Kind:            "command",
+		Status:          scheduler.EvidenceStatusPassed,
+		SubjectRevision: "git:revision-a",
+	})
+	if err == nil || !strings.Contains(err.Error(), "subject revision") {
+		t.Fatalf("expected stale subject revision error, got %v", err)
+	}
+	if store.upserts != 0 {
+		t.Fatalf("upserts = %d, want 0", store.upserts)
+	}
+}
+
+func TestAdvanceTaskCapsuleSubjectRevisionPersistsAndPreservesEvidenceHistory(t *testing.T) {
+	capsule := scheduler.TaskCapsule{
+		Version:         scheduler.TaskCapsuleVersion,
+		TaskID:          "task-1",
+		WorkspaceID:     "workspace-1",
+		Agent:           scheduler.AgentIdentity{ID: "agent-1", Role: "implementer"},
+		SubjectRevision: "git:revision-a",
+		Evidence: []scheduler.Evidence{
+			{
+				Name:            "tests",
+				Kind:            "command",
+				Status:          scheduler.EvidenceStatusPassed,
+				SubjectRevision: "git:revision-a",
+			},
+		},
+	}
+	store := &memoryCapsuleEvidenceStore{
+		record: capsuleRecordForTest(t, "run-1", capsule),
+	}
+
+	got, err := advanceTaskCapsuleSubjectRevision(context.Background(), store, "run-1", "git:revision-b")
+	if err != nil {
+		t.Fatalf("advanceTaskCapsuleSubjectRevision() error: %v", err)
+	}
+	if got.SubjectRevision != "git:revision-b" {
+		t.Fatalf("subject revision = %q, want git:revision-b", got.SubjectRevision)
+	}
+	if len(got.Evidence) != 1 || got.Evidence[0].SubjectRevision != "git:revision-a" {
+		t.Fatalf("evidence history changed unexpectedly: %#v", got.Evidence)
+	}
+	if store.upserts != 1 {
+		t.Fatalf("upserts = %d, want 1", store.upserts)
+	}
+}
+
+func TestAdvanceTaskCapsuleSubjectRevisionRejectsEmptyRevision(t *testing.T) {
+	capsule := scheduler.TaskCapsule{
+		Version:     scheduler.TaskCapsuleVersion,
+		TaskID:      "task-1",
+		WorkspaceID: "workspace-1",
+		Agent:       scheduler.AgentIdentity{ID: "agent-1", Role: "implementer"},
+	}
+	store := &memoryCapsuleEvidenceStore{
+		record: capsuleRecordForTest(t, "run-1", capsule),
+	}
+
+	_, err := advanceTaskCapsuleSubjectRevision(context.Background(), store, "run-1", "   ")
+	if err == nil || !strings.Contains(err.Error(), "subject revision is required") {
+		t.Fatalf("expected subject revision validation error, got %v", err)
+	}
+	if store.upserts != 0 {
+		t.Fatalf("upserts = %d, want 0", store.upserts)
+	}
+}
