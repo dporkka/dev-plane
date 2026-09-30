@@ -38,6 +38,8 @@ type Provider interface {
 }
 ```
 
+`CreateRequest.Revision` optionally pins provisioning to an immutable Git commit. When set, local and Docker providers create the requested workspace branch from that revision rather than resolving the mutable base branch. Fresh-environment retries use this field together with a canonical binary patch and a post-provision Git-tree equality check so retry execution cannot silently move to different source code.
+
 ### Session Lifecycle
 
 ```
