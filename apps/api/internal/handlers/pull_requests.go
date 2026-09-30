@@ -13,22 +13,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/oauth2"
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
-	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/pkg/changeauthority"
 	"github.com/ai-dev-control-plane/decisionpacket"
-	"github.com/ai-dev-control-plane/events"
-	"github.com/ai-dev-control-plane/gateway"
-	"github.com/ai-dev-control-plane/models"
-	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/prfactory"
 )
 
