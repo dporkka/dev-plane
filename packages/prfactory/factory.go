@@ -162,10 +162,20 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
-	if workspacePath != "" {
-		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
-			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
-		}
+	if workspacePath == "" {
+		return nil, fmt.Errorf("workspace path is required to create a verified candidate")
+	}
+	if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
+		return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
+	}
+
+	commitSHA, treeHash, err := gitCandidateIdentity(ctx, workspacePath)
+	if err != nil {
+		return nil, fmt.Errorf("capture candidate identity: %w", err)
+	}
+	evidence, err := f.loadLatestVerificationEvidence(ctx, run.ID, treeHash)
+	if err != nil {
+		return nil, fmt.Errorf("load verification evidence: %w", err)
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
@@ -193,18 +203,23 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		UpdatedAt:  time.Now().UTC(),
 	}
 
-	if err := f.createPRRecord(ctx, pr); err != nil {
-		return nil, fmt.Errorf("save PR record: %w", err)
+	candidate := verifiedCandidateRecord{
+		ID:            uuid.New().String(),
+		PullRequestID: pr.ID,
+		TaskID:        taskID,
+		RunID:         run.ID,
+		WorkspaceID:   run.WorkspaceID,
+		RepositoryID:  task.RepositoryID,
+		CommitSHA:     commitSHA,
+		TreeHash:      treeHash,
+		Branch:        workspaceBranch,
+		CreatedAt:     time.Now().UTC(),
 	}
+	evidence.ID = uuid.New().String()
+	evidence.CandidateID = candidate.ID
 
-	// 9. Update task status to pr_created
-	now := time.Now().UTC()
-	_, err = f.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'pr_created', updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, taskID)
-	if err != nil {
-		f.logger.Warn("failed to update task status to pr_created", "error", err)
+	if err := f.recordVerifiedPullRequest(ctx, pr, candidate, evidence); err != nil {
+		return nil, fmt.Errorf("save verified pull request: %w", err)
 	}
 
 	f.logger.Info("pull request created",
@@ -342,22 +357,182 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 	return b.String()
 }
 
-// createPRRecord saves PR metadata to DB.
-func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) error {
+type verifiedCandidateRecord struct {
+	ID            string
+	PullRequestID string
+	TaskID        string
+	RunID         string
+	WorkspaceID   *string
+	RepositoryID  string
+	CommitSHA     string
+	TreeHash      string
+	Branch        string
+	CreatedAt     time.Time
+}
+
+type verificationEvidenceRecord struct {
+	ID                string
+	CandidateID       string
+	TreeHash          string
+	ContractHash      string
+	EnvironmentDigest string
+	RunnerIdentity    string
+	Checks            json.RawMessage
+	StartedAt         time.Time
+	CompletedAt       time.Time
+}
+
+func (f *Factory) loadLatestVerificationEvidence(ctx context.Context, runID, candidateTreeHash string) (*verificationEvidenceRecord, error) {
+	var raw string
+	err := f.db.QueryRowContext(ctx, `
+		SELECT tool_output
+		FROM agent_steps
+		WHERE agent_run_id = $1
+		  AND tool_name = 'run_tests'
+		  AND status = 'completed'
+		ORDER BY step_number DESC
+		LIMIT 1
+	`, runID).Scan(&raw)
+	if err != nil {
+		return nil, err
+	}
+
+	var output struct {
+		Source            string          `json:"source"`
+		Passed            bool            `json:"passed"`
+		TreeHash          string          `json:"tree_hash"`
+		ContractHash      string          `json:"contract_hash"`
+		EnvironmentDigest string          `json:"environment_digest"`
+		RunnerIdentity    string          `json:"runner_identity"`
+		Checks            json.RawMessage `json:"checks"`
+		StartedAt         time.Time       `json:"started_at"`
+		CompletedAt       time.Time       `json:"completed_at"`
+	}
+	if err := json.Unmarshal([]byte(raw), &output); err != nil {
+		return nil, fmt.Errorf("decode verification tool output: %w", err)
+	}
+	if output.Source != "verification_contract" {
+		return nil, fmt.Errorf("latest test step is not verification-contract evidence")
+	}
+	if !output.Passed {
+		return nil, fmt.Errorf("latest verification contract did not pass")
+	}
+	if strings.TrimSpace(output.TreeHash) == "" || output.TreeHash != candidateTreeHash {
+		return nil, fmt.Errorf("verification tree %q does not match candidate tree %q", output.TreeHash, candidateTreeHash)
+	}
+	if strings.TrimSpace(output.ContractHash) == "" {
+		return nil, fmt.Errorf("verification contract hash is missing")
+	}
+	if strings.TrimSpace(output.EnvironmentDigest) == "" || strings.TrimSpace(output.RunnerIdentity) == "" {
+		return nil, fmt.Errorf("verification runtime identity is missing")
+	}
+	if output.StartedAt.IsZero() || output.CompletedAt.IsZero() || output.CompletedAt.Before(output.StartedAt) {
+		return nil, fmt.Errorf("verification timestamps are invalid")
+	}
+	if len(output.Checks) == 0 || string(output.Checks) == "null" {
+		return nil, fmt.Errorf("verification check results are missing")
+	}
+
+	return &verificationEvidenceRecord{
+		TreeHash:          output.TreeHash,
+		ContractHash:      output.ContractHash,
+		EnvironmentDigest: output.EnvironmentDigest,
+		RunnerIdentity:    output.RunnerIdentity,
+		Checks:            append(json.RawMessage(nil), output.Checks...),
+		StartedAt:         output.StartedAt,
+		CompletedAt:       output.CompletedAt,
+	}, nil
+}
+
+func gitCandidateIdentity(ctx context.Context, workspacePath string) (string, string, error) {
+	if strings.TrimSpace(workspacePath) == "" {
+		return "", "", fmt.Errorf("workspace path is required")
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse", "HEAD", "HEAD^{tree}")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("git rev-parse candidate identity: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Fields(string(out))
+	if len(lines) != 2 || strings.TrimSpace(lines[0]) == "" || strings.TrimSpace(lines[1]) == "" {
+		return "", "", fmt.Errorf("unexpected candidate identity output %q", strings.TrimSpace(string(out)))
+	}
+	return lines[0], lines[1], nil
+}
+
+func (f *Factory) recordVerifiedPullRequest(ctx context.Context, pr *models.PullRequest, candidate verifiedCandidateRecord, evidence *verificationEvidenceRecord) error {
 	if err := pr.Validate(); err != nil {
 		return fmt.Errorf("validate PR: %w", err)
 	}
+	if evidence == nil {
+		return fmt.Errorf("verification evidence is required")
+	}
+	if candidate.PullRequestID != pr.ID || evidence.CandidateID != candidate.ID {
+		return fmt.Errorf("candidate/evidence relationship is inconsistent")
+	}
+	if candidate.TreeHash != evidence.TreeHash {
+		return fmt.Errorf("candidate tree does not match verification evidence")
+	}
 
-	_, err := f.db.ExecContext(ctx, `
+	tx, err := f.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin verified PR transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO pull_requests (
 			id, task_id, run_id, repository_id, number, title, body,
 			branch, base_branch, url, state, draft, created_by, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 	`, pr.ID, pr.TaskID, pr.RunID, pr.RepoID, pr.Number, pr.Title, pr.Body,
 		pr.Branch, pr.BaseBranch, pr.URL, pr.State, pr.Draft, pr.CreatedBy, pr.CreatedAt, pr.UpdatedAt,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("insert pull request: %w", err)
+	}
+
+	workspaceID := any(nil)
+	if candidate.WorkspaceID != nil {
+		workspaceID = *candidate.WorkspaceID
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO change_candidates (
+			id, pull_request_id, task_id, run_id, workspace_id, repository_id,
+			commit_sha, tree_hash, branch, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, candidate.ID, candidate.PullRequestID, candidate.TaskID, candidate.RunID, workspaceID,
+		candidate.RepositoryID, candidate.CommitSHA, candidate.TreeHash, candidate.Branch, candidate.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("insert change candidate: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO verification_evidence (
+			id, candidate_id, tree_hash, contract_hash, environment_digest,
+			runner_identity, checks, started_at, completed_at, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, evidence.ID, evidence.CandidateID, evidence.TreeHash, evidence.ContractHash,
+		evidence.EnvironmentDigest, evidence.RunnerIdentity, string(evidence.Checks),
+		evidence.StartedAt, evidence.CompletedAt, candidate.CreatedAt,
+	); err != nil {
+		return fmt.Errorf("insert verification evidence: %w", err)
+	}
+
+	result, err := tx.ExecContext(ctx, `
+		UPDATE tasks SET status = 'pr_created', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, candidate.CreatedAt, pr.TaskID)
+	if err != nil {
+		return fmt.Errorf("update task status: %w", err)
+	}
+	if rows, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("check task status update: %w", err)
+	} else if rows == 0 {
+		return fmt.Errorf("task %s was not updated to pr_created", pr.TaskID)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit verified PR transaction: %w", err)
 	}
 	return nil
 }
