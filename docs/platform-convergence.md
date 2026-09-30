@@ -111,6 +111,108 @@ X-Dev-Plane-Signature: sha256=<HMAC-SHA256(secret, timestamp + "." + raw_body)>
 
 The existing API Factory local generator remains available as a fallback while the Dev Plane path proves production parity.
 
+## Nulang Forge Gateway integration
+
+Nulang exposes a provider-neutral `forge.*` command vocabulary to agents. Dev
+Plane remains the execution/policy authority for software-development forge
+actions.
+
+The shared operation contract is:
+
+| Nulang forge operation | Dev Plane capability operation | Default policy |
+| --- | --- | --- |
+| `repo.read` | `read_repository` | allow |
+| `branch.create` | `create_branch` | ask |
+| `commit.write` | `create_commit` | ask |
+| `change.create` | `open_pull_request` | ask |
+| `change.review` | `review_pull_request` | ask |
+| `change.merge` | `merge_pull_request` | admin-only |
+| `check.read` | `read_checks` | allow |
+
+Nulang must not accept model-supplied forge grants as authority. A trusted host
+constructs the agent-facing session, while Dev Plane independently derives and
+evaluates authority from its task, agent run, project, repository, workspace,
+approval, budget, sandbox, and audit context. Unknown provider-neutral forge
+operations fail closed.
+
+Hosted calls use signed workload endpoints. `POST /api/v1/internal/forge/authorize`
+accepts `request_id`, `task_id`, `run_id`, and the provider-neutral
+operation for authorization-only flows. `POST /api/v1/internal/forge/execute`
+accepts `request_id`, task/run identity, and the full provider-neutral command;
+the operation is derived by Dev Plane from the command type rather than trusted
+from the caller. Repository scope and agent role are loaded from persisted Dev
+Plane state.
+
+The companion `POST /api/v1/internal/forge/reconcile` endpoint accepts the
+same execution body and stable execution `request_id`, but performs only
+provider read-side probes. It never issues the mutating command. A reconciliation
+can prove the mutation was applied, prove it is absent and release the exact
+request for one safe retry, or keep the request ambiguous and non-retryable.
+
+All three endpoints use a dedicated Nulang workload identity plus a timestamped
+HMAC-SHA256 signature covering workload id, timestamp, HTTP method, request URI,
+and the SHA-256 body digest. Authorization is mounted only when
+`NULANG_WORKLOAD_SECRET` is configured. Hosted execution and reconciliation additionally require one configured forge
+provider. Gitea uses `GITEA_BASE_URL` + `GITEA_TOKEN`; GitHub uses the
+server-held `GITHUB_FORGE_TOKEN` and defaults to `https://api.github.com`
+unless `GITHUB_FORGE_BASE_URL` is set. `FORGE_PROVIDER` may be omitted when
+exactly one provider is configured, but is required to disambiguate when both
+credential sets are present.
+
+Dev Plane also applies an independent role allowlist before ordinary policy:
+planners/test runners are read-only; implementers and docs agents may create
+branches/commits/changes but cannot review or merge; reviewers/security agents
+may review but cannot commit; only release-manager runs can reach merge policy.
+Merge remains admin-only even for that role.
+
+Provider credentials, branch publication, pull-request creation/merge, approval
+state, and audit records stay in Dev Plane. Nulang Cloud may provide the runtime
+and durable execution substrate, but it does not become a second policy engine
+or credential store. Hosted Nulang uses `DevPlaneExecutionBackend`: the local
+`ForgeSession` remains the first least-privilege gate, then Dev Plane performs
+canonical context lookup, role/policy evaluation, and the provider side effect.
+
+Every signed request carries a stable host-derived `request_id`. Dev Plane
+binds it to workload, raw-body hash, task, run, and derived operation in a
+durable replay ledger. Completed identical requests replay the cached response;
+conflicting reuse, in-flight duplicates, and uncertain mutation outcomes fail
+closed. Read-only provider failures may release the claim for retry. Mutation
+provider failures are marked `uncertain` instead of retried automatically,
+because the remote side effect may have succeeded before the connection failed.
+Authorization and execution use separate replay-ID namespaces so their different
+signed bodies cannot collide.
+
+When policy returns `ask` or `admin_only`, Dev Plane creates one
+`forge_capability` approval keyed by the stable execution `request_id` and
+releases the replay lease before any provider side effect. Repeated pending
+requests reuse that approval. An approved retry reclaims the same execution ID
+and proceeds; rejected or expired approvals become terminal cached denials.
+Concurrent retries converge through the unique `forge_request_id` constraint.
+
+Successful provider mutations persist structured evidence alongside the cached
+response, including provider, repository, operation, command type, head/blob SHA
+where available, pull-request/review identifiers, merge status, and check
+results. Uncertain mutations retain reconciliation evidence rather than being
+blindly replayed.
+
+### Hosted forge providers
+
+The provider-neutral executor/reconciliation interface currently has Gitea and
+GitHub implementations. Nulang sends the same command vocabulary to either one;
+provider selection is a Dev Plane deployment concern and does not change the
+agent-facing contract.
+
+The GitHub adapter uses the current versioned REST API and keeps the credential
+server-side. Branch creation resolves the source Git ref before creating
+`refs/heads/<branch>`; file writes use the Contents API; pull requests,
+reviews, merges, and check runs map back into the same provider-neutral response
+types used by Gitea.
+
+GitHub uncertain-mutation reconciliation uses read-side provider probes only:
+Git refs for branches, Contents + branch refs for file writes, filtered pull
+request listing for change creation, review listing for reviews, and the merged
+status probe for merges. Ambiguous attribution remains non-retryable.
+
 ## Nulang Cloud runtime provider
 
 Dev Plane's `packages/runtimes.Provider` is the intended integration point. A future provider should preserve the existing interface semantics rather than make the runner depend directly on Nulang Cloud internals.

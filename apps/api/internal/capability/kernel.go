@@ -98,6 +98,43 @@ func NewKernel(policyEngine *policies.Engine, budgetEngine *budget.Engine, audit
 }
 
 // Evaluate checks if the requested operation is permitted.
+// EvaluateForge maps a provider-neutral forge operation onto Dev Plane's
+// capability vocabulary and evaluates it with the existing policy/budget/audit
+// kernel. Unknown forge operations fail closed rather than falling through to
+// the generic "ask" behavior used for ordinary unknown capabilities.
+func (k *Kernel) EvaluateForge(ctx context.Context, forgeOperation string, req Request) (*Result, error) {
+	operation, ok := OperationForForge(forgeOperation)
+	if !ok {
+		result := &Result{
+			Effect:           policies.EffectDeny,
+			RequiredApproval: false,
+			AuditRequired:    true,
+			Reason:           fmt.Sprintf("unknown forge operation: %s", forgeOperation),
+			RiskLevel:        RiskLevelHigh,
+		}
+		req.Operation = forgeOperation
+		k.logAudit(ctx, req, result)
+		return result, ErrCapabilityUnknown
+	}
+	req.Operation = operation
+	if req.ActorType == "agent" && !ForgeOperationAllowedForAgentRole(req.AgentRole, forgeOperation) {
+		result := &Result{
+			Effect:           policies.EffectDeny,
+			RequiredApproval: false,
+			AuditRequired:    true,
+			Reason: fmt.Sprintf(
+				"agent role %q lacks forge authority for %s",
+				req.AgentRole,
+				forgeOperation,
+			),
+			RiskLevel: RiskLevelHigh,
+		}
+		k.logAudit(ctx, req, result)
+		return result, nil
+	}
+	return k.Evaluate(ctx, req)
+}
+
 func (k *Kernel) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	// 1. Build the evaluation result
 	result := &Result{

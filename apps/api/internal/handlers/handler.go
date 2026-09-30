@@ -10,8 +10,11 @@ import (
 	agentvaultclient "github.com/ai-dev-control-plane/api/internal/agentvault"
 	"github.com/ai-dev-control-plane/api/internal/auth"
 	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/api/internal/forgeexec"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
@@ -23,6 +26,27 @@ import (
 // EventPublisher is the subset of the event bus used by HTTP handlers.
 type EventPublisher interface {
 	Publish(subject string, data []byte) error
+}
+
+// ForgeExecutor executes an already-authorized provider-neutral forge command.
+// Provider credentials are held by the implementation, never by the workload.
+type ForgeExecutor interface {
+	Provider() string
+	Execute(ctx context.Context, command forgeexec.Command) (forgeexec.Response, error)
+	Reconcile(ctx context.Context, command forgeexec.Command) (forgeexec.ReconcileResult, error)
+}
+
+// ForgeReplayStore is the durable idempotency boundary for signed workload calls.
+type ForgeReplayStore interface {
+	Claim(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
+	Inspect(ctx context.Context, req forgereplay.Request) (forgereplay.Result, error)
+	Complete(ctx context.Context, requestID string, status int, body []byte) error
+	CompleteWithEvidence(ctx context.Context, requestID string, status int, body, evidence []byte) error
+	ResolveUncertain(ctx context.Context, requestID string, status int, body, evidence []byte) error
+	RetryUncertain(ctx context.Context, requestID string, evidence []byte) error
+	KeepUncertain(ctx context.Context, requestID string, evidence []byte) error
+	MarkUncertain(ctx context.Context, requestID string, detail []byte) error
+	Release(ctx context.Context, requestID string) error
 }
 
 // Handler is the base handler struct that provides access to shared dependencies.
@@ -39,6 +63,9 @@ type Handler struct {
 	githubToken       string
 	deployGateway     deployGateway
 	deployToken       string
+	workloadVerifier  *workloadauth.Verifier
+	forgeReplayStore  ForgeReplayStore
+	forgeExecutor     ForgeExecutor
 
 	// integrationValidator is an optional override for integration credential
 	// validation. When nil, the default gateway-based validation is used.
@@ -123,6 +150,26 @@ func (h *Handler) WithDeployGateway(g deployGateway) *Handler {
 // WithDeployToken configures the deployment token used for task deploy operations.
 func (h *Handler) WithDeployToken(token string) *Handler {
 	h.deployToken = token
+	return h
+}
+
+// WithWorkloadVerifier configures service-to-service workload authentication
+// for internal endpoints such as the Nulang forge authorization contract.
+func (h *Handler) WithWorkloadVerifier(verifier *workloadauth.Verifier) *Handler {
+	h.workloadVerifier = verifier
+	return h
+}
+
+// WithForgeReplayStore configures durable request idempotency/replay handling
+// for signed workload endpoints.
+func (h *Handler) WithForgeReplayStore(store ForgeReplayStore) *Handler {
+	h.forgeReplayStore = store
+	return h
+}
+
+// WithForgeExecutor configures the control-plane-owned forge provider executor.
+func (h *Handler) WithForgeExecutor(executor ForgeExecutor) *Handler {
+	h.forgeExecutor = executor
 	return h
 }
 

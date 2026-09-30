@@ -16,11 +16,14 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/audit"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/config"
+	"github.com/ai-dev-control-plane/api/internal/forgeexec"
+	"github.com/ai-dev-control-plane/api/internal/forgereplay"
 	"github.com/ai-dev-control-plane/api/internal/handlers"
 	appmiddleware "github.com/ai-dev-control-plane/api/internal/middleware"
 	"github.com/ai-dev-control-plane/api/internal/openapi"
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	"github.com/ai-dev-control-plane/api/internal/workloadauth"
 	events "github.com/ai-dev-control-plane/events"
 )
 
@@ -91,6 +94,21 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	if s.config.NulangWorkloadSecret != "" {
+		verifier, err := workloadauth.NewVerifier(s.config.NulangWorkloadID, s.config.NulangWorkloadSecret, time.Minute)
+		if err != nil {
+			s.logger.Error("invalid Nulang workload auth configuration", "error", err)
+		} else {
+			h = h.WithWorkloadVerifier(verifier).WithForgeReplayStore(forgereplay.NewStore(s.db))
+		}
+	} else {
+		s.logger.Warn("NULANG_WORKLOAD_SECRET not configured; internal forge workload endpoint is disabled")
+	}
+	forgeExecutionEnabled := false
+	if executor := newForgeExecutor(s.config, &http.Client{Timeout: 15 * time.Second}); executor != nil {
+		h = h.WithForgeExecutor(executor)
+		forgeExecutionEnabled = true
+	}
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
@@ -134,6 +152,16 @@ func (s *Server) routes() {
 		r.Post("/webhooks/slack", wh.SlackWebhook)
 		r.Post("/webhooks/discord", wh.DiscordWebhook)
 		r.Post("/webhooks/{provider}/{integrationID}", wh.IntegrationWebhook)
+
+		// Signed service-to-service endpoint. It is mounted only when the
+		// dedicated Nulang workload secret is configured.
+		if s.config.NulangWorkloadSecret != "" {
+			r.Post("/internal/forge/authorize", h.AuthorizeForgeWorkload)
+			if forgeExecutionEnabled {
+				r.Post("/internal/forge/execute", h.ExecuteForgeWorkload)
+				r.Post("/internal/forge/reconcile", h.ReconcileForgeWorkload)
+			}
+		}
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
@@ -248,6 +276,41 @@ func (s *Server) routes() {
 			r.Post("/projects/{projectID}/voice-tasks", h.CreateVoiceTask)
 		})
 	})
+}
+
+func newForgeExecutor(cfg *config.Config, client *http.Client) handlers.ForgeExecutor {
+	provider := cfg.ForgeProvider
+	if provider == "" {
+		switch {
+		case cfg.GiteaBaseURL != "" && cfg.GiteaToken != "" &&
+			cfg.GitHubForgeToken == "":
+			provider = "gitea"
+		case cfg.GitHubForgeToken != "" &&
+			(cfg.GiteaBaseURL == "" || cfg.GiteaToken == ""):
+			provider = "github"
+		default:
+			return nil
+		}
+	}
+
+	switch provider {
+	case "gitea":
+		if cfg.GiteaBaseURL == "" || cfg.GiteaToken == "" {
+			return nil
+		}
+		return forgeexec.NewGiteaExecutor(cfg.GiteaBaseURL, cfg.GiteaToken, client)
+	case "github":
+		if cfg.GitHubForgeToken == "" {
+			return nil
+		}
+		baseURL := cfg.GitHubForgeBaseURL
+		if baseURL == "" {
+			baseURL = "https://api.github.com"
+		}
+		return forgeexec.NewGitHubExecutor(baseURL, cfg.GitHubForgeToken, client)
+	default:
+		return nil
+	}
 }
 
 // Start starts the HTTP server on the given address.

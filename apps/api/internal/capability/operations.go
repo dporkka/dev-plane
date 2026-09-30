@@ -1,5 +1,7 @@
 package capability
 
+import "github.com/ai-dev-control-plane/models"
+
 // All operations that must go through the Capability Kernel.
 const (
 	// File operations
@@ -32,11 +34,15 @@ const (
 	OpRunMigration  = "run_migration"
 	OpDestructiveDB = "destructive_db"
 
-	// Git operations
-	OpCreateCommit = "create_commit"
-	OpPushBranch   = "push_branch"
-	OpOpenPR       = "open_pull_request"
-	OpMergePR      = "merge_pull_request"
+	// Git / forge operations
+	OpReadRepository = "read_repository"
+	OpCreateBranch   = "create_branch"
+	OpCreateCommit   = "create_commit"
+	OpPushBranch     = "push_branch"
+	OpOpenPR         = "open_pull_request"
+	OpReviewPR       = "review_pull_request"
+	OpMergePR        = "merge_pull_request"
+	OpReadChecks     = "read_checks"
 
 	// Deploy operations
 	OpDeploy = "deploy"
@@ -71,10 +77,14 @@ var operationResourceMap = map[string]struct {
 	OpStopPreview:     {ResourceType: "deploy", Action: "execute"},
 	OpRunMigration:    {ResourceType: "command", Action: "migrate"},
 	OpDestructiveDB:   {ResourceType: "command", Action: "destructive_db"},
+	OpReadRepository:  {ResourceType: "git", Action: "read"},
+	OpCreateBranch:    {ResourceType: "git", Action: "create_branch"},
 	OpCreateCommit:    {ResourceType: "git", Action: "commit"},
 	OpPushBranch:      {ResourceType: "git", Action: "push"},
 	OpOpenPR:          {ResourceType: "git", Action: "create_pr"},
+	OpReviewPR:        {ResourceType: "git", Action: "review"},
 	OpMergePR:         {ResourceType: "git", Action: "merge"},
+	OpReadChecks:      {ResourceType: "git", Action: "read_checks"},
 	OpDeploy:          {ResourceType: "deploy", Action: "execute"},
 	OpDeleteWorkspace: {ResourceType: "workspace", Action: "delete"},
 	OpModifyPolicy:    {ResourceType: "policy", Action: "write"},
@@ -105,4 +115,86 @@ func GetResourceAndAction(op string) (resourceType, action string) {
 		return m.ResourceType, m.Action
 	}
 	return "", ""
+}
+
+// ForgeOperation* values are the provider-neutral operation vocabulary shared
+// with Nulang's forge gateway. They deliberately describe intent rather than a
+// specific forge provider API.
+const (
+	ForgeOperationRepoRead     = "repo.read"
+	ForgeOperationBranchCreate = "branch.create"
+	ForgeOperationCommitWrite  = "commit.write"
+	ForgeOperationChangeCreate = "change.create"
+	ForgeOperationChangeReview = "change.review"
+	ForgeOperationChangeMerge  = "change.merge"
+	ForgeOperationCheckRead    = "check.read"
+)
+
+var forgeOperationMap = map[string]string{
+	ForgeOperationRepoRead:     OpReadRepository,
+	ForgeOperationBranchCreate: OpCreateBranch,
+	ForgeOperationCommitWrite:  OpCreateCommit,
+	ForgeOperationChangeCreate: OpOpenPR,
+	ForgeOperationChangeReview: OpReviewPR,
+	ForgeOperationChangeMerge:  OpMergePR,
+	ForgeOperationCheckRead:    OpReadChecks,
+}
+
+// OperationForForge maps the provider-neutral forge vocabulary onto the
+// capability kernel's canonical operations. Unknown operations fail closed.
+func OperationForForge(operation string) (string, bool) {
+	op, ok := forgeOperationMap[operation]
+	return op, ok
+}
+
+var forgeAgentRoleOperations = map[string]map[string]struct{}{
+	models.AgentRolePlanner: {
+		ForgeOperationRepoRead:  {},
+		ForgeOperationCheckRead: {},
+	},
+	models.AgentRoleImplementer: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationBranchCreate: {},
+		ForgeOperationCommitWrite:  {},
+		ForgeOperationChangeCreate: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleReviewer: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleTestRunner: {
+		ForgeOperationRepoRead:  {},
+		ForgeOperationCheckRead: {},
+	},
+	models.AgentRoleSecurity: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleDocs: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationBranchCreate: {},
+		ForgeOperationCommitWrite:  {},
+		ForgeOperationChangeCreate: {},
+		ForgeOperationCheckRead:    {},
+	},
+	models.AgentRoleReleaseManager: {
+		ForgeOperationRepoRead:     {},
+		ForgeOperationChangeReview: {},
+		ForgeOperationChangeMerge:  {},
+		ForgeOperationCheckRead:    {},
+	},
+}
+
+// ForgeOperationAllowedForAgentRole enforces least-privilege forge authority
+// independently of the caller's local session grants. Unknown roles fail closed.
+func ForgeOperationAllowedForAgentRole(role, operation string) bool {
+	operations, ok := forgeAgentRoleOperations[role]
+	if !ok {
+		return false
+	}
+	_, ok = operations[operation]
+	return ok
 }
