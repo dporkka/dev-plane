@@ -420,14 +420,9 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusServiceUnavailable, errors.New("forge provider is not configured"))
 		return
 	}
-	if h.forgeCredential.Token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("forge credential is not configured"))
-		return
-	}
-
 	mergeResult, err := h.forgeProvider.MergeChange(ctx, h.forgeCredential, forge.Repository{
-		Owner: repoOwner,
-		Name:  repoName,
+		Namespace: repoOwner,
+		Name:      repoName,
 	}, pr.Number, forge.MergeChangeRequest{
 		Method:               forge.MergeMethod(req.Method),
 		ExpectedHeadRevision: req.SHA,
