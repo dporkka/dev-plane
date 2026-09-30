@@ -104,3 +104,62 @@ func TestReadyEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
 }
+
+func TestBuildForgeIntegration_Gitea(t *testing.T) {
+	cfg := &config.Config{
+		ForgeProvider:         "gitea",
+		ForgeGitRemote:        "review",
+		GiteaURL:              "https://code.example.com",
+		GiteaToken:            "secret-token",
+		GiteaUsername:         "alice",
+		GiteaDraftTitlePrefix: "[Draft]",
+	}
+
+	integration, err := buildForgeIntegration(cfg, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("buildForgeIntegration() error: %v", err)
+	}
+	if integration == nil {
+		t.Fatal("integration is nil")
+	}
+	if integration.provider.Name() != "gitea" {
+		t.Fatalf("provider = %q, want gitea", integration.provider.Name())
+	}
+	if integration.credential.Token != "secret-token" {
+		t.Fatalf("credential token = %q", integration.credential.Token)
+	}
+	if integration.creator == nil {
+		t.Fatal("creator is nil")
+	}
+}
+
+func TestBuildForgeIntegration_ForgejoAlias(t *testing.T) {
+	cfg := &config.Config{
+		ForgeProvider:  "forgejo",
+		GiteaURL:       "https://forge.example.com",
+		GiteaToken:     "secret-token",
+		GiteaUsername:  "alice",
+		ForgeGitRemote: "origin",
+	}
+	integration, err := buildForgeIntegration(cfg, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("buildForgeIntegration() error: %v", err)
+	}
+	if integration == nil || integration.provider.Name() != "gitea" {
+		t.Fatalf("integration = %#v, want Gitea-compatible provider", integration)
+	}
+}
+
+func TestBuildForgeIntegration_GiteaRequiresURL(t *testing.T) {
+	cfg := &config.Config{ForgeProvider: "gitea"}
+	if _, err := buildForgeIntegration(cfg, nil, slog.Default()); err == nil {
+		t.Fatal("expected missing Gitea URL error")
+	}
+}
+
+func TestBuildForgeIntegration_RejectsUnknownProvider(t *testing.T) {
+	cfg := &config.Config{ForgeProvider: "bitbucket"}
+	if _, err := buildForgeIntegration(cfg, nil, slog.Default()); err == nil {
+		t.Fatal("expected unsupported forge provider error")
+	}
+}
