@@ -1156,3 +1156,41 @@ func TestHandleRunFailedRetriesDispatchAfterPublishFailure(t *testing.T) {
 		t.Fatalf("retry metadata = %s, want dispatch_published=true", metadata)
 	}
 }
+
+
+func TestHandleRunFailedDoesNotAutoRetryWithoutEventPublisher(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed' WHERE id = 'run-1'`); err != nil {
+		t.Fatalf("mark run failed: %v", err)
+	}
+
+	handler := NewRunHandler(db, slog.Default(), nil)
+	msg := failedRunMessage(t, "run-1", "task-1", runfailure.Classification{
+		Taxonomy:    runfailure.TaxonomyVersion,
+		Category:    runfailure.CategoryInfrastructure,
+		Retryable:   true,
+		Disposition: runfailure.DispositionRetry,
+		Stage:       "verification",
+		Source:      "tests",
+	})
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("HandleRunFailed() error: %v", err)
+	}
+
+	var runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("count runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("run count = %d, want no automatic retry without publisher", runCount)
+	}
+	var taskStatus string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("query task status: %v", err)
+	}
+	if taskStatus != "failed" {
+		t.Fatalf("task status = %q, want failed", taskStatus)
+	}
+}
