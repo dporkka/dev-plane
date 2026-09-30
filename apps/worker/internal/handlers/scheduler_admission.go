@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-dev-control-plane/readiness"
 	"github.com/ai-dev-control-plane/scheduler"
 )
 
@@ -47,6 +48,7 @@ type schedulerTaskRow struct {
 	RepositoryID string
 	Status       string
 	Metadata     string
+	RunMetadata  string
 }
 
 func NewSchedulerAdmission(db *sql.DB, capacity SchedulerCapacity) *SchedulerAdmission {
@@ -77,6 +79,11 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 	candidate, config, err := a.loadCandidate(ctx, runID, taskID)
 	if err != nil {
 		return RunAdmissionDecision{}, err
+	}
+	if decision, ok, err := validatePersistedAdmission(candidate.RunMetadata); err != nil {
+		return RunAdmissionDecision{}, err
+	} else if ok {
+		return decision, nil
 	}
 
 	if config != nil {
@@ -232,11 +239,12 @@ func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID st
 	var row schedulerTaskRow
 	var runStatus string
 	err := a.db.QueryRowContext(ctx, `
-		SELECT t.id, t.project_id, t.repository_id, t.status, COALESCE(t.metadata, '{}'), ar.status
+		SELECT t.id, t.project_id, t.repository_id, t.status,
+		       COALESCE(t.metadata, '{}'), ar.status, COALESCE(ar.metadata, '{}')
 		FROM agent_runs ar
 		JOIN tasks t ON t.id = ar.task_id
 		WHERE ar.id = $1 AND t.id = $2 AND t.deleted_at IS NULL
-	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus)
+	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus, &row.RunMetadata)
 	if err != nil {
 		return row, nil, fmt.Errorf("load scheduler candidate: %w", err)
 	}
@@ -248,6 +256,38 @@ func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID st
 		return row, nil, err
 	}
 	return row, config, nil
+}
+
+type persistedAdmissionMetadata struct {
+	Admission *struct {
+		Policy    string           `json:"policy"`
+		Readiness readiness.Report `json:"readiness"`
+	} `json:"admission"`
+}
+
+func validatePersistedAdmission(raw string) (RunAdmissionDecision, bool, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "{}" {
+		return RunAdmissionDecision{}, false, nil
+	}
+	var metadata persistedAdmissionMetadata
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil {
+		return RunAdmissionDecision{}, false, fmt.Errorf("decode persisted admission metadata: %w", err)
+	}
+	if metadata.Admission == nil {
+		return RunAdmissionDecision{}, false, nil
+	}
+	if metadata.Admission.Policy != readiness.AdmissionPolicyVersion {
+		return RunAdmissionDecision{Allowed: false, Reason: "unsupported-admission-policy"}, true, nil
+	}
+	switch metadata.Admission.Readiness.Status {
+	case readiness.StatusReady, readiness.StatusAttention:
+		return RunAdmissionDecision{}, false, nil
+	case readiness.StatusBlocked:
+		return RunAdmissionDecision{Allowed: false, Reason: "readiness-blocked"}, true, nil
+	default:
+		return RunAdmissionDecision{Allowed: false, Reason: "invalid-readiness-status"}, true, nil
+	}
 }
 
 func (a *SchedulerAdmission) loadRunningClaims(ctx context.Context, candidate schedulerTaskRow) ([]scheduler.Task, bool, error) {
