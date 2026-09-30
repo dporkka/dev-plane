@@ -46,6 +46,10 @@ type StdioClient struct {
 	nextSub uint64
 	subs    map[uint64]chan Notification
 
+	requestsMu  sync.Mutex
+	nextRequestSub uint64
+	requests     map[uint64]chan ServerRequest
+
 	closeOnce sync.Once
 	closed    chan struct{}
 	readErr   atomic.Value
@@ -55,9 +59,10 @@ type StdioClient struct {
 func NewStdioClient(ctx context.Context, config StdioConfig) (*StdioClient, error) {
 	client := &StdioClient{
 		config:  normalizeStdioConfig(config),
-		pending: make(map[int64]chan rpcResponse),
-		subs:    make(map[uint64]chan Notification),
-		closed:  make(chan struct{}),
+		pending:  make(map[int64]chan rpcResponse),
+		subs:     make(map[uint64]chan Notification),
+		requests: make(map[uint64]chan ServerRequest),
+		closed:   make(chan struct{}),
 	}
 	if err := client.start(ctx); err != nil {
 		_ = client.Close()
@@ -233,6 +238,51 @@ func (c *StdioClient) Subscribe() (<-chan Notification, func()) {
 	return ch, cancel
 }
 
+// SubscribeRequests returns client-directed app-server requests that require a response.
+// Unsupported request methods remain fail-closed in the transport and are never emitted.
+func (c *StdioClient) SubscribeRequests() (<-chan ServerRequest, func()) {
+	ch := make(chan ServerRequest, 32)
+
+	c.requestsMu.Lock()
+	c.nextRequestSub++
+	id := c.nextRequestSub
+	select {
+	case <-c.closed:
+		close(ch)
+		c.requestsMu.Unlock()
+		return ch, func() {}
+	default:
+		c.requests[id] = ch
+		c.requestsMu.Unlock()
+	}
+
+	var once sync.Once
+	cancel := func() {
+		once.Do(func() {
+			c.requestsMu.Lock()
+			if existing, ok := c.requests[id]; ok {
+				delete(c.requests, id)
+				close(existing)
+			}
+			c.requestsMu.Unlock()
+		})
+	}
+	return ch, cancel
+}
+
+// Respond resolves a client-directed JSON-RPC request.
+func (c *StdioClient) Respond(ctx context.Context, id json.RawMessage, result any) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+	if len(id) == 0 {
+		return errors.New("codex server request id is required")
+	}
+	return c.writeJSON(rpcResultResponse{JSONRPC: "2.0", ID: id, Result: result})
+}
+
 // Close terminates the app-server process and releases subscribers.
 func (c *StdioClient) Close() error {
 	if c == nil {
@@ -265,6 +315,13 @@ func (c *StdioClient) Close() error {
 			close(ch)
 		}
 		c.subsMu.Unlock()
+
+		c.requestsMu.Lock()
+		for id, ch := range c.requests {
+			delete(c.requests, id)
+			close(ch)
+		}
+		c.requestsMu.Unlock()
 	})
 	return closeErr
 }
@@ -302,16 +359,23 @@ func (c *StdioClient) readLoop() {
 			continue
 		}
 
-		// Codex can send client-directed requests for approvals and other
-		// interactive UI work. This adapter does not advertise those capabilities
-		// yet, so fail closed instead of leaving app-server blocked indefinitely.
+		// Surface the approval request methods Dev Plane can safely map. All other
+		// client-directed requests fail closed instead of being auto-approved.
 		if message.Method != "" && len(message.ID) > 0 {
+			if supportsServerRequest(message.Method) {
+				c.broadcastRequest(ServerRequest{
+					ID:     append(json.RawMessage(nil), message.ID...),
+					Method: message.Method,
+					Params: append(json.RawMessage(nil), message.Params...),
+				})
+				continue
+			}
 			_ = c.writeJSON(rpcErrorResponse{
 				JSONRPC: "2.0",
 				ID:      message.ID,
 				Error: RPCError{
 					Code:    -32601,
-					Message: "Dev Plane Codex adapter does not handle client-directed requests yet",
+					Message: "Dev Plane Codex adapter does not handle this client-directed request",
 				},
 			})
 		}
@@ -330,6 +394,18 @@ func (c *StdioClient) broadcast(notification Notification) {
 		case <-c.closed:
 			return
 		case ch <- notification:
+		}
+	}
+}
+
+func (c *StdioClient) broadcastRequest(request ServerRequest) {
+	c.requestsMu.Lock()
+	defer c.requestsMu.Unlock()
+	for _, ch := range c.requests {
+		select {
+		case <-c.closed:
+			return
+		case ch <- request:
 		}
 	}
 }
@@ -406,6 +482,12 @@ type rpcErrorResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Error   RPCError        `json:"error"`
+}
+
+type rpcResultResponse struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"`
+	Result  any             `json:"result"`
 }
 
 type wireMessage struct {
