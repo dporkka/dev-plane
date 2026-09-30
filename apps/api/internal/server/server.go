@@ -167,6 +167,7 @@ func (s *Server) routes() {
 
 			// Task actions
 			r.Get("/tasks/{id}/spec", h.GetTaskSpec)
+			r.Get("/tasks/{id}/readiness", h.GetTaskReadiness)
 			r.Post("/tasks/{id}/generate-spec", h.GenerateSpec)
 			r.Post("/tasks/{id}/start-run", h.StartRun)
 			r.Post("/runs/{id}/retry", h.RetryRun)

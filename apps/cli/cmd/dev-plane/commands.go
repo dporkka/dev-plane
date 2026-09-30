@@ -15,6 +15,7 @@ import (
 
 	"github.com/ai-dev-control-plane/cli/internal/client"
 	"github.com/ai-dev-control-plane/cli/internal/config"
+	"github.com/ai-dev-control-plane/readiness"
 )
 
 func runLogin(args []string) error {
@@ -81,6 +82,22 @@ func runTasksGet(args []string) error {
 		return err
 	}
 	return printJSON(task)
+}
+
+func runTasksReadiness(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: tasks readiness <id>")
+	}
+	id := args[0]
+	c, err := newClient()
+	if err != nil {
+		return err
+	}
+	var report readiness.Report
+	if err := c.Get(context.Background(), "/api/v1/tasks/"+url.PathEscape(id)+"/readiness", &report); err != nil {
+		return err
+	}
+	return printJSON(report)
 }
 
 func runTasksCreate(args []string) error {

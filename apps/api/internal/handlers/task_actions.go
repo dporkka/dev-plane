@@ -15,6 +15,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/respond"
 	specgenerator "github.com/ai-dev-control-plane/api/internal/spec"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/readiness"
 )
 
 // GetTaskSpec returns the generated spec for a task.
@@ -149,12 +150,13 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 		RepositoryID string
 		WorkspaceID  *string
 		TargetBranch string
+		RiskLevel    string
 	}
 	var workspaceID sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT status, project_id, repository_id, workspace_id, target_branch
+		SELECT status, project_id, repository_id, workspace_id, target_branch, risk_level
 		FROM tasks WHERE id = $1 AND deleted_at IS NULL
-	`, taskID).Scan(&task.Status, &task.ProjectID, &task.RepositoryID, &workspaceID, &task.TargetBranch)
+	`, taskID).Scan(&task.Status, &task.ProjectID, &task.RepositoryID, &workspaceID, &task.TargetBranch, &task.RiskLevel)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("task not found"))
@@ -168,6 +170,31 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, fmt.Errorf("task must be in 'approved' status, current: %s", task.Status))
 		return
 	}
+
+	readinessReport, err := h.assessTaskReadiness(ctx, taskID, task.RepositoryID, task.RiskLevel)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if readinessReport.Status == readiness.StatusBlocked {
+		respond.JSON(w, http.StatusConflict, map[string]any{
+			"error":     "task readiness blocked",
+			"readiness": readinessReport,
+		})
+		return
+	}
+
+	admissionMetadata, err := json.Marshal(map[string]any{
+		"admission": map[string]any{
+			"policy":    readiness.AdmissionPolicyVersion,
+			"readiness": readinessReport,
+		},
+	})
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	if workspaceID.Valid {
 		task.WorkspaceID = &workspaceID.String
 	}
@@ -175,37 +202,64 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	runID := uuid.New().String()
 
-	// Create the agent run record
-	workspaceArg := any(nil)
-	if task.WorkspaceID != nil {
-		workspaceArg = *task.WorkspaceID
-	}
-	_, err = h.db.ExecContext(ctx, `
-		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, '{}', $4, $4)
-	`, runID, taskID, workspaceArg, now)
+	tx, err := h.db.BeginTx(ctx, nil)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
 
-	// Update task status to running
-	_, err = h.db.ExecContext(ctx, `
-		UPDATE tasks SET status = 'running', started_at = $1, updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
+	claimResult, err := tx.ExecContext(ctx, `
+		UPDATE tasks
+		SET status = 'running', started_at = COALESCE(started_at, $1), updated_at = $1
+		WHERE id = $2 AND status = 'approved' AND deleted_at IS NULL
 	`, now, taskID)
 	if err != nil {
-		h.logger.Warn("failed to update task status to running", "error", err)
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
+	claimed, err := claimResult.RowsAffected()
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if claimed != 1 {
+		respond.JSON(w, http.StatusConflict, map[string]string{"error": "initial run already claimed"})
+		return
+	}
+
+	workspaceArg := any(nil)
+	if task.WorkspaceID != nil {
+		workspaceArg = *task.WorkspaceID
+	}
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
+		VALUES ($1, $2, $3, 'implementer', 'gpt-4o', 'openai', 'queued', 0.0, $4, $5, $5)
+	`, runID, taskID, workspaceArg, string(admissionMetadata), now)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	committed = true
 
 	// Publish event to NATS if event bus is available
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"run_id":     runID,
-			"task_id":    taskID,
-			"status":     "queued",
-			"action":     "start_run",
-			"project_id": task.ProjectID,
+			"run_id":           runID,
+			"task_id":          taskID,
+			"status":           "queued",
+			"action":           "start_run",
+			"project_id":       task.ProjectID,
+			"readiness_status": readinessReport.Status,
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("runs.triggered", data); pubErr != nil {
@@ -214,8 +268,9 @@ func (h *Handler) StartRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.JSON(w, http.StatusCreated, map[string]interface{}{
-		"run_id": runID,
-		"status": "queued",
+		"run_id":           runID,
+		"status":           "queued",
+		"readiness_status": readinessReport.Status,
 	})
 }
 
@@ -290,6 +345,27 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var originalMetadata sql.NullString
+	if err := h.db.QueryRowContext(ctx, `SELECT metadata FROM agent_runs WHERE id = $1`, runID).Scan(&originalMetadata); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	retryMetadata := map[string]any{}
+	if originalMetadata.Valid && len(originalMetadata.String) > 0 {
+		if err := json.Unmarshal([]byte(originalMetadata.String), &retryMetadata); err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("invalid original run metadata: %w", err))
+			return
+		}
+	}
+	retryMetadata["retry"] = map[string]any{
+		"original_run_id": runID,
+	}
+	retryMetadataJSON, err := json.Marshal(retryMetadata)
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	now := time.Now().UTC()
 	newRunID := uuid.New().String()
 
@@ -309,8 +385,8 @@ func (h *Handler) RetryRun(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO agent_runs (id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, '{}', $7, $7)
-	`, newRunID, run.TaskID, workspaceArg, run.AgentRole, model, provider, now)
+		VALUES ($1, $2, $3, $4, $5, $6, 'queued', 0.0, $7, $8, $8)
+	`, newRunID, run.TaskID, workspaceArg, run.AgentRole, model, provider, string(retryMetadataJSON), now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return

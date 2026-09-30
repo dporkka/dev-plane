@@ -139,7 +139,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		WithEventPublisher(publisher).
 		WithRuntimeProvider(provider, "local")
 
-	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved"}`)})
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
 	if err != nil {
 		t.Fatalf("HandleTaskApproved() error: %v", err)
 	}
@@ -152,12 +152,20 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		t.Fatalf("task status/workspace = %q/%q, want running/non-empty", taskStatus, workspaceID)
 	}
 
-	var runID, runStatus string
-	if err := db.QueryRow(`SELECT id, status FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runID, &runStatus); err != nil {
+	var runID, runStatus, runMetadata string
+	if err := db.QueryRow(`SELECT id, status, metadata FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runID, &runStatus, &runMetadata); err != nil {
 		t.Fatalf("query run: %v", err)
 	}
 	if runID == "" || runStatus != "queued" {
 		t.Fatalf("run id/status = %q/%q, want non-empty/queued", runID, runStatus)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(runMetadata), &metadata); err != nil {
+		t.Fatalf("unmarshal run metadata: %v", err)
+	}
+	admission, ok := metadata["admission"].(map[string]any)
+	if !ok || admission["policy"] != "task-readiness-v1" {
+		t.Fatalf("run metadata admission = %+v", metadata["admission"])
 	}
 	if publisher.subject != events.RunTriggered {
 		t.Fatalf("published subject = %q, want %s", publisher.subject, events.RunTriggered)
@@ -171,6 +179,113 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	}
 	if provider.req.CloneURL != "https://example.invalid/repo.git" {
 		t.Fatalf("runtime clone URL = %q", provider.req.CloneURL)
+	}
+}
+
+func TestHandleTaskApprovedRejectsMalformedAdmissionBeforeSideEffects(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	provider := &fakeRuntimeProvider{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":[]}`)})
+	if err == nil {
+		t.Fatal("HandleTaskApproved() error = nil, want malformed metadata error")
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called before metadata validation: %+v", provider.req)
+	}
+	var taskStatus string
+	var workspaceID sql.NullString
+	if err := db.QueryRow(`SELECT status, workspace_id FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus, &workspaceID); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if taskStatus != "approved" || workspaceID.Valid {
+		t.Fatalf("task status/workspace = %q/%v, want approved/null", taskStatus, workspaceID)
+	}
+	var workspaceCount, runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workspaces`).Scan(&workspaceCount); err != nil {
+		t.Fatalf("query workspace count: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("query run count: %v", err)
+	}
+	if workspaceCount != 0 || runCount != 0 {
+		t.Fatalf("workspace/run counts = %d/%d, want 0/0", workspaceCount, runCount)
+	}
+}
+
+func TestHandleTaskApprovedSkipsWhenInitialRunAlreadyClaimed(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	if _, err := db.Exec(`UPDATE tasks SET status = 'running' WHERE id = 'task-1'`); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	provider := &fakeRuntimeProvider{}
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
+	if err != nil {
+		t.Fatalf("HandleTaskApproved() error: %v", err)
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called for already-claimed task: %+v", provider.req)
+	}
+	var workspaceCount, runCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM workspaces`).Scan(&workspaceCount); err != nil {
+		t.Fatalf("query workspace count: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_runs`).Scan(&runCount); err != nil {
+		t.Fatalf("query run count: %v", err)
+	}
+	if workspaceCount != 0 || runCount != 0 {
+		t.Fatalf("workspace/run counts = %d/%d, want 0/0", workspaceCount, runCount)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("unexpected event published: %q", publisher.subject)
+	}
+}
+
+func TestHandleTaskApprovedDoesNotRepublishFollowOnRun(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+	if _, err := db.Exec(`UPDATE tasks SET status = 'running' WHERE id = 'task-1'`); err != nil {
+		t.Fatalf("mark task running: %v", err)
+	}
+	_, err := db.Exec(`
+		INSERT INTO agent_runs (
+			id, task_id, workspace_id, agent_role, model, provider, status, total_cost, metadata, created_at, updated_at
+		) VALUES (
+			'run-follow-on', 'task-1', NULL, 'reviewer', 'gpt-4o', 'openai', 'queued', 0,
+			'{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}},"trigger":"mailbox_handoff","handoff_from_run_id":"run-1"}',
+			CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		)
+	`)
+	if err != nil {
+		t.Fatalf("insert follow-on run: %v", err)
+	}
+	publisher := &fakeWorkerEventPublisher{}
+	provider := &fakeRuntimeProvider{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+
+	err = handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1","readiness":{"status":"ready","checks":[]}}}}`)})
+	if err != nil {
+		t.Fatalf("HandleTaskApproved() error: %v", err)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("published follow-on run as approval recovery: %q %s", publisher.subject, string(publisher.data))
+	}
+	if provider.req.CloneURL != "" {
+		t.Fatalf("runtime provider called for already-running task: %+v", provider.req)
 	}
 }
 
