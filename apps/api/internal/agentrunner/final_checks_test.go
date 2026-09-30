@@ -156,7 +156,6 @@ func setupFinalCheckDB(t *testing.T) *sql.DB {
 	return db
 }
 
-
 type noopCompletionObserver struct{}
 
 func (noopCompletionObserver) RecordRunCompletion(
