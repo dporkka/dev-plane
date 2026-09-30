@@ -115,6 +115,37 @@ func TestCreateChangeSet(t *testing.T) {
 	}
 }
 
+func TestAddChangeSetCandidate(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	expectDraftChangeSet(mock, "set-1")
+	expectAuthorizeProject(mock, "project-1")
+	expectAuthorizePullRequest(mock, "pr-api")
+	mock.ExpectQuery("SELECT c.id, t.project_id, pr.state").
+		WithArgs("pr-api").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "project_id", "state"}).
+			AddRow("candidate-api", "project-1", "open"))
+	mock.ExpectExec("INSERT INTO change_set_candidates").
+		WithArgs("set-1", "candidate-api", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	rec := httptest.NewRecorder()
+	h.AddChangeSetCandidate(rec, newChangeSetRequest(
+		http.MethodPost, "/change-sets/set-1/candidates", "id", "set-1",
+		"{\"pull_request_id\":\"pr-api\"}",
+	))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "\"candidate_id\":\"candidate-api\"") {
+		t.Fatalf("unexpected response: %s", rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unmet database expectations: %v", err)
+	}
+}
+
 func TestAuthorizeChangeSetPublication(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
