@@ -447,4 +447,3 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:  pr.UpdatedAt,
 	})
 }
-
