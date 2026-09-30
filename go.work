@@ -12,6 +12,7 @@ use (
 	./packages/crypto
 	./packages/db
 	./packages/events
+	./packages/execution
 	./packages/gateway
 	./packages/models
 	./packages/policies
