@@ -52,6 +52,7 @@ export type AgentRole =
 
 export type RunStatus =
   | "pending"
+  | "queued"
   | "running"
   | "paused"
   | "completed"
@@ -61,11 +62,16 @@ export type RunStatus =
 export interface AgentRun {
   id: string;
   task_id: string;
+  parent_run_id?: string;
   workspace_id?: string;
+  attempt: number;
   agent_role: AgentRole;
   model?: string;
   provider?: string;
   status: RunStatus;
+  outcome?: ExecutionOutcome;
+  execution_snapshot?: ExecutionSnapshot;
+  execution_snapshot_digest?: string;
   started_at?: string;
   completed_at?: string;
   prompt_tokens: number;
@@ -79,6 +85,24 @@ export interface AgentRun {
 }
 
 // Agent step types
+export type ExecutionOutcome =
+  | "passed"
+  | "failed"
+  | "error"
+  | "cancelled"
+  | "skipped";
+
+export interface ExecutionSnapshot {
+  recipe_version?: string;
+  policy_version?: string;
+  tool_manifest_digest?: string;
+  agent_profile_version?: string;
+  repository_base_sha?: string;
+  model_route?: string;
+  runtime_image_digest?: string;
+  verification_profile?: string;
+}
+
 export type StepType =
   | "thought"
   | "tool_call"
@@ -96,6 +120,9 @@ export interface AgentStep {
   step_number: number;
   step_type: StepType;
   status: StepStatus;
+  outcome?: ExecutionOutcome;
+  input?: unknown;
+  output?: unknown;
   content?: string;
   tool_name?: string;
   tool_input?: any;
@@ -107,6 +134,8 @@ export interface AgentStep {
   diff?: string;
   cost: number;
   latency_ms: number;
+  started_at?: string;
+  completed_at?: string;
   created_at: string;
 }
 
