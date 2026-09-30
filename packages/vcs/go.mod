@@ -1,3 +1,3 @@
 module github.com/ai-dev-control-plane/vcs
 
-go 1.25.11
+go 1.23.0
