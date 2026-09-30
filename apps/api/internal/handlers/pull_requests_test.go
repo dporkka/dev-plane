@@ -1,1 +1,622 @@
-{"result":{"meta":null,"content":[{"type":"resource","resource":{"uri":"sprite://dev-plane-artifact-final-validate/file?path=apps%2Fapi%2Finternal%2Fhandlers%2Fpull_requests_test.go&workingDir=%2Ftmp%2Fdev-plane-changegraph","mimeType":"text/plain","meta":null,"text":"package handlers\n\nimport (\n\t\"context\"\n\t\"database/sql\"\n\t\"encoding/json\"\n\t\"errors\"\n\t\"log/slog\"\n\t\"net/http\"\n\t\"net/http/httptest\"\n\t\"strings\"\n\t\"testing\"\n\t\"time\"\n\n\t\"github.com/DATA-DOG/go-sqlmock\"\n\t\"github.com/go-chi/chi/v5\"\n\t\"golang.org/x/oauth2\"\n\n\t\"github.com/ai-dev-control-plane/api/internal/auth\"\n\t\"github.com/ai-dev-control-plane/api/internal/capability\"\n\t\"github.com/ai-dev-control-plane/decisionpacket\"\n\t\"github.com/ai-dev-control-plane/events\"\n\t\"github.com/ai-dev-control-plane/gateway\"\n\t\"github.com/ai-dev-control-plane/models\"\n\t\"github.com/ai-dev-control-plane/policies\"\n)\n\ntype fakeMergeGateway struct {\n\tresult *gateway.MergePRResult\n\terr    error\n\tcalls  []gateway.MergePRRequest\n}\n\nfunc (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error) {\n\tf.calls = append(f.calls, req)\n\tif f.err != nil {\n\t\treturn nil, f.err\n\t}\n\treturn f.result, nil\n}\n\nfunc newMergeRequest(prID string, body string) *http.Request {\n\treturn newMergeRequestWithRole(prID, body, models.RoleOwner)\n}\n\nfunc newMergeRequestWithRole(prID, body, role string) *http.Request {\n\treq := httptest.NewRequest(http.MethodPost, \"/pull-requests/\"+prID+\"/merge\", strings.NewReader(body))\n\treq = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{\n\t\tUserID: testUserID,\n\t\tOrgID:  testOrgID,\n\t\tEmail:  \"test@example.com\",\n\t\tRole:   role,\n\t}))\n\treq.Header.Set(\"Content-Type\", \"application/json\")\n\trctx := chi.NewRouteContext()\n\trctx.URLParams.Add(\"id\", prID)\n\treq = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))\n\treturn req\n}\n\nfunc expectVerifiedCandidateEvidence(t *testing.T, mock sqlmock.Sqlmock, prID, commitSHA, treeHash string, completedAt time.Time) {\n\tt.Helper()\n\tdigest, packet := decisionPacketFixture(t, prID, commitSHA, treeHash, completedAt)\n\tmock.ExpectQuery(\"SELECT c.commit_sha, c.tree_hash, e.tree_hash\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"commit_sha\", \"candidate_tree_hash\", \"evidence_tree_hash\", \"contract_hash\",\n\t\t\t\"environment_digest\", \"runner_identity\", \"completed_at\", \"candidate_id\",\n\t\t\t\"packet_digest\", \"packet\", \"project_id\",\n\t\t}).AddRow(\n\t\t\tcommitSHA, treeHash, treeHash, \"contract-a\",\n\t\t\t\"env-a\", \"runtime:runner-1\", completedAt, \"candidate-1\",\n\t\t\tdigest, packet, \"project-1\",\n\t\t))\n\tmock.ExpectQuery(\"SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash\").\n\t\tWithArgs(\"project-1\").\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"pull_request_id\", \"repository_id\", \"commit_sha\", \"tree_hash\", \"state\", \"depends_on_candidate_id\",\n\t\t}).AddRow(\"candidate-1\", prID, \"repo-1\", commitSHA, treeHash, \"open\", nil))\n}\n\nfunc decisionPacketFixture(t *testing.T, prID, commitSHA, treeHash string, createdAt time.Time) (string, string) {\n\tt.Helper()\n\tpacket, err := decisionpacket.New(decisionpacket.Input{\n\t\tCandidate: decisionpacket.Candidate{\n\t\t\tID: \"candidate-1\", PullRequestID: prID, TaskID: \"task-1\", RunID: \"run-1\",\n\t\t\tRepositoryID: \"repo-1\", CommitSHA: commitSHA, TreeHash: treeHash, Branch: \"feature\",\n\t\t},\n\t\tTask:   decisionpacket.TaskSnapshot{Title: \"title\"},\n\t\tReview: decisionpacket.ReviewSnapshot{RiskLevel: \"low\", Approvable: true},\n\t\tVerification: decisionpacket.VerificationSnapshot{\n\t\t\tContractHash: \"contract-a\", EnvironmentDigest: \"env-a\", RunnerIdentity: \"runtime:runner-1\",\n\t\t\tChecks: json.RawMessage(`[{\"id\":\"unit\",\"passed\":true,\"exit_code\":0}]`),\n\t\t},\n\t\tCreatedAt: createdAt,\n\t})\n\tif err != nil {\n\t\tt.Fatalf(\"decisionpacket.New() error: %v\", err)\n\t}\n\tdigest, err := packet.Digest()\n\tif err != nil {\n\t\tt.Fatalf(\"packet.Digest() error: %v\", err)\n\t}\n\tdata, err := packet.Marshal()\n\tif err != nil {\n\t\tt.Fatalf(\"packet.Marshal() error: %v\", err)\n\t}\n\treturn digest, string(data)\n}\n\nfunc TestGetPullRequestDecisionPacket(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"pr-1\"\n\tnow := time.Now().UTC()\n\tdigest, packet := decisionPacketFixture(t, prID, \"candidate-sha\", \"tree-a\", now)\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"candidate_id\", \"digest\", \"packet\", \"created_at\",\n\t\t}).AddRow(\"packet-1\", \"candidate-1\", digest, packet, now))\n\n\trec := httptest.NewRecorder()\n\treq := httptest.NewRequest(http.MethodGet, \"/pull-requests/\"+prID+\"/decision-packet\", nil)\n\treq = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{\n\t\tUserID: testUserID, OrgID: testOrgID, Email: \"test@example.com\", Role: models.RoleOwner,\n\t}))\n\trctx := chi.NewRouteContext()\n\trctx.URLParams.Add(\"id\", prID)\n\treq = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))\n\n\th.GetPullRequestDecisionPacket(rec, req)\n\n\tif rec.Code != http.StatusOK {\n\t\tt.Fatalf(\"status = %d, want 200; body = %s\", rec.Code, rec.Body.String())\n\t}\n\tvar response DecisionPacketResponse\n\tif err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {\n\t\tt.Fatalf(\"decode response: %v\", err)\n\t}\n\tif response.Digest != digest || response.CandidateID != \"candidate-1\" {\n\t\tt.Fatalf(\"response = %#v\", response)\n\t}\n\tif response.Packet.Candidate.CommitSHA != \"candidate-sha\" || response.Packet.Candidate.TreeHash != \"tree-a\" {\n\t\tt.Fatalf(\"packet candidate = %#v\", response.Packet.Candidate)\n\t}\n}\n\nfunc TestGetPullRequestDecisionPacket_NotFoundForUnverifiedPR(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"pr-1\"\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at\").\n\t\tWithArgs(prID).\n\t\tWillReturnError(sql.ErrNoRows)\n\n\trec := httptest.NewRecorder()\n\treq := httptest.NewRequest(http.MethodGet, \"/pull-requests/\"+prID+\"/decision-packet\", nil)\n\treq = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{\n\t\tUserID: testUserID, OrgID: testOrgID, Email: \"test@example.com\", Role: models.RoleOwner,\n\t}))\n\trctx := chi.NewRouteContext()\n\trctx.URLParams.Add(\"id\", prID)\n\treq = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))\n\n\th.GetPullRequestDecisionPacket(rec, req)\n\n\tif rec.Code != http.StatusNotFound {\n\t\tt.Fatalf(\"status = %d, want 404; body = %s\", rec.Code, rec.Body.String())\n\t}\n}\n\nfunc TestMergePullRequest(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: \"abc123\"}}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tpub := &fakeEventPublisher{}\n\th = h.WithEventPublisher(pub)\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\texpectVerifiedCandidateEvidence(t, mock, prID, \"candidate-sha\", \"tree-a\", now)\n\tmock.ExpectExec(\"UPDATE pull_requests SET state\").\n\t\tWithArgs(sqlmock.AnyArg(), prID).\n\t\tWillReturnResult(sqlmock.NewResult(0, 1))\n\tmock.ExpectExec(\"UPDATE tasks SET status\").\n\t\tWithArgs(sqlmock.AnyArg(), taskID).\n\t\tWillReturnResult(sqlmock.NewResult(0, 1))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, `{\"merge_method\":\"squash\"}`))\n\n\tif rec.Code != http.StatusOK {\n\t\tt.Fatalf(\"status = %d, want 200; body = %s\", rec.Code, rec.Body.String())\n\t}\n\n\tif len(fakeGH.calls) != 1 {\n\t\tt.Fatalf(\"merge calls = %d, want 1\", len(fakeGH.calls))\n\t}\n\tif fakeGH.calls[0].Method != \"squash\" {\n\t\tt.Errorf(\"merge method = %q, want squash\", fakeGH.calls[0].Method)\n\t}\n\tif fakeGH.calls[0].SHA != \"candidate-sha\" {\n\t\tt.Errorf(\"merge sha = %q, want verified candidate sha\", fakeGH.calls[0].SHA)\n\t}\n\n\tif pub.subject != events.PRMerged {\n\t\tt.Errorf(\"published subject = %q, want %q\", pub.subject, events.PRMerged)\n\t}\n}\n\nfunc TestMergePullRequest_BlocksUnmergedCandidateDependency(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: \"abc123\"}}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\tdigest, packet := decisionPacketFixture(t, prID, \"candidate-sha\", \"tree-a\", now)\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\tmock.ExpectQuery(\"SELECT c.commit_sha, c.tree_hash, e.tree_hash\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"commit_sha\", \"candidate_tree_hash\", \"evidence_tree_hash\", \"contract_hash\",\n\t\t\t\"environment_digest\", \"runner_identity\", \"completed_at\", \"candidate_id\",\n\t\t\t\"packet_digest\", \"packet\", \"project_id\",\n\t\t}).AddRow(\n\t\t\t\"candidate-sha\", \"tree-a\", \"tree-a\", \"contract-a\",\n\t\t\t\"env-a\", \"runtime:runner-1\", now, \"candidate-1\", digest, packet, \"project-1\",\n\t\t))\n\tmock.ExpectQuery(\"SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash\").\n\t\tWithArgs(\"project-1\").\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"pull_request_id\", \"repository_id\", \"commit_sha\", \"tree_hash\", \"state\", \"depends_on_candidate_id\",\n\t\t}).\n\t\t\tAddRow(\"candidate-api\", \"pr-api\", \"repo-api\", \"sha-api\", \"tree-api\", \"open\", nil).\n\t\t\tAddRow(\"candidate-1\", prID, repoID, \"candidate-sha\", \"tree-a\", \"open\", \"candidate-api\"))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusConflict {\n\t\tt.Fatalf(\"status = %d, want 409; body = %s\", rec.Code, rec.Body.String())\n\t}\n\tif !strings.Contains(rec.Body.String(), \"candidate-api\") {\n\t\tt.Fatalf(\"body = %s, want dependency blocker\", rec.Body.String())\n\t}\n\tif len(fakeGH.calls) != 0 {\n\t\tt.Fatalf(\"merge calls = %d, want 0 with unmerged dependency\", len(fakeGH.calls))\n\t}\n}\n\nfunc TestMergePullRequest_BlocksMissingVerificationEvidence(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: \"abc123\"}}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\tmock.ExpectQuery(\"SELECT c.commit_sha, c.tree_hash, e.tree_hash\").\n\t\tWithArgs(prID).\n\t\tWillReturnError(sql.ErrNoRows)\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusConflict {\n\t\tt.Fatalf(\"status = %d, want 409; body = %s\", rec.Code, rec.Body.String())\n\t}\n\tif len(fakeGH.calls) != 0 {\n\t\tt.Fatalf(\"merge calls = %d, want 0 when verification evidence is missing\", len(fakeGH.calls))\n\t}\n}\n\nfunc TestMergePullRequest_BlocksTreeMismatch(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: \"abc123\"}}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\tdigest, packet := decisionPacketFixture(t, prID, \"candidate-sha\", \"tree-current\", now)\n\tmock.ExpectQuery(\"SELECT c.commit_sha, c.tree_hash, e.tree_hash\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"commit_sha\", \"candidate_tree_hash\", \"evidence_tree_hash\", \"contract_hash\",\n\t\t\t\"environment_digest\", \"runner_identity\", \"completed_at\", \"candidate_id\",\n\t\t\t\"packet_digest\", \"packet\", \"project_id\",\n\t\t}).AddRow(\n\t\t\t\"candidate-sha\", \"tree-current\", \"tree-verified\", \"contract-a\",\n\t\t\t\"env-a\", \"runtime:runner-1\", now, \"candidate-1\", digest, packet, \"project-1\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusConflict {\n\t\tt.Fatalf(\"status = %d, want 409; body = %s\", rec.Code, rec.Body.String())\n\t}\n\tif len(fakeGH.calls) != 0 {\n\t\tt.Fatalf(\"merge calls = %d, want 0 for stale evidence\", len(fakeGH.calls))\n\t}\n}\n\nfunc TestMergePullRequest_BlocksDecisionPacketDigestMismatch(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: \"abc123\"}}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\t_, packet := decisionPacketFixture(t, prID, \"candidate-sha\", \"tree-a\", now)\n\tmock.ExpectQuery(\"SELECT c.commit_sha, c.tree_hash, e.tree_hash\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"commit_sha\", \"candidate_tree_hash\", \"evidence_tree_hash\", \"contract_hash\",\n\t\t\t\"environment_digest\", \"runner_identity\", \"completed_at\", \"candidate_id\",\n\t\t\t\"packet_digest\", \"packet\", \"project_id\",\n\t\t}).AddRow(\n\t\t\t\"candidate-sha\", \"tree-a\", \"tree-a\", \"contract-a\",\n\t\t\t\"env-a\", \"runtime:runner-1\", now, \"candidate-1\", \"tampered-digest\", packet, \"project-1\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusConflict {\n\t\tt.Fatalf(\"status = %d, want 409; body = %s\", rec.Code, rec.Body.String())\n\t}\n\tif len(fakeGH.calls) != 0 {\n\t\tt.Fatalf(\"merge calls = %d, want 0 for invalid decision packet\", len(fakeGH.calls))\n\t}\n}\n\nfunc TestMergePullRequest_AlreadyMerged(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"merged\", false, testUserID, &now,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusConflict {\n\t\tt.Fatalf(\"status = %d, want 409\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_WrongTaskStatus(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"running\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusBadRequest {\n\t\tt.Fatalf(\"status = %d, want 400\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_GitHubError(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tfakeGH := &fakeMergeGateway{err: errors.New(\"merge conflict\")}\n\th = h.WithGitHubGateway(fakeGH).WithGitHubToken(\"gh-token\")\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\texpectVerifiedCandidateEvidence(t, mock, prID, \"candidate-sha\", \"tree-a\", now)\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusBadGateway {\n\t\tt.Fatalf(\"status = %d, want 502\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_DeniedByPolicy(t *testing.T) {\n\tdb, mock, err := sqlmock.New()\n\tif err != nil {\n\t\tt.Fatalf(\"failed to create mock db: %v\", err)\n\t}\n\tdefer db.Close()\n\n\tdenyAll := policies.NewEngine([]policies.Policy{\n\t\t{Name: \"deny_all\", ResourceType: \"*\", Action: \"*\", Effect: policies.EffectDeny},\n\t})\n\th := NewHandler(db, slog.Default()).WithCapabilityKernel(capability.NewKernel(denyAll, nil, nil, slog.Default()))\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusForbidden {\n\t\tt.Fatalf(\"status = %d, want 403\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_MissingToken(t *testing.T) {\n\tt.Setenv(\"GITHUB_TOKEN\", \"\")\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"pr-1\"\n\ttaskID := \"task-1\"\n\trepoID := \"repo-1\"\n\tnow := time.Now().UTC()\n\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnRows(sqlmock.NewRows([]string{\n\t\t\t\"id\", \"task_id\", \"run_id\", \"repository_id\", \"number\", \"title\", \"body\",\n\t\t\t\"branch\", \"base_branch\", \"url\", \"state\", \"draft\", \"created_by\", \"merged_at\",\n\t\t\t\"created_at\", \"updated_at\", \"owner\", \"name\", \"status\",\n\t\t}).AddRow(\n\t\t\tprID, taskID, nil, repoID, 42, \"title\", \"body\",\n\t\t\t\"feature\", \"main\", \"https://github.com/owner/repo/pull/42\", \"open\", false, testUserID, nil,\n\t\t\tnow, now, \"owner\", \"repo\", \"pr_created\",\n\t\t))\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusServiceUnavailable {\n\t\tt.Fatalf(\"status = %d, want 503\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_Unauthorized(t *testing.T) {\n\th, _, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\trec := httptest.NewRecorder()\n\treq := httptest.NewRequest(http.MethodPost, \"/pull-requests/pr-1/merge\", nil)\n\trctx := chi.NewRouteContext()\n\trctx.URLParams.Add(\"id\", \"pr-1\")\n\treq = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))\n\n\th.MergePullRequest(rec, req)\n\n\tif rec.Code != http.StatusUnauthorized {\n\t\tt.Fatalf(\"status = %d, want 401\", rec.Code)\n\t}\n}\n\nfunc TestMergePullRequest_NotFound(t *testing.T) {\n\th, mock, cleanup := setupTest(t)\n\tdefer cleanup()\n\n\tprID := \"missing\"\n\texpectAuthorizePullRequest(mock, prID)\n\tmock.ExpectQuery(\"SELECT pr.id, pr.task_id, pr.run_id\").\n\t\tWithArgs(prID).\n\t\tWillReturnError(sql.ErrNoRows)\n\n\trec := httptest.NewRecorder()\n\th.MergePullRequest(rec, newMergeRequest(prID, \"\"))\n\n\tif rec.Code != http.StatusNotFound {\n\t\tt.Fatalf(\"status = %d, want 404\", rec.Code)\n\t}\n}\n"},"annotations":null,"meta":null}],"structuredContent":null,"isError":false},"error":null,"error_data":null,"error_code":null,"classification_id":null,"json_rpc_error_code":null,"error_http_status_code":null,"error_http_headers":null,"internal":{"external_call_time_ms":403},"clamp_errors":null,"clamp_rewrites":null,"connector_id":"asdk_app_6a8485b5beac8191954e37241acffe6d","connector_name":"Sprites","action_name":"file_read","is_sync":false}
+package handlers
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/go-chi/chi/v5"
+	"golang.org/x/oauth2"
+
+	"github.com/ai-dev-control-plane/api/internal/auth"
+	"github.com/ai-dev-control-plane/api/internal/capability"
+	"github.com/ai-dev-control-plane/decisionpacket"
+	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/policies"
+)
+
+type fakeMergeGateway struct {
+	result *gateway.MergePRResult
+	err    error
+	calls  []gateway.MergePRRequest
+}
+
+func (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error) {
+	f.calls = append(f.calls, req)
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.result, nil
+}
+
+func newMergeRequest(prID string, body string) *http.Request {
+	return newMergeRequestWithRole(prID, body, models.RoleOwner)
+}
+
+func newMergeRequestWithRole(prID, body, role string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/pull-requests/"+prID+"/merge", strings.NewReader(body))
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID,
+		OrgID:  testOrgID,
+		Email:  "test@example.com",
+		Role:   role,
+	}))
+	req.Header.Set("Content-Type", "application/json")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", prID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	return req
+}
+
+func expectVerifiedCandidateEvidence(t *testing.T, mock sqlmock.Sqlmock, prID, commitSHA, treeHash string, completedAt time.Time) {
+	t.Helper()
+	digest, packet := decisionPacketFixture(t, prID, commitSHA, treeHash, completedAt)
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at", "candidate_id",
+			"packet_digest", "packet", "project_id",
+		}).AddRow(
+			commitSHA, treeHash, treeHash, "contract-a",
+			"env-a", "runtime:runner-1", completedAt, "candidate-1",
+			digest, packet, "project-1",
+		))
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state", "depends_on_candidate_id",
+		}).AddRow("candidate-1", prID, "repo-1", commitSHA, treeHash, "open", nil))
+}
+
+func decisionPacketFixture(t *testing.T, prID, commitSHA, treeHash string, createdAt time.Time) (string, string) {
+	t.Helper()
+	packet, err := decisionpacket.New(decisionpacket.Input{
+		Candidate: decisionpacket.Candidate{
+			ID: "candidate-1", PullRequestID: prID, TaskID: "task-1", RunID: "run-1",
+			RepositoryID: "repo-1", CommitSHA: commitSHA, TreeHash: treeHash, Branch: "feature",
+		},
+		Task:   decisionpacket.TaskSnapshot{Title: "title"},
+		Review: decisionpacket.ReviewSnapshot{RiskLevel: "low", Approvable: true},
+		Verification: decisionpacket.VerificationSnapshot{
+			ContractHash: "contract-a", EnvironmentDigest: "env-a", RunnerIdentity: "runtime:runner-1",
+			Checks: json.RawMessage(`[{"id":"unit","passed":true,"exit_code":0}]`),
+		},
+		CreatedAt: createdAt,
+	})
+	if err != nil {
+		t.Fatalf("decisionpacket.New() error: %v", err)
+	}
+	digest, err := packet.Digest()
+	if err != nil {
+		t.Fatalf("packet.Digest() error: %v", err)
+	}
+	data, err := packet.Marshal()
+	if err != nil {
+		t.Fatalf("packet.Marshal() error: %v", err)
+	}
+	return digest, string(data)
+}
+
+func TestGetPullRequestDecisionPacket(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	now := time.Now().UTC()
+	digest, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-a", now)
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "candidate_id", "digest", "packet", "created_at",
+		}).AddRow("packet-1", "candidate-1", digest, packet, now))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pull-requests/"+prID+"/decision-packet", nil)
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID, OrgID: testOrgID, Email: "test@example.com", Role: models.RoleOwner,
+	}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", prID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.GetPullRequestDecisionPacket(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+	var response DecisionPacketResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Digest != digest || response.CandidateID != "candidate-1" {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Packet.Candidate.CommitSHA != "candidate-sha" || response.Packet.Candidate.TreeHash != "tree-a" {
+		t.Fatalf("packet candidate = %#v", response.Packet.Candidate)
+	}
+}
+
+func TestGetPullRequestDecisionPacket_NotFoundForUnverifiedPR(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT dp.id, dp.candidate_id, dp.digest, dp.packet, dp.created_at").
+		WithArgs(prID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/pull-requests/"+prID+"/decision-packet", nil)
+	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
+		UserID: testUserID, OrgID: testOrgID, Email: "test@example.com", Role: models.RoleOwner,
+	}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", prID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.GetPullRequestDecisionPacket(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMergePullRequest(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	pub := &fakeEventPublisher{}
+	h = h.WithEventPublisher(pub)
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	expectVerifiedCandidateEvidence(t, mock, prID, "candidate-sha", "tree-a", now)
+	mock.ExpectExec("UPDATE pull_requests SET state").
+		WithArgs(sqlmock.AnyArg(), prID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("UPDATE tasks SET status").
+		WithArgs(sqlmock.AnyArg(), taskID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, `{"merge_method":"squash"}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rec.Code, rec.Body.String())
+	}
+
+	if len(fakeGH.calls) != 1 {
+		t.Fatalf("merge calls = %d, want 1", len(fakeGH.calls))
+	}
+	if fakeGH.calls[0].Method != "squash" {
+		t.Errorf("merge method = %q, want squash", fakeGH.calls[0].Method)
+	}
+	if fakeGH.calls[0].SHA != "candidate-sha" {
+		t.Errorf("merge sha = %q, want verified candidate sha", fakeGH.calls[0].SHA)
+	}
+
+	if pub.subject != events.PRMerged {
+		t.Errorf("published subject = %q, want %q", pub.subject, events.PRMerged)
+	}
+}
+
+func TestMergePullRequest_BlocksUnmergedCandidateDependency(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+	digest, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-a", now)
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at", "candidate_id",
+			"packet_digest", "packet", "project_id",
+		}).AddRow(
+			"candidate-sha", "tree-a", "tree-a", "contract-a",
+			"env-a", "runtime:runner-1", now, "candidate-1", digest, packet, "project-1",
+		))
+	mock.ExpectQuery("SELECT c.id, c.pull_request_id, c.repository_id, c.commit_sha, c.tree_hash").
+		WithArgs("project-1").
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "pull_request_id", "repository_id", "commit_sha", "tree_hash", "state", "depends_on_candidate_id",
+		}).
+			AddRow("candidate-api", "pr-api", "repo-api", "sha-api", "tree-api", "open", nil).
+			AddRow("candidate-1", prID, repoID, "candidate-sha", "tree-a", "open", "candidate-api"))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "candidate-api") {
+		t.Fatalf("body = %s, want dependency blocker", rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 with unmerged dependency", len(fakeGH.calls))
+	}
+}
+
+func TestMergePullRequest_BlocksMissingVerificationEvidence(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 when verification evidence is missing", len(fakeGH.calls))
+	}
+}
+
+func TestMergePullRequest_BlocksTreeMismatch(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	digest, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-current", now)
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at", "candidate_id",
+			"packet_digest", "packet", "project_id",
+		}).AddRow(
+			"candidate-sha", "tree-current", "tree-verified", "contract-a",
+			"env-a", "runtime:runner-1", now, "candidate-1", digest, packet, "project-1",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 for stale evidence", len(fakeGH.calls))
+	}
+}
+
+func TestMergePullRequest_BlocksDecisionPacketDigestMismatch(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	_, packet := decisionPacketFixture(t, prID, "candidate-sha", "tree-a", now)
+	mock.ExpectQuery("SELECT c.commit_sha, c.tree_hash, e.tree_hash").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"commit_sha", "candidate_tree_hash", "evidence_tree_hash", "contract_hash",
+			"environment_digest", "runner_identity", "completed_at", "candidate_id",
+			"packet_digest", "packet", "project_id",
+		}).AddRow(
+			"candidate-sha", "tree-a", "tree-a", "contract-a",
+			"env-a", "runtime:runner-1", now, "candidate-1", "tampered-digest", packet, "project-1",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body = %s", rec.Code, rec.Body.String())
+	}
+	if len(fakeGH.calls) != 0 {
+		t.Fatalf("merge calls = %d, want 0 for invalid decision packet", len(fakeGH.calls))
+	}
+}
+
+func TestMergePullRequest_AlreadyMerged(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "merged", false, testUserID, &now,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", rec.Code)
+	}
+}
+
+func TestMergePullRequest_WrongTaskStatus(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "running",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+func TestMergePullRequest_GitHubError(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	fakeGH := &fakeMergeGateway{err: errors.New("merge conflict")}
+	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+	expectVerifiedCandidateEvidence(t, mock, prID, "candidate-sha", "tree-a", now)
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", rec.Code)
+	}
+}
+
+func TestMergePullRequest_DeniedByPolicy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("failed to create mock db: %v", err)
+	}
+	defer db.Close()
+
+	denyAll := policies.NewEngine([]policies.Policy{
+		{Name: "deny_all", ResourceType: "*", Action: "*", Effect: policies.EffectDeny},
+	})
+	h := NewHandler(db, slog.Default()).WithCapabilityKernel(capability.NewKernel(denyAll, nil, nil, slog.Default()))
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+func TestMergePullRequest_MissingToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "pr-1"
+	taskID := "task-1"
+	repoID := "repo-1"
+	now := time.Now().UTC()
+
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
+			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
+			"created_at", "updated_at", "owner", "name", "status",
+		}).AddRow(
+			prID, taskID, nil, repoID, 42, "title", "body",
+			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
+			now, now, "owner", "repo", "pr_created",
+		))
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+}
+
+func TestMergePullRequest_Unauthorized(t *testing.T) {
+	h, _, cleanup := setupTest(t)
+	defer cleanup()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/pull-requests/pr-1/merge", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "pr-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	h.MergePullRequest(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
+func TestMergePullRequest_NotFound(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	prID := "missing"
+	expectAuthorizePullRequest(mock, prID)
+	mock.ExpectQuery("SELECT pr.id, pr.task_id, pr.run_id").
+		WithArgs(prID).
+		WillReturnError(sql.ErrNoRows)
+
+	rec := httptest.NewRecorder()
+	h.MergePullRequest(rec, newMergeRequest(prID, ""))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+ 
