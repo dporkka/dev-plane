@@ -15,9 +15,9 @@ import (
 )
 
 type fakePublicationGateway struct {
-	getResults []*gateway.GitHubPR
-	getErr     error
-	getCalls   int
+	getResults  []*gateway.GitHubPR
+	getErr      error
+	getCalls    int
 	mergeResult *gateway.MergePRResult
 	mergeErr    error
 	mergeCalls  []gateway.MergePRRequest
