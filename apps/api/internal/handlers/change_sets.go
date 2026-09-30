@@ -45,11 +45,11 @@ type AddChangeSetCandidateRequest struct {
 }
 
 type ChangeSetStatusResponse struct {
-	ChangeSet        ChangeSet          `json:"change_set"`
-	Members          []changeset.Member `json:"members"`
-	Ready            bool               `json:"ready"`
+	ChangeSet        ChangeSet           `json:"change_set"`
+	Members          []changeset.Member  `json:"members"`
+	Ready            bool                `json:"ready"`
 	Blockers         []changeset.Blocker `json:"blockers,omitempty"`
-	PublicationOrder []string           `json:"publication_order"`
+	PublicationOrder []string            `json:"publication_order"`
 }
 
 func (h *Handler) CreateChangeSet(w http.ResponseWriter, r *http.Request) {
@@ -187,7 +187,7 @@ func (h *Handler) AddChangeSetCandidate(w http.ResponseWriter, r *http.Request) 
 	}
 	respond.JSON(w, http.StatusCreated, map[string]string{
 		"change_set_id": changeSet.ID,
-		"candidate_id": candidateID,
+		"candidate_id":  candidateID,
 	})
 }
 
@@ -321,10 +321,10 @@ func (h *Handler) AuthorizeChangeSetPublication(w http.ResponseWriter, r *http.R
 
 func (h *Handler) validateCandidateChangeSetPublication(ctx context.Context, candidateID, projectID string) error {
 	var (
-		changeSetID string
-		storedProjectID string
-		status string
-		publicationDigest sql.NullString
+		changeSetID         string
+		storedProjectID     string
+		status              string
+		publicationDigest   sql.NullString
 		publicationManifest sql.NullString
 	)
 	err := h.db.QueryRowContext(ctx, `
@@ -396,12 +396,12 @@ func (h *Handler) validateCandidateChangeSetPublication(ctx context.Context, can
 
 func (h *Handler) loadChangeSet(ctx context.Context, id string) (*ChangeSet, error) {
 	var (
-		changeSet ChangeSet
-		description sql.NullString
-		publicationDigest sql.NullString
+		changeSet           ChangeSet
+		description         sql.NullString
+		publicationDigest   sql.NullString
 		publicationManifest sql.NullString
-		authorizedAt sql.NullTime
-		authorizedBy sql.NullString
+		authorizedAt        sql.NullTime
+		authorizedBy        sql.NullString
 	)
 	err := h.db.QueryRowContext(ctx, `
 		SELECT id, project_id, name, description, status, publication_digest,
@@ -507,11 +507,11 @@ func (h *Handler) loadChangeSetMembers(ctx context.Context, changeSetID string) 
 			return nil, fmt.Errorf("decision packet integrity mismatch for candidate %s", candidateID)
 		}
 		members = append(members, changeset.Member{
-			ID: candidateID,
-			CommitSHA: commitSHA,
-			TreeHash: treeHash,
+			ID:             candidateID,
+			CommitSHA:      commitSHA,
+			TreeHash:       treeHash,
 			DecisionDigest: storedDigest,
-			Approvable: packet.Review.Approvable,
+			Approvable:     packet.Review.Approvable,
 		})
 	}
 	if err := rows.Err(); err != nil {
