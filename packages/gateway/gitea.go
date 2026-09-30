@@ -260,7 +260,7 @@ func decodeGiteaError(resp *http.Response) error {
 		category = forge.ErrInvalidRequest
 	case http.StatusNotFound:
 		category = forge.ErrNotFound
-	case http.StatusConflict, http.StatusLocked:
+	case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusLocked:
 		category = forge.ErrConflict
 	default:
 		return fmt.Errorf("gitea API %s: %s", resp.Status, message)
