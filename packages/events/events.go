@@ -84,7 +84,8 @@ type AgentRunEvent struct {
 	RunID     string          `json:"run_id"`
 	TaskID    string          `json:"task_id"`
 	AgentRole string          `json:"agent_role"`
-	Status    string          `json:"status"`
+	Status       string          `json:"status"`
+	StateVersion int64           `json:"state_version,omitempty"`
 	Data      json.RawMessage `json:"data,omitempty"`
 }
 
@@ -122,9 +123,10 @@ type AuditEvent struct {
 
 // RunEvent is the payload for background run events.
 type RunEvent struct {
-	RunID    string          `json:"run_id"`
-	TaskID   string          `json:"task_id"`
-	Status   string          `json:"status"`
+	RunID        string          `json:"run_id"`
+	TaskID       string          `json:"task_id"`
+	Status       string          `json:"status"`
+	StateVersion int64           `json:"state_version,omitempty"`
 	WorkerID string          `json:"worker_id,omitempty"`
 	Data     json.RawMessage `json:"data,omitempty"`
 }
