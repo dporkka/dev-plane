@@ -389,65 +389,72 @@ type verificationEvidenceRecord struct {
 }
 
 func (f *Factory) loadLatestVerificationEvidence(ctx context.Context, runID, candidateTreeHash string) (*verificationEvidenceRecord, error) {
-	var raw string
-	err := f.db.QueryRowContext(ctx, `
+	rows, err := f.db.QueryContext(ctx, `
 		SELECT tool_output
 		FROM agent_steps
 		WHERE agent_run_id = $1
 		  AND tool_name = 'run_tests'
 		  AND status = 'completed'
 		ORDER BY step_number DESC
-		LIMIT 1
-	`, runID).Scan(&raw)
+	`, runID)
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 
-	var output struct {
-		Source            string          `json:"source"`
-		Passed            bool            `json:"passed"`
-		TreeHash          string          `json:"tree_hash"`
-		ContractHash      string          `json:"contract_hash"`
-		EnvironmentDigest string          `json:"environment_digest"`
-		RunnerIdentity    string          `json:"runner_identity"`
-		Checks            json.RawMessage `json:"checks"`
-		StartedAt         time.Time       `json:"started_at"`
-		CompletedAt       time.Time       `json:"completed_at"`
-	}
-	if err := json.Unmarshal([]byte(raw), &output); err != nil {
-		return nil, fmt.Errorf("decode verification tool output: %w", err)
-	}
-	if output.Source != "verification_contract" {
-		return nil, fmt.Errorf("latest test step is not verification-contract evidence")
-	}
-	if !output.Passed {
-		return nil, fmt.Errorf("latest verification contract did not pass")
-	}
-	if strings.TrimSpace(output.TreeHash) == "" || output.TreeHash != candidateTreeHash {
-		return nil, fmt.Errorf("verification tree %q does not match candidate tree %q", output.TreeHash, candidateTreeHash)
-	}
-	if strings.TrimSpace(output.ContractHash) == "" {
-		return nil, fmt.Errorf("verification contract hash is missing")
-	}
-	if strings.TrimSpace(output.EnvironmentDigest) == "" || strings.TrimSpace(output.RunnerIdentity) == "" {
-		return nil, fmt.Errorf("verification runtime identity is missing")
-	}
-	if output.StartedAt.IsZero() || output.CompletedAt.IsZero() || output.CompletedAt.Before(output.StartedAt) {
-		return nil, fmt.Errorf("verification timestamps are invalid")
-	}
-	if len(output.Checks) == 0 || string(output.Checks) == "null" {
-		return nil, fmt.Errorf("verification check results are missing")
-	}
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("scan verification tool output: %w", err)
+		}
 
-	return &verificationEvidenceRecord{
-		TreeHash:          output.TreeHash,
-		ContractHash:      output.ContractHash,
-		EnvironmentDigest: output.EnvironmentDigest,
-		RunnerIdentity:    output.RunnerIdentity,
-		Checks:            append(json.RawMessage(nil), output.Checks...),
-		StartedAt:         output.StartedAt,
-		CompletedAt:       output.CompletedAt,
-	}, nil
+		var output struct {
+			Source            string          `json:"source"`
+			Passed            bool            `json:"passed"`
+			TreeHash          string          `json:"tree_hash"`
+			ContractHash      string          `json:"contract_hash"`
+			EnvironmentDigest string          `json:"environment_digest"`
+			RunnerIdentity    string          `json:"runner_identity"`
+			Checks            json.RawMessage `json:"checks"`
+			StartedAt         time.Time       `json:"started_at"`
+			CompletedAt       time.Time       `json:"completed_at"`
+		}
+		if err := json.Unmarshal([]byte(raw), &output); err != nil {
+			continue
+		}
+		if output.Source != "verification_contract" || !output.Passed {
+			continue
+		}
+		if strings.TrimSpace(output.TreeHash) == "" || output.TreeHash != candidateTreeHash {
+			continue
+		}
+		if strings.TrimSpace(output.ContractHash) == "" {
+			continue
+		}
+		if strings.TrimSpace(output.EnvironmentDigest) == "" || strings.TrimSpace(output.RunnerIdentity) == "" {
+			continue
+		}
+		if output.StartedAt.IsZero() || output.CompletedAt.IsZero() || output.CompletedAt.Before(output.StartedAt) {
+			continue
+		}
+		if len(output.Checks) == 0 || string(output.Checks) == "null" {
+			continue
+		}
+
+		return &verificationEvidenceRecord{
+			TreeHash:          output.TreeHash,
+			ContractHash:      output.ContractHash,
+			EnvironmentDigest: output.EnvironmentDigest,
+			RunnerIdentity:    output.RunnerIdentity,
+			Checks:            append(json.RawMessage(nil), output.Checks...),
+			StartedAt:         output.StartedAt,
+			CompletedAt:       output.CompletedAt,
+		}, nil
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate verification tool outputs: %w", err)
+	}
+	return nil, sql.ErrNoRows
 }
 
 func gitCandidateIdentity(ctx context.Context, workspacePath string) (string, string, error) {
