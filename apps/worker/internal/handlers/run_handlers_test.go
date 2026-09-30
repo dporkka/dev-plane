@@ -43,12 +43,16 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 		t.Fatalf("nextRole = %q, want reviewer", nextRole)
 	}
 
-	var role, status, workspaceID, metadata string
+	var role, status, workspaceID, metadata, parentRunID, snapshot, snapshotDigest string
+	var attempt int
 	if err := db.QueryRow(`
-		SELECT agent_role, status, workspace_id, metadata
+		SELECT agent_role, status, workspace_id, metadata, parent_run_id, attempt,
+		       execution_snapshot, execution_snapshot_digest
 		FROM agent_runs
 		WHERE id = ?
-	`, nextRunID).Scan(&role, &status, &workspaceID, &metadata); err != nil {
+	`, nextRunID).Scan(
+		&role, &status, &workspaceID, &metadata, &parentRunID, &attempt, &snapshot, &snapshotDigest,
+	); err != nil {
 		t.Fatalf("query next run: %v", err)
 	}
 	if role != models.AgentRoleReviewer || status != "queued" || workspaceID != "workspace-1" {
@@ -56,6 +60,12 @@ func TestScheduleFollowOnRunConsumesHandoffAndQueuesNextRole(t *testing.T) {
 	}
 	if !contains(metadata, "message-1") || !contains(metadata, "mailbox_handoff") {
 		t.Fatalf("metadata = %s, want handoff trace", metadata)
+	}
+	if parentRunID != "run-1" || attempt != 2 {
+		t.Fatalf("next run lineage = parent %q attempt %d, want run-1/2", parentRunID, attempt)
+	}
+	if !contains(snapshot, "reviewer/v1") || snapshotDigest == "" {
+		t.Fatalf("execution snapshot = %s digest=%q, want reviewer snapshot and digest", snapshot, snapshotDigest)
 	}
 
 	var consumedBy sql.NullString
@@ -711,11 +721,16 @@ func setupRunHandlerDB(t *testing.T) *sql.DB {
 		CREATE TABLE agent_runs (
 			id TEXT PRIMARY KEY,
 			task_id TEXT NOT NULL,
+			parent_run_id TEXT,
 			workspace_id TEXT,
+			attempt INTEGER NOT NULL DEFAULT 1,
 			agent_role TEXT NOT NULL,
 			model TEXT,
 			provider TEXT,
 			status TEXT NOT NULL,
+			outcome TEXT,
+			execution_snapshot TEXT NOT NULL DEFAULT '{}',
+			execution_snapshot_digest TEXT,
 			total_cost REAL DEFAULT 0,
 			metadata TEXT DEFAULT '{}',
 			created_at DATETIME,
