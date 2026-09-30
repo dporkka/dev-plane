@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 
+	dbpkg "github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
@@ -103,7 +104,32 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		return fmt.Errorf("unmarshal agent run event: %w", err)
 	}
 
-	h.logger.Info("handling run completed", "run_id", event.RunID, "task_id", event.TaskID)
+	h.logger.Info("handling run completed", "run_id", event.RunID, "task_id", event.TaskID, "state_version", event.StateVersion)
+
+	claim, err := dbpkg.ClaimAgentRunLifecycleEvent(context.Background(), h.db, dbpkg.AgentRunLifecycleEvent{
+		RunID:                event.RunID,
+		Status:               models.AgentRunStatusCompleted,
+		StateVersion:         event.StateVersion,
+		RequireLatestAttempt: true,
+	})
+	if errors.Is(err, dbpkg.ErrRunNotFound) {
+		return ackMessage(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("claim completed run event: %w", err)
+	}
+	if !claim.Claimed {
+		h.logger.Info("ignoring duplicate, stale, or superseded run completion", "run_id", event.RunID, "state_version", event.StateVersion)
+		return ackMessage(msg)
+	}
+	claimCompleted := false
+	defer func() {
+		if !claimCompleted {
+			if releaseErr := dbpkg.ReleaseAgentRunLifecycleEvent(context.Background(), h.db, claim); releaseErr != nil {
+				h.logger.Warn("failed to release run completion claim", "run_id", event.RunID, "error", releaseErr)
+			}
+		}
+	}()
 
 	if scheduled, nextRunID, nextRole, err := h.scheduleFollowOnRun(context.Background(), event); err != nil {
 		return err
@@ -113,6 +139,10 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 			"next_run_id", nextRunID,
 			"next_role", nextRole,
 		)
+		if err := dbpkg.CompleteAgentRunLifecycleEvent(context.Background(), h.db, claim); err != nil {
+			return fmt.Errorf("complete run lifecycle claim: %w", err)
+		}
+		claimCompleted = true
 		return ackMessage(msg)
 	}
 
@@ -138,6 +168,10 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		if err := h.handleRejectedReview(context.Background(), event, report); err != nil {
 			return err
 		}
+		if err := dbpkg.CompleteAgentRunLifecycleEvent(context.Background(), h.db, claim); err != nil {
+			return fmt.Errorf("complete rejected-review lifecycle claim: %w", err)
+		}
+		claimCompleted = true
 		return ackMessage(msg)
 	}
 	if h.eventBus != nil {
@@ -160,6 +194,10 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		"risk_level", report.RiskLevel,
 		"approvable", report.Approvable,
 	)
+	if err := dbpkg.CompleteAgentRunLifecycleEvent(context.Background(), h.db, claim); err != nil {
+		return fmt.Errorf("complete run lifecycle claim: %w", err)
+	}
+	claimCompleted = true
 	return ackMessage(msg)
 }
 
@@ -171,7 +209,32 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 		return fmt.Errorf("unmarshal agent run event: %w", err)
 	}
 
-	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
+	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID, "state_version", event.StateVersion)
+
+	claim, err := dbpkg.ClaimAgentRunLifecycleEvent(context.Background(), h.db, dbpkg.AgentRunLifecycleEvent{
+		RunID:                event.RunID,
+		Status:               models.AgentRunStatusFailed,
+		StateVersion:         event.StateVersion,
+		RequireLatestAttempt: true,
+	})
+	if errors.Is(err, dbpkg.ErrRunNotFound) {
+		return ackMessage(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("claim failed run event: %w", err)
+	}
+	if !claim.Claimed {
+		h.logger.Info("ignoring duplicate, stale, or superseded run failure", "run_id", event.RunID, "state_version", event.StateVersion)
+		return ackMessage(msg)
+	}
+	claimCompleted := false
+	defer func() {
+		if !claimCompleted {
+			if releaseErr := dbpkg.ReleaseAgentRunLifecycleEvent(context.Background(), h.db, claim); releaseErr != nil {
+				h.logger.Warn("failed to release run failure claim", "run_id", event.RunID, "error", releaseErr)
+			}
+		}
+	}()
 
 	now := time.Now().UTC()
 	_, err := h.db.Exec(`
@@ -198,6 +261,10 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 		"run_id", event.RunID,
 		"task_id", event.TaskID,
 	)
+	if err := dbpkg.CompleteAgentRunLifecycleEvent(context.Background(), h.db, claim); err != nil {
+		return fmt.Errorf("complete failed-run lifecycle claim: %w", err)
+	}
+	claimCompleted = true
 	return ackMessage(msg)
 }
 
@@ -738,6 +805,12 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		}
 	}
 	if err != nil {
+		if errors.Is(err, dbpkg.ErrInvalidTransition) ||
+			errors.Is(err, dbpkg.ErrStaleRunState) ||
+			errors.Is(err, dbpkg.ErrRunNotFound) {
+			h.logger.Info("ignoring stale run trigger", "run_id", event.RunID, "error", err)
+			return ackMessage(msg)
+		}
 		return fmt.Errorf("execute run %s: %w", event.RunID, err)
 	}
 	return ackMessage(msg)
