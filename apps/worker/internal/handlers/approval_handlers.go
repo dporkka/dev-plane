@@ -8,8 +8,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -40,8 +40,8 @@ type AgentRuntimeApprovalResponder interface {
 
 // ApprovalHandler handles approval response events.
 type ApprovalHandler struct {
-	db       *sql.DB
-	logger   *slog.Logger
+	db                        *sql.DB
+	logger                    *slog.Logger
 	eventBus                  WorkerEventPublisher
 	factory                   PullRequestCreator
 	agentRuntimeApprovalReply AgentRuntimeApprovalResponder
@@ -185,10 +185,10 @@ func (h *ApprovalHandler) HandleApprovalApproved(msg *nats.Msg) error {
 // Update task status to failed and notify user.
 func (h *ApprovalHandler) HandleApprovalRejected(msg *nats.Msg) error {
 	var payload struct {
-		ApprovalID  string `json:"approval_id"`
-		TaskID      string `json:"task_id"`
-		AgentRunID  string `json:"agent_run_id"`
-		Response    string `json:"response"`
+		ApprovalID   string `json:"approval_id"`
+		TaskID       string `json:"task_id"`
+		AgentRunID   string `json:"agent_run_id"`
+		Response     string `json:"response"`
 		ResponderID  string `json:"responder_id"`
 		ApprovalType string `json:"approval_type"`
 		Note         string `json:"note"`
