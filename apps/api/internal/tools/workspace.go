@@ -389,7 +389,7 @@ func (t *WorkspaceTools) RunCommand(ctx context.Context, workspacePath string, i
 
 // InspectRepo returns repository structure and metadata.
 // Input: {}
-// Output: {"root": "/path", "total_files": 150, "total_dirs": 20, "languages": {"Go": 80, "TypeScript": 40}, "package_manager": "go", "framework": "chi"}
+// Output: {"root": "/path", "total_files": 150, "total_dirs": 20, "languages": {"Go": 80, "TypeScript": 40}, "package_manager": "go", "framework": "chi", "test_command": "go test ./..."}
 func (t *WorkspaceTools) InspectRepo(ctx context.Context, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
 	files, dirs, languages := countFileStats(workspacePath)
 
