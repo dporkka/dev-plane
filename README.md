@@ -368,6 +368,10 @@ A Go CLI client is available in `apps/cli`.
 # Build the CLI
 make build-cli
 
+# Inspect repository readiness before autonomous execution
+dev-plane inspect --path=. 
+dev-plane inspect --path=. --json
+
 # Authenticate
 dev-plane login --base-url=http://localhost:8080
 # Enter your JWT token when prompted
