@@ -11,7 +11,7 @@ const (
 	CurrentVersion = 1
 
 	GateIndependentReview = "independent_review"
-	GateHumanApproval      = "human_approval"
+	GateHumanApproval     = "human_approval"
 )
 
 type Isolation string
@@ -34,16 +34,16 @@ const (
 type WorkState string
 
 const (
-	WorkDraft         WorkState = "draft"
-	WorkReady         WorkState = "ready"
-	WorkClaimed       WorkState = "claimed"
-	WorkImplementing  WorkState = "implementing"
-	WorkVerifying     WorkState = "verifying"
-	WorkReviewing     WorkState = "reviewing"
-	WorkReadyToLand   WorkState = "ready_to_land"
-	WorkLanded        WorkState = "landed"
-	WorkFailed        WorkState = "failed"
-	WorkCancelled     WorkState = "cancelled"
+	WorkDraft        WorkState = "draft"
+	WorkReady        WorkState = "ready"
+	WorkClaimed      WorkState = "claimed"
+	WorkImplementing WorkState = "implementing"
+	WorkVerifying    WorkState = "verifying"
+	WorkReviewing    WorkState = "reviewing"
+	WorkReadyToLand  WorkState = "ready_to_land"
+	WorkLanded       WorkState = "landed"
+	WorkFailed       WorkState = "failed"
+	WorkCancelled    WorkState = "cancelled"
 )
 
 type GateStatus string
