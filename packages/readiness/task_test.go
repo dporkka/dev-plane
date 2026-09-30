@@ -96,7 +96,6 @@ func TestAssessTaskBlocksCriticalRiskWithoutApproval(t *testing.T) {
 	}
 }
 
-
 func TestBuildVerificationPlanUsesConfiguredSecondaryChecks(t *testing.T) {
 	plan := BuildVerificationPlan(
 		"go test ./...",
