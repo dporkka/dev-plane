@@ -1,0 +1,15 @@
+name: Runner Diagnostic
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  runner:
+    name: Runner Diagnostic
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prove runner assignment
+        run: |
+          echo "runner assigned"
+          uname -a
