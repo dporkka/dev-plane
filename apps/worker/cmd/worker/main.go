@@ -13,6 +13,7 @@
 //	review.completed     -> request human PR approval
 //	approval.approved    -> create PR if type=pr_create
 //	approval.rejected    -> update task status, notify user
+//	changesets.publish_requested -> resume coordinated change-set publication
 package main
 
 import (
@@ -157,6 +158,7 @@ func main() {
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
+	changeSetPublicationHandler := handlers.NewChangeSetPublicationHandler(database.DB, logger, eventBus)
 
 	// Set up subscriptions - one per stream to avoid consumer conflicts
 	shutdownCtx := &shutdownContext{logger: logger}
@@ -181,6 +183,23 @@ func main() {
 	}
 	shutdownCtx.addSubscription(subTasks)
 	logger.Info("subscribed to tasks.*")
+
+	// changesets.publish_requested -> resumable coordinated publication
+	subChangeSetPublish, err := eventBus.SubscribeQueue(events.ChangeSetPublishRequested, "change-set-publication", func(msg *nats.Msg) {
+		logger.Debug("received change set publication request")
+		if err := changeSetPublicationHandler.HandlePublishRequested(msg); err != nil {
+			logger.Error("failed to handle change set publication request", "error", err)
+			if nakErr := msg.Nak(); nakErr != nil {
+				logger.Error("failed to negatively acknowledge change set publication request", "error", nakErr)
+			}
+		}
+	})
+	if err != nil {
+		logger.Error("failed to subscribe to change set publication requests", "error", err)
+		os.Exit(1)
+	}
+	shutdownCtx.addSubscription(subChangeSetPublish)
+	logger.Info("subscribed to changesets.publish_requested", "queue", "change-set-publication")
 
 	// agents.run.completed -> mailbox handoff scheduling or review generation
 	subRunCompleted, err := eventBus.Subscribe("agents.run.completed", func(msg *nats.Msg) {
