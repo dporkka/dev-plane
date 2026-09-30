@@ -205,17 +205,17 @@ test-portability: ## Verify Dev Plane against unbranded Go/TypeScript/Rust/Pytho
 	@echo "$(BLUE)[test]$(RESET) Running repository portability contract..."
 	cd apps/api && go test ./internal/tools -run 'PortableRepositoryFixtures|DetectPackageManager|DetectTestCommand|RunTestsRequiresDetectedOrExplicitCommand' -count=1
 
-test-forge: ## Verify provider-neutral forge behavior and GitHub adapter conformance
+test-forge: ## Verify provider-neutral forge behavior and built-in adapter conformance
 	@echo "$(BLUE)[test]$(RESET) Running forge provider contract..."
 	cd packages/forge && go test ./... -count=1
-	cd packages/gateway && go test ./... -run 'ForgeContract' -count=1
+	cd packages/gateway && go test ./... -run 'ForgeContract|GiteaGateway' -count=1
 	cd packages/prfactory && go test ./... -run 'OpenForgeChange|WithForge|GitHubCompatibility' -count=1
-	cd apps/api && go test ./internal/handlers -run 'MergePullRequest' -count=1
+	cd apps/api && go test ./internal/config ./internal/server ./internal/handlers -run 'Forge|Gitea|MergePullRequest' -count=1
 
 test-publication: ## Verify branch publication transport and composition
 	@echo "$(BLUE)[test]$(RESET) Running branch publication contract..."
 	cd packages/vcs && go test ./... -run 'Publish|HTTPBasic' -count=1
-	cd packages/gateway && go test ./... -run 'GitHubBranchPublisher' -count=1
+	cd packages/gateway && go test ./... -run 'GitHubBranchPublisher|GiteaBranchPublisher' -count=1
 	cd packages/prfactory && go test ./... -run 'PublishBranch|BranchRemote|GitHubCompatibility|RepoNamespace' -count=1
 	cd apps/api && go test ./internal/handlers -run 'CreatePullRequestUsesConfiguredCreator|MergePullRequest' -count=1
 
