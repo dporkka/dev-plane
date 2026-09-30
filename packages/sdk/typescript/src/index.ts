@@ -30,6 +30,7 @@ import type {
   Policy,
   Project,
   PullRequest,
+  ReadinessReport,
   RepoAnalysis,
   RepoAnalysisPending,
   Repository,
@@ -314,6 +315,10 @@ export class DevPlaneClient {
 
   getTaskSpec(taskId: string) {
     return this.request<TaskSpec>(`/api/v1/tasks/${taskId}/spec`);
+  }
+
+  getTaskReadiness(taskId: string) {
+    return this.request<ReadinessReport>(`/api/v1/tasks/${taskId}/readiness`);
   }
 
   createTask(projectId: string, payload: CreateTaskRequest) {
