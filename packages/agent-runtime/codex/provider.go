@@ -258,13 +258,13 @@ func (p *Provider) streamTurn(
 
 	sequence := int64(1)
 	out <- agentruntime.Event{
-		Sequence:   sequence,
-		Type:       agentruntime.EventTypeTurnStarted,
+		Sequence:       sequence,
+		Type:           agentruntime.EventTypeTurnStarted,
 		ThreadID:       threadID,
 		TurnID:         started.ID,
 		ProviderTurnID: started.ID,
 		Status:         agentruntime.TurnStatusRunning,
-		OccurredAt: unixSeconds(started.StartedAt, time.Now().UTC()),
+		OccurredAt:     unixSeconds(started.StartedAt, time.Now().UTC()),
 	}
 	sequence++
 
@@ -318,13 +318,13 @@ func mapNotification(
 			return agentruntime.Event{}, false, false, err
 		}
 		return agentruntime.Event{
-			Type:       eventType,
+			Type:           eventType,
 			ThreadID:       threadID,
 			TurnID:         turnID,
 			ProviderTurnID: turnID,
-			Status:     agentruntime.TurnStatusRunning,
-			Item:       &item,
-			OccurredAt: occurredAt,
+			Status:         agentruntime.TurnStatusRunning,
+			Item:           &item,
+			OccurredAt:     occurredAt,
 		}, false, true, nil
 
 	case "turn/completed":
@@ -343,13 +343,13 @@ func mapNotification(
 			eventType = agentruntime.EventTypeTurnStatus
 		}
 		return agentruntime.Event{
-			Type:       eventType,
+			Type:           eventType,
 			ThreadID:       threadID,
 			TurnID:         turnID,
 			ProviderTurnID: turnID,
-			Status:     status,
-			Error:      payload.Turn.Error.Message,
-			OccurredAt: unixSeconds(payload.Turn.CompletedAt, time.Now().UTC()),
+			Status:         status,
+			Error:          payload.Turn.Error.Message,
+			OccurredAt:     unixSeconds(payload.Turn.CompletedAt, time.Now().UTC()),
 		}, true, true, nil
 	default:
 		return agentruntime.Event{}, false, false, nil
