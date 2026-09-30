@@ -61,6 +61,7 @@ type CreateRequest struct {
 	BaseBranch   string            `json:"base_branch"`
 	WorktreeName string            `json:"worktree_name"`
 	Env          map[string]string `json:"env,omitempty"`
+	Sandbox      *SandboxSpec       `json:"sandbox,omitempty"`
 }
 
 // Session represents an active workspace runtime session.
