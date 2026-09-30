@@ -17,5 +17,58 @@
     "dev": {
       "run": "make dev"
     }
+  },
+  "validation": {
+    "fallback_checks": ["lint", "test"]
+  },
+  "components": {
+    "repo-manifest": {
+      "paths": [
+        "packages/repo-manifest/**",
+        "docs/repository-manifest.md"
+      ],
+      "checks": {
+        "lint": {
+          "run": "cd packages/repo-manifest && go vet ./...",
+          "timeout_seconds": 120
+        },
+        "test": {
+          "run": "cd packages/repo-manifest && go test ./...",
+          "timeout_seconds": 120
+        }
+      }
+    },
+    "cli": {
+      "paths": [
+        "apps/cli/**"
+      ],
+      "depends_on": ["repo-manifest"],
+      "checks": {
+        "lint": {
+          "run": "cd apps/cli && go vet ./...",
+          "timeout_seconds": 120
+        },
+        "test": {
+          "run": "cd apps/cli && go test ./...",
+          "timeout_seconds": 120
+        }
+      }
+    },
+    "api": {
+      "paths": [
+        "apps/api/**"
+      ],
+      "depends_on": ["repo-manifest"],
+      "checks": {
+        "lint": {
+          "run": "cd apps/api && go vet ./...",
+          "timeout_seconds": 180
+        },
+        "test": {
+          "run": "cd apps/api && go test ./...",
+          "timeout_seconds": 300
+        }
+      }
+    }
   }
 }
