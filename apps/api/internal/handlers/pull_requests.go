@@ -23,6 +23,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/decisionpacket"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
@@ -505,6 +506,8 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 }
 
 type verifiedCandidateForMerge struct {
+	PullRequestID     string
+	CandidateID       string
 	CommitSHA         string
 	CandidateTreeHash string
 	EvidenceTreeHash  string
@@ -512,6 +515,8 @@ type verifiedCandidateForMerge struct {
 	EnvironmentDigest string
 	RunnerIdentity    string
 	CompletedAt       time.Time
+	PacketDigest      string
+	Packet            json.RawMessage
 }
 
 func (v verifiedCandidateForMerge) Validate() error {
@@ -533,6 +538,38 @@ func (v verifiedCandidateForMerge) Validate() error {
 	if v.CompletedAt.IsZero() {
 		return errors.New("verification evidence is missing completion time")
 	}
+	if strings.TrimSpace(v.CandidateID) == "" || strings.TrimSpace(v.PacketDigest) == "" || len(v.Packet) == 0 {
+		return errors.New("verified candidate is missing decision packet")
+	}
+
+	var packet decisionpacket.Packet
+	if err := json.Unmarshal(v.Packet, &packet); err != nil {
+		return fmt.Errorf("decode decision packet: %w", err)
+	}
+	if err := packet.Validate(); err != nil {
+		return fmt.Errorf("invalid decision packet: %w", err)
+	}
+	digest, err := packet.Digest()
+	if err != nil {
+		return fmt.Errorf("digest decision packet: %w", err)
+	}
+	if digest != v.PacketDigest {
+		return errors.New("decision packet digest does not match stored packet")
+	}
+	if packet.Candidate.ID != v.CandidateID ||
+		packet.Candidate.PullRequestID != v.PullRequestID ||
+		packet.Candidate.CommitSHA != v.CommitSHA ||
+		packet.Candidate.TreeHash != v.CandidateTreeHash {
+		return errors.New("decision packet is stale for the verified candidate")
+	}
+	if packet.Verification.ContractHash != v.ContractHash ||
+		packet.Verification.EnvironmentDigest != v.EnvironmentDigest ||
+		packet.Verification.RunnerIdentity != v.RunnerIdentity {
+		return errors.New("decision packet verification identity does not match evidence")
+	}
+	if !packet.Review.Approvable {
+		return errors.New("decision packet review is not approvable")
+	}
 	return nil
 }
 
@@ -540,9 +577,11 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 	var verified verifiedCandidateForMerge
 	err := h.db.QueryRowContext(ctx, `
 		SELECT c.commit_sha, c.tree_hash, e.tree_hash, e.contract_hash,
-		       e.environment_digest, e.runner_identity, e.completed_at
+		       e.environment_digest, e.runner_identity, e.completed_at,
+		       c.id, dp.digest, dp.packet
 		FROM change_candidates c
 		JOIN verification_evidence e ON e.candidate_id = c.id
+		JOIN decision_packets dp ON dp.candidate_id = c.id
 		WHERE c.pull_request_id = $1
 		ORDER BY e.completed_at DESC
 		LIMIT 1
@@ -554,9 +593,13 @@ func (h *Handler) loadVerifiedCandidateForMerge(ctx context.Context, pullRequest
 		&verified.EnvironmentDigest,
 		&verified.RunnerIdentity,
 		&verified.CompletedAt,
+		&verified.CandidateID,
+		&verified.PacketDigest,
+		&verified.Packet,
 	)
 	if err != nil {
 		return nil, err
 	}
+	verified.PullRequestID = pullRequestID
 	return &verified, nil
 }
