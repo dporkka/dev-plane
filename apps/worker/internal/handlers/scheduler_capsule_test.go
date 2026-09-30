@@ -174,6 +174,15 @@ func setupAdmittedCapsuleDB(t *testing.T) *sql.DB {
 			files_to_change TEXT DEFAULT '[]',
 			files_to_create TEXT DEFAULT '[]'
 		);
+		CREATE TABLE project_configs (
+			id TEXT PRIMARY KEY,
+			repository_id TEXT NOT NULL,
+			test_command TEXT,
+			lint_command TEXT,
+			typecheck_command TEXT,
+			build_command TEXT,
+			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+		);
 	`)
 	if err != nil {
 		_ = db.Close()
