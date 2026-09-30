@@ -79,6 +79,9 @@ export const api = {
 
   getRun: (id: string): Promise<any> => getClient().getRun(id),
 
+  getTaskExecutionEvidence: (taskId: string): Promise<any> =>
+    getClient().getTaskExecutionEvidence(taskId),
+
   getRunSteps: (id: string): Promise<any> => getClient().getRunSteps(id),
 
   streamRun: (id: string): SSELike => adaptRunStream(getClient().streamRun(id)),
