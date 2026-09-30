@@ -54,3 +54,24 @@ func TestNewProviderUnsupported(t *testing.T) {
 		t.Fatal("NewProvider(unknown) error = nil, want error")
 	}
 }
+
+
+func TestNewProviderNulang(t *testing.T) {
+	p, name, err := NewProvider("nulang", "", "http://localhost:8096", "token")
+	if err != nil {
+		t.Fatalf("NewProvider(nulang) error: %v", err)
+	}
+	if name != "nulang" {
+		t.Fatalf("name = %q, want nulang", name)
+	}
+	if _, ok := p.(*NulangCloudProvider); !ok {
+		t.Fatalf("provider type = %T, want *NulangCloudProvider", p)
+	}
+}
+
+func TestNewProviderNulangRequiresURL(t *testing.T) {
+	_, _, err := NewProvider("nulang", "", "", "")
+	if err == nil {
+		t.Fatal("NewProvider(nulang) error = nil, want error")
+	}
+}
