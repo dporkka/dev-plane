@@ -67,8 +67,12 @@ func (c Contract) Validate() error {
 	if c.Version != ContractVersion {
 		return fmt.Errorf("unsupported verification contract version %d", c.Version)
 	}
+	if len(c.Checks) == 0 {
+		return errors.New("verification contract requires at least one required check")
+	}
 
 	seenChecks := make(map[string]struct{}, len(c.Checks))
+	requiredChecks := 0
 	for i, check := range c.Checks {
 		check.ID = strings.TrimSpace(check.ID)
 		if check.ID == "" {
@@ -85,6 +89,12 @@ func (c Contract) Validate() error {
 		if check.TimeoutSeconds < 0 {
 			return fmt.Errorf("check %q: timeout_seconds cannot be negative", check.ID)
 		}
+		if check.Required {
+			requiredChecks++
+		}
+	}
+	if requiredChecks == 0 {
+		return errors.New("verification contract requires at least one required check")
 	}
 
 	return nil
