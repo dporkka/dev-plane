@@ -368,3 +368,19 @@ func TestDetectTestCommandPrefersRepositoryManifest(t *testing.T) {
 		t.Fatalf("detectTestCommand() = %q, want make verify", got)
 	}
 }
+
+
+func TestWorkspaceRunTestsRejectsMalformedRepositoryManifest(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "dev-plane.json"), []byte(`{"schema_version":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	wt := NewWorkspaceTools(slog.Default())
+	if _, err := wt.RunTests(context.Background(), tmpDir, json.RawMessage(`{}`)); err == nil {
+		t.Fatal("RunTests() error = nil, want invalid manifest to fail closed")
+	}
+}

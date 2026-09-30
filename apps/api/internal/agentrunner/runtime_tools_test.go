@@ -311,3 +311,20 @@ func TestRuntimeRunTestsPrefersRepositoryManifest(t *testing.T) {
 		t.Fatalf("timeout = %s, want 42s", provider.commands[0].Timeout)
 	}
 }
+
+
+func TestRuntimeRunTestsRejectsMalformedRepositoryManifest(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{
+			"dev-plane.json": []byte(`{"schema_version":2}`),
+			"go.mod":         []byte("module example\n"),
+		},
+	}
+
+	if _, err := runtimeRunTests(context.Background(), provider, "runtime-1", json.RawMessage(`{}`)); err == nil {
+		t.Fatal("runtimeRunTests() error = nil, want invalid manifest to fail closed")
+	}
+	if len(provider.commands) != 0 {
+		t.Fatalf("commands = %#v, want no command after invalid manifest", provider.commands)
+	}
+}
