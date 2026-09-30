@@ -198,10 +198,9 @@ test-worker: ## Run worker-specific tests
 test-packages: ## Run package tests only (no apps)
 	@echo "$(GREEN)Running package tests...$(RESET)"
 	@for pkg in $(GO_PACKAGES); do \
-		echo "$(BLUE)[test]$(RESET) $pkg"; \
-		cd $pkg && go test ./... && cd - > /dev/null || exit 1; \
+		echo "$(BLUE)[test]$(RESET) $$pkg"; \
+		cd $$pkg && go test ./... && cd - > /dev/null || exit 1; \
 	done
-
 test-portability: ## Verify Dev Plane against unbranded Go/TypeScript/Rust/Python repository fixtures
 	@echo "$(BLUE)[test]$(RESET) Running repository portability contract..."
 	cd apps/api && go test ./internal/tools -run 'PortableRepositoryFixtures|DetectPackageManager|DetectTestCommand|RunTestsRequiresDetectedOrExplicitCommand' -count=1
