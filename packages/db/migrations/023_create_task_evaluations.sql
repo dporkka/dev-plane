@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS task_evaluations (
     provider                TEXT,
     prompt_version          TEXT,
     skill_version           TEXT,
+    strategy                TEXT,
     metadata                JSONB NOT NULL DEFAULT '{}',
     created_at              TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(task_id, attempt)
@@ -32,10 +33,12 @@ CREATE INDEX IF NOT EXISTS idx_task_evaluations_task_id ON task_evaluations(task
 CREATE INDEX IF NOT EXISTS idx_task_evaluations_agent_run_id ON task_evaluations(agent_run_id);
 CREATE INDEX IF NOT EXISTS idx_task_evaluations_created_at ON task_evaluations(created_at);
 CREATE INDEX IF NOT EXISTS idx_task_evaluations_model_provider ON task_evaluations(model, provider);
+CREATE INDEX IF NOT EXISTS idx_task_evaluations_strategy ON task_evaluations(strategy);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP INDEX IF EXISTS idx_task_evaluations_strategy;
 DROP INDEX IF EXISTS idx_task_evaluations_model_provider;
 DROP INDEX IF EXISTS idx_task_evaluations_created_at;
 DROP INDEX IF EXISTS idx_task_evaluations_agent_run_id;
