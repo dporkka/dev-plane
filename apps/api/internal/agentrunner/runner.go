@@ -140,7 +140,8 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	}
 
 	// 4. Mark run as running
-	if err := r.updateRunStatus(ctx, runID, models.AgentRunStatusRunning, nil); err != nil {
+	runningVersion, err := r.updateRunStatus(ctx, runID, models.AgentRunStatusRunning, nil)
+	if err != nil {
 		return fmt.Errorf("set run status to running: %w", err)
 	}
 
@@ -149,14 +150,16 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
-		"status":     "running",
+		"status":        "running",
+		"state_version": runningVersion,
 		"timestamp":  time.Now().UTC(),
 	})
 	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunStarted, map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusRunning,
+		"status":        models.AgentRunStatusRunning,
+		"state_version": runningVersion,
 		"timestamp":  time.Now().UTC(),
 	})
 
@@ -338,14 +341,18 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+	completedVersion, err := r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+	if err != nil {
+		return fmt.Errorf("complete run state transition: %w", err)
+	}
 
 	// Publish run.completed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
+		"status":        models.AgentRunStatusCompleted,
+		"state_version": completedVersion,
 		"steps":      state.ToolCalls,
 		"summary":    summary,
 		"timestamp":  now,
@@ -354,7 +361,8 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"run_id":     runID,
 		"task_id":    run.TaskID,
 		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
+		"status":        models.AgentRunStatusCompleted,
+		"state_version": completedVersion,
 		"steps":      state.ToolCalls,
 		"summary":    summary,
 		"timestamp":  now,
