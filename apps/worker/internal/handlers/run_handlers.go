@@ -218,7 +218,6 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	return ackMessage(msg)
 }
 
-
 func (h *RunHandler) scheduleAutomaticRetry(
 	ctx context.Context,
 	event events.AgentRunEvent,
