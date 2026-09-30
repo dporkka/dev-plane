@@ -10,12 +10,13 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	dbpkg "github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/scheduler"
 )
 
 type capsuleAssertingExecutor struct {
-	db *sql.DB
-	runID string
+	db         *sql.DB
+	runID      string
 	sawCapsule bool
 }
 
@@ -88,7 +89,16 @@ func TestHandleRunTriggeredPersistsAdmittedCapsuleBeforeExecutorDispatch(t *test
 	}
 
 	executor := &capsuleAssertingExecutor{db: db}
-	admission := NewSchedulerAdmission(db, SchedulerCapacity{MaxParallel: 2, CPU: 4, MemoryMB: 4096})
+	schedulerAdmission := NewSchedulerAdmission(
+		db,
+		SchedulerCapacity{MaxParallel: 2, CPU: 4, MemoryMB: 4096},
+	)
+	admission := NewCapsulePersistingRunAdmission(
+		schedulerAdmission,
+		schedulerAdmission,
+		dbpkg.NewTaskCapsuleSQLStore(db),
+		[]string{"tests", "lint"},
+	)
 	handler := NewRunHandler(db, slog.Default(), nil).
 		WithRunExecutor(executor).
 		WithRunAdmission(admission)
