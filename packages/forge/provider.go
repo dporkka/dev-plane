@@ -92,7 +92,7 @@ type Provider interface {
 // ValidateOpenChangeRequest validates the provider-neutral requirements shared by all forges.
 func ValidateOpenChangeRequest(repository Repository, req OpenChangeRequest) error {
 	if strings.TrimSpace(repository.Namespace) == "" || strings.TrimSpace(repository.Name) == "" {
-		return fmt.Errorf("%w: repository owner and name are required", ErrInvalidRequest)
+		return fmt.Errorf("%w: repository namespace and name are required", ErrInvalidRequest)
 	}
 	if strings.TrimSpace(req.Title) == "" {
 		return fmt.Errorf("%w: title is required", ErrInvalidRequest)
@@ -109,7 +109,7 @@ func ValidateOpenChangeRequest(repository Repository, req OpenChangeRequest) err
 // ValidateMergeChangeRequest validates the provider-neutral requirements shared by all forges.
 func ValidateMergeChangeRequest(repository Repository, number int, req MergeChangeRequest) error {
 	if strings.TrimSpace(repository.Namespace) == "" || strings.TrimSpace(repository.Name) == "" {
-		return fmt.Errorf("%w: repository owner and name are required", ErrInvalidRequest)
+		return fmt.Errorf("%w: repository namespace and name are required", ErrInvalidRequest)
 	}
 	if number <= 0 {
 		return fmt.Errorf("%w: change number must be positive", ErrInvalidRequest)
