@@ -23,8 +23,8 @@ type Credential struct {
 
 // Repository identifies a repository within a forge.
 type Repository struct {
-	Owner string
-	Name  string
+	Namespace string
+	Name      string
 }
 
 // ChangeState is the provider-neutral lifecycle state of a code change request.
@@ -91,7 +91,7 @@ type Provider interface {
 
 // ValidateOpenChangeRequest validates the provider-neutral requirements shared by all forges.
 func ValidateOpenChangeRequest(repository Repository, req OpenChangeRequest) error {
-	if strings.TrimSpace(repository.Owner) == "" || strings.TrimSpace(repository.Name) == "" {
+	if strings.TrimSpace(repository.Namespace) == "" || strings.TrimSpace(repository.Name) == "" {
 		return fmt.Errorf("%w: repository owner and name are required", ErrInvalidRequest)
 	}
 	if strings.TrimSpace(req.Title) == "" {
@@ -108,7 +108,7 @@ func ValidateOpenChangeRequest(repository Repository, req OpenChangeRequest) err
 
 // ValidateMergeChangeRequest validates the provider-neutral requirements shared by all forges.
 func ValidateMergeChangeRequest(repository Repository, number int, req MergeChangeRequest) error {
-	if strings.TrimSpace(repository.Owner) == "" || strings.TrimSpace(repository.Name) == "" {
+	if strings.TrimSpace(repository.Namespace) == "" || strings.TrimSpace(repository.Name) == "" {
 		return fmt.Errorf("%w: repository owner and name are required", ErrInvalidRequest)
 	}
 	if number <= 0 {
