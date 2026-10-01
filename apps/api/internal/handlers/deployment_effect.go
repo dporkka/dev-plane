@@ -44,29 +44,49 @@ type deploymentEffectInput struct {
 	CommitSHA   string
 }
 
-func newDeploymentEffectIntent(input deploymentEffectInput) (execution.EffectIntent, error) {
+func deploymentEffectActivation(input deploymentEffectInput) (execution.Activation, error) {
 	runID := strings.TrimSpace(input.RunID)
 	if runID == "" {
 		runID = strings.TrimSpace(input.TaskID)
 	}
 	environment := strings.TrimSpace(input.Environment)
 	if environment == "" {
-		return execution.EffectIntent{}, fmt.Errorf("deployment environment is required")
-	}
-	commitSHA := strings.TrimSpace(input.CommitSHA)
-	if commitSHA == "" {
-		return execution.EffectIntent{}, fmt.Errorf("deployment commit sha is required")
+		return execution.Activation{}, fmt.Errorf("deployment environment is required")
 	}
 	repoID := strings.TrimSpace(input.RepoID)
 	if repoID == "" {
-		return execution.EffectIntent{}, fmt.Errorf("deployment repository id is required")
+		return execution.Activation{}, fmt.Errorf("deployment repository id is required")
 	}
-
 	activation := execution.Activation{
 		RunID: runID,
 		ID:    "deployment:" + repoID + ":" + environment,
 		Epoch: 1,
 	}
+	if err := activation.Validate(); err != nil {
+		return execution.Activation{}, err
+	}
+	return activation, nil
+}
+
+func deploymentEffectID(input deploymentEffectInput) (execution.OperationID, error) {
+	activation, err := deploymentEffectActivation(input)
+	if err != nil {
+		return "", err
+	}
+	return execution.NewOperationID(activation, execution.OperationEffect, 0)
+}
+
+func newDeploymentEffectIntent(input deploymentEffectInput) (execution.EffectIntent, error) {
+	activation, err := deploymentEffectActivation(input)
+	if err != nil {
+		return execution.EffectIntent{}, err
+	}
+	environment := strings.TrimSpace(input.Environment)
+	commitSHA := strings.TrimSpace(input.CommitSHA)
+	if commitSHA == "" {
+		return execution.EffectIntent{}, fmt.Errorf("deployment commit sha is required")
+	}
+	repoID := strings.TrimSpace(input.RepoID)
 	grant := execution.Grant{
 		Operation: capability.OpDeploy,
 		Resource:  fmt.Sprintf("%s/%s", input.ProjectID, repoID),
@@ -83,6 +103,41 @@ func newDeploymentEffectIntent(input deploymentEffectInput) (execution.EffectInt
 		return execution.EffectIntent{}, fmt.Errorf("encode deployment effect input: %w", err)
 	}
 	return execution.NewEffectIntent(activation, 0, grant, payload)
+}
+
+func (h *Handler) persistedDeploymentCommitSHA(
+	ctx context.Context,
+	input deploymentEffectInput,
+) (string, bool, error) {
+	if h == nil || h.db == nil {
+		return "", false, errors.New("database is required")
+	}
+	effectID, err := deploymentEffectID(input)
+	if err != nil {
+		return "", false, err
+	}
+	record, err := dbpkg.LoadEffect(ctx, h.db, effectID)
+	if errors.Is(err, dbpkg.ErrEffectIntentNotFound) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("load persisted deployment effect: %w", err)
+	}
+
+	wantResource := fmt.Sprintf("%s/%s", input.ProjectID, input.RepoID)
+	if record.Intent.Grant.Operation != capability.OpDeploy ||
+		record.Intent.Grant.Resource != wantResource {
+		return "", false, fmt.Errorf("%w: persisted deployment authority does not match task", ErrDeploymentEffectConflict)
+	}
+	const prefix = "git-commit:"
+	if !strings.HasPrefix(record.Intent.Grant.Revision, prefix) {
+		return "", false, fmt.Errorf("%w: persisted deployment revision is malformed", ErrDeploymentEffectConflict)
+	}
+	sha := strings.TrimSpace(strings.TrimPrefix(record.Intent.Grant.Revision, prefix))
+	if sha == "" {
+		return "", false, fmt.Errorf("%w: persisted deployment commit sha is empty", ErrDeploymentEffectConflict)
+	}
+	return sha, true, nil
 }
 
 func newDeploymentEffectReceipt(intent execution.EffectIntent, deployment *gateway.Deployment) (execution.EffectReceipt, error) {
