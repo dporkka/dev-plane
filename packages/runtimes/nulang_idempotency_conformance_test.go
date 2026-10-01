@@ -2,9 +2,58 @@ package runtimes
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"sync"
 	"testing"
 )
+
+type resourceFencingWorkspaceAuthority struct {
+	mu             sync.Mutex
+	idempotencyKey string
+	intent         map[string]any
+}
+
+func (a *resourceFencingWorkspaceAuthority) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if r.Method != http.MethodPost || r.URL.Path != "/workspaces" {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		key := r.Header.Get("Idempotency-Key")
+		if key == "" {
+			http.Error(w, "missing idempotency key", http.StatusBadRequest)
+			return
+		}
+		if a.intent == nil {
+			a.idempotencyKey = key
+			a.intent = body
+		} else if a.idempotencyKey != key || !reflect.DeepEqual(a.intent, body) {
+			http.Error(w, "idempotency conflict", http.StatusConflict)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"workspace": map[string]any{
+				"workspace_id": body["id"],
+				"status":       "running",
+				"memory_mb":    body["memory_mb"],
+				"vcpus":        body["vcpus"],
+				"vsock_cid":    3001,
+			},
+			"guest_ready": true,
+		})
+	})
+}
 
 func TestNulangProviderConformanceRejectsDifferentKeyForExistingWorkspace(t *testing.T) {
 	authority := &fakeWorkspaceAuthority{}
