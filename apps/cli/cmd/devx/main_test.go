@@ -18,7 +18,7 @@ func TestResolveAgentDefaults(t *testing.T) {
 	if spec.Command != "npx" {
 		t.Fatalf("command=%q", spec.Command)
 	}
-	if got := spec.Args; len(got) != 2 || got[1] != "@agentclientprotocol/codex-acp" {
+	if got := spec.Args; len(got) != 2 || got[1] != "@agentclientprotocol/codex-acp@2.1.1" {
 		t.Fatalf("args=%v", got)
 	}
 
@@ -63,5 +63,18 @@ func TestSaveSessionState(t *testing.T) {
 	}
 	if filepath.Dir(path) != dir {
 		t.Fatalf("path=%s", path)
+	}
+}
+
+func TestParseCommonAuthMethod(t *testing.T) {
+	opts, rest, err := parseCommon("chat", []string{"--auth-method", "chat-gpt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 0 {
+		t.Fatalf("rest=%v", rest)
+	}
+	if opts.AuthMethod != "chat-gpt" {
+		t.Fatalf("auth=%q", opts.AuthMethod)
 	}
 }
