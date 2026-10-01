@@ -8,7 +8,90 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
+
+// LocalCheckoutNulangSeeder materializes an already-authenticated local Git
+// checkout into a Nulang workspace. It is intended for CI systems such as
+// Woodpecker that already possess the exact source revision and should not need
+// to hand Git credentials to the runtime provider.
+type LocalCheckoutNulangSeeder struct {
+	sourceDir    string
+	expectedHead string
+}
+
+// NewLocalCheckoutNulangSeeder creates a seeder bound to one trusted local
+// checkout and immutable expected HEAD.
+func NewLocalCheckoutNulangSeeder(sourceDir, expectedHead string) *LocalCheckoutNulangSeeder {
+	return &LocalCheckoutNulangSeeder{
+		sourceDir:    sourceDir,
+		expectedHead: expectedHead,
+	}
+}
+
+func (s *LocalCheckoutNulangSeeder) Seed(ctx context.Context, provider *NulangCloudProvider, workspaceID string, req CreateRequest) error {
+	if s == nil {
+		return errors.New("local checkout Nulang seeder is required")
+	}
+	if provider == nil {
+		return errors.New("Nulang provider is required")
+	}
+
+	repoDir, expectedHead, cleanup, err := prepareNulangLocalCheckout(ctx, s.sourceDir, s.expectedHead, req.CloneURL)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	archiveFile, err := os.CreateTemp("", "devplane-nulang-local-source-*.tar")
+	if err != nil {
+		return fmt.Errorf("create local source archive: %w", err)
+	}
+	archivePath := archiveFile.Name()
+	if err := archiveFile.Close(); err != nil {
+		_ = os.Remove(archivePath)
+		return fmt.Errorf("close local source archive placeholder: %w", err)
+	}
+	defer os.Remove(archivePath)
+
+	if err := createRepositoryTar(repoDir, archivePath); err != nil {
+		return fmt.Errorf("archive local source checkout: %w", err)
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return fmt.Errorf("open local source archive: %w", err)
+	}
+	defer archive.Close()
+
+	if err := provider.writeFileChunks(ctx, workspaceID, ".seed/repository.tar", archive); err != nil {
+		return fmt.Errorf("upload local repository seed: %w", err)
+	}
+	result, err := provider.execRaw(ctx, workspaceID, "/bin/tar", []string{"-xf", ".seed/repository.tar", "-C", "/workspace"}, nil, nil, 30*time.Second)
+	if err != nil {
+		return fmt.Errorf("extract local repository seed: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		output := ""
+		if result != nil {
+			output = strings.TrimSpace(result.Stdout + result.Stderr)
+		}
+		return fmt.Errorf("extract local repository seed failed: %s", output)
+	}
+	_, _ = provider.execRaw(ctx, workspaceID, "/bin/rm", []string{"-f", ".seed/repository.tar"}, nil, nil, 10*time.Second)
+
+	actual, err := provider.execRaw(ctx, workspaceID, "git", []string{"rev-parse", "HEAD"}, nil, nil, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("verify local repository seed HEAD: %w", err)
+	}
+	if actual == nil || actual.ExitCode != 0 {
+		return errors.New("verify local repository seed HEAD failed")
+	}
+	actualHead := strings.TrimSpace(actual.Stdout)
+	if actualHead != expectedHead {
+		return fmt.Errorf("seeded repository HEAD mismatch: expected %s got %s", expectedHead, actualHead)
+	}
+	return nil
+}
 
 // prepareNulangLocalCheckout copies an already-authenticated local repository
 // checkout into a disposable trusted staging directory before it is archived
