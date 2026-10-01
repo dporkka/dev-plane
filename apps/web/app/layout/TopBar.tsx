@@ -10,7 +10,6 @@ import {
   LogOut,
   User,
 } from "lucide-react";
-import Image from "next/image";
 import { useEffect, useRef, useState } from "react";
 
 export function TopBar() {
@@ -116,12 +115,11 @@ export function TopBar() {
               className="flex items-center gap-2 p-1.5 rounded-md hover:bg-[#21262d] transition-colors"
             >
               {user?.avatar_url ? (
-                <Image
+                <img
                   src={user.avatar_url}
                   alt={user.name || user.email}
                   width={28}
                   height={28}
-                  unoptimized
                   className="w-7 h-7 rounded-full"
                 />
               ) : (
