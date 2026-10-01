@@ -240,6 +240,16 @@ func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner
 	return &result, nil
 }
 
+// GetPR retrieves a pull request including its current head and merge state.
+func (g *GitHubGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*GitHubPR, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", g.apiBaseURL, owner, name, number)
+	var result GitHubPR
+	if err := g.get(ctx, token, url, &result); err != nil {
+		return nil, fmt.Errorf("get github pr: %w", err)
+	}
+	return &result, nil
+}
+
 // MergePR merges a pull request on GitHub.
 func (g *GitHubGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req MergePRRequest) (*MergePRResult, error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d/merge", g.apiBaseURL, owner, name, number)
