@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
@@ -739,4 +740,58 @@ func containsSubstr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestKernel_EvaluateBindsExactRequestedGrant(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	k := NewKernel(nil, nil, nil, logger)
+
+	req := Request{
+		ActorType: "agent",
+		Operation: OpMergePR,
+		Resource:  "repo:dporkka/dev-plane/pr:123",
+		Revision:  "abc123",
+	}
+
+	result, err := k.Evaluate(ctx, req)
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if result.RequestedGrant == nil {
+		t.Fatal("Evaluate().RequestedGrant = nil, want exact authority grant")
+	}
+	want := execution.Grant{
+		Operation: OpMergePR,
+		Resource:  "repo:dporkka/dev-plane/pr:123",
+		Revision:  "abc123",
+	}
+	if *result.RequestedGrant != want {
+		t.Fatalf("Evaluate().RequestedGrant = %#v, want %#v", *result.RequestedGrant, want)
+	}
+}
+
+func TestKernel_EvaluateDoesNotMintGrantForDeniedRequest(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	k := NewKernel(nil, nil, nil, logger)
+
+	result, err := k.Evaluate(ctx, Request{
+		ActorType: "human",
+		User: &models.User{
+			ID:   "user-1",
+			Role: "invalid-role",
+		},
+		Operation: OpReadFile,
+		Resource:  "main.go",
+	})
+	if err != nil {
+		t.Fatalf("Evaluate() error = %v", err)
+	}
+	if result.Effect != policies.EffectDeny {
+		t.Fatalf("Evaluate().Effect = %v, want deny", result.Effect)
+	}
+	if result.RequestedGrant != nil {
+		t.Fatalf("denied request minted grant %#v", result.RequestedGrant)
+	}
 }

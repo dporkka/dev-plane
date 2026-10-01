@@ -8,6 +8,7 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/audit"
 	"github.com/ai-dev-control-plane/api/internal/budget"
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 )
@@ -48,6 +49,7 @@ type Request struct {
 	Operation    string // read_file, write_file, apply_patch, run_command, etc.
 	ResourceType string
 	Resource     string // specific file path, command, etc.
+	Revision     string // optional immutable revision bound to this authority request
 
 	// State
 	Budget       *models.Budget
@@ -64,6 +66,7 @@ type Result struct {
 	AuditRequired    bool
 	Reason           string
 	RiskLevel        string
+	RequestedGrant   *execution.Grant
 }
 
 // WithPolicyEngine replaces the policy engine used by the kernel.
@@ -182,6 +185,26 @@ func (k *Kernel) Evaluate(ctx context.Context, req Request) (*Result, error) {
 
 	// 7. Determine approval requirement
 	result.RequiredApproval = effect == policies.EffectAsk || effect == policies.EffectAdminOnly
+
+	// Bind the policy decision to the exact requested authority. A denied
+	// decision never mints a grant. Legacy callers that do not yet provide a
+	// concrete resource remain unbound until their request path is migrated.
+	if effect != policies.EffectDeny && req.Operation != "" && req.Resource != "" {
+		grant := execution.Grant{
+			Operation: req.Operation,
+			Resource:  req.Resource,
+			Revision:  req.Revision,
+		}
+		if err := grant.Validate(); err != nil {
+			result.Effect = policies.EffectDeny
+			result.RequiredApproval = false
+			result.Reason = fmt.Sprintf("invalid authority request: %v", err)
+			result.RiskLevel = RiskLevelHigh
+			k.logAudit(ctx, req, result)
+			return result, fmt.Errorf("%w: %v", ErrCapabilityUnknown, err)
+		}
+		result.RequestedGrant = &grant
+	}
 
 	// 8. Determine risk level
 	result.RiskLevel = k.calculateRiskLevel(req, effect)

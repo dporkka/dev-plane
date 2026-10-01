@@ -9,8 +9,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 )
+
 func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
 	if r.db == nil {
 		return nil
@@ -81,6 +83,39 @@ func (r *Runner) pauseRun(ctx context.Context, runID string, reason string) erro
 	return nil
 }
 
+func capabilityApprovalMetadata(decision *capabilityDecisionError) ([]byte, error) {
+	if decision == nil || decision.result == nil {
+		return nil, fmt.Errorf("capability decision is required")
+	}
+
+	metadata := map[string]any{
+		"tool_name":  decision.toolName,
+		"operation":  decision.operation,
+		"resource":   decision.resource,
+		"effect":     decision.result.Effect,
+		"risk_level": decision.result.RiskLevel,
+		"reason":     decision.result.Reason,
+	}
+	if grant := decision.result.RequestedGrant; grant != nil {
+		manifest, err := execution.NewManifest(*grant)
+		if err != nil {
+			return nil, fmt.Errorf("build authority manifest: %w", err)
+		}
+		digest, err := manifest.Digest()
+		if err != nil {
+			return nil, fmt.Errorf("digest authority manifest: %w", err)
+		}
+		metadata["authority_grant"] = map[string]string{
+			"operation": grant.Operation,
+			"resource":  grant.Resource,
+			"revision":  grant.Revision,
+		}
+		metadata["authority_digest"] = digest
+	}
+
+	return json.Marshal(metadata)
+}
+
 func (r *Runner) requestCapabilityApproval(ctx context.Context, run *models.AgentRun, task *models.Task, decision *capabilityDecisionError) error {
 	if r.db == nil || task == nil || decision == nil || decision.result == nil {
 		return nil
@@ -88,14 +123,7 @@ func (r *Runner) requestCapabilityApproval(ctx context.Context, run *models.Agen
 
 	approvalID := uuid.New().String()
 	now := time.Now().UTC()
-	metadata, err := json.Marshal(map[string]any{
-		"tool_name":  decision.toolName,
-		"operation":  decision.operation,
-		"resource":   decision.resource,
-		"effect":     decision.result.Effect,
-		"risk_level": decision.result.RiskLevel,
-		"reason":     decision.result.Reason,
-	})
+	metadata, err := capabilityApprovalMetadata(decision)
 	if err != nil {
 		return fmt.Errorf("marshal approval metadata: %w", err)
 	}
