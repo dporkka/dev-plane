@@ -9,13 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/ai-dev-control-plane/api/internal/capability"
 	dbpkg "github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/gateway"
+	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/policies"
 )
 
 type effectDeployGateway struct {
@@ -457,4 +459,3 @@ func openDeploymentHandlerTestDB(t *testing.T) *dbpkg.DB {
 	return database
 }
 
-var _ = time.Now
