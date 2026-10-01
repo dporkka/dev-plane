@@ -23,9 +23,8 @@ export default defineConfig(({ mode }) => {
       },
     },
     define: {
-      // Compatibility for the existing API client during the cutover. The
-      // production UI and API are deliberately same-origin; Vite proxies this
-      // origin to the Go API in development.
+      // The shipped UI is same-origin with the Go API. During local Vite
+      // development the proxy below preserves that exact production shape.
       "process.env.NEXT_PUBLIC_API_URL": "window.location.origin",
     },
     server: {
@@ -42,7 +41,11 @@ export default defineConfig(({ mode }) => {
       strictPort: true,
     },
     build: {
-      outDir: "dist",
+      // Build directly into the Go package so the API binary can embed the
+      // exact static bundle it ships. The fallback index in dist/ remains
+      // untouched because only the dist/web child is emptied by Vite.
+      outDir: "../api/internal/webui/dist/web",
+      emptyOutDir: true,
       sourcemap: true,
     },
   };
