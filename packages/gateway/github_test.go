@@ -301,6 +301,134 @@ func TestDeleteWebhook(t *testing.T) {
 	}
 }
 
+func TestResolveCommitSHAReturnsImmutableRevision(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/repos/owner/repo/commits/main" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sha":"commit-abc"}`))
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	sha, err := g.ResolveCommitSHA(context.Background(), &oauth2.Token{AccessToken: "token"}, "owner", "repo", "main")
+	if err != nil {
+		t.Fatalf("ResolveCommitSHA() error = %v", err)
+	}
+	if sha != "commit-abc" {
+		t.Fatalf("sha = %q, want commit-abc", sha)
+	}
+}
+
+func TestCreateDeploymentWithPayloadPersistsEffectCorrelation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/repos/owner/repo/deployments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		var body struct {
+			Ref         string         `json:"ref"`
+			Environment string         `json:"environment"`
+			Payload     map[string]any `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode deployment body: %v", err)
+		}
+		if body.Ref != "commit-abc" || body.Environment != "staging" {
+			t.Fatalf("deployment request = %#v", body)
+		}
+		if body.Payload["dev_plane_effect_id"] != "dp1_effect" {
+			t.Fatalf("effect payload = %#v", body.Payload)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"id":12345,
+			"url":"https://api.github.com/repos/owner/repo/deployments/12345",
+			"sha":"commit-abc",
+			"ref":"commit-abc",
+			"environment":"staging",
+			"payload":{"dev_plane_effect_id":"dp1_effect"}
+		}`))
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	deployment, err := g.CreateDeploymentWithPayload(
+		context.Background(),
+		&oauth2.Token{AccessToken: "token"},
+		"owner",
+		"repo",
+		"staging",
+		"commit-abc",
+		map[string]any{"dev_plane_effect_id": "dp1_effect"},
+	)
+	if err != nil {
+		t.Fatalf("CreateDeploymentWithPayload() error = %v", err)
+	}
+	if deployment.ID != 12345 || deployment.SHA != "commit-abc" || deployment.Environment != "staging" {
+		t.Fatalf("deployment = %#v", deployment)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(deployment.Payload, &payload); err != nil {
+		t.Fatalf("decode returned payload: %v", err)
+	}
+	if payload["dev_plane_effect_id"] != "dp1_effect" {
+		t.Fatalf("returned payload = %#v", payload)
+	}
+}
+
+func TestListDeploymentsFiltersExactRevisionAndEnvironment(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Fatalf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/repos/owner/repo/deployments" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("sha"); got != "commit-abc" {
+			t.Fatalf("sha query = %q", got)
+		}
+		if got := r.URL.Query().Get("environment"); got != "staging" {
+			t.Fatalf("environment query = %q", got)
+		}
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Fatalf("per_page query = %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{
+			"id":12345,
+			"url":"https://api.github.com/repos/owner/repo/deployments/12345",
+			"sha":"commit-abc",
+			"ref":"commit-abc",
+			"environment":"staging",
+			"payload":{"dev_plane_effect_id":"dp1_effect"}
+		}]`))
+	}))
+	defer server.Close()
+
+	g := testGateway(server)
+	deployments, err := g.ListDeployments(
+		context.Background(),
+		&oauth2.Token{AccessToken: "token"},
+		"owner",
+		"repo",
+		DeploymentListOptions{SHA: "commit-abc", Environment: "staging"},
+	)
+	if err != nil {
+		t.Fatalf("ListDeployments() error = %v", err)
+	}
+	if len(deployments) != 1 || deployments[0].ID != 12345 {
+		t.Fatalf("deployments = %#v", deployments)
+	}
+}
+
 func TestCreateDeployment(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/repos/owner/repo/deployments" {
