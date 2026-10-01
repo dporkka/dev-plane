@@ -59,6 +59,8 @@ risk:
       - human_approval
 
   - paths:
+      - devplane.yaml
+      - scripts/verify.sh
       - .github/workflows/**
       - docker-compose.yml
     level: high
