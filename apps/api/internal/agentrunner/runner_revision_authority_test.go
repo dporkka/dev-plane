@@ -142,6 +142,7 @@ func TestAuthorizeToolFailsClosedWhenMutationRevisionCannotBeCaptured(t *testing
 		run,
 		nil,
 		workspace,
+		"",
 		"write_file",
 		json.RawMessage(`{"path":"src/main.go","content":"package main"}`),
 	)
