@@ -72,11 +72,21 @@ type SessionMetadata struct {
 	RunID  string
 }
 
+type AuthMethod struct {
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Type        string            `json:"type"`
+	Args        []string          `json:"args"`
+	Env         map[string]string `json:"env"`
+}
+
 type InitializeResult struct {
 	ProtocolVersion int
 	LoadSession     bool
 	AgentName       string
 	AgentVersion    string
+	AuthMethods     []AuthMethod
 	RawCapabilities map[string]any
 }
 
@@ -177,6 +187,7 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 			Name    string `json:"name"`
 			Version string `json:"version"`
 		} `json:"agentInfo"`
+		AuthMethods []AuthMethod `json:"authMethods"`
 	}
 	if err := c.request(ctx, "initialize", params, &raw); err != nil {
 		return InitializeResult{}, err
@@ -188,6 +199,7 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 		ProtocolVersion: raw.ProtocolVersion,
 		AgentName:       raw.AgentInfo.Name,
 		AgentVersion:    raw.AgentInfo.Version,
+		AuthMethods:     raw.AuthMethods,
 		RawCapabilities: raw.AgentCapabilities,
 	}
 	if v, ok := raw.AgentCapabilities["loadSession"].(bool); ok {
@@ -195,6 +207,28 @@ func (c *Client) Initialize(ctx context.Context) (InitializeResult, error) {
 	}
 	c.init = result
 	return result, nil
+}
+
+func (c *Client) Authenticate(ctx context.Context, methodID string) error {
+	var selected *AuthMethod
+	for i := range c.init.AuthMethods {
+		if c.init.AuthMethods[i].ID == methodID {
+			selected = &c.init.AuthMethods[i]
+			break
+		}
+	}
+	if selected == nil {
+		return fmt.Errorf("ACP auth method %q was not advertised by the agent", methodID)
+	}
+	methodType := selected.Type
+	if methodType == "" {
+		methodType = "agent"
+	}
+	if methodType == "terminal" {
+		return fmt.Errorf("ACP auth method %q requires terminal authentication, which devx does not advertise yet", methodID)
+	}
+	var raw map[string]any
+	return c.request(ctx, "authenticate", map[string]any{"methodId": methodID}, &raw)
 }
 
 func (c *Client) NewSession(ctx context.Context, cwd string, meta SessionMetadata) (Session, error) {
@@ -299,11 +333,7 @@ func (c *Client) request(ctx context.Context, method string, params any, out any
 	c.pendingMu.Lock()
 	c.pending[key] = ch
 	c.pendingMu.Unlock()
-	defer func() {
-		c.pendingMu.Lock()
-		delete(c.pending, key)
-		c.pendingMu.Unlock()
-	}()
+	defer func() { c.pendingMu.Lock(); delete(c.pending, key); c.pendingMu.Unlock() }()
 
 	if err := c.write(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params}); err != nil {
 		return err
@@ -450,11 +480,7 @@ func (c *Client) writeError(id json.RawMessage, code int, message string) error 
 	return c.write(map[string]any{"jsonrpc": "2.0", "id": idValue, "error": map[string]any{"code": code, "message": message}})
 }
 
-func (c *Client) setReadErr(err error) {
-	c.errMu.Lock()
-	c.readErr = err
-	c.errMu.Unlock()
-}
+func (c *Client) setReadErr(err error) { c.errMu.Lock(); c.readErr = err; c.errMu.Unlock() }
 func (c *Client) connectionError() error {
 	c.errMu.Lock()
 	defer c.errMu.Unlock()
