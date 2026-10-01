@@ -26,9 +26,7 @@ func TestSelectBuiltAssetsUsesViteOutput(t *testing.T) {
 		t.Fatalf("selectBuiltAssets() error: %v", err)
 	}
 
-	data, err := fstest.TestFS(assets, "index.html")
-	if err != nil {
+	if err := fstest.TestFS(assets, "index.html"); err != nil {
 		t.Fatalf("selected assets do not expose index.html: %v", err)
 	}
-	_ = data
 }
