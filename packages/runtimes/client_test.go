@@ -419,3 +419,61 @@ func TestRemoteProviderAuthToken(t *testing.T) {
 		t.Fatal("expected auth error")
 	}
 }
+
+
+func TestRemoteProviderCircuitBreakerBlocksRequestsUntilRecovery(t *testing.T) {
+	now := time.Unix(100, 0)
+	requests := 0
+	fail := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if fail {
+			http.Error(w, "provider unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(Session{ID: "sess-1", WorkspaceID: "repo-1", Status: "ready", Provider: "remote"})
+	}))
+	defer server.Close()
+
+	breaker := NewCircuitBreaker(CircuitBreakerConfig{
+		FailureThreshold: 2,
+		RecoveryTimeout:  10 * time.Second,
+	}).withClock(func() time.Time { return now })
+
+	client := NewRemoteProvider(server.URL, "").WithCircuitBreaker(breaker)
+	req := CreateRequest{RepositoryID: "repo-1", CloneURL: "https://example.invalid/repo.git", Branch: "feat", BaseBranch: "main"}
+
+	for i := 0; i < 2; i++ {
+		if _, err := client.CreateWorkspace(context.Background(), req); err == nil {
+			t.Fatalf("CreateWorkspace attempt %d error = nil, want provider failure", i+1)
+		}
+	}
+	if requests != 2 {
+		t.Fatalf("server requests = %d, want 2", requests)
+	}
+
+	if _, err := client.CreateWorkspace(context.Background(), req); !errors.Is(err, ErrCircuitOpen) {
+		t.Fatalf("CreateWorkspace with open circuit error = %v, want ErrCircuitOpen", err)
+	}
+	if requests != 2 {
+		t.Fatalf("open circuit reached server; requests = %d", requests)
+	}
+
+	now = now.Add(11 * time.Second)
+	fail = false
+	if _, err := client.CreateWorkspace(context.Background(), req); err != nil {
+		t.Fatalf("half-open CreateWorkspace error = %v", err)
+	}
+	if requests != 3 {
+		t.Fatalf("half-open server requests = %d, want 3", requests)
+	}
+
+	if _, err := client.CreateWorkspace(context.Background(), req); err != nil {
+		t.Fatalf("CreateWorkspace after recovery error = %v", err)
+	}
+	if requests != 4 {
+		t.Fatalf("closed circuit server requests = %d, want 4", requests)
+	}
+}
