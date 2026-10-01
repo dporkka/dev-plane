@@ -24,6 +24,7 @@ import type {
   IntegrationPayload,
   IntegrationProvider,
   MergePullRequestRequest,
+  NLAPExecutionRequest,
   Organization,
   PatchRequest,
   PatchResponse,
@@ -318,6 +319,13 @@ export class DevPlaneClient {
 
   createTask(projectId: string, payload: CreateTaskRequest) {
     return this.request<Task>(`/api/v1/projects/${projectId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  }
+
+  createNLAPTask(projectId: string, payload: NLAPExecutionRequest) {
+    return this.request<Task>(`/api/v1/projects/${projectId}/nlap/tasks`, {
       method: 'POST',
       body: JSON.stringify(payload),
     });
