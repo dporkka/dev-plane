@@ -49,7 +49,7 @@ func (p *RemoteProvider) do(req *http.Request) (*http.Response, error) {
 	if err := p.breaker.Before(); err != nil {
 		return nil, err
 	}
-	resp, err := p.do(req)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		p.breaker.RecordFailure()
 		return nil, err
