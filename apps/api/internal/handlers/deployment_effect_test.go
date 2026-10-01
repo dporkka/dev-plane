@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -376,6 +377,109 @@ func TestDeployTaskRecoversStoredCommitWhenMutableRefMoved(t *testing.T) {
 	}
 	if externalID != "98765" || ref != "commit-old" || taskStatus != "deploying" {
 		t.Fatalf("local recovery = external:%q ref:%q task:%q", externalID, ref, taskStatus)
+	}
+}
+
+func TestDeployTaskRetryAfterLocalInsertDoesNotDuplicateDeployment(t *testing.T) {
+	database := openDeploymentHandlerTestDB(t)
+	allowAll := policies.NewEngine([]policies.Policy{
+		{Name: "allow_all", ResourceType: "*", Action: "*", Effect: policies.EffectAllow},
+	})
+
+	input := deploymentEffectInput{
+		RunID:       "task-1",
+		TaskID:      "task-1",
+		ProjectID:   "project-1",
+		RepoID:      "repo-1",
+		Owner:       "dporkka",
+		RepoName:    "dev-plane",
+		Environment: "staging",
+		CommitSHA:   "commit-old",
+	}
+	intent, err := newDeploymentEffectIntent(input)
+	if err != nil {
+		t.Fatalf("newDeploymentEffectIntent() error = %v", err)
+	}
+	if err := dbpkg.EnsureEffectIntent(context.Background(), database.DB, intent); err != nil {
+		t.Fatalf("seed deployment intent: %v", err)
+	}
+
+	payload, _ := json.Marshal(map[string]any{"dev_plane_effect_id": string(intent.ID)})
+	remote := gateway.Deployment{
+		ID:          98765,
+		URL:         "https://api.github.com/repos/dporkka/dev-plane/deployments/98765",
+		SHA:         "commit-old",
+		Ref:         "commit-old",
+		Environment: "staging",
+		Payload:     payload,
+	}
+	receipt, err := newDeploymentEffectReceipt(intent, &remote)
+	if err != nil {
+		t.Fatalf("newDeploymentEffectReceipt() error = %v", err)
+	}
+	if err := dbpkg.RecordEffectReceipt(context.Background(), database.DB, receipt); err != nil {
+		t.Fatalf("seed deployment receipt: %v", err)
+	}
+
+	_, err = database.Exec(`
+		INSERT INTO deployments (
+			id, task_id, environment, ref, provider, external_id,
+			status, url, created_at, updated_at
+		) VALUES (
+			'deployment-existing', 'task-1', 'staging', 'commit-old',
+			'github', '98765', 'pending', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+		)
+	`, remote.URL)
+	if err != nil {
+		t.Fatalf("seed local deployment: %v", err)
+	}
+
+	fake := &effectDeployGateway{
+		resolvedSHA: "commit-new",
+		list:        []gateway.Deployment{remote},
+	}
+	h := NewHandler(database.DB, slog.Default()).
+		WithCapabilityKernel(capability.NewKernel(allowAll, nil, nil, slog.Default())).
+		WithDeployGateway(fake).
+		WithDeployToken("gh-token")
+
+	body, _ := json.Marshal(DeployTaskRequest{Environment: "staging", Ref: "main"})
+	req := httptest.NewRequest(http.MethodPost, "/tasks/task-1/deploy", bytes.NewReader(body))
+	req = req.WithContext(withRole(req.Context(), models.RoleAdmin))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "task-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.DeployTask(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.resolveCalls != 0 || fake.createCalls != 0 {
+		t.Fatalf("retry calls = resolve:%d create:%d, want 0/0", fake.resolveCalls, fake.createCalls)
+	}
+
+	var count int
+	if err := database.QueryRow(`
+		SELECT COUNT(*) FROM deployments
+		WHERE provider = 'github' AND external_id = '98765'
+	`).Scan(&count); err != nil {
+		t.Fatalf("count local deployments: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("local deployment count = %d, want 1", count)
+	}
+
+	var taskStatus string
+	if err := database.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&taskStatus); err != nil {
+		t.Fatalf("load task status: %v", err)
+	}
+	if taskStatus != "deploying" {
+		t.Fatalf("task status = %q, want deploying", taskStatus)
+	}
+	if !strings.Contains(rec.Body.String(), "deployment-existing") {
+		t.Fatalf("response did not reuse existing local deployment id: %s", rec.Body.String())
 	}
 }
 
