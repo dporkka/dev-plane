@@ -515,7 +515,7 @@ func (r *Runner) runToolStep(ctx context.Context, stepNum int, run *models.Agent
 
 // executeTool authorizes and dispatches a tool call to WorkspaceTools.
 func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath, toolName string, input json.RawMessage) (json.RawMessage, error) {
-	if err := r.authorizeTool(ctx, run, task, workspace, toolName, input); err != nil {
+	if err := r.authorizeTool(ctx, run, task, workspace, workspacePath, toolName, input); err != nil {
 		return nil, err
 	}
 	if provider, sessionID, err := r.runtimeProviderForWorkspace(ctx, workspace); err != nil {
@@ -554,7 +554,7 @@ func (r *Runner) executeToolUnchecked(ctx context.Context, toolName, workspacePa
 	}
 }
 
-func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, toolName string, input json.RawMessage) error {
+func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath, toolName string, input json.RawMessage) error {
 	if r.kernel == nil {
 		return fmt.Errorf("capability kernel is not configured")
 	}
@@ -565,6 +565,14 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 	}
 
 	resource := toolResource(toolName, input)
+	revision := ""
+	if toolRequiresWorkspaceRevision(toolName) {
+		var err error
+		revision, err = r.workspaceSubjectRevision(ctx, workspace, workspacePath)
+		if err != nil {
+			return fmt.Errorf("capture workspace subject revision for %s: %w", toolName, err)
+		}
+	}
 	organization := r.loadTaskOrganization(ctx, task)
 	req := capability.Request{
 		ActorType:    "agent",
@@ -575,6 +583,7 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 		AgentRun:     run,
 		Operation:    operation,
 		Resource:     resource,
+		Revision:     revision,
 		SandboxState: sandboxState(workspace),
 		Details: map[string]any{
 			"tool_name": toolName,
@@ -635,6 +644,15 @@ func (e *capabilityDecisionError) Error() string {
 
 func (e *capabilityDecisionError) requiresApproval() bool {
 	return e != nil && e.result != nil && e.result.RequiredApproval
+}
+
+func toolRequiresWorkspaceRevision(toolName string) bool {
+	switch toolName {
+	case "write_file", "apply_patch", "run_command", "create_commit":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolOperation(toolName string) (string, bool) {
