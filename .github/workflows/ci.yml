@@ -13,7 +13,6 @@ env:
   NATS_URL: "nats://localhost:4222"
   JWT_SECRET: "ci-secret-change-me-min-32-chars-long"
   SECRET_ENCRYPTION_KEYS: "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-  NEXT_PUBLIC_API_URL: "http://localhost:8080"
 
 jobs:
   lint:
@@ -92,7 +91,7 @@ jobs:
         run: cd apps/web && npm test
 
   build:
-    name: Build
+    name: Build and release smoke
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -112,8 +111,72 @@ jobs:
             apps/web/package-lock.json
             packages/sdk/typescript/package-lock.json
 
-      - name: Install web dependencies
-        run: cd apps/web && npm ci
-
       - name: Build all
         run: make build
+
+      - name: Smoke unified binary from an empty database
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f /tmp/dev-plane-smoke.db*
+          PORT=18080 \
+          DATABASE_URL='file:/tmp/dev-plane-smoke.db?_journal_mode=WAL' \
+          NATS_URL='' \
+          ./bin/api >/tmp/dev-plane-api.log 2>&1 &
+          api_pid=$!
+          cleanup() {
+            kill "$api_pid" >/dev/null 2>&1 || true
+            wait "$api_pid" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18080/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat /tmp/dev-plane-api.log
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:18080/ | grep -q '<title>AI Dev Control Plane</title>'
+
+      - name: Build release image
+        run: docker build -f infra/docker/api.Dockerfile -t dev-plane-api:ci .
+
+      - name: Smoke release image from an empty database
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d \
+            --name dev-plane-release-smoke \
+            --network host \
+            -e PORT=18081 \
+            -e DATABASE_URL='file:/app/data/dev.db?_journal_mode=WAL' \
+            -e NATS_URL='' \
+            -e JWT_SECRET \
+            -e SECRET_ENCRYPTION_KEYS \
+            dev-plane-api:ci
+          cleanup() {
+            docker logs dev-plane-release-smoke || true
+            docker rm -f dev-plane-release-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18081/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:18081/ | grep -q '<title>AI Dev Control Plane</title>'
