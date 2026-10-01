@@ -11,7 +11,7 @@ import (
 
 func TestPrepareNulangLocalCheckoutPinsExactHeadAndStripsRemoteCredentials(t *testing.T) {
 	source := initLocalSourceRepo(t)
-	head := gitOutput(t, source, "rev-parse", "HEAD")
+	head := gitOutputLocalSource(t, source, "rev-parse", "HEAD")
 
 	repoDir, preparedHead, cleanup, err := prepareNulangLocalCheckout(
 		context.Background(),
@@ -27,10 +27,10 @@ func TestPrepareNulangLocalCheckoutPinsExactHeadAndStripsRemoteCredentials(t *te
 	if preparedHead != head {
 		t.Fatalf("prepared head = %q, want %q", preparedHead, head)
 	}
-	if got := gitOutput(t, repoDir, "rev-parse", "HEAD"); got != head {
+	if got := gitOutputLocalSource(t, repoDir, "rev-parse", "HEAD"); got != head {
 		t.Fatalf("cloned HEAD = %q, want %q", got, head)
 	}
-	if got := gitOutput(t, repoDir, "remote", "get-url", "origin"); got != "https://example.com/org/repo.git" {
+	if got := gitOutputLocalSource(t, repoDir, "remote", "get-url", "origin"); got != "https://example.com/org/repo.git" {
 		t.Fatalf("sanitized origin = %q", got)
 	}
 	configBytes, err := os.ReadFile(filepath.Join(repoDir, ".git", "config"))
@@ -62,7 +62,7 @@ func TestPrepareNulangLocalCheckoutRejectsSourceHeadDrift(t *testing.T) {
 
 func TestPrepareNulangLocalCheckoutRemovesHostLocalOriginWithoutProvenanceURL(t *testing.T) {
 	source := initLocalSourceRepo(t)
-	head := gitOutput(t, source, "rev-parse", "HEAD")
+	head := gitOutputLocalSource(t, source, "rev-parse", "HEAD")
 
 	repoDir, _, cleanup, err := prepareNulangLocalCheckout(context.Background(), source, head, "")
 	if err != nil {
@@ -83,18 +83,18 @@ func TestPrepareNulangLocalCheckoutRemovesHostLocalOriginWithoutProvenanceURL(t 
 func initLocalSourceRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	runGit(t, dir, "init")
-	runGit(t, dir, "config", "user.email", "ci@example.invalid")
-	runGit(t, dir, "config", "user.name", "CI")
+	runGitLocalSource(t, dir, "init")
+	runGitLocalSource(t, dir, "config", "user.email", "ci@example.invalid")
+	runGitLocalSource(t, dir, "config", "user.name", "CI")
 	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("verified source\n"), 0o644); err != nil {
 		t.Fatalf("write source file: %v", err)
 	}
-	runGit(t, dir, "add", "README.md")
-	runGit(t, dir, "commit", "-m", "initial")
+	runGitLocalSource(t, dir, "add", "README.md")
+	runGitLocalSource(t, dir, "commit", "-m", "initial")
 	return dir
 }
 
-func runGit(t *testing.T, dir string, args ...string) {
+func runGitLocalSource(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	if output, err := cmd.CombinedOutput(); err != nil {
@@ -102,7 +102,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 	}
 }
 
-func gitOutput(t *testing.T, dir string, args ...string) string {
+func gitOutputLocalSource(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
 	output, err := cmd.Output()
