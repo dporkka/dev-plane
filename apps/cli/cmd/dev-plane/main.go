@@ -21,6 +21,8 @@ func run(args []string) error {
 	switch args[0] {
 	case "inspect":
 		return runInspect(args[1:])
+	case "verify":
+		return runVerify(args[1:])
 	case "login":
 		return runLogin(args[1:])
 	case "tasks":
@@ -76,6 +78,7 @@ func printUsage() {
 
 Usage:
   dev-plane inspect [--path=<repo>] [--json]
+  dev-plane verify --repository=<owner/name> --candidate-sha=<sha> --base-sha=<sha> --gate=<name> [--provider=local|nulang] [--source=<path>] [--changed-path=<path> ...]
   dev-plane login --base-url=<url>
   dev-plane tasks list --project-id=<id>
   dev-plane tasks get <id>
