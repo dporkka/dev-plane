@@ -82,6 +82,7 @@ dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 	done
 	@mkdir -p $(DATA_DIR)
 	@$(MAKE) migrate
+	@$(MAKE) build-web
 	@echo "$(GREEN)All dependencies ready. Starting applications...$(RESET)"
 	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 %4 2>/dev/null; wait' EXIT INT TERM; \
 		$(MAKE) dev-web & \
@@ -94,7 +95,8 @@ dev-web: ## Start Vite dev server
 	@echo "$(BLUE)[web]$(RESET) Starting Vite dev server on port $(WEB_PORT)..."
 	cd apps/web && npm run dev -- --port $(WEB_PORT)
 
-dev-api: build-web ## Start Go API server (with hot reload via Air if available)
+dev-api: ## Start Go API server (with hot reload via Air if available)
+	@if [ ! -f apps/api/internal/webui/dist/web/index.html ]; then $(MAKE) build-web; fi
 	@echo "$(BLUE)[api]$(RESET) Starting Go API server on port $(PORT)..."
 ifeq ($(shell which air 2>/dev/null),)
 	cd apps/api && go run cmd/api/main.go
@@ -117,7 +119,7 @@ docker-up: ## Start Docker services (NATS, optional Temporal)
 	$(DOCKER_COMPOSE) up -d
 
 docker-down: ## Stop Docker services
-	@echo "$(BLUE)[docker]$(RESET) Stopping Docker services...$(RESET)"
+	@echo "$(BLUE)[docker]$(RESET) Stopping Docker services..."
 	$(DOCKER_COMPOSE) down
 
 docker-logs: ## Follow Docker service logs
@@ -133,7 +135,7 @@ docker-logs-temporal: ## Follow Temporal logs only
 	$(DOCKER_COMPOSE) logs -f temporal
 
 docker-down-volumes: ## Stop Docker services and remove volumes (DESTRUCTIVE)
-	@echo "$(BLUE)[docker]$(RESET) Stopping services and removing volumes...$(RESET)"
+	@echo "$(BLUE)[docker]$(RESET) Stopping services and removing volumes..."
 	$(DOCKER_COMPOSE) down -v
 
 # --- Database targets --------------------------------------------------------
