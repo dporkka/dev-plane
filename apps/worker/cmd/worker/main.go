@@ -145,11 +145,17 @@ func main() {
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
 	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
+	schedulerAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
 		MaxParallel: *schedulerMaxParallel,
 		CPU:         *schedulerCPU,
 		MemoryMB:    *schedulerMemoryMB,
 	}).WithStartBudget(runExecutor)
+	runAdmission := handlers.NewCapsulePersistingRunAdmission(
+		schedulerAdmission,
+		schedulerAdmission,
+		db.NewTaskCapsuleSQLStore(database.DB),
+		nil,
+	)
 	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).

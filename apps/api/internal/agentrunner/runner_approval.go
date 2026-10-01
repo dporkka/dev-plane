@@ -11,6 +11,7 @@ import (
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/models"
 )
+
 func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
 	if r.db == nil {
 		return nil
@@ -31,6 +32,16 @@ func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summ
 }
 
 func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) error {
+	return r.failRunWithData(ctx, runID, "", errorMsg, nil)
+}
+
+func (r *Runner) failRunWithData(
+	ctx context.Context,
+	runID string,
+	taskID string,
+	errorMsg string,
+	data any,
+) error {
 	r.logger.Error("agent run failed", "run_id", runID, "error", errorMsg)
 
 	if r.db != nil {
@@ -42,19 +53,21 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 		`, models.AgentRunStatusFailed, errorMsg, now, runID)
 	}
 
-	// Publish run.failed event
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
+	payload := map[string]any{
 		"run_id":    runID,
 		"status":    models.AgentRunStatusFailed,
 		"error":     errorMsg,
 		"timestamp": time.Now().UTC(),
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, map[string]any{
-		"run_id":    runID,
-		"status":    models.AgentRunStatusFailed,
-		"error":     errorMsg,
-		"timestamp": time.Now().UTC(),
-	})
+	}
+	if taskID != "" {
+		payload["task_id"] = taskID
+	}
+	if data != nil {
+		payload["data"] = data
+	}
+
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), payload)
+	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunFailed, payload)
 
 	return fmt.Errorf("run %s failed: %s", runID, errorMsg)
 }
