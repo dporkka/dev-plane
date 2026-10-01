@@ -15,8 +15,8 @@ import (
 	"syscall"
 	"time"
 
+	devdb "github.com/ai-dev-control-plane/db"
 	"github.com/joho/godotenv"
-	"github.com/pressly/goose/v3"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 
@@ -76,7 +76,7 @@ func main() {
 	addr := fmt.Sprintf(":%s", cfg.Port)
 	go func() {
 		logger.Info("server listening", "addr", addr)
-		if err := srv.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := srv.StartUnified(addr); err != nil && err != http.ErrServerClosed {
 			logger.Error("server error", "error", err)
 			os.Exit(1)
 		}
@@ -190,47 +190,18 @@ func ensureSQLiteParentDir(databaseURL string) error {
 	return nil
 }
 
-// runMigrations runs database migrations using goose.
+// runMigrations applies the SQL migrations embedded in packages/db. Release
+// binaries therefore do not depend on repository-relative migration files.
 func runMigrations(db *sql.DB, databaseURL string) error {
 	driverName, _ := parseDatabaseURL(databaseURL)
 
-	// Convert driver name to goose dialect
-	var gooseDialect string
-	switch driverName {
-	case "sqlite3":
-		gooseDialect = "sqlite3"
-	case "postgres":
-		gooseDialect = "postgres"
-	default:
-		gooseDialect = "sqlite3"
+	dialect := "sqlite3"
+	if driverName == "postgres" {
+		dialect = "postgres"
 	}
 
-	// Migration files are in packages/db/migrations relative to repo root
-	// When running from apps/api, go up two levels then into packages/db
-	migrationsDir := "../../packages/db/migrations"
-
-	// Check if running in different working directory
-	if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
-		// Try current directory / packages/db/migrations
-		migrationsDir = "packages/db/migrations"
-		if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
-			// Try from apps/api working directory
-			migrationsDir = "../packages/db/migrations"
-			if _, err := os.Stat(migrationsDir); os.IsNotExist(err) {
-				// Fallback: skip migrations if directory not found
-				slog.Default().Warn("migrations directory not found, skipping", "dir", migrationsDir)
-				return nil
-			}
-		}
+	if err := devdb.RunEmbeddedMigrations(db, dialect); err != nil {
+		return fmt.Errorf("failed to run embedded migrations: %w", err)
 	}
-
-	if err := goose.SetDialect(gooseDialect); err != nil {
-		return fmt.Errorf("failed to set goose dialect: %w", err)
-	}
-
-	if err := goose.Up(db, migrationsDir); err != nil {
-		return fmt.Errorf("failed to run migrations: %w", err)
-	}
-
 	return nil
 }
