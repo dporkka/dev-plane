@@ -79,10 +79,10 @@ func LoadEffect(ctx context.Context, database *sql.DB, effectID execution.Operat
 
 	var (
 		runID, activationID, operation, resource, revision, inputDigest string
-		epoch, ordinal                                                   int64
+		epoch, ordinal                                                  int64
 		provider, reference, outputDigest                               sql.NullString
-		createdAt                                                        time.Time
-		completedAt                                                      sql.NullTime
+		createdAt                                                       time.Time
+		completedAt                                                     sql.NullTime
 	)
 	err := database.QueryRowContext(ctx, `
 		SELECT run_id, activation_id, epoch, ordinal,
