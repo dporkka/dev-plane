@@ -145,7 +145,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
 	insertApprovedTaskFixture(t, db)
-	provider := &fakeRuntimeProvider{baseSHA: "abc123def456"}
+	provider := &fakeRuntimeProvider{baseSHA: "0123456789abcdef0123456789abcdef01234567"}
 	publisher := &fakeWorkerEventPublisher{}
 	handler := NewTaskHandler(db, slog.Default()).
 		WithEventPublisher(publisher).
@@ -216,7 +216,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatalf("unmarshal run manifest: %v", err)
 	}
-	if manifest.RunID != runID || manifest.TaskID != "task-1" || manifest.BaseSHA != "abc123def456" {
+	if manifest.RunID != runID || manifest.TaskID != "task-1" || manifest.BaseSHA != "0123456789abcdef0123456789abcdef01234567" {
 		t.Fatalf("run manifest identity = %+v", manifest)
 	}
 	if err := manifest.VerifyDigest(); err != nil {
