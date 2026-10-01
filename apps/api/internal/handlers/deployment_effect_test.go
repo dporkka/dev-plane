@@ -29,14 +29,14 @@ type effectDeployGateway struct {
 	created     *gateway.Deployment
 	createErr   error
 
-	resolveCalls int
-	listCalls    int
-	createCalls  int
-	createRef    string
-	createEnv    string
+	resolveCalls  int
+	listCalls     int
+	createCalls   int
+	createRef     string
+	createEnv     string
 	createPayload map[string]any
 	listOptions   gateway.DeploymentListOptions
-	onCreate     func()
+	onCreate      func()
 }
 
 func (f *effectDeployGateway) ResolveCommitSHA(
@@ -88,14 +88,14 @@ func TestExecuteDeploymentEffectPersistsIntentBeforeCreateAndCorrelatesPayload(t
 	database := openMergeEffectTestDB(t)
 	h := NewHandler(database.DB, slog.Default())
 	input := deploymentEffectInput{
-		RunID:      "run-1",
-		TaskID:     "task-1",
-		ProjectID:  "project-1",
-		RepoID:     "repo-1",
-		Owner:      "dporkka",
-		RepoName:   "dev-plane",
-		Environment:"staging",
-		CommitSHA:  "commit-abc",
+		RunID:       "run-1",
+		TaskID:      "task-1",
+		ProjectID:   "project-1",
+		RepoID:      "repo-1",
+		Owner:       "dporkka",
+		RepoName:    "dev-plane",
+		Environment: "staging",
+		CommitSHA:   "commit-abc",
 	}
 	intent, err := newDeploymentEffectIntent(input)
 	if err != nil {
@@ -300,7 +300,6 @@ func TestExecuteDeploymentEffectRejectsAmbiguousRemoteCorrelation(t *testing.T) 
 		t.Fatalf("create calls = %d, want 0", fake.createCalls)
 	}
 }
-
 
 func TestDeployTaskRecoversStoredCommitWhenMutableRefMoved(t *testing.T) {
 	database := openDeploymentHandlerTestDB(t)
@@ -562,4 +561,3 @@ func openDeploymentHandlerTestDB(t *testing.T) *dbpkg.DB {
 	}
 	return database
 }
-
