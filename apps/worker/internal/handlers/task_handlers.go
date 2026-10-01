@@ -138,8 +138,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 
 	// Allocate stable identities before provisioning so retries can carry the same
 	// run/workspace identity into the runtime boundary.
-	runID := uuid.New().String()
-	workspaceID := uuid.New().String()
+	runID, workspaceID := initialRunIdentity(task.ID)
 	workspace, err := h.provisionWorkspace(context.Background(), approvedTask{
 		ID:            task.ID,
 		RepositoryID:  task.RepositoryID,
@@ -350,7 +349,7 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 	if baseBranch == "" {
 		baseBranch = "main"
 	}
-	branchName := fmt.Sprintf("agent/%s/%d", shortID(task.ID), now.Unix())
+	branchName := fmt.Sprintf("agent/%s/initial", shortID(task.ID))
 	workspace := provisionedWorkspace{
 		Name:            fmt.Sprintf("workspace-%s", shortID(task.ID)),
 		BranchName:      branchName,
@@ -402,6 +401,13 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		workspace.WorktreePath = &session.WorktreePath
 	}
 	return workspace, nil
+}
+
+func initialRunIdentity(taskID string) (runID, workspaceID string) {
+	taskID = strings.TrimSpace(taskID)
+	runID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("dev-plane:initial-run:"+taskID)).String()
+	workspaceID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("dev-plane:initial-workspace:"+taskID)).String()
+	return runID, workspaceID
 }
 
 func shortID(id string) string {

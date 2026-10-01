@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"reflect"
 	"strings"
@@ -20,13 +21,23 @@ import (
 )
 
 type fakeRuntimeProvider struct {
-	req       runtimes.CreateRequest
-	baseSHA   string
-	destroyed []string
+	req          runtimes.CreateRequest
+	requests     []runtimes.CreateRequest
+	baseSHA      string
+	createErrors []error
+	destroyed    []string
 }
 
 func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.CreateRequest) (*runtimes.Session, error) {
 	p.req = req
+	p.requests = append(p.requests, req)
+	if len(p.createErrors) > 0 {
+		err := p.createErrors[0]
+		p.createErrors = p.createErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	return &runtimes.Session{
 		ID:           "runtime-session-1",
 		WorkspaceID:  req.RepositoryID,
@@ -104,8 +115,8 @@ func TestProvisionWorkspaceUsesRuntimeProvider(t *testing.T) {
 	if provider.req.CloneURL != "https://example.invalid/repo.git" {
 		t.Fatalf("CloneURL = %q", provider.req.CloneURL)
 	}
-	if provider.req.Branch != "agent/task-123/1234" {
-		t.Fatalf("Branch = %q, want agent/task-123/1234", provider.req.Branch)
+	if provider.req.Branch != "agent/task-123/initial" {
+		t.Fatalf("Branch = %q, want agent/task-123/initial", provider.req.Branch)
 	}
 	if provider.req.BaseBranch != "main" {
 		t.Fatalf("BaseBranch = %q, want main", provider.req.BaseBranch)
@@ -133,8 +144,8 @@ func TestProvisionWorkspaceWithoutRuntimeProviderStaysPending(t *testing.T) {
 	if workspace.RuntimeProvider != "unprovisioned" {
 		t.Fatalf("RuntimeProvider = %q, want unprovisioned", workspace.RuntimeProvider)
 	}
-	if workspace.BranchName != "agent/short/1234" {
-		t.Fatalf("BranchName = %q, want agent/short/1234", workspace.BranchName)
+	if workspace.BranchName != "agent/short/initial" {
+		t.Fatalf("BranchName = %q, want agent/short/initial", workspace.BranchName)
 	}
 	if workspace.BaseBranch != "trunk" {
 		t.Fatalf("BaseBranch = %q, want trunk", workspace.BaseBranch)
@@ -468,5 +479,75 @@ func TestHandleTaskApprovedCleansUpWorkspaceWhenBaseRevisionCannotBeResolved(t *
 	}
 	if status != "approved" || workspaceID.Valid {
 		t.Fatalf("task status/workspace = %q/%v, want approved/null", status, workspaceID)
+	}
+}
+
+func TestInitialRunIdentityStableForTask(t *testing.T) {
+	run1, workspace1 := initialRunIdentity("task-1")
+	run2, workspace2 := initialRunIdentity("task-1")
+	if run1 == "" || workspace1 == "" {
+		t.Fatal("initial run identity must not be empty")
+	}
+	if run1 != run2 || workspace1 != workspace2 {
+		t.Fatalf("initial identities are not stable: %q/%q != %q/%q", run1, workspace1, run2, workspace2)
+	}
+	otherRun, otherWorkspace := initialRunIdentity("task-2")
+	if run1 == otherRun || workspace1 == otherWorkspace {
+		t.Fatal("different tasks must not share initial run identities")
+	}
+}
+
+func TestHandleTaskApprovedReusesStableRuntimeIdentityAfterAmbiguousCreateFailure(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+
+	provider := &fakeRuntimeProvider{
+		baseSHA:      "0123456789abcdef0123456789abcdef01234567",
+		createErrors: []error{errors.New("transport closed after provider accepted request"), nil},
+	}
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewTaskHandler(db, slog.Default()).
+		WithEventPublisher(publisher).
+		WithRuntimeProvider(provider, "local")
+	msg := []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1"}}}`)
+
+	firstErr := handler.HandleTaskApproved(&nats.Msg{Data: msg})
+	if firstErr == nil {
+		t.Fatal("first HandleTaskApproved() error = nil, want ambiguous create failure")
+	}
+
+	var status string
+	var workspaceID sql.NullString
+	if err := db.QueryRow(`SELECT status, workspace_id FROM tasks WHERE id = 'task-1'`).Scan(&status, &workspaceID); err != nil {
+		t.Fatalf("query task after first attempt: %v", err)
+	}
+	if status != "approved" || workspaceID.Valid {
+		t.Fatalf("task after first attempt = %q/%v, want approved/null", status, workspaceID)
+	}
+
+	if err := handler.HandleTaskApproved(&nats.Msg{Data: msg}); err != nil {
+		t.Fatalf("second HandleTaskApproved() error = %v", err)
+	}
+	if len(provider.requests) != 2 {
+		t.Fatalf("runtime create request count = %d, want 2", len(provider.requests))
+	}
+	first, second := provider.requests[0], provider.requests[1]
+	if first.IdempotencyKey == "" || first.IdempotencyKey != second.IdempotencyKey {
+		t.Fatalf("idempotency keys = %q / %q, want same non-empty key", first.IdempotencyKey, second.IdempotencyKey)
+	}
+	if first.Metadata["dev_plane_run_id"] != second.Metadata["dev_plane_run_id"] {
+		t.Fatalf("run ids changed across retry: %q != %q", first.Metadata["dev_plane_run_id"], second.Metadata["dev_plane_run_id"])
+	}
+	if first.Branch != second.Branch || first.WorktreeName != second.WorktreeName {
+		t.Fatalf("runtime identity changed across retry: first=%+v second=%+v", first, second)
+	}
+
+	var persistedRunID string
+	if err := db.QueryRow(`SELECT id FROM agent_runs WHERE task_id = 'task-1'`).Scan(&persistedRunID); err != nil {
+		t.Fatalf("query persisted run: %v", err)
+	}
+	if persistedRunID != second.Metadata["dev_plane_run_id"] {
+		t.Fatalf("persisted run id = %q, runtime metadata run id = %q", persistedRunID, second.Metadata["dev_plane_run_id"])
 	}
 }
