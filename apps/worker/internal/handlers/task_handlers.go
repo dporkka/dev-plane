@@ -505,7 +505,6 @@ func (h *TaskHandler) publishRunTriggered(ctx context.Context, runID, taskID, ac
 	return nil
 }
 
-
 func (h *TaskHandler) workspaceBaseRevision(ctx context.Context, workspace provisionedWorkspace) (string, error) {
 	if h.runtimeProvider == nil {
 		return "", errors.New("runtime provider is required to resolve base revision")
