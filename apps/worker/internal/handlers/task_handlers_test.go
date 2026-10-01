@@ -192,7 +192,6 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	if provider.req.CloneURL != "https://example.invalid/repo.git" {
 		t.Fatalf("runtime clone URL = %q", provider.req.CloneURL)
 	}
-}
 	if provider.req.IdempotencyKey != "workspace:"+runID {
 		t.Fatalf("runtime idempotency key = %q, want workspace:%s", provider.req.IdempotencyKey, runID)
 	}
@@ -226,7 +225,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	if metadata["run_manifest_digest"] != manifest.Digest {
 		t.Fatalf("run_manifest_digest = %v, want %s", metadata["run_manifest_digest"], manifest.Digest)
 	}
-
+}
 
 func TestHandleTaskApprovedRejectsMalformedAdmissionBeforeSideEffects(t *testing.T) {
 	db := setupTaskHandlerDB(t)
