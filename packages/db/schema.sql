@@ -281,6 +281,9 @@ CREATE TABLE IF NOT EXISTS deployments (
 );
 
 CREATE INDEX IF NOT EXISTS idx_deployments_task_id ON deployments(task_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deployments_provider_external_id
+    ON deployments(provider, external_id)
+    WHERE external_id IS NOT NULL;
 
 -- =====================================================
 -- 9. approvals
