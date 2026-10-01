@@ -590,6 +590,15 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 		return &capabilityDecisionError{toolName: toolName, operation: operation, resource: resource, result: result}
 	}
 	if result.RequiredApproval {
+		if result.RequestedGrant != nil && r.db != nil {
+			consumed, err := r.consumeApprovedAuthority(ctx, run.ID, *result.RequestedGrant)
+			if err != nil {
+				return fmt.Errorf("consume approved authority for %s: %w", toolName, err)
+			}
+			if consumed {
+				return nil
+			}
+		}
 		return &capabilityDecisionError{toolName: toolName, operation: operation, resource: resource, result: result}
 	}
 	return nil
@@ -696,7 +705,6 @@ func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, worksp
 	return nil
 }
 
-
 // streamStep publishes a step event via NATS.
 func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventType string) error {
 	if r.eventBus == nil {
@@ -725,7 +733,6 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
 }
-
 
 func nextStepNumber(history []models.AgentStep) int {
 	maxStep := 0
@@ -765,7 +772,6 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	// Fallback: construct from workspaces directory
 	return filepath.Join("workspaces", ws.ID)
 }
-
 
 // runFinalChecks executes lint, typecheck, and tests via the test runner.
 func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath string) map[string]any {
