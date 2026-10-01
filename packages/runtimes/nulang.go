@@ -83,7 +83,7 @@ func (p *NulangCloudProvider) CreateWorkspace(ctx context.Context, req CreateReq
 		httpReq.Header.Set("Idempotency-Key", key)
 	}
 
-	resp, err := p.RemoteProvider.client.Do(httpReq)
+	resp, err := p.RemoteProvider.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("create Nulang workspace request: %w", err)
 	}
@@ -107,7 +107,7 @@ func (p *NulangCloudProvider) GetUsage(ctx context.Context, sessionID string) (*
 		return nil, err
 	}
 
-	resp, err := p.RemoteProvider.client.Do(req)
+	resp, err := p.RemoteProvider.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("Nulang runtime usage request: %w", err)
 	}
