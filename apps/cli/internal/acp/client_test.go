@@ -164,3 +164,11 @@ func TestACPHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+func TestAuthenticateRejectsTerminalMethod(t *testing.T) {
+	c := &Client{init: InitializeResult{AuthMethods: []AuthMethod{{ID: "terminal-login", Type: "terminal"}}}}
+	err := c.Authenticate(context.Background(), "terminal-login")
+	if err == nil || !strings.Contains(err.Error(), "terminal authentication") {
+		t.Fatalf("err=%v", err)
+	}
+}
