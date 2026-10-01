@@ -17,6 +17,12 @@ import (
 
 var ErrMergeEffectConflict = errors.New("pull request merge effect conflict")
 
+func isMergeEffectConflict(err error) bool {
+	return errors.Is(err, ErrMergeEffectConflict) ||
+		errors.Is(err, execution.ErrIntentConflict) ||
+		errors.Is(err, execution.ErrReceiptConflict)
+}
+
 type mergeEffectInput struct {
 	RunID         string
 	TaskID        string
