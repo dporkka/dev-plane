@@ -165,7 +165,6 @@ func askForFileWrites() *policies.Engine {
 	})
 }
 
-
 func TestLocalSubjectRevisionIncludesWorkingTreeWithoutMutatingGitIndex(t *testing.T) {
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
