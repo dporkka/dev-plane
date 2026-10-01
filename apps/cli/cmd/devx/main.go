@@ -21,11 +21,8 @@ import (
 
 type stringList []string
 
-func (s *stringList) String() string { return strings.Join(*s, ",") }
-func (s *stringList) Set(v string) error {
-	*s = append(*s, v)
-	return nil
-}
+func (s *stringList) String() string     { return strings.Join(*s, ",") }
+func (s *stringList) Set(v string) error { *s = append(*s, v); return nil }
 
 type sessionState struct {
 	Version   int       `json:"version"`
@@ -45,6 +42,7 @@ type commandOptions struct {
 	TaskID        string
 	RunID         string
 	Permission    acp.PermissionMode
+	AuthMethod    string
 	ResumeSession string
 	StateDir      string
 	Thoughts      bool
@@ -159,6 +157,7 @@ func parseCommon(name string, args []string) (commandOptions, []string, error) {
 	taskID := fs.String("task-id", os.Getenv("DEV_PLANE_TASK_ID"), "Dev Plane task ID")
 	runID := fs.String("run-id", os.Getenv("DEV_PLANE_RUN_ID"), "Dev Plane run ID")
 	permission := fs.String("permission", "ask", "permission mode: ask, allow, deny")
+	authMethod := fs.String("auth-method", "", "ACP protocol auth method ID, e.g. chat-gpt or api-key")
 	resume := fs.String("resume-session", "", "load an existing ACP v1 session")
 	stateDir := fs.String("state-dir", defaultStateDir(), "directory for devx session metadata")
 	thoughts := fs.Bool("thoughts", false, "render agent thought chunks")
@@ -172,7 +171,7 @@ func parseCommon(name string, args []string) (commandOptions, []string, error) {
 	}
 	return commandOptions{
 		Agent: *agent, AgentExec: *agentExec, AgentArgs: agentArgs, CWD: *cwd,
-		TaskID: *taskID, RunID: *runID, Permission: mode, ResumeSession: *resume,
+		TaskID: *taskID, RunID: *runID, Permission: mode, AuthMethod: *authMethod, ResumeSession: *resume,
 		StateDir: *stateDir, Thoughts: *thoughts, Verbose: *verbose,
 	}, fs.Args(), nil
 }
@@ -212,6 +211,18 @@ func withSession(ctx context.Context, opts commandOptions, stdin io.Reader, stdo
 	}
 	if opts.Verbose {
 		fmt.Fprintf(stderr, "[ACP v%d · %s %s]\n", init.ProtocolVersion, init.AgentName, init.AgentVersion)
+		if len(init.AuthMethods) > 0 {
+			fmt.Fprint(stderr, "[auth methods:")
+			for _, method := range init.AuthMethods {
+				fmt.Fprintf(stderr, " %s", method.ID)
+			}
+			fmt.Fprintln(stderr, "]")
+		}
+	}
+	if opts.AuthMethod != "" {
+		if err := client.Authenticate(ctx, opts.AuthMethod); err != nil {
+			return fmt.Errorf("authenticate with %s: %w", opts.AuthMethod, err)
+		}
 	}
 
 	meta := acp.SessionMetadata{TaskID: opts.TaskID, RunID: opts.RunID}
@@ -246,7 +257,7 @@ func resolveAgent(name, override string, overrideArgs []string) (acp.AgentSpec, 
 	}
 	switch name {
 	case "codex":
-		return acp.AgentSpec{Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}}, nil
+		return acp.AgentSpec{Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp@2.1.1"}}, nil
 	case "gemini":
 		return acp.AgentSpec{Command: "gemini", Args: []string{"--acp"}}, nil
 	default:
@@ -371,6 +382,7 @@ Options:
   --task-id ID                attach Dev Plane task ID (or DEV_PLANE_TASK_ID)
   --run-id ID                 attach Dev Plane run ID (or DEV_PLANE_RUN_ID)
   --permission ask|allow|deny permission policy (default: ask)
+  --auth-method ID             ACP protocol auth method (e.g. chat-gpt)
   --resume-session ID         load an existing ACP v1 session when supported
   --thoughts                   render agent thought chunks
   --verbose                    show lifecycle details
@@ -378,7 +390,7 @@ Options:
   --agent-arg ARG              custom ACP executable argument (repeatable)
 
 Examples:
-  devx chat --agent codex --cwd ~/projects/adacavo --task-id task_123
+  devx chat --agent codex --auth-method chat-gpt --cwd ~/projects/adacavo --task-id task_123
   devx ask --agent gemini --permission deny "review the current diff"
   devx chat --agent codex --resume-session sess_abc123`)
 }
