@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"log/slog"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,11 +15,14 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
 type fakeRuntimeProvider struct {
-	req runtimes.CreateRequest
+	req       runtimes.CreateRequest
+	baseSHA   string
+	destroyed []string
 }
 
 func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.CreateRequest) (*runtimes.Session, error) {
@@ -34,9 +38,17 @@ func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.
 }
 
 func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID string) error {
+	p.destroyed = append(p.destroyed, sessionID)
 	return nil
 }
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
+	if reflect.DeepEqual(cmd.Args, []string{"git", "rev-parse", "HEAD"}) {
+		sha := p.baseSHA
+		if sha == "" {
+			sha = "base-sha-123"
+		}
+		return &runtimes.CommandResult{Stdout: sha + "\n", ExitCode: 0}, nil
+	}
 	return nil, nil
 }
 func (p *fakeRuntimeProvider) ReadFile(ctx context.Context, sessionID, path string) ([]byte, error) {
@@ -133,7 +145,7 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
 	insertApprovedTaskFixture(t, db)
-	provider := &fakeRuntimeProvider{}
+	provider := &fakeRuntimeProvider{baseSHA: "abc123def456"}
 	publisher := &fakeWorkerEventPublisher{}
 	handler := NewTaskHandler(db, slog.Default()).
 		WithEventPublisher(publisher).
@@ -181,6 +193,40 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		t.Fatalf("runtime clone URL = %q", provider.req.CloneURL)
 	}
 }
+	if provider.req.IdempotencyKey != "workspace:"+runID {
+		t.Fatalf("runtime idempotency key = %q, want workspace:%s", provider.req.IdempotencyKey, runID)
+	}
+	if provider.req.Metadata["dev_plane_task_id"] != "task-1" || provider.req.Metadata["dev_plane_run_id"] != runID {
+		t.Fatalf("runtime metadata = %+v", provider.req.Metadata)
+	}
+	if provider.req.Limits.CPUMillis <= 0 || provider.req.Limits.MemoryMB <= 0 || provider.req.Limits.DiskMB <= 0 || provider.req.Limits.WallTimeSeconds <= 0 {
+		t.Fatalf("runtime limits must be explicit: %+v", provider.req.Limits)
+	}
+	if provider.req.Capabilities.Network {
+		t.Fatal("runtime network capability must default deny")
+	}
+	rawManifest, ok := metadata["run_manifest"]
+	if !ok {
+		t.Fatalf("run metadata missing run_manifest: %+v", metadata)
+	}
+	manifestBytes, err := json.Marshal(rawManifest)
+	if err != nil {
+		t.Fatalf("marshal run manifest: %v", err)
+	}
+	var manifest models.RunManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatalf("unmarshal run manifest: %v", err)
+	}
+	if manifest.RunID != runID || manifest.TaskID != "task-1" || manifest.BaseSHA != "abc123def456" {
+		t.Fatalf("run manifest identity = %+v", manifest)
+	}
+	if err := manifest.VerifyDigest(); err != nil {
+		t.Fatalf("run manifest digest invalid: %v", err)
+	}
+	if metadata["run_manifest_digest"] != manifest.Digest {
+		t.Fatalf("run_manifest_digest = %v, want %s", metadata["run_manifest_digest"], manifest.Digest)
+	}
+
 
 func TestHandleTaskApprovedRejectsMalformedAdmissionBeforeSideEffects(t *testing.T) {
 	db := setupTaskHandlerDB(t)
@@ -398,5 +444,31 @@ func insertApprovedTaskFixture(t *testing.T, db *sql.DB) {
 	`)
 	if err != nil {
 		t.Fatalf("insert approved task fixture: %v", err)
+	}
+}
+
+
+func TestHandleTaskApprovedCleansUpWorkspaceWhenBaseRevisionCannotBeResolved(t *testing.T) {
+	db := setupTaskHandlerDB(t)
+	defer db.Close()
+	insertApprovedTaskFixture(t, db)
+
+	provider := &fakeRuntimeProvider{baseSHA: "   "}
+	handler := NewTaskHandler(db, slog.Default()).WithRuntimeProvider(provider, "local")
+
+	err := handler.HandleTaskApproved(&nats.Msg{Data: []byte(`{"task_id":"task-1","status":"approved","data":{"admission":{"policy":"task-readiness-v1"}}}`)})
+	if err == nil || !strings.Contains(err.Error(), "base revision") {
+		t.Fatalf("HandleTaskApproved() error = %v, want base revision error", err)
+	}
+	if len(provider.destroyed) != 1 || provider.destroyed[0] != "runtime-session-1" {
+		t.Fatalf("destroyed sessions = %v, want runtime-session-1", provider.destroyed)
+	}
+	var status string
+	var workspaceID sql.NullString
+	if err := db.QueryRow(`SELECT status, workspace_id FROM tasks WHERE id = 'task-1'`).Scan(&status, &workspaceID); err != nil {
+		t.Fatalf("query task: %v", err)
+	}
+	if status != "approved" || workspaceID.Valid {
+		t.Fatalf("task status/workspace = %q/%v, want approved/null", status, workspaceID)
 	}
 }
