@@ -47,6 +47,7 @@ type Handler struct {
 
 // githubGateway is the subset of the GitHub gateway used by handlers.
 type githubGateway interface {
+	GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*gateway.GitHubPR, error)
 	MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error)
 }
 

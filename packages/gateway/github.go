@@ -59,8 +59,11 @@ type GitHubPR struct {
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
-	State     string    `json:"state"`
-	HTMLURL   string    `json:"html_url"`
+	State          string     `json:"state"`
+	HTMLURL        string     `json:"html_url"`
+	Merged         bool       `json:"merged"`
+	MergeCommitSHA string     `json:"merge_commit_sha"`
+	MergedAt       *time.Time `json:"merged_at,omitempty"`
 	Head      struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
@@ -233,6 +236,16 @@ func (g *GitHubGateway) CreatePR(ctx context.Context, token *oauth2.Token, owner
 	var result GitHubPR
 	if err := g.post(ctx, token, url, body, &result); err != nil {
 		return nil, fmt.Errorf("create github pr: %w", err)
+	}
+	return &result, nil
+}
+
+// GetPR retrieves a pull request including its current head and merge state.
+func (g *GitHubGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*GitHubPR, error) {
+	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", g.apiBaseURL, owner, name, number)
+	var result GitHubPR
+	if err := g.get(ctx, token, url, &result); err != nil {
+		return nil, fmt.Errorf("get github pr: %w", err)
 	}
 	return &result, nil
 }

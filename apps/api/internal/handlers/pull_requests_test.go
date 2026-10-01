@@ -24,9 +24,25 @@ import (
 )
 
 type fakeMergeGateway struct {
-	result *gateway.MergePRResult
-	err    error
-	calls  []gateway.MergePRRequest
+	result   *gateway.MergePRResult
+	err      error
+	calls    []gateway.MergePRRequest
+	remote   *gateway.GitHubPR
+	getErr   error
+	getCalls int
+}
+
+func (f *fakeMergeGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*gateway.GitHubPR, error) {
+	f.getCalls++
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.remote != nil {
+		return f.remote, nil
+	}
+	pr := &gateway.GitHubPR{Number: number, State: "open"}
+	pr.Head.SHA = "head-sha"
+	return pr, nil
 }
 
 func (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error) {
@@ -35,6 +51,76 @@ func (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, own
 		return nil, f.err
 	}
 	return f.result, nil
+}
+
+func expectMergeEffectPersistence(
+	t *testing.T,
+	mock sqlmock.Sqlmock,
+	input mergeEffectInput,
+	mergeSHA string,
+	recordReceipt bool,
+) {
+	t.Helper()
+	intent, err := newMergeEffectIntent(input)
+	if err != nil {
+		t.Fatalf("newMergeEffectIntent() error = %v", err)
+	}
+
+	mock.ExpectExec("INSERT INTO execution_effects").
+		WithArgs(
+			string(intent.ID),
+			intent.RunID,
+			intent.ActivationID,
+			int64(intent.Epoch),
+			int64(intent.Ordinal),
+			intent.Grant.Operation,
+			intent.Grant.Resource,
+			intent.Grant.Revision,
+			intent.InputDigest,
+			sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	expectLoad := func() {
+		mock.ExpectQuery("SELECT run_id, activation_id, epoch, ordinal").
+			WithArgs(string(intent.ID)).
+			WillReturnRows(sqlmock.NewRows([]string{
+				"run_id", "activation_id", "epoch", "ordinal",
+				"operation", "resource", "revision", "input_digest",
+				"provider", "reference", "output_digest", "created_at", "completed_at",
+			}).AddRow(
+				intent.RunID,
+				intent.ActivationID,
+				int64(intent.Epoch),
+				int64(intent.Ordinal),
+				intent.Grant.Operation,
+				intent.Grant.Resource,
+				intent.Grant.Revision,
+				intent.InputDigest,
+				nil, nil, nil, time.Now().UTC(), nil,
+			))
+	}
+
+	expectLoad()
+	expectLoad()
+	if !recordReceipt {
+		return
+	}
+
+	receipt, err := newMergeEffectReceipt(intent, mergeSHA)
+	if err != nil {
+		t.Fatalf("newMergeEffectReceipt() error = %v", err)
+	}
+	expectLoad()
+	mock.ExpectExec("UPDATE execution_effects").
+		WithArgs(
+			receipt.Provider,
+			receipt.Reference,
+			receipt.OutputDigest,
+			sqlmock.AnyArg(),
+			string(receipt.EffectID),
+		).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 }
 
 func newMergeRequest(prID string, body string) *http.Request {
@@ -83,6 +169,16 @@ func TestMergePullRequest(t *testing.T) {
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
 			now, now, "owner", "repo", "pr_created",
 		))
+	expectMergeEffectPersistence(t, mock, mergeEffectInput{
+		RunID:         taskID,
+		TaskID:        taskID,
+		PullRequestID: prID,
+		Owner:         "owner",
+		RepoName:      "repo",
+		Number:        42,
+		Method:        "squash",
+		Revision:      "head-sha",
+	}, "abc123", true)
 	mock.ExpectExec("UPDATE pull_requests SET state").
 		WithArgs(sqlmock.AnyArg(), prID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -193,6 +289,17 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
 			now, now, "owner", "repo", "pr_created",
 		))
+
+	expectMergeEffectPersistence(t, mock, mergeEffectInput{
+		RunID:         taskID,
+		TaskID:        taskID,
+		PullRequestID: prID,
+		Owner:         "owner",
+		RepoName:      "repo",
+		Number:        42,
+		Method:        "merge",
+		Revision:      "head-sha",
+	}, "", false)
 
 	rec := httptest.NewRecorder()
 	h.MergePullRequest(rec, newMergeRequest(prID, ""))

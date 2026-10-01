@@ -31,6 +31,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"budgets",
 		"deployments",
 		"evidence_bundles",
+		"execution_effects",
 		"detection_results",
 		"integrations",
 		"model_usage",
