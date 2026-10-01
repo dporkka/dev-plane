@@ -1,8 +1,8 @@
+import ArchitecturePage from "@/app/architecture/page";
+import DashboardPage from "@/app/dashboard/page";
 import { Sidebar } from "@/app/layout/Sidebar";
 import { TopBar } from "@/app/layout/TopBar";
 import { Providers } from "@/app/layout/providers";
-import ArchitecturePage from "@/app/architecture/page";
-import DashboardPage from "@/app/dashboard/page";
 import ProjectArchitecturePage from "@/app/projects/[id]/architecture/page";
 import ProjectDetailPage from "@/app/projects/[id]/page";
 import ProjectSettingsPage from "@/app/projects/[id]/settings/page";
@@ -62,35 +62,103 @@ const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   beforeLoad: () => {
-    throw redirect({ to: "/dashboard" });
+    throw redirect({ href: "/dashboard" });
   },
 });
 
-function page(path: string, component: React.ComponentType) {
-  return createRoute({
-    getParentRoute: () => rootRoute,
-    path,
-    component,
-  });
-}
+const dashboardRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/dashboard",
+  component: DashboardPage,
+});
+const architectureRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/architecture",
+  component: ArchitecturePage,
+});
+const projectsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects",
+  component: ProjectsPage,
+});
+const projectDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$id",
+  component: ProjectDetailPage,
+});
+const projectArchitectureRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$id/architecture",
+  component: ProjectArchitecturePage,
+});
+const projectSettingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$id/settings",
+  component: ProjectSettingsPage,
+});
+const projectTasksRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/projects/$id/tasks",
+  component: ProjectTasksPage,
+});
+const repositoriesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/repositories",
+  component: RepositoriesPage,
+});
+const runDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/runs/$id",
+  component: RunDetailPage,
+});
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: SettingsPage,
+});
+const integrationsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/integrations",
+  component: IntegrationsPage,
+});
+const policiesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/policies",
+  component: PoliciesPage,
+});
+const taskDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tasks/$id",
+  component: TaskDetailPage,
+});
+const taskRunsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tasks/$id/runs",
+  component: TaskRunsPage,
+});
+const taskSpecRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/tasks/$id/spec",
+  component: TaskSpecPage,
+});
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
-  page("/dashboard", DashboardPage),
-  page("/architecture", ArchitecturePage),
-  page("/projects", ProjectsPage),
-  page("/projects/$id", ProjectDetailPage),
-  page("/projects/$id/architecture", ProjectArchitecturePage),
-  page("/projects/$id/settings", ProjectSettingsPage),
-  page("/projects/$id/tasks", ProjectTasksPage),
-  page("/repositories", RepositoriesPage),
-  page("/runs/$id", RunDetailPage),
-  page("/settings", SettingsPage),
-  page("/settings/integrations", IntegrationsPage),
-  page("/settings/policies", PoliciesPage),
-  page("/tasks/$id", TaskDetailPage),
-  page("/tasks/$id/runs", TaskRunsPage),
-  page("/tasks/$id/spec", TaskSpecPage),
+  dashboardRoute,
+  architectureRoute,
+  projectsRoute,
+  projectDetailRoute,
+  projectArchitectureRoute,
+  projectSettingsRoute,
+  projectTasksRoute,
+  repositoriesRoute,
+  runDetailRoute,
+  settingsRoute,
+  integrationsRoute,
+  policiesRoute,
+  taskDetailRoute,
+  taskRunsRoute,
+  taskSpecRoute,
 ]);
 
 export const router = createRouter({
