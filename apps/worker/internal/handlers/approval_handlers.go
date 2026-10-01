@@ -289,6 +289,13 @@ func (h *ApprovalHandler) resumePausedRun(ctx context.Context, approvalID, taskI
 		}
 		data, _ := json.Marshal(payload)
 		if err := h.eventBus.Publish(events.RunTriggered, data); err != nil {
+			if _, rollbackErr := h.db.ExecContext(ctx, `
+				UPDATE agent_runs
+				SET status = 'paused', updated_at = $1
+				WHERE id = $2 AND task_id = $3 AND status = 'queued'
+			`, time.Now().UTC(), runID, taskID); rollbackErr != nil {
+				return fmt.Errorf("publish resumed run triggered event: %w; rollback queued run: %v", err, rollbackErr)
+			}
 			return fmt.Errorf("publish resumed run triggered event: %w", err)
 		}
 	}

@@ -342,3 +342,48 @@ func insertApprovalFixture(t *testing.T, db *sql.DB, id, taskID, runID, approval
 		t.Fatalf("insert approval fixture: %v", err)
 	}
 }
+
+
+func TestHandleApprovalApprovedRetriesResumeWhenRunTriggeredPublishFails(t *testing.T) {
+	db := setupApprovalHandlerDB(t)
+	defer db.Close()
+	insertApprovalTaskFixture(t, db, "task-1", "running")
+	insertApprovalRunFixture(t, db, "run-1", "task-1", models.AgentRunStatusPaused)
+
+	publisher := &fakeWorkerEventPublisher{err: errors.New("nats unavailable")}
+	handler := NewApprovalHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := []byte(`{
+		"approval_id":"approval-1",
+		"task_id":"task-1",
+		"agent_run_id":"run-1",
+		"response":"approved",
+		"approval_type":"risky_action"
+	}`)
+
+	firstErr := handler.HandleApprovalApproved(&nats.Msg{Data: msg})
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "publish resumed run triggered event") {
+		t.Fatalf("first HandleApprovalApproved() error = %v", firstErr)
+	}
+
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&status); err != nil {
+		t.Fatalf("query run after failed publish: %v", err)
+	}
+	if status != models.AgentRunStatusPaused {
+		t.Fatalf("run status after failed publish = %q, want paused", status)
+	}
+
+	publisher.err = nil
+	if err := handler.HandleApprovalApproved(&nats.Msg{Data: msg}); err != nil {
+		t.Fatalf("second HandleApprovalApproved() error = %v", err)
+	}
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id = 'run-1'`).Scan(&status); err != nil {
+		t.Fatalf("query run after retry: %v", err)
+	}
+	if status != models.AgentRunStatusQueued {
+		t.Fatalf("run status after retry = %q, want queued", status)
+	}
+	if publisher.subject != events.RunTriggered {
+		t.Fatalf("published subject = %q, want %s", publisher.subject, events.RunTriggered)
+	}
+}
