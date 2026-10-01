@@ -14,6 +14,7 @@ import (
 	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestConsumeApprovedAuthorityConsumesExactGrantOnce(t *testing.T) {
@@ -129,27 +130,35 @@ func TestConsumeApprovedAuthorityRejectsTamperedDigest(t *testing.T) {
 
 func TestAuthorizeToolUsesExactApprovedGrantInsteadOfRequestingApprovalAgain(t *testing.T) {
 	db := openAuthorityConsumptionDB(t)
+	provider := &fakeRuntimeProvider{
+		commandResult: &runtimes.CommandResult{Stdout: "tree-approved\n", ExitCode: 0},
+	}
 	runner := &Runner{
 		db:     db,
 		kernel: capability.NewKernel(nil, nil, nil, nil),
+		runtimes: map[string]runtimes.Provider{
+			"docker": provider,
+		},
 	}
 
 	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
 	task := &models.Task{ID: "task-1"}
-	workspace := &models.Workspace{ID: "workspace-1", RuntimeProvider: "local"}
+	sessionID := "runtime-1"
+	workspace := &models.Workspace{ID: "workspace-1", RuntimeProvider: "docker", RuntimeSessionID: &sessionID}
 	input := json.RawMessage(`{"path":"src/main.go","content":"package main"}`)
 
 	grant := execution.Grant{
 		Operation: capability.OpWriteFile,
 		Resource:  "src/main.go",
+		Revision:  "git-tree:tree-approved",
 	}
 	insertApprovedCapabilityGrant(t, db, "approval-1", run.ID, grant)
 
-	if err := runner.authorizeTool(context.Background(), run, task, workspace, "write_file", input); err != nil {
+	if err := runner.authorizeTool(context.Background(), run, task, workspace, "", "write_file", input); err != nil {
 		t.Fatalf("authorizeTool() with exact approval error = %v", err)
 	}
 
-	err := runner.authorizeTool(context.Background(), run, task, workspace, "write_file", input)
+	err := runner.authorizeTool(context.Background(), run, task, workspace, "", "write_file", input)
 	var decision *capabilityDecisionError
 	if !errors.As(err, &decision) || !decision.requiresApproval() {
 		t.Fatalf("authorizeTool() after consumption error = %v, want approval-required decision", err)
