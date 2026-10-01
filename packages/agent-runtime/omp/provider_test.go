@@ -11,23 +11,25 @@ import (
 )
 
 type fakeClient struct {
-	openBinding SessionBinding
-	openDir     string
-	modelProv   string
-	modelID     string
-	promptID    string
-	promptText  string
-	steerText   string
-	aborted     bool
-	compacted   bool
-	frames      chan Frame
+	openBinding  SessionBinding
+	openDir      string
+	modelProv    string
+	modelID      string
+	promptID     string
+	agentInvoked bool
+	promptText   string
+	steerText    string
+	aborted      bool
+	compacted    bool
+	frames       chan Frame
 }
 
 func newFakeClient() *fakeClient {
 	return &fakeClient{
-		openBinding: SessionBinding{SessionID: "omp-session-1", SessionFile: "/sessions/thread/session.jsonl"},
-		promptID:    "req_1",
-		frames:      make(chan Frame, 16),
+		openBinding:  SessionBinding{SessionID: "omp-session-1", SessionFile: "/sessions/thread/session.jsonl"},
+		promptID:     "req_1",
+		agentInvoked: true,
+		frames:       make(chan Frame, 16),
 	}
 }
 
@@ -42,6 +44,10 @@ func (f *fakeClient) SetModel(_ context.Context, provider, modelID string) error
 func (f *fakeClient) Prompt(_ context.Context, message string) (string, error) {
 	f.promptText = message
 	return f.promptID, nil
+}
+func (f *fakeClient) StartPrompt(_ context.Context, message string) (PromptStart, error) {
+	f.promptText = message
+	return PromptStart{ID: f.promptID, AgentInvoked: f.agentInvoked}, nil
 }
 func (f *fakeClient) Steer(_ context.Context, message string) error {
 	f.steerText = message
@@ -222,6 +228,91 @@ func TestRunTurnNormalizesMessageToolAndCompletionEvents(t *testing.T) {
 	}
 	if got[5].Type != agentruntime.EventTypeTurnCompleted || got[5].Status != agentruntime.TurnStatusCompleted {
 		t.Fatalf("turn completion = %#v", got[5])
+	}
+}
+
+func TestRunTurnCompletesLocalPromptFromAcknowledgement(t *testing.T) {
+	client := newFakeClient()
+	client.agentInvoked = false
+	provider, err := NewProvider(Config{SessionRoot: t.TempDir(), NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
+		return client, nil
+	}})
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	thread, err := provider.CreateThread(context.Background(), agentruntime.CreateThreadRequest{WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatalf("CreateThread() error = %v", err)
+	}
+
+	events, err := provider.RunTurn(context.Background(), agentruntime.RunTurnRequest{
+		ThreadID:         thread.ID,
+		ProviderThreadID: thread.ProviderThreadID,
+		Input:            agentruntime.TurnInput{Text: "/usage"},
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+
+	first := <-events
+	second := <-events
+	if first.Type != agentruntime.EventTypeTurnStarted {
+		t.Fatalf("first event = %#v", first)
+	}
+	if second.Type != agentruntime.EventTypeTurnCompleted || second.Status != agentruntime.TurnStatusCompleted {
+		t.Fatalf("local completion = %#v", second)
+	}
+	if _, ok := <-events; ok {
+		t.Fatal("local prompt event stream remained open")
+	}
+}
+
+func TestRunTurnWaitsForSessionSettlement(t *testing.T) {
+	client := newFakeClient()
+	provider, err := NewProvider(Config{SessionRoot: t.TempDir(), NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
+		return client, nil
+	}})
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+	thread, err := provider.CreateThread(context.Background(), agentruntime.CreateThreadRequest{WorkspaceID: "ws-1"})
+	if err != nil {
+		t.Fatalf("CreateThread() error = %v", err)
+	}
+
+	events, err := provider.RunTurn(context.Background(), agentruntime.RunTurnRequest{
+		ThreadID:         thread.ID,
+		ProviderThreadID: thread.ProviderThreadID,
+		Input:            agentruntime.TurnInput{Text: "start background work"},
+	})
+	if err != nil {
+		t.Fatalf("RunTurn() error = %v", err)
+	}
+	if event := <-events; event.Type != agentruntime.EventTypeTurnStarted {
+		t.Fatalf("first event = %#v", event)
+	}
+
+	client.frames <- Frame{
+		Type:           "prompt_result",
+		ID:             "req_1",
+		Status:         "completed",
+		SessionSettled: false,
+		Raw:            json.RawMessage(`{"type":"prompt_result","id":"req_1","status":"completed","agentInvoked":true,"sessionSettled":false}`),
+	}
+	select {
+	case event := <-events:
+		t.Fatalf("turn completed before session settled: %#v", event)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	client.frames <- Frame{Type: "session_settled", Raw: json.RawMessage(`{"type":"session_settled"}`)}
+	select {
+	case event := <-events:
+		if event.Type != agentruntime.EventTypeTurnCompleted || event.Status != agentruntime.TurnStatusCompleted {
+			t.Fatalf("settled completion = %#v", event)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for settled completion")
 	}
 }
 
