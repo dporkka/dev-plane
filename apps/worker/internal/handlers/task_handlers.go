@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
@@ -134,7 +136,9 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		}
 	}()
 
-	// Create workspace only after winning the atomic initial-run claim.
+	// Allocate stable identities before provisioning so retries can carry the same
+	// run/workspace identity into the runtime boundary.
+	runID := uuid.New().String()
 	workspaceID := uuid.New().String()
 	workspace, err := h.provisionWorkspace(context.Background(), approvedTask{
 		ID:            task.ID,
@@ -143,9 +147,50 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		CloneURL:      task.CloneURL,
 		DefaultBranch: task.DefaultBranch,
 		WorkspaceID:   workspaceID,
+		RunID:         runID,
 	}, now)
 	if err != nil {
 		return fmt.Errorf("provision workspace runtime: %w", err)
+	}
+
+	baseSHA, err := h.workspaceBaseRevision(context.Background(), workspace)
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("resolve workspace base revision: %w", err)
+	}
+
+	runMetadata, err = bindRunManifest(runMetadata, models.RunManifestInput{
+		RunID:           runID,
+		TaskID:          task.ID,
+		RepositoryID:    task.RepositoryID,
+		BaseSHA:         baseSHA,
+		AgentRole:       models.AgentRoleImplementer,
+		ExecutionClass:  "standard",
+		RuntimeProvider: workspace.RuntimeProvider,
+		Resources: models.RunResourceLimits{
+			CPUMillis:       defaultWorkspaceCPUMillis,
+			MemoryMB:        defaultWorkspaceMemoryMB,
+			DiskMB:          defaultWorkspaceDiskMB,
+			WallTimeSeconds: defaultWorkspaceWallTimeSeconds,
+		},
+		Authority: models.RunAuthority{
+			Network: false,
+			Operations: []string{
+				"read_file",
+				"write_file",
+				"search_files",
+				"apply_patch",
+				"run_command",
+				"list_directory",
+				"inspect_repo",
+				"get_git_diff",
+				"create_commit",
+			},
+		},
+	})
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("build run manifest: %w", err)
 	}
 
 	tx, err := h.db.BeginTx(context.Background(), nil)
@@ -197,7 +242,6 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 	}
 
 	// Create agent run and preserve the approval-time admission evidence.
-	runID := uuid.New().String()
 	_, err = tx.Exec(`
 		INSERT INTO agent_runs (
 			id, task_id, workspace_id, agent_role, model, provider,
@@ -238,7 +282,15 @@ type approvedTask struct {
 	CloneURL      string
 	DefaultBranch string
 	WorkspaceID   string
+	RunID         string
 }
+
+const (
+	defaultWorkspaceCPUMillis       = 2000
+	defaultWorkspaceMemoryMB        = 4096
+	defaultWorkspaceDiskMB          = 10240
+	defaultWorkspaceWallTimeSeconds = 1800
+)
 
 type provisionedWorkspace struct {
 	Name             string
@@ -321,6 +373,20 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		Branch:       branchName,
 		BaseBranch:   baseBranch,
 		WorktreeName: workspace.Name,
+		Limits: runtimes.ResourceLimits{
+			CPUMillis:       defaultWorkspaceCPUMillis,
+			MemoryMB:        defaultWorkspaceMemoryMB,
+			DiskMB:          defaultWorkspaceDiskMB,
+			WallTimeSeconds: defaultWorkspaceWallTimeSeconds,
+		},
+		Capabilities: runtimes.RuntimeCapabilities{
+			Network: false,
+		},
+		Metadata: map[string]string{
+			"dev_plane_task_id": task.ID,
+			"dev_plane_run_id":  task.RunID,
+		},
+		IdempotencyKey: "workspace:" + task.RunID,
 	})
 	if err != nil {
 		return provisionedWorkspace{}, err
@@ -437,4 +503,66 @@ func (h *TaskHandler) publishRunTriggered(ctx context.Context, runID, taskID, ac
 		return fmt.Errorf("publish run triggered: %w", err)
 	}
 	return nil
+}
+
+
+func (h *TaskHandler) workspaceBaseRevision(ctx context.Context, workspace provisionedWorkspace) (string, error) {
+	if h.runtimeProvider == nil {
+		return "", errors.New("runtime provider is required to resolve base revision")
+	}
+	if workspace.RuntimeSessionID == nil || strings.TrimSpace(*workspace.RuntimeSessionID) == "" {
+		return "", errors.New("runtime session is required to resolve base revision")
+	}
+	result, err := h.runtimeProvider.ExecuteCommand(ctx, *workspace.RuntimeSessionID, runtimes.Command{
+		Args:    []string{"git", "rev-parse", "HEAD"},
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		return "", err
+	}
+	if result == nil {
+		return "", errors.New("base revision command returned no result")
+	}
+	if result.ExitCode != 0 {
+		return "", fmt.Errorf("base revision command failed: %s", strings.TrimSpace(result.Stdout+result.Stderr))
+	}
+	sha := strings.TrimSpace(result.Stdout)
+	if !validGitCommitSHA(sha) {
+		return "", fmt.Errorf("base revision is not a canonical git commit SHA: %q", sha)
+	}
+	return sha, nil
+}
+
+func validGitCommitSHA(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) != 40 && len(value) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
+func bindRunManifest(rawMetadata string, input models.RunManifestInput) (string, error) {
+	var metadata map[string]any
+	rawMetadata = strings.TrimSpace(rawMetadata)
+	if rawMetadata == "" {
+		rawMetadata = "{}"
+	}
+	if err := json.Unmarshal([]byte(rawMetadata), &metadata); err != nil {
+		return "", fmt.Errorf("decode run metadata: %w", err)
+	}
+	manifest, err := models.NewRunManifest(input)
+	if err != nil {
+		return "", err
+	}
+	if err := manifest.VerifyDigest(); err != nil {
+		return "", err
+	}
+	metadata["run_manifest"] = manifest
+	metadata["run_manifest_digest"] = manifest.Digest
+	normalized, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode run metadata: %w", err)
+	}
+	return string(normalized), nil
 }
