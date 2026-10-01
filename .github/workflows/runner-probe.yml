@@ -1,0 +1,15 @@
+name: Runner Probe
+
+on:
+  push:
+    branches:
+      - ci/runner-probe-20261001
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm runner dispatch
+        run: |
+          echo "runner reached"
+          uname -a
