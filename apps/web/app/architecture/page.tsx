@@ -46,8 +46,8 @@ export default function ArchitecturePage() {
             Client Layer
           </h3>
           <p className="text-xs text-gray-400">
-            The Web UI (Next.js 16) provides the primary interface. Future
-            clients include CLI tools and API integrations.
+            The Web UI (React 19 + Vite + TanStack Router) provides the primary
+            interface. Future clients include CLI tools and API integrations.
           </p>
         </div>
         <div className="card">
