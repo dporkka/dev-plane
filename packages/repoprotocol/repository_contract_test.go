@@ -53,4 +53,10 @@ func TestRepositoryContractParsesAndPreservesSafetyDefaults(t *testing.T) {
 	if !reflect.DeepEqual(workflowGates, wantWorkflowGates) {
 		t.Fatalf("workflow gates = %#v, want %#v", workflowGates, wantWorkflowGates)
 	}
+
+	contractGates := cfg.RequiredGatesForPaths([]string{"devplane.yaml", "scripts/verify.sh"})
+	wantContractGates := []string{"full", GateIndependentReview, GateHumanApproval}
+	if !reflect.DeepEqual(contractGates, wantContractGates) {
+		t.Fatalf("contract gates = %#v, want %#v", contractGates, wantContractGates)
+	}
 }
