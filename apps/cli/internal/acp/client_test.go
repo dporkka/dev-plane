@@ -44,6 +44,12 @@ func TestClientPromptStreamsUpdatesAndHandlesPermission(t *testing.T) {
 	if !init.LoadSession {
 		t.Fatal("expected loadSession capability")
 	}
+	if len(init.AuthMethods) != 1 || init.AuthMethods[0].ID != "chat-gpt" {
+		t.Fatalf("authMethods=%+v", init.AuthMethods)
+	}
+	if err := client.Authenticate(ctx, "chat-gpt"); err != nil {
+		t.Fatal(err)
+	}
 
 	session, err := client.NewSession(ctx, "/tmp/project", SessionMetadata{TaskID: "task-1", RunID: "run-2"})
 	if err != nil {
@@ -114,7 +120,14 @@ func TestACPHelperProcess(t *testing.T) {
 				"protocolVersion":   1,
 				"agentCapabilities": map[string]any{"loadSession": true},
 				"agentInfo":         map[string]any{"name": "fake-agent", "version": "1"},
+				"authMethods":       []map[string]any{{"id": "chat-gpt", "name": "ChatGPT", "description": "Sign in", "type": "agent"}},
 			}})
+		case "authenticate":
+			params := msg["params"].(map[string]any)
+			if params["methodId"] != "chat-gpt" {
+				os.Exit(6)
+			}
+			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
 		case "session/new":
 			params := msg["params"].(map[string]any)
 			meta := params["_meta"].(map[string]any)["devPlane"].(map[string]any)
@@ -132,10 +145,7 @@ func TestACPHelperProcess(t *testing.T) {
 			_ = enc.Encode(map[string]any{"jsonrpc": "2.0", "id": 99, "method": "session/request_permission", "params": map[string]any{
 				"sessionId": "sess-1",
 				"toolCall":  map[string]any{"toolCallId": "tool-1", "title": "Run tests", "kind": "execute", "status": "pending"},
-				"options": []map[string]any{
-					{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"},
-					{"optionId": "reject", "name": "Reject", "kind": "reject_once"},
-				},
+				"options":   []map[string]any{{"optionId": "allow-once", "name": "Allow once", "kind": "allow_once"}, {"optionId": "reject", "name": "Reject", "kind": "reject_once"}},
 			}})
 		default:
 			if idFloat, ok := id.(float64); ok && int(idFloat) == 99 {
