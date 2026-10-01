@@ -5,11 +5,9 @@ go 1.25.11
 require (
 	github.com/ai-dev-control-plane/agent-runtime v0.0.0
 	github.com/ai-dev-control-plane/repoprotocol v0.0.0
-	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.12.3
-	github.com/mattn/go-sqlite3 v1.14.47
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/pressly/goose/v3 v3.27.1
-	github.com/sqlc-dev/pqtype v0.3.0
 )
 
 require (
@@ -18,7 +16,9 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
+	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 
 replace github.com/ai-dev-control-plane/agent-runtime => ../agent-runtime
+
 replace github.com/ai-dev-control-plane/repoprotocol => ../repoprotocol
