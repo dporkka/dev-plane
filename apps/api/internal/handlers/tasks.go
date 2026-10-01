@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -79,6 +81,46 @@ type UpdateTaskRequest struct {
 	Priority    *string `json:"priority,omitempty"`
 	RiskLevel   *string `json:"risk_level,omitempty"`
 	Status      *string `json:"status,omitempty"`
+}
+
+type ApproveSpecRequest struct {
+	Execution *TaskExecutionSelection `json:"execution,omitempty"`
+}
+
+type TaskExecutionSelection struct {
+	Backend  string `json:"backend"`
+	Provider string `json:"provider,omitempty"`
+}
+
+func decodeApproveSpecRequest(r *http.Request) (ApproveSpecRequest, error) {
+	var req ApproveSpecRequest
+	if r == nil || r.Body == nil {
+		return req, nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if errors.Is(err, io.EOF) {
+			return req, nil
+		}
+		return req, err
+	}
+	if req.Execution == nil {
+		return req, nil
+	}
+
+	req.Execution.Backend = strings.ToLower(strings.TrimSpace(req.Execution.Backend))
+	req.Execution.Provider = strings.ToLower(strings.TrimSpace(req.Execution.Provider))
+	switch req.Execution.Backend {
+	case "", "legacy":
+		req.Execution.Backend = "legacy"
+		req.Execution.Provider = ""
+	case "agent_runtime":
+		if req.Execution.Provider == "" {
+			return ApproveSpecRequest{}, errors.New("agent_runtime execution requires a provider")
+		}
+	default:
+		return ApproveSpecRequest{}, errors.New("unsupported execution backend " + req.Execution.Backend)
+	}
+	return req, nil
 }
 
 // Valid status transitions: map[current_status] -> []allowed_next_statuses
@@ -348,8 +390,14 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	req, err := decodeApproveSpecRequest(r)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+
 	var repositoryID, riskLevel, currentStatus string
-	err := h.db.QueryRowContext(ctx, `
+	err = h.db.QueryRowContext(ctx, `
 		SELECT repository_id, risk_level, status
 		FROM tasks
 		WHERE id = $1 AND deleted_at IS NULL
@@ -397,15 +445,19 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if h.eventBus != nil {
+		eventData := map[string]any{
+			"admission": map[string]any{
+				"policy":    readiness.AdmissionPolicyVersion,
+				"readiness": readinessReport,
+			},
+		}
+		if req.Execution != nil {
+			eventData["execution"] = req.Execution
+		}
 		data, _ := json.Marshal(events.TaskEvent{
 			TaskID: id,
 			Status: "approved",
-			Data: mustRawMessage(map[string]any{
-				"admission": map[string]any{
-					"policy":    readiness.AdmissionPolicyVersion,
-					"readiness": readinessReport,
-				},
-			}),
+			Data:   mustRawMessage(eventData),
 		})
 		if pubErr := h.eventBus.Publish(events.TaskApproved, data); pubErr != nil {
 			h.logger.Warn("failed to publish task approved event", "task_id", id, "error", pubErr)
