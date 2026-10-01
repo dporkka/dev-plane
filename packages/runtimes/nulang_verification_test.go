@@ -145,11 +145,13 @@ func TestNulangVerificationProviderKeepsShortCommandsOnUnaryExec(t *testing.T) {
 }
 
 func TestNulangVerificationProviderCancelsDurableJobWhenContextEnds(t *testing.T) {
+	started := make(chan struct{}, 1)
 	cancelled := make(chan struct{}, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/workspaces/ws-1/exec/jobs":
+			started <- struct{}{}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"job_id": "job-1", "request_id": "req", "state": "running",
 				"stdout": "", "stderr": "", "duration_ms": 0, "logs_truncated": false,
@@ -176,14 +178,29 @@ func TestNulangVerificationProviderCancelsDurableJobWhenContextEnds(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	provider.pollInterval = time.Millisecond
+	provider.pollInterval = 5 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = provider.ExecuteCommand(ctx, "ws-1", Command{
-		Args: []string{"sleep", "120"}, Timeout: 2 * time.Minute,
-	})
-	if err == nil {
-		t.Fatal("expected cancelled context error")
+	result := make(chan error, 1)
+	go func() {
+		_, executeErr := provider.ExecuteCommand(ctx, "ws-1", Command{
+			Args: []string{"sleep", "120"}, Timeout: 2 * time.Minute,
+		})
+		result <- executeErr
+	}()
+
+	select {
+	case <-started:
+		cancel()
+	case <-time.After(time.Second):
+		t.Fatal("durable job was not started")
+	}
+	select {
+	case executeErr := <-result:
+		if executeErr == nil {
+			t.Fatal("expected cancelled context error")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("ExecuteCommand did not return after context cancellation")
 	}
 	select {
 	case <-cancelled:
