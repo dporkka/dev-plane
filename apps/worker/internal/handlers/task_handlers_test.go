@@ -446,7 +446,6 @@ func insertApprovedTaskFixture(t *testing.T, db *sql.DB) {
 	}
 }
 
-
 func TestHandleTaskApprovedCleansUpWorkspaceWhenBaseRevisionCannotBeResolved(t *testing.T) {
 	db := setupTaskHandlerDB(t)
 	defer db.Close()
