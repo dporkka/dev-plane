@@ -19,6 +19,7 @@ type RemoteProvider struct {
 	baseURL   string
 	authToken string
 	client    *http.Client
+	breaker   *CircuitBreaker
 }
 
 // NewRemoteProvider creates a client for the runner service at baseURL.
@@ -29,6 +30,7 @@ func NewRemoteProvider(baseURL, authToken string) *RemoteProvider {
 		baseURL:   baseURL,
 		authToken: authToken,
 		client:    &http.Client{Timeout: 120 * time.Second},
+		breaker:   NewCircuitBreaker(CircuitBreakerConfig{}),
 	}
 }
 
@@ -36,6 +38,28 @@ func NewRemoteProvider(baseURL, authToken string) *RemoteProvider {
 func (p *RemoteProvider) WithHTTPClient(client *http.Client) *RemoteProvider {
 	p.client = client
 	return p
+}
+
+func (p *RemoteProvider) WithCircuitBreaker(breaker *CircuitBreaker) *RemoteProvider {
+	p.breaker = breaker
+	return p
+}
+
+func (p *RemoteProvider) do(req *http.Request) (*http.Response, error) {
+	if err := p.breaker.Before(); err != nil {
+		return nil, err
+	}
+	resp, err := p.client.Do(req)
+	if err != nil {
+		p.breaker.RecordFailure()
+		return nil, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+		p.breaker.RecordFailure()
+	} else {
+		p.breaker.RecordSuccess()
+	}
+	return resp, nil
 }
 
 func (p *RemoteProvider) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
@@ -62,7 +86,7 @@ func (p *RemoteProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("create workspace request: %w", err)
 	}
@@ -87,7 +111,7 @@ func (p *RemoteProvider) DestroyWorkspace(ctx context.Context, sessionID string)
 		return err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return fmt.Errorf("destroy workspace request: %w", err)
 	}
@@ -113,7 +137,7 @@ func (p *RemoteProvider) ExecuteCommand(ctx context.Context, sessionID string, c
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("execute command request: %w", err)
 	}
@@ -138,7 +162,7 @@ func (p *RemoteProvider) ReadFile(ctx context.Context, sessionID, filePath strin
 		return nil, err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("read file request: %w", err)
 	}
@@ -163,7 +187,7 @@ func (p *RemoteProvider) WriteFile(ctx context.Context, sessionID, filePath stri
 	}
 	httpReq.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return fmt.Errorf("write file request: %w", err)
 	}
@@ -186,7 +210,7 @@ func (p *RemoteProvider) ApplyPatch(ctx context.Context, sessionID, patch string
 		return err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return fmt.Errorf("apply patch request: %w", err)
 	}
@@ -209,7 +233,7 @@ func (p *RemoteProvider) Snapshot(ctx context.Context, sessionID string) (*Snaps
 		return nil, err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot request: %w", err)
 	}
@@ -243,7 +267,7 @@ func (p *RemoteProvider) Restore(ctx context.Context, sessionID string, snap *Sn
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return fmt.Errorf("restore request: %w", err)
 	}
@@ -266,7 +290,7 @@ func (p *RemoteProvider) GetStatus(ctx context.Context, sessionID string) (*Sess
 		return nil, err
 	}
 
-	resp, err := p.client.Do(httpReq)
+	resp, err := p.do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("status request: %w", err)
 	}
@@ -300,7 +324,7 @@ func (p *RemoteProvider) StreamLogs(ctx context.Context, sessionID string) (<-ch
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := p.client.Do(req)
+	resp, err := p.do(req)
 	if err != nil {
 		return nil, fmt.Errorf("stream logs request: %w", err)
 	}
