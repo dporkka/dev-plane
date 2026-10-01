@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -109,13 +111,26 @@ type MergePRResult struct {
 
 // Deployment represents a GitHub deployment.
 type Deployment struct {
-	ID        int64  `json:"id"`
-	NodeID    string `json:"node_id"`
-	URL       string `json:"url"`
-	StatusURL string `json:"statuses_url"`
-	Ref       string `json:"ref"`
-	Task      string `json:"task"`
-	State     string `json:"state"`
+	ID          int64           `json:"id"`
+	NodeID      string          `json:"node_id"`
+	URL         string          `json:"url"`
+	StatusURL   string          `json:"statuses_url"`
+	SHA         string          `json:"sha"`
+	Ref         string          `json:"ref"`
+	Task        string          `json:"task"`
+	Environment string          `json:"environment"`
+	Payload     json.RawMessage `json:"payload"`
+	State       string          `json:"state"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+}
+
+// DeploymentListOptions filters repository deployments.
+type DeploymentListOptions struct {
+	SHA         string
+	Ref         string
+	Task        string
+	Environment string
 }
 
 // DeploymentStatus represents a GitHub deployment status.
@@ -270,14 +285,75 @@ func (g *GitHubGateway) MergePR(ctx context.Context, token *oauth2.Token, owner,
 	return &result, nil
 }
 
+// ResolveCommitSHA resolves a branch, tag, or SHA-like ref to the immutable
+// commit SHA GitHub currently identifies for it.
+func (g *GitHubGateway) ResolveCommitSHA(ctx context.Context, token *oauth2.Token, owner, name, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", fmt.Errorf("deployment ref is required")
+	}
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/commits/%s", g.apiBaseURL, owner, name, url.PathEscape(ref))
+	var result struct {
+		SHA string `json:"sha"`
+	}
+	if err := g.get(ctx, token, endpoint, &result); err != nil {
+		return "", fmt.Errorf("resolve github commit %s: %w", ref, err)
+	}
+	result.SHA = strings.TrimSpace(result.SHA)
+	if result.SHA == "" {
+		return "", fmt.Errorf("resolved github commit sha is empty for %s", ref)
+	}
+	return result.SHA, nil
+}
+
+// ListDeployments returns deployments matching GitHub's ref/sha/task/environment
+// filters. Callers may apply stronger correlation checks to deployment payload.
+func (g *GitHubGateway) ListDeployments(ctx context.Context, token *oauth2.Token, owner, name string, opts DeploymentListOptions) ([]Deployment, error) {
+	values := url.Values{}
+	if value := strings.TrimSpace(opts.SHA); value != "" {
+		values.Set("sha", value)
+	}
+	if value := strings.TrimSpace(opts.Ref); value != "" {
+		values.Set("ref", value)
+	}
+	if value := strings.TrimSpace(opts.Task); value != "" {
+		values.Set("task", value)
+	}
+	if value := strings.TrimSpace(opts.Environment); value != "" {
+		values.Set("environment", value)
+	}
+	values.Set("per_page", "100")
+
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/deployments?%s", g.apiBaseURL, owner, name, values.Encode())
+	var result []Deployment
+	if err := g.get(ctx, token, endpoint, &result); err != nil {
+		return nil, fmt.Errorf("list github deployments: %w", err)
+	}
+	return result, nil
+}
+
 // CreateDeployment creates a new GitHub deployment for the given ref and environment.
 func (g *GitHubGateway) CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*Deployment, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBaseURL, owner, name)
+	return g.CreateDeploymentWithPayload(ctx, token, owner, name, environment, ref, nil)
+}
+
+// CreateDeploymentWithPayload creates a deployment and attaches caller-owned
+// correlation metadata that GitHub returns from deployment reads/lists.
+func (g *GitHubGateway) CreateDeploymentWithPayload(
+	ctx context.Context,
+	token *oauth2.Token,
+	owner, name, environment, ref string,
+	deploymentPayload map[string]any,
+) (*Deployment, error) {
+	endpoint := fmt.Sprintf("%s/repos/%s/%s/deployments", g.apiBaseURL, owner, name)
 	payload := map[string]any{
-		"ref":         ref,
-		"environment": environment,
-		"auto_merge":  false,
+		"ref":               ref,
+		"environment":       environment,
+		"auto_merge":        false,
 		"required_contexts": []string{},
+	}
+	if deploymentPayload != nil {
+		payload["payload"] = deploymentPayload
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -285,7 +361,7 @@ func (g *GitHubGateway) CreateDeployment(ctx context.Context, token *oauth2.Toke
 	}
 
 	var result Deployment
-	if err := g.post(ctx, token, url, body, &result); err != nil {
+	if err := g.post(ctx, token, endpoint, body, &result); err != nil {
 		return nil, fmt.Errorf("create github deployment: %w", err)
 	}
 	return &result, nil
