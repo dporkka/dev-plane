@@ -59,8 +59,11 @@ type GitHubPR struct {
 	Number    int       `json:"number"`
 	Title     string    `json:"title"`
 	Body      string    `json:"body"`
-	State     string    `json:"state"`
-	HTMLURL   string    `json:"html_url"`
+	State          string     `json:"state"`
+	HTMLURL        string     `json:"html_url"`
+	Merged         bool       `json:"merged"`
+	MergeCommitSHA string     `json:"merge_commit_sha"`
+	MergedAt       *time.Time `json:"merged_at,omitempty"`
 	Head      struct {
 		Ref string `json:"ref"`
 		SHA string `json:"sha"`
