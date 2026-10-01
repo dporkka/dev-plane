@@ -15,9 +15,14 @@ const browserAuthPath = "/api/auth/github/callback"
 
 // Wrap returns the single-origin production handler: API and health requests
 // stay on the Go router while every other browser route is served by the
-// embedded Vite application.
-func Wrap(api http.Handler) http.Handler {
-	return WrapWithAssets(api, embeddedAssets())
+// embedded Vite application. Production startup fails when the Vite bundle was
+// not built into the binary.
+func Wrap(api http.Handler) (http.Handler, error) {
+	assets, err := embeddedAssets()
+	if err != nil {
+		return nil, err
+	}
+	return WrapWithAssets(api, assets), nil
 }
 
 // WrapWithAssets is Wrap with an injectable filesystem for tests.
