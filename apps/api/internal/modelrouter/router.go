@@ -21,7 +21,7 @@ const (
 
 // Semantic model routes keep callers stable while provider/model catalogs evolve.
 const (
-	RouteUltraLowLatency    = "ultra_low_latency"
+	RouteUltraLowLatency     = "ultra_low_latency"
 	RouteCheapClassification = "cheap_classification"
 	RouteCheapSummary        = "cheap_summary"
 	RouteBalancedChat        = "balanced_chat"
