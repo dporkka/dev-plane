@@ -12,8 +12,9 @@ const (
 	ApprovalTypeSpec        = "spec"
 	ApprovalTypeExecution   = "execution"
 	ApprovalTypePRCreate    = "pr_create"
-	ApprovalTypeDeploy      = "deploy"
-	ApprovalTypeRiskyAction = "risky_action"
+	ApprovalTypeDeploy       = "deploy"
+	ApprovalTypeRiskyAction  = "risky_action"
+	ApprovalTypeAgentRuntime = "agent_runtime"
 )
 
 // ApprovalResponse constants.

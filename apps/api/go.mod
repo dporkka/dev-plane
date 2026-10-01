@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
+	github.com/ai-dev-control-plane/agent-runtime v0.0.0
 	github.com/ai-dev-control-plane/crypto v0.0.0
 	github.com/ai-dev-control-plane/events v0.0.0
 	github.com/ai-dev-control-plane/execution v0.0.0
@@ -50,6 +51,7 @@ require (
 )
 
 replace (
+	github.com/ai-dev-control-plane/agent-runtime => ../../packages/agent-runtime
 	github.com/ai-dev-control-plane/crypto => ../../packages/crypto
 	github.com/ai-dev-control-plane/db => ../../packages/db
 	github.com/ai-dev-control-plane/events => ../../packages/events
