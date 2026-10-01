@@ -140,12 +140,12 @@ type nulangWorkspaceResponse struct {
 }
 
 type nulangCheckpoint struct {
-	ID            string `json:"id"`
-	WorkspaceID   string `json:"workspace_id"`
-	CreatedAtMS   int64  `json:"created_at_ms"`
-	FormatVersion int    `json:"format_version"`
-	RootfsSize    uint64 `json:"rootfs_size_bytes"`
-	WorkspaceSize uint64 `json:"workspace_size_bytes"`
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	CreatedAtMS    int64  `json:"created_at_ms"`
+	FormatVersion  int    `json:"format_version"`
+	RootfsSize     uint64 `json:"rootfs_size_bytes"`
+	WorkspaceSize  uint64 `json:"workspace_size_bytes"`
 }
 
 type nulangCheckpointOperationResponse struct {
@@ -237,3 +237,409 @@ func (p *NulangCloudProvider) ExecuteCommand(ctx context.Context, sessionID stri
 }
 
 func (p *NulangCloudProvider) execRaw(ctx context.Context, sessionID, command string, args []string, cwd *string, env map[string]string, timeout time.Duration) (*CommandResult, error) {
+	started := time.Now()
+	body := map[string]any{
+		"command":    command,
+		"args":       args,
+		"cwd":        cwd,
+		"env":        env,
+		"timeout_ms": timeout.Milliseconds(),
+	}
+	var response nulangWorkspaceResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/exec", body, &response, ""); err != nil {
+		return nil, err
+	}
+	if response.Kind != "exec" {
+		return nil, fmt.Errorf("unexpected Nulang exec response kind %q", response.Kind)
+	}
+	stdout, err := base64.StdEncoding.DecodeString(response.StdoutBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode Nulang stdout: %w", err)
+	}
+	stderr, err := base64.StdEncoding.DecodeString(response.StderrBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode Nulang stderr: %w", err)
+	}
+	if response.StdoutTruncated {
+		stdout = append(stdout, []byte("\n... [Nulang stdout truncated]")...)
+	}
+	if response.StderrTruncated {
+		stderr = append(stderr, []byte("\n... [Nulang stderr truncated]")...)
+	}
+	if response.TimedOut {
+		return nil, fmt.Errorf("%w after %s", ErrCommandTimeout, timeout)
+	}
+	exitCode := -1
+	if response.ExitCode != nil {
+		exitCode = *response.ExitCode
+	}
+	return &CommandResult{
+		Stdout: string(stdout), Stderr: string(stderr), ExitCode: exitCode, Duration: time.Since(started),
+	}, nil
+}
+
+func (p *NulangCloudProvider) ReadFile(ctx context.Context, sessionID, path string) ([]byte, error) {
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return nil, err
+	}
+	var response nulangWorkspaceResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/files/read", map[string]any{
+		"path": rel, "max_bytes": nulangWorkspaceFileLimit,
+	}, &response, ""); err != nil {
+		return nil, err
+	}
+	if response.Kind != "file" {
+		return nil, fmt.Errorf("unexpected Nulang read response kind %q", response.Kind)
+	}
+	data, err := base64.StdEncoding.DecodeString(response.ContentBase64)
+	if err != nil {
+		return nil, fmt.Errorf("decode Nulang file %q: %w", path, err)
+	}
+	return data, nil
+}
+
+func (p *NulangCloudProvider) WriteFile(ctx context.Context, sessionID, path string, data []byte) error {
+	rel, err := cleanRelativePath(path)
+	if err != nil {
+		return err
+	}
+	if len(data) <= nulangWorkspaceFileLimit {
+		var response nulangWorkspaceResponse
+		if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/files/write", map[string]any{
+			"path": rel, "content_base64": base64.StdEncoding.EncodeToString(data), "create_parents": true,
+		}, &response, ""); err != nil {
+			return err
+		}
+		if response.Kind != "ack" {
+			return fmt.Errorf("unexpected Nulang write response kind %q", response.Kind)
+		}
+		return nil
+	}
+	return p.writeFileChunks(ctx, sessionID, rel, bytes.NewReader(data))
+}
+
+func (p *NulangCloudProvider) writeFileChunks(ctx context.Context, sessionID, path string, reader io.Reader) error {
+	buffer := make([]byte, nulangWorkspaceChunkLimit)
+	var offset uint64
+	first := true
+	for {
+		n, readErr := reader.Read(buffer)
+		if n > 0 {
+			final := errors.Is(readErr, io.EOF)
+			var response nulangWorkspaceResponse
+			if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/files/write-chunk", map[string]any{
+				"path": path, "offset": offset,
+				"content_base64": base64.StdEncoding.EncodeToString(buffer[:n]),
+				"truncate": first, "sync": final,
+			}, &response, ""); err != nil {
+				return err
+			}
+			if response.Kind != "chunk" && response.Kind != "ack" {
+				return fmt.Errorf("unexpected Nulang chunk response kind %q", response.Kind)
+			}
+			offset += uint64(n)
+			first = false
+		}
+		if errors.Is(readErr, io.EOF) {
+			if offset == 0 {
+				return p.WriteFile(ctx, sessionID, path, nil)
+			}
+			// If EOF was returned only after the final full read, send an empty
+			// sync chunk so the guest fsyncs the completed file.
+			if n == 0 {
+				var response nulangWorkspaceResponse
+				if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/files/write-chunk", map[string]any{
+					"path": path, "offset": offset, "content_base64": "", "truncate": false, "sync": true,
+				}, &response, ""); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func (p *NulangCloudProvider) ApplyPatch(ctx context.Context, sessionID, patch string) error {
+	const patchPath = ".devplane/current.patch"
+	if err := p.WriteFile(ctx, sessionID, patchPath, []byte(patch)); err != nil {
+		return err
+	}
+	result, err := p.execRaw(ctx, sessionID, "git", []string{"apply", patchPath}, nil, nil, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("git apply failed: %s", strings.TrimSpace(result.Stdout+result.Stderr))
+	}
+	return nil
+}
+
+func (p *NulangCloudProvider) Snapshot(ctx context.Context, sessionID string) (*Snapshot, error) {
+	var response nulangCheckpointOperationResponse
+	if err := p.doJSON(ctx, http.MethodPost, "/workspaces/"+url.PathEscape(sessionID)+"/checkpoints", nil, &response, ""); err != nil {
+		return nil, err
+	}
+	createdAt := time.Now().UTC()
+	if response.Checkpoint.CreatedAtMS > 0 {
+		createdAt = time.UnixMilli(response.Checkpoint.CreatedAtMS).UTC()
+	}
+	return &Snapshot{
+		ID: response.Checkpoint.ID, SessionID: sessionID,
+		Description: "Nulang portable workspace checkpoint", CreatedAt: createdAt,
+	}, nil
+}
+
+func (p *NulangCloudProvider) Restore(ctx context.Context, sessionID string, snap *Snapshot) error {
+	if snap == nil || strings.TrimSpace(snap.ID) == "" {
+		return errors.New("Nulang restore requires a checkpoint id")
+	}
+	path := "/workspaces/" + url.PathEscape(sessionID) + "/checkpoints/" + url.PathEscape(snap.ID) + "/restore"
+	var response nulangCheckpointOperationResponse
+	return p.doJSON(ctx, http.MethodPost, path, nil, &response, "")
+}
+
+func (p *NulangCloudProvider) GetStatus(ctx context.Context, sessionID string) (*SessionStatus, error) {
+	var response nulangWorkspaceStatusResponse
+	if err := p.doJSON(ctx, http.MethodGet, "/workspaces/"+url.PathEscape(sessionID), nil, &response, ""); err != nil {
+		return nil, err
+	}
+	status := response.Status
+	if response.Status == "running" {
+		if response.GuestReady {
+			status = "ready"
+		} else {
+			status = "pending"
+		}
+	}
+	return &SessionStatus{SessionID: sessionID, Status: status, LastActive: time.Now().UTC()}, nil
+}
+
+func (p *NulangCloudProvider) StreamLogs(context.Context, string) (<-chan LogLine, error) {
+	return nil, fmt.Errorf("%w: Nulang Workspace streaming logs are not available yet", ErrNotImplemented)
+}
+
+func (p *NulangCloudProvider) doJSON(ctx context.Context, method, path string, body any, out any, idempotencyKey string) error {
+	var reader io.Reader
+	if body != nil {
+		payload, err := json.Marshal(body)
+		if err != nil {
+			return fmt.Errorf("marshal Nulang request: %w", err)
+		}
+		reader = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, p.RemoteProvider.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if key := strings.TrimSpace(idempotencyKey); key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	resp, err := p.RemoteProvider.do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, path)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return p.RemoteProvider.readError(resp)
+	}
+	if out == nil || resp.StatusCode == http.StatusNoContent {
+		return nil
+	}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return fmt.Errorf("decode Nulang response: %w", err)
+	}
+	return nil
+}
+
+func nulangWorkspaceID(req CreateRequest) (string, error) {
+	candidate := strings.TrimSpace(req.WorktreeName)
+	if candidate == "" {
+		candidate = "devplane-" + strings.TrimSpace(req.Metadata["dev_plane_run_id"])
+	}
+	if candidate == "devplane-" || !validNulangWorkspaceID(candidate) {
+		return "", fmt.Errorf("invalid Nulang workspace id %q", candidate)
+	}
+	return candidate, nil
+}
+
+func validNulangWorkspaceID(value string) bool {
+	if value == "" || value == "." || value == ".." || len(value) > 128 {
+		return false
+	}
+	for _, ch := range value {
+		if (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' || ch == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func normalizeNulangCommand(cmd Command) (string, []string, error) {
+	if len(cmd.Args) > 0 {
+		if err := ValidateCommandArgs(cmd.Args); err != nil {
+			return "", nil, fmt.Errorf("invalid command args: %w", err)
+		}
+		return cmd.Args[0], append([]string(nil), cmd.Args[1:]...), nil
+	}
+	if cmd.UnsafeShell {
+		if strings.TrimSpace(cmd.Command) == "" {
+			return "", nil, errors.New("shell command is required")
+		}
+		return "/bin/sh", []string{"-c", cmd.Command}, nil
+	}
+	args, err := ParseCommandString(cmd.Command)
+	if err != nil {
+		return "", nil, fmt.Errorf("invalid command: %w", err)
+	}
+	return args[0], args[1:], nil
+}
+
+type localGitNulangSeeder struct{}
+
+func (localGitNulangSeeder) Seed(ctx context.Context, provider *NulangCloudProvider, workspaceID string, req CreateRequest) error {
+	if strings.TrimSpace(req.CloneURL) == "" {
+		return errors.New("clone URL is required")
+	}
+	tempDir, err := os.MkdirTemp("", "devplane-nulang-seed-*")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(tempDir)
+
+	repoDir := filepath.Join(tempDir, "repo")
+	clone := exec.CommandContext(ctx, "git", "clone", req.CloneURL, repoDir)
+	if output, err := clone.CombinedOutput(); err != nil {
+		return fmt.Errorf("git clone: %w (output: %s)", err, strings.TrimSpace(string(output)))
+	}
+	checkout := exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "-B", req.Branch, req.BaseBranch)
+	if output, err := checkout.CombinedOutput(); err != nil {
+		checkout = exec.CommandContext(ctx, "git", "-C", repoDir, "checkout", "-B", req.Branch, "origin/"+req.BaseBranch)
+		if retryOutput, retryErr := checkout.CombinedOutput(); retryErr != nil {
+			return fmt.Errorf("git checkout: %w (output: %s; retry: %s)", err, strings.TrimSpace(string(output)), strings.TrimSpace(string(retryOutput)))
+		}
+	}
+	if cleanURL := credentialFreeCloneURL(req.CloneURL); cleanURL != "" {
+		setURL := exec.CommandContext(ctx, "git", "-C", repoDir, "remote", "set-url", "origin", cleanURL)
+		if output, err := setURL.CombinedOutput(); err != nil {
+			return fmt.Errorf("sanitize git remote: %w (output: %s)", err, strings.TrimSpace(string(output)))
+		}
+	}
+	headCmd := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "HEAD")
+	headBytes, err := headCmd.Output()
+	if err != nil {
+		return fmt.Errorf("resolve seed HEAD: %w", err)
+	}
+	expectedHead := strings.TrimSpace(string(headBytes))
+	if current, err := provider.execRaw(ctx, workspaceID, "git", []string{"rev-parse", "HEAD"}, nil, nil, 10*time.Second); err == nil && current.ExitCode == 0 && strings.TrimSpace(current.Stdout) == expectedHead {
+		return nil
+	}
+
+	archivePath := filepath.Join(tempDir, "repository.tar")
+	if err := createRepositoryTar(repoDir, archivePath); err != nil {
+		return err
+	}
+	archive, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer archive.Close()
+	if err := provider.writeFileChunks(ctx, workspaceID, ".seed/repository.tar", archive); err != nil {
+		return fmt.Errorf("upload repository seed: %w", err)
+	}
+	result, err := provider.execRaw(ctx, workspaceID, "/bin/tar", []string{"-xf", ".seed/repository.tar", "-C", "/workspace"}, nil, nil, 30*time.Second)
+	if err != nil {
+		return err
+	}
+	if result.ExitCode != 0 {
+		return fmt.Errorf("extract repository seed: %s", strings.TrimSpace(result.Stdout+result.Stderr))
+	}
+	_, _ = provider.execRaw(ctx, workspaceID, "/bin/rm", []string{"-f", ".seed/repository.tar"}, nil, nil, 10*time.Second)
+	actual, err := provider.execRaw(ctx, workspaceID, "git", []string{"rev-parse", "HEAD"}, nil, nil, 10*time.Second)
+	if err != nil {
+		return err
+	}
+	if actual.ExitCode != 0 || strings.TrimSpace(actual.Stdout) != expectedHead {
+		return fmt.Errorf("seeded repository HEAD mismatch: expected %s got %s", expectedHead, strings.TrimSpace(actual.Stdout))
+	}
+	return nil
+}
+
+func credentialFreeCloneURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	parsed.User = nil
+	return parsed.String()
+}
+
+func createRepositoryTar(repoDir, archivePath string) error {
+	file, err := os.Create(archivePath)
+	if err != nil {
+		return err
+	}
+	writer := tar.NewWriter(file)
+	walkErr := filepath.Walk(repoDir, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if path == repoDir {
+			return nil
+		}
+		rel, err := filepath.Rel(repoDir, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		link := ""
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err = os.Readlink(path)
+			if err != nil {
+				return err
+			}
+		}
+		header, err := tar.FileInfoHeader(info, link)
+		if err != nil {
+			return err
+		}
+		header.Name = rel
+		if err := writer.WriteHeader(header); err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		source, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(writer, source)
+		closeErr := source.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
+	closeWriterErr := writer.Close()
+	closeFileErr := file.Close()
+	if walkErr != nil {
+		return walkErr
+	}
+	if closeWriterErr != nil {
+		return closeWriterErr
+	}
+	return closeFileErr
+}
+
+var _ Provider = (*NulangCloudProvider)(nil)
