@@ -42,8 +42,9 @@ type Config struct {
 
 // Provider adapts Codex app-server to the provider-neutral agent runtime contract.
 type Provider struct {
-	client RPCClient
-	config Config
+	client           RPCClient
+	config           Config
+	pendingApprovals approvalRequestStore
 }
 
 // NewProvider creates a Codex provider around an initialized RPC client.
@@ -60,14 +61,18 @@ func NewProvider(client RPCClient, config Config) *Provider {
 func (p *Provider) Name() string { return "codex" }
 
 func (p *Provider) Capabilities() agentruntime.CapabilitySet {
-	return agentruntime.NewCapabilitySet(
+	capabilities := []agentruntime.Capability{
 		agentruntime.CapabilityResumeThread,
 		agentruntime.CapabilityInterruptTurn,
 		agentruntime.CapabilitySteerTurn,
 		agentruntime.CapabilityModelSwitch,
 		agentruntime.CapabilityCompact,
 		agentruntime.CapabilityStructuredOutput,
-	)
+	}
+	if _, ok := p.client.(ServerRequestClient); ok {
+		capabilities = append(capabilities, agentruntime.CapabilityApprovalRequests)
+	}
+	return agentruntime.NewCapabilitySet(capabilities...)
 }
 
 // Close closes the underlying Codex connection when the provider owns it.
@@ -169,7 +174,16 @@ func (p *Provider) RunTurn(ctx context.Context, req agentruntime.RunTurnRequest)
 		params["outputSchema"] = schema
 	}
 
-	notifications, cancel := p.client.Subscribe()
+	notifications, cancelNotifications := p.client.Subscribe()
+	var requests <-chan ServerRequest
+	cancelRequests := func() {}
+	if interactive, ok := p.client.(ServerRequestClient); ok {
+		requests, cancelRequests = interactive.SubscribeRequests()
+	}
+	cancel := func() {
+		cancelNotifications()
+		cancelRequests()
+	}
 	var response turnStartResponse
 	if err := p.client.Call(ctx, "turn/start", params, &response); err != nil {
 		cancel()
@@ -181,7 +195,7 @@ func (p *Provider) RunTurn(ctx context.Context, req agentruntime.RunTurnRequest)
 	}
 
 	events := make(chan agentruntime.Event, 32)
-	go p.streamTurn(ctx, cancel, notifications, req.ThreadID, providerThreadID, response.Turn, events)
+	go p.streamTurn(ctx, cancel, notifications, requests, req.ThreadID, providerThreadID, response.Turn, events)
 	return events, nil
 }
 
@@ -248,6 +262,7 @@ func (p *Provider) streamTurn(
 	ctx context.Context,
 	cancel func(),
 	notifications <-chan Notification,
+	requests <-chan ServerRequest,
 	threadID string,
 	providerThreadID string,
 	started codexTurn,
@@ -288,6 +303,23 @@ func (p *Provider) streamTurn(
 				return
 			}
 			if terminal {
+				return
+			}
+		case request, ok := <-requests:
+			if !ok {
+				requests = nil
+				continue
+			}
+			event, matches, err := mapServerRequest(request, threadID, providerThreadID, started.ID)
+			if err != nil || !matches {
+				continue
+			}
+			if event.Item != nil {
+				p.pendingApprovals.Store(event.Item.ID, request.ID)
+			}
+			event.Sequence = sequence
+			sequence++
+			if !sendEvent(ctx, out, event) {
 				return
 			}
 		}
