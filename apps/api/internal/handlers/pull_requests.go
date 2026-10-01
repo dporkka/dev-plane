@@ -391,7 +391,13 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Capability kernel authorization. Merge is admin-only by default.
+	mergeResource := fmt.Sprintf("%s/%s#%d", repoOwner, repoName, pr.Number)
+	requestedRevision := strings.TrimSpace(req.SHA)
+
+	// Preserve the existing deny/approval boundary before making any GitHub
+	// request. If the caller supplied a head SHA, this first decision is already
+	// revision-bound. Otherwise we bind a second exact decision after reading
+	// the remote PR head.
 	result, err := h.kernel().Evaluate(ctx, capability.Request{
 		ActorType: "human",
 		User: &models.User{
@@ -400,7 +406,8 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 			Role:           user.Role,
 		},
 		Operation: capability.OpMergePR,
-		Resource:  fmt.Sprintf("%s/%s#%d", repoOwner, repoName, pr.Number),
+		Resource:  mergeResource,
+		Revision:  requestedRevision,
 		Details: map[string]any{
 			"organization_id": user.OrgID,
 			"pull_request_id": id,
@@ -432,17 +439,89 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	if gh == nil {
 		gh = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
 	}
-	mergeResult, err := gh.MergePR(ctx, &oauth2.Token{AccessToken: token}, repoOwner, repoName, pr.Number, gateway.MergePRRequest{
-		Method: req.Method,
-		SHA:    req.SHA,
-	})
+	oauthToken := &oauth2.Token{AccessToken: token}
+	remote, err := gh.GetPR(ctx, oauthToken, repoOwner, repoName, pr.Number)
 	if err != nil {
-		h.logger.Error("failed to merge pull request", "pr_id", id, "error", err)
-		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
+		h.logger.Error("failed to reconcile pull request before merge", "pr_id", id, "error", err)
+		respond.Error(w, http.StatusBadGateway, fmt.Errorf("reconcile pull request: %w", err))
 		return
 	}
-	if !mergeResult.Merged {
-		respond.Error(w, http.StatusConflict, errors.New(mergeResult.Message))
+	if remote == nil {
+		respond.Error(w, http.StatusBadGateway, errors.New("github pull request reconciliation returned no result"))
+		return
+	}
+
+	revision := requestedRevision
+	if revision == "" {
+		revision = strings.TrimSpace(remote.Head.SHA)
+	}
+	if revision == "" {
+		respond.Error(w, http.StatusConflict, errors.New("github pull request head sha is empty"))
+		return
+	}
+	if strings.TrimSpace(remote.Head.SHA) != revision {
+		respond.Error(w, http.StatusConflict, fmt.Errorf(
+			"pull request head changed: authorized %s, current %s",
+			revision,
+			strings.TrimSpace(remote.Head.SHA),
+		))
+		return
+	}
+
+	// When the request omitted a SHA, the first policy decision was necessarily
+	// coarse. Re-run it with the exact remote head so any approval/audit record
+	// is bound to the immutable revision that may be merged.
+	if result.RequestedGrant == nil || result.RequestedGrant.Revision != revision {
+		result, err = h.kernel().Evaluate(ctx, capability.Request{
+			ActorType: "human",
+			User: &models.User{
+				ID:             user.UserID,
+				OrganizationID: user.OrgID,
+				Role:           user.Role,
+			},
+			Operation: capability.OpMergePR,
+			Resource:  mergeResource,
+			Revision:  revision,
+			Details: map[string]any{
+				"organization_id": user.OrgID,
+				"pull_request_id": id,
+			},
+		})
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("authorize revision-bound merge: %w", err))
+			return
+		}
+		if result.Effect == policies.EffectDeny {
+			respond.Error(w, http.StatusForbidden, errors.New(result.Reason))
+			return
+		}
+		if result.RequiredApproval {
+			respond.Error(w, http.StatusLocked, errors.New(result.Reason))
+			return
+		}
+	}
+
+	effectRunID := taskID
+	if runID.Valid && strings.TrimSpace(runID.String) != "" {
+		effectRunID = strings.TrimSpace(runID.String)
+	}
+	mergeSHA, err := h.executeMergeEffect(ctx, gh, oauthToken, mergeEffectInput{
+		RunID:         effectRunID,
+		TaskID:        taskID,
+		PullRequestID: id,
+		Owner:         repoOwner,
+		RepoName:      repoName,
+		Number:        pr.Number,
+		Method:        req.Method,
+		Revision:      revision,
+	}, remote)
+	if err != nil {
+		h.logger.Error("failed to execute or recover pull request merge", "pr_id", id, "error", err)
+		if isMergeEffectConflict(err) {
+			respond.Error(w, http.StatusConflict, err)
+			return
+		}
+		respond.Error(w, http.StatusBadGateway, fmt.Errorf("merge pull request: %w", err))
 		return
 	}
 
@@ -468,7 +547,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 			"pr_id":      id,
 			"task_id":    taskID,
 			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
+			"sha":        mergeSHA,
 			"timestamp":  now.Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
