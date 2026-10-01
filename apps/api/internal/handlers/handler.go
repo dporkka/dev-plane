@@ -53,7 +53,19 @@ type githubGateway interface {
 
 // deployGateway is the subset of a deployment provider used by handlers.
 type deployGateway interface {
-	CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*gateway.Deployment, error)
+	ResolveCommitSHA(ctx context.Context, token *oauth2.Token, owner, name, ref string) (string, error)
+	ListDeployments(
+		ctx context.Context,
+		token *oauth2.Token,
+		owner, name string,
+		opts gateway.DeploymentListOptions,
+	) ([]gateway.Deployment, error)
+	CreateDeploymentWithPayload(
+		ctx context.Context,
+		token *oauth2.Token,
+		owner, name, environment, ref string,
+		payload map[string]any,
+	) (*gateway.Deployment, error)
 }
 
 // NewHandler creates a new base handler with the given dependencies.
