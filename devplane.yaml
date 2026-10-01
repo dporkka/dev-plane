@@ -1,0 +1,68 @@
+version: 1
+
+commands:
+  doctor: go version && node --version && docker --version
+  dev: make dev
+  logs: make docker-logs
+
+verification:
+  fast:
+    command: bash scripts/verify.sh static
+    timeout_seconds: 600
+  changed:
+    command: bash scripts/verify.sh standard
+    timeout_seconds: 1800
+  full:
+    command: bash scripts/verify.sh race
+    timeout_seconds: 2400
+  postgres:
+    command: cd packages/db && test -n "$POSTGRES_TEST_DATABASE_URL" && go test ./... -run TestRunMigrationsPostgres -v
+    timeout_seconds: 600
+  integration:
+    command: bash scripts/verify.sh integration
+    timeout_seconds: 3000
+  live:
+    command: bash scripts/verify.sh live
+    timeout_seconds: 3600
+
+work:
+  isolation: worktree
+  max_parallel_cost: 4
+  require_clean_handoff: true
+
+review:
+  independent: true
+  exact_head: true
+
+risk:
+  - paths:
+      - packages/db/migrations/**
+    level: high
+    requires:
+      - full
+      - postgres
+      - independent_review
+      - human_approval
+
+  - paths:
+      - packages/repoprotocol/**
+      - packages/verifier/**
+      - packages/readiness/**
+      - packages/reviewer/**
+      - packages/policies/**
+      - packages/securityscan/**
+      - apps/api/internal/auth/**
+    level: high
+    requires:
+      - full
+      - independent_review
+      - human_approval
+
+  - paths:
+      - .github/workflows/**
+      - docker-compose.yml
+    level: high
+    requires:
+      - full
+      - independent_review
+      - human_approval
