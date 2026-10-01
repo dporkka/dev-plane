@@ -17,11 +17,39 @@ import (
 )
 
 type fakeDeployGateway struct {
-	deployment *gateway.Deployment
-	err        error
+	deployment   *gateway.Deployment
+	err          error
+	resolvedSHA  string
+	resolveErr   error
+	deployments  []gateway.Deployment
+	listErr      error
+	createCalls  int
 }
 
-func (g *fakeDeployGateway) CreateDeployment(ctx context.Context, token *oauth2.Token, owner, name, environment, ref string) (*gateway.Deployment, error) {
+func (g *fakeDeployGateway) ResolveCommitSHA(ctx context.Context, token *oauth2.Token, owner, name, ref string) (string, error) {
+	if g.resolveErr != nil {
+		return "", g.resolveErr
+	}
+	if g.resolvedSHA != "" {
+		return g.resolvedSHA, nil
+	}
+	return "commit-abc", nil
+}
+
+func (g *fakeDeployGateway) ListDeployments(ctx context.Context, token *oauth2.Token, owner, name string, opts gateway.DeploymentListOptions) ([]gateway.Deployment, error) {
+	if g.listErr != nil {
+		return nil, g.listErr
+	}
+	return append([]gateway.Deployment(nil), g.deployments...), nil
+}
+
+func (g *fakeDeployGateway) CreateDeploymentWithPayload(
+	ctx context.Context,
+	token *oauth2.Token,
+	owner, name, environment, ref string,
+	payload map[string]any,
+) (*gateway.Deployment, error) {
+	g.createCalls++
 	return g.deployment, g.err
 }
 
