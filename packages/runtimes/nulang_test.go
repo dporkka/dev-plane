@@ -250,4 +250,33 @@ func TestNulangCloudProviderCheckpointRestoreAndDestroyMapWorkspaceAPI(t *testin
 	}
 }
 
+func TestNulangCloudProviderGetUsageMapsWorkspaceUsageEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/workspaces/ws-1/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(RuntimeUsage{
+			CPUMilliseconds:    1500,
+			MemoryMBSeconds:    8192,
+			StorageByteSeconds: 4096,
+			EgressBytes:        0,
+			SnapshotBytes:      2048,
+			RuntimeCostUSD:     0,
+		})
+	}))
+	defer server.Close()
+
+	provider := NewNulangCloudProvider(server.URL, "internal-secret").WithHTTPClient(server.Client())
+	usage, err := provider.GetUsage(context.Background(), "ws-1")
+	if err != nil {
+		t.Fatalf("GetUsage() error = %v", err)
+	}
+	if usage.CPUMilliseconds != 1500 || usage.MemoryMBSeconds != 8192 || usage.SnapshotBytes != 2048 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
 var _ Provider = (*NulangCloudProvider)(nil)
+var _ UsageProvider = (*NulangCloudProvider)(nil)
