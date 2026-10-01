@@ -40,7 +40,7 @@ func TestAuthorizeToolBindsMutationApprovalToCanonicalWorkspaceTreeRevision(t *t
 	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
 	input := json.RawMessage(`{"path":"src/main.go","content":"package main"}`)
 
-	err := runner.authorizeTool(context.Background(), run, nil, workspace, "write_file", input)
+	err := runner.authorizeTool(context.Background(), run, nil, workspace, "", "write_file", input)
 	var decision *capabilityDecisionError
 	if !errors.As(err, &decision) || !decision.requiresApproval() {
 		t.Fatalf("authorizeTool() error = %v, want approval-required decision", err)
@@ -84,7 +84,7 @@ func TestAuthorizeToolRejectsApprovedGrantAfterWorkspaceRevisionDrifts(t *testin
 	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
 	input := json.RawMessage(`{"path":"src/main.go","content":"package main"}`)
 
-	err := runner.authorizeTool(context.Background(), run, nil, workspace, "write_file", input)
+	err := runner.authorizeTool(context.Background(), run, nil, workspace, "", "write_file", input)
 	var firstDecision *capabilityDecisionError
 	if !errors.As(err, &firstDecision) || firstDecision.result.RequestedGrant == nil {
 		t.Fatalf("first authorizeTool() error = %v, want revision-bound approval", err)
@@ -95,7 +95,7 @@ func TestAuthorizeToolRejectsApprovedGrantAfterWorkspaceRevisionDrifts(t *testin
 	provider.commands = nil
 	provider.commandResult = &runtimes.CommandResult{Stdout: "tree-after\n", ExitCode: 0}
 
-	err = runner.authorizeTool(context.Background(), run, nil, workspace, "write_file", input)
+	err = runner.authorizeTool(context.Background(), run, nil, workspace, "", "write_file", input)
 	var driftDecision *capabilityDecisionError
 	if !errors.As(err, &driftDecision) || !driftDecision.requiresApproval() {
 		t.Fatalf("authorizeTool() after drift error = %v, want new approval-required decision", err)
