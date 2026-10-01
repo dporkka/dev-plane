@@ -482,7 +482,6 @@ func TestHandleTaskApprovedCleansUpWorkspaceWhenBaseRevisionCannotBeResolved(t *
 	}
 }
 
-
 func TestInitialRunIdentityStableForTask(t *testing.T) {
 	run1, workspace1 := initialRunIdentity("task-1")
 	run2, workspace2 := initialRunIdentity("task-1")
