@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - ci/runner-probe-20261001
+  pull_request:
+    branches:
+      - main
 
 jobs:
   probe:
