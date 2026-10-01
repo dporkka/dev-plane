@@ -295,7 +295,6 @@ func openMergeEffectTestDB(t *testing.T) *dbpkg.DB {
 	return database
 }
 
-
 func TestMergePullRequestRecoversRemoteMergedEffectWithoutCallingMerge(t *testing.T) {
 	database := openMergeHandlerTestDB(t)
 	allowAll := policies.NewEngine([]policies.Policy{
