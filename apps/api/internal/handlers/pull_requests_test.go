@@ -24,9 +24,25 @@ import (
 )
 
 type fakeMergeGateway struct {
-	result *gateway.MergePRResult
-	err    error
-	calls  []gateway.MergePRRequest
+	result   *gateway.MergePRResult
+	err      error
+	calls    []gateway.MergePRRequest
+	remote   *gateway.GitHubPR
+	getErr   error
+	getCalls int
+}
+
+func (f *fakeMergeGateway) GetPR(ctx context.Context, token *oauth2.Token, owner, name string, number int) (*gateway.GitHubPR, error) {
+	f.getCalls++
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	if f.remote != nil {
+		return f.remote, nil
+	}
+	pr := &gateway.GitHubPR{Number: number, State: "open"}
+	pr.Head.SHA = "head-sha"
+	return pr, nil
 }
 
 func (f *fakeMergeGateway) MergePR(ctx context.Context, token *oauth2.Token, owner, name string, number int, req gateway.MergePRRequest) (*gateway.MergePRResult, error) {
