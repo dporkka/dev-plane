@@ -158,11 +158,13 @@ func runVerifyWith(ctx context.Context, args []string, out io.Writer, runtimeFac
 	if cleanup == nil {
 		cleanup = func() error { return nil }
 	}
-	defer cleanup()
 
 	store := &cliEvidenceStore{path: opts.EvidenceOut}
 	runner := verifier.NewRunner(runtime, store)
 	runResult, runErr := runner.Run(ctx, buildVerifyRunRequest(opts))
+	if cleanupErr := cleanup(); cleanupErr != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("runtime cleanup: %w", cleanupErr))
+	}
 
 	result := verifyOutput{
 		Status:       "passed",
