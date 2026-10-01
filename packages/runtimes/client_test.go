@@ -420,7 +420,6 @@ func TestRemoteProviderAuthToken(t *testing.T) {
 	}
 }
 
-
 func TestRemoteProviderCircuitBreakerBlocksRequestsUntilRecovery(t *testing.T) {
 	now := time.Unix(100, 0)
 	requests := 0
