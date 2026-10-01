@@ -43,11 +43,14 @@ func (f *fakeClient) Prompt(_ context.Context, message string) (string, error) {
 	f.promptText = message
 	return f.promptID, nil
 }
-func (f *fakeClient) Steer(_ context.Context, message string) error { f.steerText = message; return nil }
-func (f *fakeClient) Abort(context.Context) error                    { f.aborted = true; return nil }
-func (f *fakeClient) Compact(context.Context) error                  { f.compacted = true; return nil }
-func (f *fakeClient) Subscribe() (<-chan Frame, func())              { return f.frames, func() {} }
-func (f *fakeClient) Close() error                                  { return nil }
+func (f *fakeClient) Steer(_ context.Context, message string) error {
+	f.steerText = message
+	return nil
+}
+func (f *fakeClient) Abort(context.Context) error       { f.aborted = true; return nil }
+func (f *fakeClient) Compact(context.Context) error     { f.compacted = true; return nil }
+func (f *fakeClient) Subscribe() (<-chan Frame, func()) { return f.frames, func() {} }
+func (f *fakeClient) Close() error                      { return nil }
 
 func TestProviderCapabilities(t *testing.T) {
 	provider, err := NewProvider(Config{SessionRoot: t.TempDir(), NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
@@ -122,8 +125,10 @@ func TestCreateThreadBindsDedicatedSessionAndModel(t *testing.T) {
 }
 
 func TestResumeThreadReopensProviderSessionDirectory(t *testing.T) {
+	root := t.TempDir()
+	sessionDir := filepath.Join(root, "thread-1")
 	client := newFakeClient()
-	provider, err := NewProvider(Config{SessionRoot: t.TempDir(), NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
+	provider, err := NewProvider(Config{SessionRoot: root, NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
 		return client, nil
 	}})
 	if err != nil {
@@ -132,17 +137,35 @@ func TestResumeThreadReopensProviderSessionDirectory(t *testing.T) {
 
 	resumed, err := provider.ResumeThread(context.Background(), agentruntime.ResumeThreadRequest{
 		ThreadID:         "durable-thread-1",
-		ProviderThreadID: "/srv/dev-plane/omp/thread-1",
+		ProviderThreadID: sessionDir,
 		WorkspaceID:      "ws-1",
 	})
 	if err != nil {
 		t.Fatalf("ResumeThread() error = %v", err)
 	}
-	if client.openDir != "/srv/dev-plane/omp/thread-1" {
-		t.Fatalf("open session dir = %q", client.openDir)
+	if client.openDir != sessionDir {
+		t.Fatalf("open session dir = %q, want %q", client.openDir, sessionDir)
 	}
-	if resumed.ID != "durable-thread-1" || resumed.ProviderThreadID != "/srv/dev-plane/omp/thread-1" {
+	if resumed.ID != "durable-thread-1" || resumed.ProviderThreadID != sessionDir {
 		t.Fatalf("resumed thread = %#v", resumed)
+	}
+}
+
+func TestResumeThreadRejectsSessionDirectoryOutsideRoot(t *testing.T) {
+	provider, err := NewProvider(Config{SessionRoot: t.TempDir(), NewClient: func(context.Context, StdioConfig) (RPCClient, error) {
+		return newFakeClient(), nil
+	}})
+	if err != nil {
+		t.Fatalf("NewProvider() error = %v", err)
+	}
+
+	_, err = provider.ResumeThread(context.Background(), agentruntime.ResumeThreadRequest{
+		ThreadID:         "durable-thread-1",
+		ProviderThreadID: filepath.Join(t.TempDir(), "outside"),
+		WorkspaceID:      "ws-1",
+	})
+	if err == nil {
+		t.Fatal("ResumeThread() error = nil, want root escape rejection")
 	}
 }
 
