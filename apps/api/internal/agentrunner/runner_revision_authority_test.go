@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -159,4 +162,53 @@ func askForFileWrites() *policies.Engine {
 	return policies.NewEngine([]policies.Policy{
 		{Name: "ask_file_writes", ResourceType: "file", Action: "write", Effect: policies.EffectAsk},
 	})
+}
+
+
+func TestLocalSubjectRevisionIncludesWorkingTreeWithoutMutatingGitIndex(t *testing.T) {
+	repo := t.TempDir()
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %s: %v: %s", strings.Join(args, " "), err, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+
+	runGit("init")
+	runGit("config", "user.email", "dev-plane@example.invalid")
+	runGit("config", "user.name", "Dev Plane")
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write tracked file: %v", err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-m", "base")
+	headTree := runGit("rev-parse", "HEAD^{tree}")
+
+	if err := os.WriteFile(filepath.Join(repo, "tracked.txt"), []byte("working\n"), 0o644); err != nil {
+		t.Fatalf("modify tracked file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatalf("write untracked file: %v", err)
+	}
+	beforeStatus := runGit("status", "--porcelain")
+
+	revision, err := localSubjectRevision(context.Background(), repo)
+	if err != nil {
+		t.Fatalf("localSubjectRevision() error = %v", err)
+	}
+	if !strings.HasPrefix(revision, "git-tree:") {
+		t.Fatalf("revision = %q, want git-tree prefix", revision)
+	}
+	if revision == "git-tree:"+headTree {
+		t.Fatalf("revision = committed tree %q, want working-tree content included", revision)
+	}
+
+	afterStatus := runGit("status", "--porcelain")
+	if afterStatus != beforeStatus {
+		t.Fatalf("git index/worktree status changed:\nbefore=%q\nafter=%q", beforeStatus, afterStatus)
+	}
 }
