@@ -226,11 +226,25 @@ func (p *Provider) RunTurn(ctx context.Context, req agentruntime.RunTurnRequest)
 	}
 
 	frames, cancel := client.Subscribe()
-	promptID, err := client.Prompt(ctx, message)
-	if err != nil {
-		cancel()
-		p.clearActive(handle)
-		return nil, err
+	promptID := ""
+	agentInvoked := true
+	if starter, ok := client.(PromptStarter); ok {
+		start, err := starter.StartPrompt(ctx, message)
+		if err != nil {
+			cancel()
+			p.clearActive(handle)
+			return nil, err
+		}
+		promptID = start.ID
+		agentInvoked = start.AgentInvoked
+	} else {
+		var err error
+		promptID, err = client.Prompt(ctx, message)
+		if err != nil {
+			cancel()
+			p.clearActive(handle)
+			return nil, err
+		}
 	}
 	if strings.TrimSpace(promptID) == "" {
 		cancel()
@@ -239,7 +253,7 @@ func (p *Provider) RunTurn(ctx context.Context, req agentruntime.RunTurnRequest)
 	}
 
 	events := make(chan agentruntime.Event, 32)
-	go p.streamTurn(ctx, handle, cancel, frames, req.ThreadID, promptID, events)
+	go p.streamTurn(ctx, handle, cancel, frames, req.ThreadID, promptID, agentInvoked, events)
 	return events, nil
 }
 
@@ -283,6 +297,7 @@ func (p *Provider) streamTurn(
 	frames <-chan Frame,
 	threadID string,
 	turnID string,
+	agentInvoked bool,
 	events chan<- agentruntime.Event,
 ) {
 	defer cancel()
@@ -303,6 +318,22 @@ func (p *Provider) streamTurn(
 	}
 	sequence++
 
+	// Builtin slash commands may complete entirely inside the RPC command
+	// handler. In that case OMP deliberately emits no later prompt_result.
+	if !agentInvoked {
+		sendEvent(ctx, events, agentruntime.Event{
+			Sequence:       sequence,
+			Type:           agentruntime.EventTypeTurnCompleted,
+			ThreadID:       threadID,
+			TurnID:         turnID,
+			ProviderTurnID: turnID,
+			Status:         agentruntime.TurnStatusCompleted,
+			OccurredAt:     time.Now().UTC(),
+		})
+		return
+	}
+
+	var pendingTerminal *Frame
 	for {
 		select {
 		case <-ctx.Done():
@@ -311,6 +342,23 @@ func (p *Provider) streamTurn(
 			if !ok {
 				return
 			}
+
+			// A prompt may yield while an async job can still inject another
+			// follow-up. Do not make the durable turn terminal until OMP reports
+			// that the whole session is quiescent.
+			if frame.Type == "prompt_result" && frame.ID == turnID && !frame.SessionSettled {
+				copy := frame
+				pendingTerminal = &copy
+				continue
+			}
+			if frame.Type == "session_settled" && pendingTerminal != nil {
+				event, mapped, _ := mapFrame(*pendingTerminal, threadID, turnID, sequence)
+				if mapped {
+					sendEvent(ctx, events, event)
+				}
+				return
+			}
+
 			event, mapped, terminal := mapFrame(frame, threadID, turnID, sequence)
 			if !mapped {
 				continue
@@ -581,9 +629,9 @@ func firstNonEmpty(values ...string) string {
 }
 
 var (
-	_ agentruntime.Provider          = (*Provider)(nil)
-	_ agentruntime.ResumeProvider    = (*Provider)(nil)
-	_ agentruntime.InterruptProvider = (*Provider)(nil)
-	_ agentruntime.SteeringProvider  = (*Provider)(nil)
+	_ agentruntime.Provider           = (*Provider)(nil)
+	_ agentruntime.ResumeProvider     = (*Provider)(nil)
+	_ agentruntime.InterruptProvider  = (*Provider)(nil)
+	_ agentruntime.SteeringProvider   = (*Provider)(nil)
 	_ agentruntime.CompactionProvider = (*Provider)(nil)
 )
