@@ -20,20 +20,20 @@ import (
 )
 
 type verifyOptions struct {
-	Provider      string
-	SourcePath    string
-	Repository    string
-	CandidateSHA  string
-	BaseSHA       string
-	CloneURL      string
-	Gates         []string
-	ChangedPaths  []string
-	EvidenceOut   string
-	RuntimeURL    string
-	CPUMillis     int
-	MemoryMB      int
-	DiskMB        int
-	WallTimeSecs  int
+	Provider     string
+	SourcePath   string
+	Repository   string
+	CandidateSHA string
+	BaseSHA      string
+	CloneURL     string
+	Gates        []string
+	ChangedPaths []string
+	EvidenceOut  string
+	RuntimeURL   string
+	CPUMillis    int
+	MemoryMB     int
+	DiskMB       int
+	WallTimeSecs int
 }
 
 type verifyOutput struct {
@@ -269,8 +269,8 @@ func buildVerifyRunRequest(opts verifyOptions) verifier.RunRequest {
 			},
 			Capabilities: runtimes.RuntimeCapabilities{Network: false},
 			Metadata: map[string]string{
-				"dev_plane_run_id":   workspaceID,
-				"verification_sha":   opts.CandidateSHA,
+				"dev_plane_run_id":    workspaceID,
+				"verification_sha":    opts.CandidateSHA,
 				"verification_source": "ci",
 			},
 			IdempotencyKey: "verification:" + identity,
