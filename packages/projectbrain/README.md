@@ -63,6 +63,12 @@ ADRs / docs ────┘                         durable AgentRun metadata
 
 Embeddings may help a source retrieve candidate facts, but they are not treated as authoritative project state. Source control, language tooling, schemas, executed verification, and runtime evidence should remain the truth-bearing inputs.
 
+## Activation boundary
+
+This package intentionally does not make the API process spawn `npx gitnexus` or depend on a local developer MCP configuration. Production activation should inject a trusted `GitNexusClient` at the service composition boundary, then configure the runner with `NewCompiler(NewGitNexusSource(client, ...))`.
+
+Keeping transport outside the compiler avoids making Node/npm availability, local MCP config, or model-visible credentials part of the Dev Plane runtime contract.
+
 ## Next integration
 
 1. Implement the production GitNexus `GitNexusClient` bridge at the composition boundary and configure the runner with `NewCompiler(NewGitNexusSource(...))`.
