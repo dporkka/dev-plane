@@ -167,7 +167,7 @@ func TestPrepareProjectContextPersistsExactPackageBeforeUse(t *testing.T) {
 		Digest:  "context-1",
 		Sources: []string{"gitnexus"},
 	}}
-	runner := &Runner{db: db, contextProvider: provider, runtimes: map[string]runtimes.Provider{}}
+	runner := &Runner{db: db, contextProvider: provider}
 	run := &models.AgentRun{ID: "run-1", Metadata: json.RawMessage(`{"run_manifest":{"digest":"manifest-1"}}`)}
 	task := &models.Task{RepositoryID: "repo-1", Title: "fix invoices"}
 	workspace := &models.Workspace{ID: "ws-1", RepositoryID: "repo-1", RuntimeProvider: "local"}
