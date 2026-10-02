@@ -38,6 +38,28 @@ func TestGitNexusSourceRejectsStaleIndex(t *testing.T) {
 	}
 }
 
+func TestCompilerDoesNotUseStaleGitNexusFacts(t *testing.T) {
+	client := &fakeGitNexusClient{
+		snapshot: GitNexusSnapshot{LastCommit: "def456"},
+		result: GitNexusResult{Nodes: []GitNexusNode{{Name: "wrongRevision", FilePath: "stale.go", StartLine: 1}}},
+	}
+	compiler := NewCompiler(NewGitNexusSource(client, GitNexusSourceOptions{}))
+	pkg, err := compiler.Compile(context.Background(), CompileRequest{
+		Repository: "repo-1",
+		Revision:   "git-commit:abc123",
+		Objective:  "fix invoice save",
+	})
+	if err != nil {
+		t.Fatalf("Compile() error = %v", err)
+	}
+	if len(pkg.Facts) != 0 {
+		t.Fatalf("Compile().Facts = %#v, want no stale facts", pkg.Facts)
+	}
+	if len(pkg.Warnings) != 1 || pkg.Warnings[0].Source != "gitnexus" || !strings.Contains(pkg.Warnings[0].Error, "stale") {
+		t.Fatalf("Compile().Warnings = %#v, want explicit stale GitNexus warning", pkg.Warnings)
+	}
+}
+
 func TestGitNexusSourceRequiresCommitRevision(t *testing.T) {
 	client := &fakeGitNexusClient{}
 	source := NewGitNexusSource(client, GitNexusSourceOptions{})
