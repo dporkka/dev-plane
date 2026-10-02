@@ -95,6 +95,13 @@ func (i *StubIndexer) Index(ctx context.Context, repoPath string) error {
 			return nil
 		}
 
+		// Never follow source-file symlinks. A repository can legitimately track
+		// a symlink whose target is outside the workspace; indexing its target
+		// would turn repository inspection into host-file access.
+		if info.Mode()&os.ModeSymlink != 0 {
+			return nil
+		}
+
 		// Skip binary and large files
 		if info.Size() > 1024*1024 { // 1MB
 			return nil
@@ -196,6 +203,13 @@ func (i *StubIndexer) GetSymbols(ctx context.Context, filePath string) ([]Symbol
 	fullPath := filePath
 	if !filepath.IsAbs(fullPath) {
 		fullPath = filepath.Join(i.baseDir, filePath)
+	}
+	info, err := os.Lstat(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("inspect symbols path %q: %w", filePath, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("refuse symbols from symlink %q", filePath)
 	}
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
