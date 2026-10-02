@@ -19,6 +19,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/tools"
 	"github.com/ai-dev-control-plane/events"
 	"github.com/ai-dev-control-plane/policies"
+	"github.com/ai-dev-control-plane/projectbrain"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
@@ -38,10 +39,12 @@ type ExternalRunExecutor interface {
 
 // Executor runs queued agent_runs by ID.
 type Executor struct {
-	db       *sql.DB
-	runner   *agentrunner.Runner
-	legacy   legacyRunBackend
-	external ExternalRunExecutor
+	db                  *sql.DB
+	runner              *agentrunner.Runner
+	legacy              legacyRunBackend
+	external            ExternalRunExecutor
+	projectBrainEnabled bool
+	gitNexusClient      projectbrain.GitNexusClient
 }
 
 // New creates a production runner with the shared policy, budget, audit,
