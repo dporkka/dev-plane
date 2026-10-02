@@ -17,7 +17,7 @@ RUN cd packages/sdk/typescript && npm ci
 COPY packages/sdk/typescript/ ./packages/sdk/typescript/
 RUN cd packages/sdk/typescript && npm run build
 
-COPY apps/web/package.json apps/web/package-lock.json ./apps/web/
+COPY apps/web/package.json apps/web/package-lock.json apps/web/.npmrc ./apps/web/
 RUN cd apps/web && npm ci
 COPY apps/web/ ./apps/web/
 RUN mkdir -p apps/api/internal/webui/dist && \
