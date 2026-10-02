@@ -69,6 +69,10 @@ This package intentionally does not make the API process spawn `npx gitnexus` or
 
 Keeping transport outside the compiler avoids making Node/npm availability, local MCP config, or model-visible credentials part of the Dev Plane runtime contract.
 
+## Verification boundary
+
+The Project Brain package and GitNexus adapter were developed test-first and verified in the available isolated Go environment. The full repository requires the checked-in Go toolchain and authoritative CI/runtime lane. If those lanes fail before executing steps, that is not treated as evidence for or against this code.
+
 ## Next integration
 
 1. Implement the production GitNexus `GitNexusClient` bridge at the composition boundary and configure the runner with `NewCompiler(NewGitNexusSource(...))`.
