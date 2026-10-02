@@ -104,7 +104,7 @@ The complete context package and digest are persisted on `agent_runs.metadata`, 
 
 ## Verification boundary
 
-The original Project Brain package and GitNexus adapter were developed test-first and verified in the available isolated Go environment. Later workspace-source and rollout changes are also test-first, but full repository verification still requires the checked-in Go toolchain and authoritative CI/runtime lane. If those lanes fail before executing steps, that is not treated as evidence for or against this code.
+The original Project Brain package and GitNexus adapter were developed test-first and verified in the available isolated Go environment. The workspace-source, rollout, and filesystem-confinement additions are also covered by tests written before their corresponding implementation changes, but those newest tests have not executed in the repository's authoritative lane because GitHub Actions is currently failing before runner assignment. An admission failure with zero executed steps is not treated as evidence for or against the code.
 
 ## Next integration
 
