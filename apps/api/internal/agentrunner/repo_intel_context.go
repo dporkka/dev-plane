@@ -93,7 +93,10 @@ func (s *RepoIntelContextSource) Facts(ctx context.Context, query projectbrain.Q
 	}
 
 	for _, changedPath := range query.ChangedPaths {
-		changedPath = filepath.ToSlash(strings.TrimSpace(changedPath))
+		changedPath, err := safeRepoIntelChangedPath(s.workspacePath, changedPath)
+		if err != nil {
+			return nil, err
+		}
 		if changedPath == "" {
 			continue
 		}
@@ -124,6 +127,47 @@ func (s *RepoIntelContextSource) Facts(ctx context.Context, query projectbrain.Q
 	}
 
 	return facts, nil
+}
+
+func safeRepoIntelChangedPath(workspacePath, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	clean := filepath.Clean(filepath.FromSlash(value))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("repo-intel changed path escapes workspace: %q", value)
+	}
+
+	root, err := filepath.Abs(workspacePath)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo-intel workspace: %w", err)
+	}
+	full := filepath.Join(root, clean)
+	info, err := os.Lstat(full)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return filepath.ToSlash(clean), nil
+		}
+		return "", fmt.Errorf("inspect repo-intel changed path %q: %w", value, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return "", fmt.Errorf("repo-intel changed path is a symlink: %q", value)
+	}
+
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo-intel workspace symlinks: %w", err)
+	}
+	resolvedPath, err := filepath.EvalSymlinks(full)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo-intel changed path %q: %w", value, err)
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("repo-intel changed path escapes workspace: %q", value)
+	}
+	return filepath.ToSlash(clean), nil
 }
 
 func verifyRepoIntelRevision(ctx context.Context, workspacePath, revision string) error {
