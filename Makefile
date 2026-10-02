@@ -82,6 +82,7 @@ dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 	done
 	@mkdir -p $(DATA_DIR)
 	@$(MAKE) migrate
+	@$(MAKE) build-web
 	@echo "$(GREEN)All dependencies ready. Starting applications...$(RESET)"
 	@trap 'echo "$(BLUE)Shutting down dev servers...$(RESET)"; kill %1 %2 %3 %4 2>/dev/null; wait' EXIT INT TERM; \
 		$(MAKE) dev-web & \
@@ -90,11 +91,12 @@ dev: ## Start all services (docker-up, migrate, then web/api/worker in parallel)
 		$(MAKE) dev-runner & \
 		wait
 
-dev-web: ## Start Next.js dev server
-	@echo "$(BLUE)[web]$(RESET) Starting Next.js dev server on port $(WEB_PORT)..."
-	cd apps/web && PORT=$(WEB_PORT) npm run dev
+dev-web: ## Start Vite dev server
+	@echo "$(BLUE)[web]$(RESET) Starting Vite dev server on port $(WEB_PORT)..."
+	cd apps/web && npm run dev -- --port $(WEB_PORT)
 
 dev-api: ## Start Go API server (with hot reload via Air if available)
+	@if [ ! -f apps/api/internal/webui/dist/web/index.html ]; then $(MAKE) build-web; fi
 	@echo "$(BLUE)[api]$(RESET) Starting Go API server on port $(PORT)..."
 ifeq ($(shell which air 2>/dev/null),)
 	cd apps/api && go run cmd/api/main.go
@@ -223,7 +225,7 @@ integration-test: ## Run credential-dependent integration tests (skip if no cred
 	cd packages/gateway && go test -tags=integration ./... -run Integration -timeout 60s
 	cd apps/api && go test -tags=integration ./internal/modelrouter/... -run Integration -timeout 60s
 
-live-e2e: ## Run live end-to-end gates (requires model provider key, GitHub token, NATS, Docker)
+live-e2e: ## Run live end-to-end integration gates (requires model provider key, GitHub token, NATS, Docker)
 	@echo "$(GREEN)Running live end-to-end integration gates...$(RESET)"
 	cd apps/worker && RUN_LIVE_E2E=1 go test ./internal/integration/... -v -timeout 20m
 
@@ -298,8 +300,8 @@ lint-fix: ## Run linters with auto-fix
 
 build: build-api build-cli build-worker build-runner build-sdk build-web ## Build all binaries, SDK, and frontend
 
-build-api: ## Build API binary --> bin/api
-	@echo "$(BLUE)[build]$(RESET) Building API..."
+build-api: build-web ## Build unified API + embedded Vite UI --> bin/api
+	@echo "$(BLUE)[build]$(RESET) Building unified API..."
 	@mkdir -p $(BIN_DIR)
 	cd apps/api && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/api cmd/api/main.go
 	@echo "$(GREEN)API binary: $(BIN_DIR)/api$(RESET)"
@@ -322,10 +324,10 @@ build-runner: ## Build runner binary --> bin/runner
 	cd apps/runner && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/runner cmd/runner/main.go
 	@echo "$(GREEN)Runner binary: $(BIN_DIR)/runner$(RESET)"
 
-build-web: build-sdk ## Build Next.js for production
-	@echo "$(BLUE)[build]$(RESET) Building Next.js..."
-	cd apps/web && npm run build
-	@echo "$(GREEN)Next.js build complete.$(RESET)"
+build-web: build-sdk ## Build Vite frontend for embedding
+	@echo "$(BLUE)[build]$(RESET) Building Vite frontend..."
+	cd apps/web && npm ci && npm run build
+	@echo "$(GREEN)Vite build complete.$(RESET)"
 
 build-sdk: ## Install deps and build TypeScript SDK
 	@echo "$(BLUE)[build]$(RESET) Building TypeScript SDK..."
@@ -334,10 +336,10 @@ build-sdk: ## Install deps and build TypeScript SDK
 
 # --- Clean targets -----------------------------------------------------------
 
-clean: ## Remove bin/ and .next/ build artifacts
+clean: ## Remove binaries and generated frontend artifacts
 	@echo "$(BLUE)[clean]$(RESET) Removing build artifacts..."
 	@rm -rf $(BIN_DIR)/*
-	@cd apps/web && rm -rf .next/
+	@rm -rf apps/api/internal/webui/dist/web
 	@echo "$(GREEN)Clean complete.$(RESET)"
 
 clean-all: clean ## Remove all artifacts including Docker volumes (DESTRUCTIVE)
