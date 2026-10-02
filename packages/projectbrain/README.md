@@ -26,6 +26,8 @@ Before it emits any fact, the adapter verifies both:
 
 The second check includes tracked modifications, deletions, and non-ignored untracked files without mutating the real Git index. A dirty or mismatched checkout therefore contributes no falsely revision-bound facts; the compiler records the source failure as a warning and may still use other sources.
 
+Filesystem reads are separately confined to the workspace. The shared lexical indexer skips source-file symlinks, and task-declared changed paths reject traversal, absolute paths, direct symlinks, and paths whose resolved target leaves the workspace. A clean Git tree therefore cannot use a tracked symlink as a host-file ingestion path.
+
 The worker rollout is opt-in:
 
 ```text
