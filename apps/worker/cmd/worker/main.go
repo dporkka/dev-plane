@@ -52,7 +52,7 @@ func main() {
 		dbURL                = flag.String("db", os.Getenv("DATABASE_URL"), "Database URL (or DATABASE_URL env)")
 		natsURL              = flag.String("nats", os.Getenv("NATS_URL"), "NATS URL (or NATS_URL env, default nats://localhost:4222)")
 		logLevel             = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
-		runtimeName          = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
+		runtimeName          = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, remote, or nulang")
 		runtimeBaseDir       = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
 		schedulerMaxParallel = flag.Int("scheduler-max-parallel", envIntOrDefault("SCHEDULER_MAX_PARALLEL", 2), "Maximum concurrently admitted scheduler-enabled runs per worker")
 		schedulerCPU         = flag.Float64("scheduler-cpu", envFloatOrDefault("SCHEDULER_CPU", 4), "Scheduler CPU capacity units")
@@ -375,6 +375,9 @@ func detectDriver(url string) string {
 
 func initRuntimeProvider(name, baseDir, runnerURL, runnerToken string) (runtimes.Provider, string, error) {
 	if runnerURL != "" {
+		if name == "nulang" {
+			return runtimes.NewNulangCloudProvider(runnerURL, runnerToken), "nulang", nil
+		}
 		return runtimes.NewRemoteProvider(runnerURL, runnerToken), "remote", nil
 	}
 	if isProduction() && name == "local" {

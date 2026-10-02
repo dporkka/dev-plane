@@ -21,6 +21,14 @@ verification:
     command: make verify-changed
   full:
     command: make ci
+  browser:
+    timeout_seconds: 900
+    browser:
+      command: pnpm exec playwright test tests/e2e/golden-path.spec.ts
+      report_path: artifacts/playwright/summary.txt
+      artifact_paths:
+        - artifacts/playwright/golden-path.png
+        - artifacts/playwright/trace.zip
 
 work:
   isolation: worktree
@@ -47,7 +55,9 @@ The parser is strict: unknown fields are rejected so misspelled safety policy ca
 
 ## Verification profiles
 
-Profile names are repository-defined. Dev Plane treats them as opaque named gates and executes the declared command. This keeps repository-specific tooling inside the repository: Make, Cargo, npm, Dagger, Bazel, shell scripts, or other build systems can all satisfy the same control-plane contract.
+Profile names are repository-defined. Command profiles remain opaque named gates, keeping repository-specific tooling inside the repository: Make, Cargo, npm, Dagger, Bazel, shell scripts, or other build systems can all satisfy the same control-plane contract.
+
+A profile may instead declare a `browser` gate. Browser gates still execute the repository-owned Playwright/browser command, so Dev Plane does not impose a JavaScript toolchain. After execution, Dev Plane reads the declared report and artifacts from the isolated workspace, records artifact size plus SHA-256 in the evidence bundle, and binds that evidence to the exact candidate HEAD. Declared report/artifact paths must remain repository-relative; missing declared evidence fails the gate.
 
 Two gates are reserved by the protocol:
 
@@ -74,6 +84,8 @@ A durable work item records:
 Ownership paths are repository-relative. Escaping paths such as `../secrets/**` are rejected.
 
 ## Evidence
+
+Verification evidence is bound to an exact candidate HEAD. Browser evidence additionally records an explicit gate kind plus content hashes for declared screenshots/traces/reports so an operator can distinguish browser acceptance evidence from ordinary command output.
 
 Verification evidence is bound to an exact candidate HEAD. A new commit invalidates the previous evidence by definition because `EvidenceBundle.ValidateHead` requires the bundle's `head_sha` to equal the candidate SHA and requires every recorded gate to be passing.
 
