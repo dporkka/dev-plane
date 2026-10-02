@@ -136,6 +136,17 @@ func TestRenderProjectContextUsesDataBoundary(t *testing.T) {
 	}
 }
 
+func TestPrepareProjectContextDisabledDoesNotRequireStorageOrWorkspace(t *testing.T) {
+	runner := &Runner{}
+	pkg, err := runner.prepareProjectContext(context.Background(), &models.AgentRun{}, &models.Task{}, &models.Workspace{}, "")
+	if err != nil {
+		t.Fatalf("prepareProjectContext() disabled error = %v", err)
+	}
+	if pkg != nil {
+		t.Fatalf("prepareProjectContext() disabled package = %#v, want nil", pkg)
+	}
+}
+
 func TestPrepareProjectContextPersistsExactPackageBeforeUse(t *testing.T) {
 	repo := t.TempDir()
 	runGit := func(args ...string) string {
