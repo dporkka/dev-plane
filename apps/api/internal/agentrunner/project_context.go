@@ -58,7 +58,12 @@ func (r *Runner) prepareProjectContext(
 	if err != nil {
 		return nil, err
 	}
-	pkg, err := r.contextProvider.Compile(ctx, req)
+	var pkg projectbrain.ContextPackage
+	if workspaceProvider, ok := r.contextProvider.(WorkspaceProjectContextProvider); ok {
+		pkg, err = workspaceProvider.CompileWorkspace(ctx, req, workspacePath)
+	} else {
+		pkg, err = r.contextProvider.Compile(ctx, req)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("compile project context: %w", err)
 	}
