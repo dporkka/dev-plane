@@ -13,7 +13,8 @@ func (e *Executor) EnableProjectBrain() *Executor {
 	if e == nil || e.runner == nil {
 		return e
 	}
-	e.runner.WithProjectContextProvider(newProjectBrainProvider(nil))
+	e.projectBrainEnabled = true
+	e.configureProjectBrain()
 	return e
 }
 
@@ -25,8 +26,17 @@ func (e *Executor) WithGitNexusClient(client projectbrain.GitNexusClient) *Execu
 	if e == nil || e.runner == nil || client == nil {
 		return e
 	}
-	e.runner.WithProjectContextProvider(newProjectBrainProvider(client))
+	e.projectBrainEnabled = true
+	e.gitNexusClient = client
+	e.configureProjectBrain()
 	return e
+}
+
+func (e *Executor) configureProjectBrain() {
+	if e == nil || e.runner == nil || !e.projectBrainEnabled {
+		return
+	}
+	e.runner.WithProjectContextProvider(newProjectBrainProvider(e.gitNexusClient))
 }
 
 func newProjectBrainProvider(client projectbrain.GitNexusClient) *agentrunner.WorkspaceContextCompiler {
