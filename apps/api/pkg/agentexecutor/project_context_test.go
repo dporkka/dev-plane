@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/api/internal/agentrunner"
 	"github.com/ai-dev-control-plane/projectbrain"
 )
 
@@ -56,6 +57,42 @@ func TestNewProjectBrainProviderAddsExplicitGitNexusClient(t *testing.T) {
 	}
 	if !containsString(pkg.Sources, "repo-intel") || !containsString(pkg.Sources, "gitnexus") {
 		t.Fatalf("sources = %#v, want independent repo-intel and gitnexus", pkg.Sources)
+	}
+}
+
+func TestProjectBrainConfigurationRetainsGitNexusAcrossCallOrder(t *testing.T) {
+	client := &fakeExecutorGitNexusClient{commit: "abc123"}
+	tests := []struct {
+		name      string
+		configure func(*Executor) *Executor
+	}{
+		{
+			name: "enable then gitnexus",
+			configure: func(executor *Executor) *Executor {
+				return executor.EnableProjectBrain().WithGitNexusClient(client)
+			},
+		},
+		{
+			name: "gitnexus then enable",
+			configure: func(executor *Executor) *Executor {
+				return executor.WithGitNexusClient(client).EnableProjectBrain()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			executor := &Executor{runner: &agentrunner.Runner{}}
+			if got := tt.configure(executor); got != executor {
+				t.Fatalf("configuration returned %p, want original executor %p", got, executor)
+			}
+			if !executor.projectBrainEnabled {
+				t.Fatal("project brain configuration was not retained")
+			}
+			if executor.gitNexusClient != client {
+				t.Fatalf("gitnexus client = %#v, want configured client", executor.gitNexusClient)
+			}
+		})
 	}
 }
 
