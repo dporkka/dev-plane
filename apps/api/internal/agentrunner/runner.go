@@ -28,15 +28,16 @@ import (
 
 // Runner executes agent runs with tool calling, budget checks, and event streaming.
 type Runner struct {
-	db       *sql.DB
-	tools    *tools.WorkspaceTools
-	router   *modelrouter.Router
-	policies *policies.Engine
-	budget   *budget.Engine
-	kernel   *capability.Kernel
-	eventBus *events.Bus
-	logger   *slog.Logger
-	runtimes map[string]runtimes.Provider
+	db              *sql.DB
+	tools           *tools.WorkspaceTools
+	router          *modelrouter.Router
+	policies        *policies.Engine
+	budget          *budget.Engine
+	kernel          *capability.Kernel
+	eventBus        *events.Bus
+	logger          *slog.Logger
+	runtimes        map[string]runtimes.Provider
+	contextProvider ProjectContextProvider
 }
 
 // NewRunner creates an agent runner with all required dependencies.
@@ -99,7 +100,7 @@ func (r *Runner) WithRuntimeProvider(name string, provider runtimes.Provider) *R
 //  1. Load AgentRun from DB, set status to "running"
 //  2. Load task, workspace from DB
 //  3. Get workspace path
-//  4. Build system prompt from agent role
+//  4. Compile and persist optional Project Brain context, then build the prompt
 //  5. Enter agent loop (up to max steps)
 //  6. Run lint/typecheck/tests via test runner
 //  7. Record final results, cost, status
@@ -160,8 +161,17 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"timestamp":  time.Now().UTC(),
 	})
 
-	// Build system prompt
+	projectContext, err := r.prepareProjectContext(ctx, run, task, workspace, workspacePath)
+	if err != nil {
+		return r.failRun(ctx, runID, fmt.Sprintf("prepare project context: %v", err))
+	}
+
+	// Build system prompt only after configured Project Brain context has been
+	// durably bound to this exact run and source revision.
 	systemPrompt := BuildSystemPrompt(run.AgentRole, task, workspace)
+	if projectContext != nil {
+		systemPrompt += renderProjectContext(projectContext)
+	}
 	r.logger.Debug("system prompt built", "run_id", runID, "prompt_len", len(systemPrompt))
 
 	// 5. Agent loop
@@ -817,7 +827,6 @@ func (r *Runner) buildSummary(state *RunState, testResults map[string]any, diffO
 			if files, ok := diffMap["files_changed"].([]any); ok {
 				summary += fmt.Sprintf(" Files changed: %d.", len(files))
 			}
-		}
 	}
 	return summary
 }
