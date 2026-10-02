@@ -2,7 +2,7 @@
 
 `projectbrain` defines the revision-bound knowledge and context-compilation contract for Dev Plane agents.
 
-The package is intentionally source-agnostic. GitNexus, LSP/AST analysis, repository metadata, tests, schemas, deployment telemetry, and other intelligence providers implement the `Source` interface and return normalized facts with provenance.
+The package is intentionally source-agnostic. First-party repository intelligence, GitNexus, LSP/AST analysis, repository metadata, tests, schemas, deployment telemetry, and other intelligence providers implement the `Source` interface and return normalized facts with provenance.
 
 ## Invariants
 
@@ -14,6 +14,26 @@ The package is intentionally source-agnostic. GitNexus, LSP/AST analysis, reposi
 - Context size is bounded deterministically.
 - Source failures are visible as warnings rather than silently degrading context.
 - The context package carries a stable SHA-256 digest suitable for persisting on an agent run. Observation timestamps are deliberately excluded from the digest so re-observing unchanged knowledge does not create a different context identity.
+
+## First-party repository source
+
+The production-safe baseline source adapts Dev Plane's existing `packages/repo-intel` lexical indexer. It supports the languages already understood by that package and emits revision-scoped symbol-definition facts.
+
+Before it emits any fact, the adapter verifies both:
+
+1. workspace `HEAD` exactly matches the requested `git-commit:<sha>`; and
+2. a temporary-index tree of the complete workspace matches `HEAD^{tree}`.
+
+The second check includes tracked modifications, deletions, and non-ignored untracked files without mutating the real Git index. A dirty or mismatched checkout therefore contributes no falsely revision-bound facts; the compiler records the source failure as a warning and may still use other sources.
+
+The worker rollout is opt-in:
+
+```text
+--project-brain
+PROJECT_BRAIN_ENABLED=true
+```
+
+When enabled this activates only the first-party `repo-intel` source. It does not spawn or require an external code-graph service.
 
 ## GitNexus adapter
 
@@ -29,9 +49,11 @@ GitNexus relationship  -> symbol:<from> <relation> symbol:<to>
 GitNexus process step  -> process:<name> step <position>:symbol:<name>@<location>
 ```
 
+GitNexus is not a required Dev Plane runtime dependency. Its upstream project currently uses the PolyForm Noncommercial 1.0.0 license, so commercial deployments must verify that their use is permitted or obtain appropriate terms. `agentexecutor.WithGitNexusClient` accepts a caller-supplied client and composes it with the first-party source; Dev Plane does not construct, distribute, or launch GitNexus itself.
+
 ## Agent-run integration
 
-The API runner exposes one optional `ProjectContextProvider` seam. `*projectbrain.Compiler` implements it directly.
+The API runner exposes one optional `ProjectContextProvider` seam. `*projectbrain.Compiler` implements it directly, and `WorkspaceContextCompiler` extends the seam for sources that require the concrete workspace path.
 
 When configured, the runner:
 
@@ -49,33 +71,42 @@ Project Brain uses the committed source revision for source-code intelligence. D
 ## Source architecture
 
 ```text
-GitNexus graph ─┐
-LSP / AST ──────┤
-Git history ────┤
-Tests / schema ─┼─> projectbrain.Source -> Compiler -> ContextPackage
-Runtime traces ─┤                                  |
-Deployments ────┤                                  v
-ADRs / docs ────┘                         durable AgentRun metadata
+repo-intel ──────┐
+GitNexus* ───────┤
+LSP / AST ───────┤
+Git history ─────┤
+Tests / schema ──┼─> projectbrain.Source -> Compiler -> ContextPackage
+Runtime traces ──┤                                  |
+Deployments ─────┤                                  v
+ADRs / docs ─────┘                         durable AgentRun metadata
                                                      |
                                                      v
                                              bounded agent prompt
+
+* optional external source
 ```
 
 Embeddings may help a source retrieve candidate facts, but they are not treated as authoritative project state. Source control, language tooling, schemas, executed verification, and runtime evidence should remain the truth-bearing inputs.
 
 ## Activation boundary
 
-This package intentionally does not make the API process spawn `npx gitnexus` or depend on a local developer MCP configuration. Production activation should inject a trusted `GitNexusClient` at the service composition boundary, then configure the runner with `NewCompiler(NewGitNexusSource(client, ...))`.
+`agentexecutor.EnableProjectBrain` composes the first-party workspace source. The worker exposes that through `--project-brain` / `PROJECT_BRAIN_ENABLED` and leaves it disabled by default for controlled rollout.
 
-Keeping transport outside the compiler avoids making Node/npm availability, local MCP config, or model-visible credentials part of the Dev Plane runtime contract.
+`agentexecutor.WithGitNexusClient` is an explicit integration boundary for deployments that independently provide a compatible GitNexus client. The API process never spawns `npx gitnexus`, depends on a local developer MCP configuration, or makes GitNexus availability part of Dev Plane's core runtime contract.
+
+Keeping external transport outside the compiler avoids making Node/npm availability, local MCP config, model-visible credentials, or non-permissive dependencies part of the control plane.
+
+## Evaluation boundary
+
+The complete context package and digest are persisted on `agent_runs.metadata`, while existing `model_usage` rows already reference `agent_run_id`. This gives Dev Plane a joinable basis for comparing model, cost, context strategy, and later verification outcomes without creating another telemetry schema in this slice.
 
 ## Verification boundary
 
-The Project Brain package and GitNexus adapter were developed test-first and verified in the available isolated Go environment. The full repository requires the checked-in Go toolchain and authoritative CI/runtime lane. If those lanes fail before executing steps, that is not treated as evidence for or against this code.
+The original Project Brain package and GitNexus adapter were developed test-first and verified in the available isolated Go environment. Later workspace-source and rollout changes are also test-first, but full repository verification still requires the checked-in Go toolchain and authoritative CI/runtime lane. If those lanes fail before executing steps, that is not treated as evidence for or against this code.
 
 ## Next integration
 
-1. Implement the production GitNexus `GitNexusClient` bridge at the composition boundary and configure the runner with `NewCompiler(NewGitNexusSource(...))`.
-2. Add a second independent source (LSP/AST or repository/test facts) so GitNexus degradation does not reduce context to zero.
-3. Record context digest/model/context strategy alongside verification outcomes for the evaluation flywheel.
+1. Run the exact PR head through an authoritative Go/CI lane, then enable Project Brain for a small local-workspace cohort.
+2. Add a stronger first-party semantic source (LSP/tree-sitter) behind the same `Source` contract rather than making an external graph mandatory.
+3. Join run context identity with model usage and verification outcomes to learn routing/context policy empirically.
 4. Add runtime/deployment facts only after the source-code context path has production evidence.
