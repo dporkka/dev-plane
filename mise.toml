@@ -1,0 +1,36 @@
+[tools]
+node = "24"
+
+[settings]
+idiomatic_version_file_enable_tools = ["go"]
+
+[tasks.doctor]
+description = "Check the core local development toolchain"
+run = '''
+go version
+node --version
+npm --version
+git --version
+docker --version
+docker compose version
+'''
+
+[tasks.dev]
+description = "Start the Dev Plane development environment"
+run = "make dev"
+
+[tasks.test]
+description = "Run the repository test gate"
+run = "make test"
+
+[tasks.test-cli]
+description = "Run the CLI test suite"
+run = "make test-cli"
+
+[tasks.lint]
+description = "Run repository linters"
+run = "make lint"
+
+[tasks.build]
+description = "Build repository artifacts"
+run = "make build"
