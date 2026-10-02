@@ -827,6 +827,7 @@ func (r *Runner) buildSummary(state *RunState, testResults map[string]any, diffO
 			if files, ok := diffMap["files_changed"].([]any); ok {
 				summary += fmt.Sprintf(" Files changed: %d.", len(files))
 			}
+		}
 	}
 	return summary
 }
