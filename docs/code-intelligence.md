@@ -92,14 +92,14 @@ The harness:
 - uses GitNexus `analyze --index-only` so benchmarking does not rewrite agent instruction/skill files;
 - calls both backends through MCP for the query phase;
 - records only repository-tracked files actually mentioned by each backend response;
-- excludes indexing time from query latency but records `index_ms` separately;
+- excludes MCP startup and indexing time from query latency, while recording `index_ms` separately;
 - saves raw backend responses under the ignored `data/` directory for auditability;
 - estimates output tokens from response length for a stable relative cost signal.
 
 Run the non-live verification lane with:
 
 ```bash
-./scripts/verify-codeintel.sh
+bash scripts/verify-codeintel.sh
 ```
 
 That executes the Python harness unit tests and `packages/repo-intel` Go tests without requiring either graph backend.
@@ -109,7 +109,7 @@ To execute the live bake-off when the repositories are checked out under one roo
 ```bash
 export CODEINTEL_RUN_LIVE=1
 export CODEINTEL_REPOS_ROOT="$HOME/src"
-./scripts/verify-codeintel.sh
+bash scripts/verify-codeintel.sh
 ```
 
 By default the harness expects checkouts named `adacavo`, `nulang`, `nulang-cloud`, and `dev-plane` under `CODEINTEL_REPOS_ROOT`. Override any checkout explicitly when needed:
@@ -137,11 +137,29 @@ cd packages/repo-intel
 go run ./cmd/codeintel-bakeoff ../../data/codeintel-bakeoff/nulang-mir-codegen-callers.json
 ```
 
-Ranking policy is intentionally conservative: failed runs sort last; otherwise retrieval F1 wins first, then latency, then output-token count. A fast backend that misses affected code must not beat a slower correct backend.
+The suite-level promotion verdict is:
+
+```bash
+cd packages/repo-intel
+go run ./cmd/codeintel-promote ../../data/codeintel-bakeoff/suite.json
+```
+
+The default promotion gate requires the candidate backend to succeed on every scenario, achieve at least 0.80 recall and 0.75 F1 on every scenario, and have no per-scenario recall or F1 regression versus a successful GitNexus baseline. Latency and output-token cost never compensate for lower retrieval quality.
+
+## Woodpecker verification
+
+`.woodpecker/code-intelligence.yaml` provides a provider-independent verification lane for this subsystem. It runs on relevant pull-request changes and pushes to `main` and executes:
+
+- the Python 3.13 harness tests;
+- the `packages/repo-intel` Go tests using Go 1.26.8.
+
+Woodpecker only runs repository workflows after the repository is activated in the Woodpecker server and its forge webhook is installed. Repository activation is an infrastructure/admin operation, not something encoded in this repository.
+
+The live cross-repository bake-off is intentionally not part of the default PR lane because it needs canonical checkouts of four repositories plus both backend binaries. Run it on a trusted benchmark worker with those dependencies preinstalled or mounted.
 
 ## CI admission
 
-The code-intelligence lane is intentionally runnable outside GitHub Actions. A hosted Actions run that creates jobs but executes zero steps is an admission/infrastructure failure and must not be treated as evidence that source validation failed. Run `scripts/verify-codeintel.sh` on an available local, Woodpecker, Dagger, or other repository-defined runner until hosted Actions admission is healthy again.
+The code-intelligence lane is intentionally runnable outside GitHub Actions. A hosted Actions run that creates jobs but executes zero steps is an admission/infrastructure failure and must not be treated as evidence that source validation failed. Run `bash scripts/verify-codeintel.sh` on an available local, Woodpecker, Dagger, or other repository-defined runner until hosted Actions admission is healthy again.
 
 Do not weaken or remove repository verification because a hosted CI provider is unavailable; move the same commands to a functioning runner.
 
