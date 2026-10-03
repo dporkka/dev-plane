@@ -7,6 +7,9 @@ cd "$ROOT"
 printf '[codeintel] python harness tests\n'
 python3 scripts/test_codeintel_bakeoff.py
 
+printf '[codeintel] provenance tests\n'
+python3 scripts/test_codeintel_provenance.py
+
 printf '[codeintel] repo-intel Go tests\n'
 (
   cd packages/repo-intel
@@ -20,8 +23,15 @@ if [[ "${CODEINTEL_RUN_LIVE:-0}" == "1" ]]; then
   bakeoff_status=$?
   set -e
 
+  provenance_status=1
   promotion_status=1
   if [[ -f data/codeintel-bakeoff/suite.json ]]; then
+    printf '[codeintel] capture provenance\n'
+    set +e
+    python3 scripts/codeintel_provenance.py data/codeintel-bakeoff/suite.json
+    provenance_status=$?
+    set -e
+
     printf '[codeintel] promotion verdict\n'
     set +e
     (
@@ -31,10 +41,10 @@ if [[ "${CODEINTEL_RUN_LIVE:-0}" == "1" ]]; then
     promotion_status=$?
     set -e
   else
-    printf '[codeintel] promotion verdict unavailable: suite.json was not produced\n' >&2
+    printf '[codeintel] provenance/promotion verdict unavailable: suite.json was not produced\n' >&2
   fi
 
-  if [[ $bakeoff_status -ne 0 || $promotion_status -ne 0 ]]; then
+  if [[ $bakeoff_status -ne 0 || $provenance_status -ne 0 || $promotion_status -ne 0 ]]; then
     exit 1
   fi
 else
