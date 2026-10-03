@@ -19,6 +19,10 @@ const (
 	EventSnapshotCreated  EventKind = "snapshot.created"
 	EventPublished        EventKind = "change.published"
 	EventWorkspaceRemoved EventKind = "workspace.removed"
+
+	EventCandidateMaterialized EventKind = "candidate.materialized"
+	EventCandidateIntegrated   EventKind = "candidate.integrated"
+	EventDAGCompleted          EventKind = "dag.completed"
 )
 
 // ProvenanceEvent is intentionally VCS-neutral so it can later be written to
