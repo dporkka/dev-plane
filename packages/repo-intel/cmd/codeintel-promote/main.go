@@ -99,6 +99,14 @@ func main() {
 	if err := encoder.Encode(output); err != nil {
 		fatalf("encode output: %v", err)
 	}
+	os.Exit(decisionExitCode(decision.Promote))
+}
+
+func decisionExitCode(promote bool) int {
+	if promote {
+		return 0
+	}
+	return 3
 }
 
 func fatalf(format string, args ...any) {
