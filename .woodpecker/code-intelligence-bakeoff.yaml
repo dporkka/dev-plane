@@ -1,0 +1,55 @@
+when:
+  - event: manual
+
+steps:
+  - name: live-bakeoff
+    image: node:24-bookworm
+    environment:
+      CODEINTEL_GITHUB_TOKEN:
+        from_secret: codeintel_github_token
+      CI: "1"
+      GITNEXUS_NO_UPDATE_NOTIFIER: "1"
+      GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1"
+      CODEINTEL_GITNEXUS_MCP_CMD: "gitnexus mcp"
+      CODEINTEL_GITNEXUS_ANALYZE_CMD: "gitnexus analyze --index-only"
+      CODEINTEL_GITNEXUS_VERSION_CMD: "gitnexus --version"
+      CODEINTEL_CODEBASE_MEMORY_CMD: "codebase-memory-mcp"
+      CODEINTEL_CODEBASE_MEMORY_VERSION_CMD: "codebase-memory-mcp --version"
+    commands:
+      - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3 && rm -rf /var/lib/apt/lists/*
+      - |
+        case "$(uname -m)" in
+          x86_64) GOARCH=amd64 ;;
+          aarch64|arm64) GOARCH=arm64 ;;
+          *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
+        esac
+        curl -fsSLo /tmp/go.tgz "https://go.dev/dl/go1.26.8.linux-$${GOARCH}.tar.gz"
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf /tmp/go.tgz
+        export PATH="/usr/local/go/bin:$${PATH}"
+        go version
+      - npm install --global codebase-memory-mcp@0.11.0 gitnexus@1.6.12
+      - codebase-memory-mcp --version
+      - gitnexus --version
+      - |
+        export PATH="/usr/local/go/bin:$${PATH}"
+        export HOME="$${PWD}/.codeintel-home"
+        export GITNEXUS_STORAGE_ROOT="$${PWD}/.codeintel-gitnexus"
+        export CODEINTEL_REPOS_ROOT="$${PWD}/.codeintel-repos"
+        mkdir -p "$${HOME}" "$${GITNEXUS_STORAGE_ROOT}" "$${CODEINTEL_REPOS_ROOT}"
+
+        git config --global credential.helper store
+        printf 'https://x-access-token:%s@github.com\n' "$${CODEINTEL_GITHUB_TOKEN}" > "$${HOME}/.git-credentials"
+        chmod 600 "$${HOME}/.git-credentials"
+
+        git clone --depth 1 https://github.com/dporkka/adacavo.git "$${CODEINTEL_REPOS_ROOT}/adacavo"
+        git clone --depth 1 https://github.com/nulang-org/nulang.git "$${CODEINTEL_REPOS_ROOT}/nulang"
+        git clone --depth 1 https://github.com/dporkka/nulang-cloud.git "$${CODEINTEL_REPOS_ROOT}/nulang-cloud"
+        git clone --depth 1 https://github.com/dporkka/dev-plane.git "$${CODEINTEL_REPOS_ROOT}/dev-plane"
+
+        rm -f "$${HOME}/.git-credentials"
+        git config --global --unset credential.helper || true
+
+        export CODEINTEL_RUN_LIVE=1
+        bash scripts/verify-codeintel.sh
+      - cat data/codeintel-bakeoff/suite.json
