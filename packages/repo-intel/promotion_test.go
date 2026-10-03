@@ -1,6 +1,7 @@
 package repointel
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,8 +125,9 @@ func TestEvaluatePromotionRejectsMissingBaselineOrCandidate(t *testing.T) {
 
 func assertContainsReason(t *testing.T, reasons []string, want string) {
 	t.Helper()
+	want = strings.ToLower(want)
 	for _, reason := range reasons {
-		if containsFold(reason, want) {
+		if strings.Contains(strings.ToLower(reason), want) {
 			return
 		}
 	}
