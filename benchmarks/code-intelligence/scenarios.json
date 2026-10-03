@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "adacavo-proposal-flow",
+      "repository": "dporkka/adacavo",
+      "intent": "impact",
+      "prompt": "Trace ProposalService through proposal entry points and the durable proposal-booking workflow. Return the files that must be reviewed before changing proposal status-transition semantics.",
+      "expected": [
+        "apps/api/services/proposal-service.ts",
+        "apps/api/proposals/actions.ts",
+        "apps/api/proposals.ts",
+        "temporal/workflows/proposal-booking-workflow.ts",
+        "temporal/activities/proposal-booking-activities.ts"
+      ]
+    },
+    {
+      "id": "nulang-mir-codegen-callers",
+      "repository": "nulang-org/nulang",
+      "intent": "impact",
+      "prompt": "Find the important production callers of mir_codegen::compile_mir that should be reviewed before changing MIR-to-bytecode code generation semantics.",
+      "expected": [
+        "src/mir_codegen.rs",
+        "src/main.rs",
+        "src/repl.rs",
+        "src/ffi/mod.rs"
+      ]
+    },
+    {
+      "id": "nulang-cloud-runtime-boundary",
+      "repository": "dporkka/nulang-cloud",
+      "intent": "understand",
+      "prompt": "Locate the core runtime boundary between Dev Plane integration, local Nulang Cloud execution, and Firecracker-backed execution. Return the most relevant implementation or contract files.",
+      "expected": [
+        "docs/DEV_PLANE_RUNTIME_PROVIDER.md",
+        "nlc-dev-server/src/runtime.rs",
+        "justfile"
+      ]
+    },
+    {
+      "id": "dev-plane-run-admission",
+      "repository": "dporkka/dev-plane",
+      "intent": "impact",
+      "prompt": "Trace run admission from scheduler claim through budget checks and executor/readiness policy. Return the files that define or consume admission semantics.",
+      "expected": [
+        "apps/worker/internal/handlers/scheduler_admission.go",
+        "apps/api/internal/budget/engine.go",
+        "apps/worker/internal/handlers/run_handlers.go",
+        "apps/api/pkg/agentexecutor/executor.go",
+        "packages/readiness/task.go"
+      ]
+    }
+  ]
+}
