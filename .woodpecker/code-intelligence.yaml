@@ -1,0 +1,34 @@
+when:
+  - event: pull_request
+    path:
+      include:
+        - packages/repo-intel/**
+        - scripts/codeintel_bakeoff.py
+        - scripts/test_codeintel_bakeoff.py
+        - scripts/verify-codeintel.sh
+        - benchmarks/code-intelligence/**
+        - docs/code-intelligence.md
+        - .woodpecker/code-intelligence.yaml
+  - event: push
+    branch: main
+    path:
+      include:
+        - packages/repo-intel/**
+        - scripts/codeintel_bakeoff.py
+        - scripts/test_codeintel_bakeoff.py
+        - scripts/verify-codeintel.sh
+        - benchmarks/code-intelligence/**
+        - docs/code-intelligence.md
+        - .woodpecker/code-intelligence.yaml
+
+steps:
+  - name: harness-tests
+    image: python:3.13-slim
+    commands:
+      - python3 scripts/test_codeintel_bakeoff.py
+
+  - name: repo-intel-tests
+    image: golang:1.26.8
+    commands:
+      - cd packages/repo-intel
+      - go test ./...
