@@ -33,10 +33,9 @@ steps:
       - gitnexus --version
       - |
         export PATH="/usr/local/go/bin:$${PATH}"
-        export HOME="$${PWD}/.codeintel-home"
         export GITNEXUS_STORAGE_ROOT="$${PWD}/.codeintel-gitnexus"
         export CODEINTEL_REPOS_ROOT="$${PWD}/.codeintel-repos"
-        mkdir -p "$${HOME}" "$${GITNEXUS_STORAGE_ROOT}" "$${CODEINTEL_REPOS_ROOT}"
+        mkdir -p "$${GITNEXUS_STORAGE_ROOT}" "$${CODEINTEL_REPOS_ROOT}"
 
         git config --global credential.helper store
         printf 'https://x-access-token:%s@github.com\n' "$${CODEINTEL_GITHUB_TOKEN}" > "$${HOME}/.git-credentials"
@@ -49,6 +48,7 @@ steps:
 
         rm -f "$${HOME}/.git-credentials"
         git config --global --unset credential.helper || true
+        unset CODEINTEL_GITHUB_TOKEN
 
         export CODEINTEL_RUN_LIVE=1
         bash scripts/verify-codeintel.sh
