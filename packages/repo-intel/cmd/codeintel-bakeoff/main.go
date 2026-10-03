@@ -23,9 +23,20 @@ type inputDocument struct {
 	Runs     []inputRun `json:"runs"`
 }
 
+type outputScore struct {
+	Backend      repointel.Backend `json:"backend"`
+	Precision    float64           `json:"precision"`
+	Recall       float64           `json:"recall"`
+	F1           float64           `json:"f1"`
+	LatencyMS    int64             `json:"latency_ms"`
+	OutputTokens int               `json:"output_tokens"`
+	Failed       bool              `json:"failed"`
+	Error        string            `json:"error,omitempty"`
+}
+
 type outputDocument struct {
-	Scenario string                       `json:"scenario"`
-	Scores   []repointel.BenchmarkScore   `json:"scores"`
+	Scenario string        `json:"scenario"`
+	Scores   []outputScore `json:"scores"`
 }
 
 func main() {
@@ -66,13 +77,30 @@ func main() {
 
 	output := outputDocument{
 		Scenario: input.Scenario,
-		Scores:   repointel.RankRuns(input.Expected, runs),
+		Scores:   formatScores(repointel.RankRuns(input.Expected, runs)),
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(output); err != nil {
 		fatalf("encode output: %v", err)
 	}
+}
+
+func formatScores(scores []repointel.BenchmarkScore) []outputScore {
+	formatted := make([]outputScore, 0, len(scores))
+	for _, score := range scores {
+		formatted = append(formatted, outputScore{
+			Backend:      score.Backend,
+			Precision:    score.Precision,
+			Recall:       score.Recall,
+			F1:           score.F1,
+			LatencyMS:    score.Latency.Milliseconds(),
+			OutputTokens: score.OutputTokens,
+			Failed:       score.Failed,
+			Error:        score.Error,
+		})
+	}
+	return formatted
 }
 
 func fatalf(format string, args ...any) {
