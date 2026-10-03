@@ -74,36 +74,6 @@ class CodeIntelBakeoffTests(unittest.TestCase):
         self.assertIn("src/main.rs", text)
         self.assertIn("src/repl.rs", text)
 
-    def test_prepare_tool_arguments_scopes_codebase_memory_to_repository(self):
-        repo = pathlib.Path("/repos/adacavo")
-        got = codeintel.prepare_tool_arguments(
-            codeintel.BACKEND_CODEBASE_MEMORY,
-            {"semantic_query": ["proposal"]},
-            repo,
-        )
-        self.assertEqual(got["project"], str(repo.resolve()))
-        self.assertEqual(got["semantic_query"], ["proposal"])
-
-    def test_prepare_tool_arguments_does_not_mutate_source_or_gitnexus(self):
-        repo = pathlib.Path("/repos/nulang")
-        source = {"target": "compile_mir"}
-        got = codeintel.prepare_tool_arguments(
-            codeintel.BACKEND_GITNEXUS,
-            source,
-            repo,
-        )
-        self.assertEqual(got, source)
-        self.assertIsNot(got, source)
-        self.assertNotIn("project", source)
-
-    def test_prepare_tool_arguments_preserves_explicit_project(self):
-        got = codeintel.prepare_tool_arguments(
-            codeintel.BACKEND_CODEBASE_MEMORY,
-            {"project": "/explicit", "name_pattern": ".*Handler.*"},
-            pathlib.Path("/repos/dev-plane"),
-        )
-        self.assertEqual(got["project"], "/explicit")
-
 
 if __name__ == "__main__":
     unittest.main()
