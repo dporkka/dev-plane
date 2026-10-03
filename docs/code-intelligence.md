@@ -45,6 +45,8 @@ Install the binary from the upstream project and ensure `codebase-memory-mcp` is
 
 On the first session for a repository, index it before depending on graph answers. Keep the graph fresh after meaningful branch changes and re-index if graph output disagrees with compiler/LSP evidence.
 
+For large multi-agent installations, prefer explicit canonical-repository indexing and keep automatic worktree watchers disabled unless you actually want every ephemeral worktree registered. The bake-off harness indexes explicitly and does not require auto-watch.
+
 ## Run shared Zoekt
 
 Zoekt indexes existing local clones; it does not need GitHub credentials in this setup.
@@ -82,46 +84,66 @@ Do not rebuild fleet-wide indexes for every agent worktree.
 
 ## Backend bake-off
 
-The benchmark corpus is checked in at `benchmarks/code-intelligence/scenarios.json`. It starts with representative high-value scenarios from Adacavo, Nulang, Nulang Cloud, and Dev Plane rather than toy symbol lookups.
+The benchmark corpus is checked in at `benchmarks/code-intelligence/scenarios.json`. It starts with representative high-value scenarios from Adacavo, Nulang, Nulang Cloud, and Dev Plane rather than toy symbol lookups. Each scenario contains backend-specific MCP tool calls so the comparison is executable and reproducible.
 
-For each scenario, run each candidate backend against the same prompt and record normalized file/symbol keys, elapsed time, output-token count, and any error/stale-index condition. Feed those observations to the scorer. Input format:
+The harness:
 
-```json
-{
-  "scenario": "nulang-mir-codegen-callers",
-  "expected": ["src/mir_codegen.rs", "src/main.rs"],
-  "runs": [
-    {
-      "backend": "codebase-memory",
-      "results": ["src/mir_codegen.rs", "src/main.rs"],
-      "latency_ms": 180,
-      "output_tokens": 850
-    },
-    {
-      "backend": "gitnexus",
-      "results": ["src/mir_codegen.rs"],
-      "latency_ms": 120,
-      "output_tokens": 600
-    }
-  ]
-}
+- optionally refreshes each backend index before measurement;
+- uses GitNexus `analyze --index-only` so benchmarking does not rewrite agent instruction/skill files;
+- calls both backends through MCP for the query phase;
+- records only repository-tracked files actually mentioned by each backend response;
+- excludes indexing time from query latency but records `index_ms` separately;
+- saves raw backend responses under the ignored `data/` directory for auditability;
+- estimates output tokens from response length for a stable relative cost signal.
+
+Run the non-live verification lane with:
+
+```bash
+./scripts/verify-codeintel.sh
 ```
 
-Score it with:
+That executes the Python harness unit tests and `packages/repo-intel` Go tests without requiring either graph backend.
+
+To execute the live bake-off when the repositories are checked out under one root:
+
+```bash
+export CODEINTEL_RUN_LIVE=1
+export CODEINTEL_REPOS_ROOT="$HOME/src"
+./scripts/verify-codeintel.sh
+```
+
+By default the harness expects checkouts named `adacavo`, `nulang`, `nulang-cloud`, and `dev-plane` under `CODEINTEL_REPOS_ROOT`. Override any checkout explicitly when needed:
+
+```bash
+python3 scripts/codeintel_bakeoff.py \
+  --repo dporkka/adacavo=/work/adacavo \
+  --repo nulang-org/nulang=/work/nulang
+```
+
+The default backend commands are:
+
+```text
+codebase-memory: codebase-memory-mcp
+gitnexus MCP:    npx -y gitnexus@1.6.12 mcp
+gitnexus index:  npx -y gitnexus@1.6.12 analyze --index-only
+```
+
+They can be overridden through `CODEINTEL_CODEBASE_MEMORY_CMD`, `CODEINTEL_GITNEXUS_MCP_CMD`, and `CODEINTEL_GITNEXUS_ANALYZE_CMD` so a runner can use preinstalled or pinned binaries without changing the corpus.
+
+Each scenario produces a scorer input in `data/codeintel-bakeoff/<scenario>.json`. Score one with:
 
 ```bash
 cd packages/repo-intel
-go run ./cmd/codeintel-bakeoff /path/to/results.json
+go run ./cmd/codeintel-bakeoff ../../data/codeintel-bakeoff/nulang-mir-codegen-callers.json
 ```
 
 Ranking policy is intentionally conservative: failed runs sort last; otherwise retrieval F1 wins first, then latency, then output-token count. A fast backend that misses affected code must not beat a slower correct backend.
 
-Run package tests with:
+## CI admission
 
-```bash
-cd packages/repo-intel
-go test ./...
-```
+The code-intelligence lane is intentionally runnable outside GitHub Actions. A hosted Actions run that creates jobs but executes zero steps is an admission/infrastructure failure and must not be treated as evidence that source validation failed. Run `scripts/verify-codeintel.sh` on an available local, Woodpecker, Dagger, or other repository-defined runner until hosted Actions admission is healthy again.
+
+Do not weaken or remove repository verification because a hosted CI provider is unavailable; move the same commands to a functioning runner.
 
 ## Migration from GitNexus
 
