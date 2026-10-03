@@ -1,3 +1,6 @@
+labels:
+  platform: linux/amd64
+
 when:
   - event: manual
 
@@ -18,12 +21,7 @@ steps:
     commands:
       - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git python3 && rm -rf /var/lib/apt/lists/*
       - |
-        case "$(uname -m)" in
-          x86_64) GOARCH=amd64 ;;
-          aarch64|arm64) GOARCH=arm64 ;;
-          *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
-        esac
-        curl -fsSLo /tmp/go.tgz "https://go.dev/dl/go1.26.8.linux-$${GOARCH}.tar.gz"
+        curl -fsSLo /tmp/go.tgz "https://go.dev/dl/go1.26.8.linux-amd64.tar.gz"
         rm -rf /usr/local/go
         tar -C /usr/local -xzf /tmp/go.tgz
         export PATH="/usr/local/go/bin:$${PATH}"
