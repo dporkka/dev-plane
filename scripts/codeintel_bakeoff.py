@@ -323,14 +323,17 @@ def run_scenario_backend(
 
     calls = scenario["backends"][backend]
     raw_parts: list[str] = []
-    started = time.monotonic()
+    query_started: float | None = None
     try:
         with MCPClient(command, repo_path, timeout_s=timeout_s) as client:
+            query_started = time.monotonic()
             for call in calls:
                 payload = client.call_tool(call["tool"], call.get("arguments", {}))
                 raw_parts.append(mcp_result_text(payload))
     except Exception as exc:  # benchmark failure should be recorded, not abort the suite
-        latency_ms = int((time.monotonic() - started) * 1000)
+        latency_ms = 0
+        if query_started is not None:
+            latency_ms = int((time.monotonic() - query_started) * 1000)
         return Observation(
             backend=backend,
             results=[],
@@ -340,7 +343,8 @@ def run_scenario_backend(
             index_ms=index_ms,
         )
 
-    latency_ms = int((time.monotonic() - started) * 1000)
+    assert query_started is not None
+    latency_ms = int((time.monotonic() - query_started) * 1000)
     raw = "\n".join(raw_parts)
     paths = extract_known_paths(raw, known_paths)
     return Observation(
