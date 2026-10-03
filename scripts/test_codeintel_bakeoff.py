@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import importlib.util
 import pathlib
+import sys
 import tempfile
 import unittest
 
 MODULE_PATH = pathlib.Path(__file__).with_name("codeintel_bakeoff.py")
 spec = importlib.util.spec_from_file_location("codeintel_bakeoff", MODULE_PATH)
 codeintel = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = codeintel
 spec.loader.exec_module(codeintel)
 
 
