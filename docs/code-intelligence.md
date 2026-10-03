@@ -21,6 +21,24 @@ On-demand only:
 - Joern for deep source-to-sink/data-flow/security analysis.
 - SCIP should not be operated as a separate service until a measured cross-repository semantic-indexing gap justifies the extra index lifecycle.
 
+## Vendor-neutral routing contract
+
+`packages/repo-intel` owns the stable routing vocabulary. Product code and agents should request an intent instead of depending directly on a vendor's MCP tool names.
+
+Supported intents are:
+
+- `locate` — exact or conceptual discovery;
+- `understand` — symbol or architecture understanding;
+- `impact` — change blast radius;
+- `refactor` — structural transformations;
+- `security` — deep data-flow/source-to-sink analysis;
+- `history` — Git history and ownership;
+- `verify` — executable correctness checks.
+
+The deterministic router maps those requests to the current preferred backend. For example, exact worktree lookup routes to ripgrep, exact fleet lookup to Zoekt, symbol semantics to LSP, architecture/impact to codebase-memory, structural refactors to ast-grep, deep data flow to Joern, and verification to tests. Mutating/high-risk plans include an executable verification step rather than treating static analysis as proof.
+
+This indirection is intentional: codebase-memory, GitNexus, or another graph engine can be replaced without changing the operation contract used by the rest of Dev Plane.
+
 ## Install codebase-memory-mcp
 
 Install the binary from the upstream project and ensure `codebase-memory-mcp` is on `PATH`. Repository MCP configuration expects that command name directly.
@@ -62,6 +80,49 @@ canonical shared indexes + branch/worktree delta + executable verification
 
 Do not rebuild fleet-wide indexes for every agent worktree.
 
+## Backend bake-off
+
+The benchmark corpus is checked in at `benchmarks/code-intelligence/scenarios.json`. It starts with representative high-value scenarios from Adacavo, Nulang, Nulang Cloud, and Dev Plane rather than toy symbol lookups.
+
+For each scenario, run each candidate backend against the same prompt and record normalized file/symbol keys, elapsed time, output-token count, and any error/stale-index condition. Feed those observations to the scorer. Input format:
+
+```json
+{
+  "scenario": "nulang-mir-codegen-callers",
+  "expected": ["src/mir_codegen.rs", "src/main.rs"],
+  "runs": [
+    {
+      "backend": "codebase-memory",
+      "results": ["src/mir_codegen.rs", "src/main.rs"],
+      "latency_ms": 180,
+      "output_tokens": 850
+    },
+    {
+      "backend": "gitnexus",
+      "results": ["src/mir_codegen.rs"],
+      "latency_ms": 120,
+      "output_tokens": 600
+    }
+  ]
+}
+```
+
+Score it with:
+
+```bash
+cd packages/repo-intel
+go run ./cmd/codeintel-bakeoff /path/to/results.json
+```
+
+Ranking policy is intentionally conservative: failed runs sort last; otherwise retrieval F1 wins first, then latency, then output-token count. A fast backend that misses affected code must not beat a slower correct backend.
+
+Run package tests with:
+
+```bash
+cd packages/repo-intel
+go test ./...
+```
+
 ## Migration from GitNexus
 
 GitNexus remains a temporary fallback where existing repository policy depends on it. Do not delete GitNexus-specific scripts or safety gates until codebase-memory has been benchmarked on equivalent architecture, impact, change-detection, and cross-repository tasks.
@@ -71,5 +132,5 @@ Removal criteria:
 - equivalent or better call-path/impact accuracy on representative changes;
 - reliable incremental freshness;
 - no regression in pre-commit affected-scope checks;
-- lower or comparable latency/token overhead;
+- lower or comparable latency/token overhead after quality is equivalent;
 - stable behavior across TypeScript, Go, Rust, and Python repositories.
