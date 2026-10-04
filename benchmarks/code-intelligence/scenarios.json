@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "scenarios": [
     {
       "id": "adacavo-proposal-flow",
@@ -41,12 +41,14 @@
       "id": "nulang-mir-codegen-callers",
       "repository": "nulang-org/nulang",
       "intent": "impact",
-      "prompt": "Find the important production callers of mir_codegen::compile_mir that should be reviewed before changing MIR-to-bytecode code generation semantics.",
+      "prompt": "Find the core production entry points that call mir_codegen::compile_mir and should be reviewed before changing MIR-to-bytecode code generation semantics.",
       "expected": [
         "src/mir_codegen.rs",
         "src/main.rs",
         "src/repl.rs",
-        "src/ffi/mod.rs"
+        "src/dap/mod.rs",
+        "src/aot/mod.rs",
+        "src/ffi/c_api.rs"
       ],
       "backends": {
         "codebase-memory": [
