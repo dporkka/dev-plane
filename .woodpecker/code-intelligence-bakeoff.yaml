@@ -31,9 +31,11 @@ steps:
       - gitnexus --version
       - |
         export PATH="/usr/local/go/bin:$${PATH}"
+        export CBM_CACHE_DIR="$${PWD}/.codeintel-cbm"
         export GITNEXUS_STORAGE_ROOT="$${PWD}/.codeintel-gitnexus"
         export CODEINTEL_REPOS_ROOT="$${PWD}/.codeintel-repos"
-        mkdir -p "$${GITNEXUS_STORAGE_ROOT}" "$${CODEINTEL_REPOS_ROOT}"
+        mkdir -p "$${CBM_CACHE_DIR}" "$${GITNEXUS_STORAGE_ROOT}" "$${CODEINTEL_REPOS_ROOT}"
+        chmod 700 "$${CBM_CACHE_DIR}" "$${GITNEXUS_STORAGE_ROOT}"
 
         git config --global credential.helper store
         printf 'https://x-access-token:%s@github.com\n' "$${CODEINTEL_GITHUB_TOKEN}" > "$${HOME}/.git-credentials"
