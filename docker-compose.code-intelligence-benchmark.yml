@@ -14,6 +14,12 @@ services:
       HOME: /var/lib/codeintel
       GITNEXUS_STORAGE_ROOT: /var/lib/codeintel/gitnexus
       GITNEXUS_NO_UPDATE_NOTIFIER: "1"
+      GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1"
+      CODEINTEL_CODEBASE_MEMORY_CMD: "codebase-memory-mcp"
+      CODEINTEL_CODEBASE_MEMORY_VERSION_CMD: "codebase-memory-mcp --version"
+      CODEINTEL_GITNEXUS_MCP_CMD: "gitnexus mcp"
+      CODEINTEL_GITNEXUS_ANALYZE_CMD: "gitnexus analyze --index-only"
+      CODEINTEL_GITNEXUS_VERSION_CMD: "gitnexus --version"
     volumes:
       - .:/workspace/dev-plane:ro
       - ${CODEINTEL_REPOS_ROOT:?set CODEINTEL_REPOS_ROOT to the directory containing adacavo, nulang, nulang-cloud, and dev-plane clones}:/repos:ro
