@@ -1,5 +1,5 @@
 {
-  "version": 6,
+  "version": 7,
   "scenarios": [
     {
       "id": "adacavo-proposal-flow",
@@ -110,12 +110,14 @@
       "id": "dev-plane-run-admission",
       "repository": "dporkka/dev-plane",
       "intent": "impact",
-      "prompt": "Trace run admission from scheduler claim through budget checks and executor/readiness policy. Return the files that define or consume admission semantics.",
+      "prompt": "Trace run admission from scheduler claim through task readiness, budget checks, agent-runner delegation, and worker wiring. Return the production files that define or consume admission semantics.",
       "expected": [
         "apps/worker/internal/handlers/scheduler_admission.go",
-        "apps/api/internal/budget/engine.go",
         "apps/worker/internal/handlers/run_handlers.go",
+        "apps/worker/cmd/worker/main.go",
         "apps/api/pkg/agentexecutor/executor.go",
+        "apps/api/internal/agentrunner/runner_budget.go",
+        "apps/api/internal/budget/engine.go",
         "packages/readiness/task.go"
       ],
       "backends": {
@@ -124,7 +126,7 @@
             "tool": "search_graph",
             "arguments": {
               "project": "dev-plane",
-              "query": "run admission scheduler claim budget CheckRunStart executor readiness policy",
+              "query": "run admission SchedulerAdmission task-readiness-v1 CheckRunStart agentexecutor runner budget worker wiring",
               "limit": 30
             }
           }
@@ -133,7 +135,7 @@
           {
             "tool": "query",
             "arguments": {
-              "search_query": "run admission scheduler claim budget CheckRunStart executor readiness policy",
+              "search_query": "run admission SchedulerAdmission task-readiness-v1 CheckRunStart agentexecutor runner budget worker wiring",
               "maxTokens": 8000
             }
           }
