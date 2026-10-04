@@ -37,6 +37,7 @@ func TestEvaluateGoalProofRequiresAllRequiredCriteria(t *testing.T) {
 		Title:          "Ship demo-ready Adacavo",
 		Objective:      "Make demos reliable",
 		Status:         GoalStatusActive,
+		ProofEpoch:     "epoch-1",
 		SuccessCriteria: []GoalCriterion{
 			{ID: "golden-path", Description: "Golden path passes", Required: true},
 			{ID: "browser", Description: "Browser smoke passes", Required: true},
@@ -54,6 +55,7 @@ func TestEvaluateGoalProofRequiresAllRequiredCriteria(t *testing.T) {
 			CriterionDigest: goldenDigest,
 			EvidenceID:      "evidence-1",
 			SubjectRevision: "git-commit:abc",
+			ProofEpoch:      "epoch-1",
 			Status:          GoalProofPassed,
 			ObservedAt:      now,
 		},
@@ -71,6 +73,7 @@ func TestEvaluateGoalProofRequiresAllRequiredCriteria(t *testing.T) {
 			CriterionDigest: goldenDigest,
 			EvidenceID:      "evidence-1",
 			SubjectRevision: "git-commit:abc",
+			ProofEpoch:      "epoch-1",
 			Status:          GoalProofPassed,
 			ObservedAt:      now,
 		},
@@ -79,6 +82,7 @@ func TestEvaluateGoalProofRequiresAllRequiredCriteria(t *testing.T) {
 			CriterionDigest: browserDigest,
 			EvidenceID:      "evidence-2",
 			SubjectRevision: "git-commit:abc",
+			ProofEpoch:      "epoch-1",
 			Status:          GoalProofPassed,
 			ObservedAt:      now,
 		},
@@ -93,6 +97,7 @@ func TestEvaluateGoalProofFailsClosedOnNewerFailure(t *testing.T) {
 	goal := Goal{
 		ID: "goal-1", OrganizationID: "org-1", CreatedBy: "user-1",
 		Title: "Ship", Objective: "Ship safely", Status: GoalStatusActive,
+		ProofEpoch:      "epoch-1",
 		SuccessCriteria: []GoalCriterion{criterion},
 	}
 	digest := criterion.Digest()
@@ -100,8 +105,8 @@ func TestEvaluateGoalProofFailsClosedOnNewerFailure(t *testing.T) {
 	newer := old.Add(time.Hour)
 
 	evaluation := EvaluateGoalProof(goal, []GoalProof{
-		{CriterionID: "tests", CriterionDigest: digest, EvidenceID: "pass", SubjectRevision: "git-commit:abc", Status: GoalProofPassed, ObservedAt: old},
-		{CriterionID: "tests", CriterionDigest: digest, EvidenceID: "fail", SubjectRevision: "git-commit:def", Status: GoalProofFailed, ObservedAt: newer},
+		{CriterionID: "tests", CriterionDigest: digest, EvidenceID: "pass", SubjectRevision: "git-commit:abc", ProofEpoch: "epoch-1", Status: GoalProofPassed, ObservedAt: old},
+		{CriterionID: "tests", CriterionDigest: digest, EvidenceID: "fail", SubjectRevision: "git-commit:def", ProofEpoch: "epoch-1", Status: GoalProofFailed, ObservedAt: newer},
 	})
 
 	if evaluation.Status != GoalEvaluationContradicted {
@@ -117,6 +122,7 @@ func TestEvaluateGoalProofRejectsStaleCriterionEvidence(t *testing.T) {
 	goal := Goal{
 		ID: "goal-1", OrganizationID: "org-1", CreatedBy: "user-1",
 		Title: "Ship", Objective: "Ship safely", Status: GoalStatusActive,
+		ProofEpoch:      "epoch-1",
 		SuccessCriteria: []GoalCriterion{criterion},
 	}
 
@@ -124,7 +130,7 @@ func TestEvaluateGoalProofRejectsStaleCriterionEvidence(t *testing.T) {
 		{
 			CriterionID: "security", CriterionDigest: "sha256:old-contract",
 			EvidenceID: "evidence-old", SubjectRevision: "git-commit:abc",
-			Status: GoalProofPassed, ObservedAt: time.Now(),
+			ProofEpoch: "epoch-1", Status: GoalProofPassed, ObservedAt: time.Now(),
 		},
 	})
 
@@ -141,14 +147,15 @@ func TestEvaluateGoalProofFailsClosedOnConflictingLatestEvidence(t *testing.T) {
 	goal := Goal{
 		ID: "goal-1", OrganizationID: "org-1", CreatedBy: "user-1",
 		Title: "Ship", Objective: "Ship safely", Status: GoalStatusActive,
+		ProofEpoch:      "epoch-1",
 		SuccessCriteria: []GoalCriterion{criterion},
 	}
 	digest := criterion.Digest()
 	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 
 	evaluation := EvaluateGoalProof(goal, []GoalProof{
-		{CriterionID: "deploy", CriterionDigest: digest, EvidenceID: "pass", SubjectRevision: "deploy:123", Status: GoalProofPassed, ObservedAt: at},
-		{CriterionID: "deploy", CriterionDigest: digest, EvidenceID: "fail", SubjectRevision: "deploy:123", Status: GoalProofFailed, ObservedAt: at},
+		{CriterionID: "deploy", CriterionDigest: digest, EvidenceID: "pass", SubjectRevision: "deploy:123", ProofEpoch: "epoch-1", Status: GoalProofPassed, ObservedAt: at},
+		{CriterionID: "deploy", CriterionDigest: digest, EvidenceID: "fail", SubjectRevision: "deploy:123", ProofEpoch: "epoch-1", Status: GoalProofFailed, ObservedAt: at},
 	})
 
 	if evaluation.Status != GoalEvaluationContradicted {
@@ -168,5 +175,33 @@ func TestEvaluateGoalProofNeverProvesInvalidGoal(t *testing.T) {
 	evaluation := EvaluateGoalProof(goal, nil)
 	if evaluation.Status != GoalEvaluationUnproven {
 		t.Fatalf("status = %q, want %q for invalid goal", evaluation.Status, GoalEvaluationUnproven)
+	}
+}
+
+func TestEvaluateGoalProofDoesNotMixProofEpochs(t *testing.T) {
+	goal := Goal{
+		ID: "goal-1", OrganizationID: "org-1", CreatedBy: "user-1",
+		Title: "Ship", Objective: "Ship safely", Status: GoalStatusActive,
+		ProofEpoch: "epoch-2",
+		SuccessCriteria: []GoalCriterion{
+			{ID: "tests", Description: "Tests pass", Required: true},
+			{ID: "browser", Description: "Browser passes", Required: true},
+		},
+	}
+	at := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+
+	evaluation := EvaluateGoalProof(goal, []GoalProof{
+		{CriterionID: "tests", CriterionDigest: goal.SuccessCriteria[0].Digest(), EvidenceID: "old-tests", SubjectRevision: "git-commit:abc", ProofEpoch: "epoch-1", Status: GoalProofPassed, ObservedAt: at},
+		{CriterionID: "browser", CriterionDigest: goal.SuccessCriteria[1].Digest(), EvidenceID: "new-browser", SubjectRevision: "git-commit:def", ProofEpoch: "epoch-2", Status: GoalProofPassed, ObservedAt: at.Add(time.Minute)},
+	})
+
+	if evaluation.Status != GoalEvaluationUnproven {
+		t.Fatalf("status = %q, want %q", evaluation.Status, GoalEvaluationUnproven)
+	}
+	if len(evaluation.MissingRequired) != 1 || evaluation.MissingRequired[0] != "tests" {
+		t.Fatalf("missing_required = %#v, want [tests]", evaluation.MissingRequired)
+	}
+	if len(evaluation.StaleEvidence) != 1 || evaluation.StaleEvidence[0] != "old-tests" {
+		t.Fatalf("stale_evidence = %#v, want [old-tests]", evaluation.StaleEvidence)
 	}
 }
