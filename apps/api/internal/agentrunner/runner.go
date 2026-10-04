@@ -144,7 +144,6 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		return fmt.Errorf("set run status to running: %w", err)
 	}
 
-	// Publish run.started event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.started", runID), map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
@@ -160,11 +159,9 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		"timestamp":  time.Now().UTC(),
 	})
 
-	// Build system prompt
 	systemPrompt := BuildSystemPrompt(run.AgentRole, task, workspace)
 	r.logger.Debug("system prompt built", "run_id", runID, "prompt_len", len(systemPrompt))
 
-	// 5. Agent loop
 	maxSteps := 50
 	history := r.loadRunHistory(ctx, run.ID)
 	state := seedRunState(run, history)
@@ -326,19 +323,15 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		}
 	}
 
-	// 6. Run lint/typecheck/tests via test runner
 	r.logger.Info("running final checks", "run_id", runID)
 	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
 	if err := r.recordRoutingOutcome(ctx, runID, models.AgentRunStatusCompleted, testResults, ""); err != nil {
 		r.logger.Warn("failed to record routing verifier outcome", "run_id", runID, "error", err)
 	}
 
-	// 7. Get git diff for summary
 	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
-
 	summary := r.buildSummary(state, testResults, diffOutput)
 
-	// 8. Mark run as completed
 	now := time.Now().UTC()
 	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
 
@@ -362,7 +355,6 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	})
 
 	r.logger.Info("agent run completed", "run_id", runID, "steps", state.ToolCalls, "duration_ms", time.Since(startTime).Milliseconds())
-
 	return nil
 }
 
@@ -497,11 +489,9 @@ func (r *Runner) runToolStep(ctx context.Context, stepNum int, run *models.Agent
 	}
 
 	_ = r.streamStep(ctx, step, "started")
-
 	stepStart := time.Now()
 	output, toolErr := r.executeTool(ctx, run, task, workspace, workspacePath, toolCall.Name, toolCall.Input)
 	step.LatencyMs = int(time.Since(stepStart).Milliseconds())
-
 	step.Status = models.AgentStepStatusCompleted
 	step.ToolOutput = output
 	if toolErr != nil {
@@ -510,16 +500,13 @@ func (r *Runner) runToolStep(ctx context.Context, stepNum int, run *models.Agent
 		step.Content = &errStr
 		r.logger.Warn("tool execution failed", "tool", toolCall.Name, "error", toolErr)
 	}
-
 	if err := r.updateStepStatus(ctx, step); err != nil {
 		r.logger.Error("failed to update step status", "error", err)
 	}
-
 	_ = r.streamStep(ctx, step, "completed")
 	return step, toolErr
 }
 
-// executeTool authorizes and dispatches a tool call to WorkspaceTools.
 func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath, toolName string, input json.RawMessage) (json.RawMessage, error) {
 	if err := r.authorizeTool(ctx, run, task, workspace, workspacePath, toolName, input); err != nil {
 		return nil, err
@@ -532,7 +519,6 @@ func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *mo
 	return r.executeToolUnchecked(ctx, toolName, workspacePath, input)
 }
 
-// executeToolUnchecked dispatches a tool call after capability authorization.
 func (r *Runner) executeToolUnchecked(ctx context.Context, toolName, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
 	switch toolName {
 	case "read_file":
@@ -564,12 +550,10 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 	if r.kernel == nil {
 		return fmt.Errorf("capability kernel is not configured")
 	}
-
 	operation, ok := toolOperation(toolName)
 	if !ok {
 		return fmt.Errorf("unknown tool: %s", toolName)
 	}
-
 	resource := toolResource(toolName, input)
 	revision := ""
 	if toolRequiresWorkspaceRevision(toolName) {
@@ -596,7 +580,6 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 			"input":     string(input),
 		},
 	}
-
 	result, err := r.kernel.Evaluate(ctx, req)
 	if err != nil {
 		return fmt.Errorf("capability evaluation failed for %s: %w", toolName, err)
@@ -715,7 +698,6 @@ func sandboxState(workspace *models.Workspace) string {
 	}
 }
 
-// executeStep runs a single agent step (alias used by the loop).
 func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, workspacePath string) error {
 	output, err := r.executeToolUnchecked(ctx, *step.ToolName, workspacePath, step.ToolInput)
 	step.ToolOutput = output
@@ -729,12 +711,10 @@ func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, worksp
 	return nil
 }
 
-// streamStep publishes a step event via NATS.
 func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventType string) error {
 	if r.eventBus == nil {
 		return nil
 	}
-
 	payload := map[string]any{
 		"run_id":      step.AgentRunID,
 		"step_id":     step.ID,
@@ -748,12 +728,10 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 	if step.Content != nil {
 		payload["content"] = *step.Content
 	}
-
 	data, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
 }
@@ -788,7 +766,6 @@ func seedRunState(run *models.AgentRun, history []models.AgentStep) *RunState {
 	return state
 }
 
-// getWorkspacePath returns the filesystem path for a workspace.
 func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	if ws.WorktreePath != nil && *ws.WorktreePath != "" {
 		return *ws.WorktreePath
@@ -796,9 +773,6 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	return filepath.Join("workspaces", ws.ID)
 }
 
-// runFinalChecks executes tests via the test runner and preserves the structured
-// pass/fail signal. WorkspaceTools.RunTests returns a JSON result even when the
-// test command exits non-zero, so a nil Go error is not sufficient evidence.
 func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath string) map[string]any {
 	results := make(map[string]any)
 	testOutput, testErr := r.executeTool(ctx, run, task, workspace, workspacePath, "run_tests", json.RawMessage(`{}`))
@@ -820,7 +794,6 @@ func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task 
 	return results
 }
 
-// buildSummary creates a human-readable summary of the run.
 func (r *Runner) buildSummary(state *RunState, testResults map[string]any, diffOutput json.RawMessage) string {
 	summary := fmt.Sprintf(
 		"Agent run completed with %d tool calls, %d shell commands, %d files changed in %d minutes.",
@@ -832,6 +805,7 @@ func (r *Runner) buildSummary(state *RunState, testResults map[string]any, diffO
 			if files, ok := diffMap["files_changed"].([]any); ok {
 				summary += fmt.Sprintf(" Files changed: %d.", len(files))
 			}
+		}
 	}
 	return summary
 }
