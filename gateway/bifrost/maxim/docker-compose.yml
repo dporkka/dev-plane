@@ -1,0 +1,13 @@
+services:
+  bifrost:
+    image: maximhq/bifrost:v2.2.5
+    container_name: dev-plane-bifrost
+    ports:
+      - "8083:8080"
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      BIFROST_ENCRYPTION_KEY: ${BIFROST_ENCRYPTION_KEY}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
