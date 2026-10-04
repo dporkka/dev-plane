@@ -35,6 +35,7 @@ type Handler struct {
 	capabilityKernel  *capability.Kernel
 	runtimeProviders  map[string]runtimes.Provider
 	secretManager     *secrets.Manager
+	goalStore         GoalStore
 	githubGateway     githubGateway
 	githubToken       string
 	deployGateway     deployGateway
@@ -99,6 +100,12 @@ func (h *Handler) WithRuntimeProvider(name string, provider runtimes.Provider) *
 // WithSecretManager enables encrypted secret storage endpoints.
 func (h *Handler) WithSecretManager(manager *secrets.Manager) *Handler {
 	h.secretManager = manager
+	return h
+}
+
+// WithGoalStore enables durable proof-bound Goal endpoints.
+func (h *Handler) WithGoalStore(store GoalStore) *Handler {
+	h.goalStore = store
 	return h
 }
 
