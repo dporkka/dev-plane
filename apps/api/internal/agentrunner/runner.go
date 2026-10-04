@@ -174,30 +174,31 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	nextStepNum := nextStepNumber(history)
 	maxStepNum := nextStepNum + maxSteps - 1
 	for stepNum := nextStepNum; stepNum <= maxStepNum; stepNum++ {
-		// Check for context cancellation
 		if ctx.Err() != nil {
 			return r.failRun(ctx, runID, fmt.Sprintf("context cancelled: %v", ctx.Err()))
 		}
 
 		action, modelResult, err := r.nextModelAction(ctx, run, task, systemPrompt, mailboxMessages, history)
-		if err != nil {
-			return r.failRun(ctx, runID, fmt.Sprintf("model action: %v", err))
-		}
 		state.ModelCalls++
 		if modelResult != nil {
-			state.CostSoFar += modelResult.Cost
+			if modelResult.SpendAuthority != modelrouter.SpendAuthorityGateway {
+				state.CostSoFar += modelResult.Cost
+				run.TotalCost += modelResult.Cost
+			}
 			run.PromptTokens += modelResult.PromptTokens
 			run.CompletionTokens += modelResult.CompletionTokens
-			run.TotalCost += modelResult.Cost
 			if modelResult.Model != "" {
 				run.Model = &modelResult.Model
 			}
 			if modelResult.Provider != "" {
 				run.Provider = &modelResult.Provider
 			}
-			if err := r.recordModelUsage(ctx, run, task, modelResult); err != nil {
-				r.logger.Warn("failed to record model usage", "run_id", runID, "error", err)
+			if usageErr := r.recordModelUsage(ctx, run, task, modelResult); usageErr != nil {
+				r.logger.Warn("failed to record model usage", "run_id", runID, "error", usageErr)
 			}
+		}
+		if err != nil {
+			return r.failRun(ctx, runID, fmt.Sprintf("model action: %v", err))
 		}
 
 		budgetResult, err := r.checkBudget(ctx, run.TaskID, state)
@@ -227,7 +228,6 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 			}
 			history = append(history, *step)
 
-			// Update and check budget
 			state.ToolCalls++
 			if toolCall.Name == "run_command" || toolCall.Name == "run_tests" {
 				state.ShellCommands++
@@ -329,18 +329,19 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	// 6. Run lint/typecheck/tests via test runner
 	r.logger.Info("running final checks", "run_id", runID)
 	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
+	if err := r.recordRoutingOutcome(ctx, runID, models.AgentRunStatusCompleted, testResults, ""); err != nil {
+		r.logger.Warn("failed to record routing verifier outcome", "run_id", runID, "error", err)
+	}
 
 	// 7. Get git diff for summary
 	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
 
-	// Build summary
 	summary := r.buildSummary(state, testResults, diffOutput)
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
 	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
 
-	// Publish run.completed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
 		"run_id":     runID,
 		"task_id":    run.TaskID,
@@ -402,11 +403,16 @@ func (r *Runner) nextModelAction(ctx context.Context, run *models.AgentRun, task
 	}
 	prompt := BuildToolCallPrompt(ctx, history, mailbox, task)
 	result, err := r.router.RouteCall(ctx, modelrouter.CallRequest{
+		Route:         modelrouter.RouteAuto,
 		TaskType:      taskTypeForRole(run.AgentRole),
 		Difficulty:    difficultyForRisk(string(task.RiskLevel)),
 		LatencyReq:    modelrouter.LatencyNormal,
 		ContextSize:   len(systemPrompt) + len(prompt),
 		StructuredReq: true,
+		RoutingMetadata: map[string]string{
+			"agent-role": run.AgentRole,
+			"risk":       string(task.RiskLevel),
+		},
 		Messages: []modelrouter.Message{
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: prompt},
@@ -787,21 +793,30 @@ func (r *Runner) getWorkspacePath(ws *models.Workspace) string {
 	if ws.WorktreePath != nil && *ws.WorktreePath != "" {
 		return *ws.WorktreePath
 	}
-	// Fallback: construct from workspaces directory
 	return filepath.Join("workspaces", ws.ID)
 }
 
-// runFinalChecks executes lint, typecheck, and tests via the test runner.
+// runFinalChecks executes tests via the test runner and preserves the structured
+// pass/fail signal. WorkspaceTools.RunTests returns a JSON result even when the
+// test command exits non-zero, so a nil Go error is not sufficient evidence.
 func (r *Runner) runFinalChecks(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath string) map[string]any {
 	results := make(map[string]any)
-
-	// Run tests
 	testOutput, testErr := r.executeTool(ctx, run, task, workspace, workspacePath, "run_tests", json.RawMessage(`{}`))
+	passed := testErr == nil
+	if len(testOutput) > 0 {
+		var testPayload map[string]any
+		if json.Unmarshal(testOutput, &testPayload) == nil {
+			if value, ok := testPayload["passed"].(bool); ok {
+				passed = value && testErr == nil
+			}
+		}
+	}
 	results["tests"] = map[string]any{
 		"output": string(testOutput),
 		"error":  fmt.Sprintf("%v", testErr),
+		"passed": passed,
 	}
-
+	results["passed"] = passed
 	return results
 }
 
@@ -817,7 +832,6 @@ func (r *Runner) buildSummary(state *RunState, testResults map[string]any, diffO
 			if files, ok := diffMap["files_changed"].([]any); ok {
 				summary += fmt.Sprintf(" Files changed: %d.", len(files))
 			}
-		}
 	}
 	return summary
 }
