@@ -1,6 +1,9 @@
 package verifier
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,15 +74,28 @@ func GoalProofFromEvidenceBundle(goal models.Goal, criterionID string, bundle re
 		return models.GoalProof{}, fmt.Errorf("validate passing evidence: %w", err)
 	}
 
+	evidenceDigest, err := evidenceBundleDigest(bundle)
+	if err != nil {
+		return models.GoalProof{}, err
+	}
 	return models.GoalProof{
 		CriterionID:     criterion.ID,
 		CriterionDigest: criterion.Digest(),
-		EvidenceID:      "evidence-bundle:" + bundle.WorkItemID + ":" + bundle.HeadSHA,
+		EvidenceID:      "evidence-bundle:" + bundle.WorkItemID + ":" + bundle.HeadSHA + ":" + evidenceDigest,
 		SubjectRevision: "git-commit:" + bundle.HeadSHA,
 		ProofEpoch:      goal.ProofEpoch,
 		Status:          status,
 		ObservedAt:      observedAt,
 	}, nil
+}
+
+func evidenceBundleDigest(bundle repoprotocol.EvidenceBundle) (string, error) {
+	payload, err := json.Marshal(bundle)
+	if err != nil {
+		return "", fmt.Errorf("marshal evidence bundle identity: %w", err)
+	}
+	sum := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func verifierGoalCriterion(goal models.Goal, criterionID string) (models.GoalCriterion, bool) {
