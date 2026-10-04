@@ -25,10 +25,32 @@ CREATE TABLE IF NOT EXISTS goal_work_items (
 
 CREATE INDEX IF NOT EXISTS idx_goal_work_items_work_item_id ON goal_work_items(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_goal_work_items_subject_revision ON goal_work_items(subject_revision);
+
+CREATE TABLE IF NOT EXISTS goal_proofs (
+    goal_id          TEXT NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+    criterion_id     TEXT NOT NULL,
+    criterion_digest TEXT NOT NULL,
+    evidence_id      TEXT NOT NULL,
+    subject_revision TEXT NOT NULL,
+    proof_epoch      TEXT NOT NULL,
+    status           TEXT NOT NULL,
+    observed_at      TIMESTAMPTZ NOT NULL,
+    payload          JSONB NOT NULL,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (goal_id, criterion_id, evidence_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goal_proofs_goal_epoch ON goal_proofs(goal_id, proof_epoch);
+CREATE INDEX IF NOT EXISTS idx_goal_proofs_evidence_id ON goal_proofs(evidence_id);
+CREATE INDEX IF NOT EXISTS idx_goal_proofs_subject_revision ON goal_proofs(subject_revision);
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
+DROP INDEX IF EXISTS idx_goal_proofs_subject_revision;
+DROP INDEX IF EXISTS idx_goal_proofs_evidence_id;
+DROP INDEX IF EXISTS idx_goal_proofs_goal_epoch;
+DROP TABLE IF EXISTS goal_proofs;
 DROP INDEX IF EXISTS idx_goal_work_items_subject_revision;
 DROP INDEX IF EXISTS idx_goal_work_items_work_item_id;
 DROP TABLE IF EXISTS goal_work_items;
