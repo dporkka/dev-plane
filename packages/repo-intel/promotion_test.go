@@ -103,6 +103,29 @@ func TestEvaluatePromotionRejectsFailedCandidate(t *testing.T) {
 	assertContainsReason(t, decision.Reasons, "candidate failed")
 }
 
+func TestEvaluatePromotionRejectsFailedBaseline(t *testing.T) {
+	scenarios := []ScenarioBenchmark{
+		{
+			ID: "runtime-boundary",
+			Scores: []BenchmarkScore{
+				{Backend: BackendCodebaseMemory, Recall: 1.0, Precision: 1.0, F1: 1.0},
+				{Backend: BackendGitNexus, Failed: true, Error: "index unavailable"},
+			},
+		},
+	}
+
+	decision := EvaluatePromotion(
+		BackendCodebaseMemory,
+		BackendGitNexus,
+		scenarios,
+		DefaultPromotionPolicy(),
+	)
+	if decision.Promote {
+		t.Fatal("expected failed baseline to block comparative promotion")
+	}
+	assertContainsReason(t, decision.Reasons, "baseline failed")
+}
+
 func TestEvaluatePromotionRejectsCandidateBelowAbsoluteRecallFloor(t *testing.T) {
 	policy := DefaultPromotionPolicy()
 	policy.MinRecall = 0.9
