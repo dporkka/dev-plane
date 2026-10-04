@@ -42,7 +42,9 @@ func (c GoalCriterion) Digest() string {
 
 // Goal represents an outcome that can span multiple tasks and repositories.
 // Tasks remain the execution primitive; Goal is the proof-bearing outcome above
-// them.
+// them. ProofEpoch is an opaque snapshot token that is rotated whenever any
+// goal-relevant subject revision changes so evidence from different snapshots
+// cannot be mixed into one completion decision.
 type Goal struct {
 	ID              string          `json:"id"`
 	OrganizationID  string          `json:"organization_id"`
@@ -50,6 +52,7 @@ type Goal struct {
 	Title           string          `json:"title"`
 	Objective       string          `json:"objective"`
 	Status          GoalStatus      `json:"status"`
+	ProofEpoch      string          `json:"proof_epoch,omitempty"`
 	SuccessCriteria []GoalCriterion `json:"success_criteria"`
 	MaxCost         *float64        `json:"max_cost,omitempty"`
 	Deadline        *time.Time      `json:"deadline,omitempty"`
@@ -137,6 +140,7 @@ type GoalProof struct {
 	CriterionDigest string          `json:"criterion_digest"`
 	EvidenceID      string          `json:"evidence_id"`
 	SubjectRevision string          `json:"subject_revision"`
+	ProofEpoch      string          `json:"proof_epoch"`
 	Status          GoalProofStatus `json:"status"`
 	ObservedAt      time.Time       `json:"observed_at"`
 }
@@ -167,12 +171,16 @@ type criterionProofState struct {
 }
 
 // EvaluateGoalProof fails closed: every required criterion must have fresh
-// passing evidence for its current criterion digest. Newer failures override
-// older passes, and conflicting evidence at the same newest observation time is
-// treated as failure. Evidence for edited criteria is reported as stale.
+// passing evidence for its current criterion digest and the goal's current proof
+// epoch. Newer failures override older passes, and conflicting evidence at the
+// same newest observation time is treated as failure. Evidence for edited
+// criteria or older proof epochs is reported as stale.
 func EvaluateGoalProof(goal Goal, proofs []GoalProof) GoalEvaluation {
 	evaluation := GoalEvaluation{Status: GoalEvaluationUnproven}
 	if err := goal.Validate(); err != nil {
+		return evaluation
+	}
+	if strings.TrimSpace(goal.ProofEpoch) == "" {
 		return evaluation
 	}
 
@@ -184,7 +192,7 @@ func EvaluateGoalProof(goal Goal, proofs []GoalProof) GoalEvaluation {
 	latest := make(map[string]criterionProofState, len(goal.SuccessCriteria))
 	for _, proof := range proofs {
 		criterion, exists := criteria[strings.TrimSpace(proof.CriterionID)]
-		if !exists || proof.CriterionDigest != criterion.Digest() {
+		if !exists || proof.CriterionDigest != criterion.Digest() || proof.ProofEpoch != goal.ProofEpoch {
 			if strings.TrimSpace(proof.EvidenceID) != "" {
 				evaluation.StaleEvidence = append(evaluation.StaleEvidence, proof.EvidenceID)
 			}
