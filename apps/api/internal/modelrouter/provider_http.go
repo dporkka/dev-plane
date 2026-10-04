@@ -34,6 +34,7 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 	}
 
 	var out struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -46,20 +47,33 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 	}
-	if err := postJSON(ctx, client, strings.TrimRight(baseURL, "/")+"/chat/completions", apiKey, "", body, &out); err != nil {
+	headers := map[string]string{}
+	if apiKey != "" {
+		headers["Authorization"] = "Bearer " + apiKey
+	}
+	if strings.EqualFold(providerName, "bifrost") {
+		for key, value := range bifrostRoutingHeaders(req) {
+			headers[key] = value
+		}
+	}
+	if err := postJSONWithHeaders(ctx, client, strings.TrimRight(baseURL, "/")+"/chat/completions", headers, body, &out); err != nil {
 		return nil, fmt.Errorf("%s chat completion: %w", providerName, err)
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%s chat completion: response contained no choices", providerName)
 	}
 	prompt, completion, total := normalizeUsage(out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Usage.TotalTokens)
+	resolvedModel := strings.TrimSpace(out.Model)
+	if resolvedModel == "" {
+		resolvedModel = model
+	}
 	return &CallResult{
 		Content:          out.Choices[0].Message.Content,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
-		Cost:             estimateCost(models, model, prompt, completion),
-		Model:            model,
+		Cost:             estimateCost(models, resolvedModel, prompt, completion),
+		Model:            resolvedModel,
 		Provider:         providerName,
 		FinishReason:     out.Choices[0].FinishReason,
 	}, nil

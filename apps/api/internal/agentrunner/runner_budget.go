@@ -33,7 +33,8 @@ func (r *Runner) CheckRunStart(ctx context.Context, runID string) (*budget.Check
 	if taskBudget == nil {
 		return &budget.CheckResult{Allowed: true}, nil
 	}
-	return r.budget.CheckRunStart(ctx, taskBudget, &budget.RunState{})
+	state := &budget.RunState{ExternalCostAuthority: r.router != nil && r.router.UsesExternalSpendAuthority()}
+	return r.budget.CheckRunStart(ctx, taskBudget, state)
 }
 
 func (r *Runner) checkBudget(ctx context.Context, taskID string, state *RunState) (*budget.CheckResult, error) {
@@ -41,19 +42,19 @@ func (r *Runner) checkBudget(ctx context.Context, taskID string, state *RunState
 		return &budget.CheckResult{Allowed: true}, nil
 	}
 
-	// Load task budget if available
 	taskBudget, _ := r.loadTaskBudget(ctx, taskID)
 	if taskBudget == nil {
 		return &budget.CheckResult{Allowed: true}, nil
 	}
 
 	rs := &budget.RunState{
-		CostSoFar:       state.CostSoFar,
-		DurationMinutes: state.DurationMinutes,
-		ModelCalls:      state.ModelCalls,
-		ToolCalls:       state.ToolCalls,
-		ShellCommands:   state.ShellCommands,
-		FilesChanged:    state.FilesChanged,
+		CostSoFar:             state.CostSoFar,
+		ExternalCostAuthority: r.router != nil && r.router.UsesExternalSpendAuthority(),
+		DurationMinutes:       state.DurationMinutes,
+		ModelCalls:            state.ModelCalls,
+		ToolCalls:             state.ToolCalls,
+		ShellCommands:         state.ShellCommands,
+		FilesChanged:          state.FilesChanged,
 	}
 
 	return r.budget.CheckRun(ctx, taskBudget, rs)
@@ -84,7 +85,6 @@ func (r *Runner) loadTaskBudget(ctx context.Context, taskID string) (*models.Bud
 		&notifications, &b.CreatedAt, &b.UpdatedAt,
 	)
 	if err != nil {
-		// Also try project-level budget
 		return r.loadProjectBudgetForTask(ctx, taskID)
 	}
 
@@ -123,7 +123,6 @@ func (r *Runner) loadTaskBudget(ctx context.Context, taskID string) (*models.Bud
 }
 
 func (r *Runner) loadProjectBudgetForTask(ctx context.Context, taskID string) (*models.Budget, error) {
-	// Get project ID from task
 	var projectID string
 	err := r.db.QueryRowContext(ctx, `SELECT project_id FROM tasks WHERE id = $1`, taskID).Scan(&projectID)
 	if err != nil {
@@ -205,6 +204,16 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 	if provider == "" {
 		provider = "unknown"
 	}
+
+	// Gateway-routed spend is enforced and metered by Bifrost. Do not insert a
+	// stale local model-price estimate into the authoritative Dev Plane ledger.
+	// routing_decisions retains result.Cost as an explicitly non-authoritative
+	// estimate if one is available for analysis.
+	accountedCost := result.Cost
+	if result.SpendAuthority == modelrouter.SpendAuthorityGateway {
+		accountedCost = 0
+	}
+
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO model_usage (
@@ -212,10 +221,17 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 			completion_tokens, total_tokens, cost, latency_ms, success, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, uuid.New().String(), run.ID, task.ID, model, provider, result.PromptTokens,
-		result.CompletionTokens, result.TotalTokens, result.Cost, result.LatencyMs, true, now)
+		result.CompletionTokens, result.TotalTokens, accountedCost, result.LatencyMs, true, now)
 	if err != nil {
 		return err
 	}
+
+	if err := r.recordRoutingDecision(ctx, run, task, 0, result); err != nil {
+		// Older dev/test databases may not yet have migration 025. Usage remains
+		// useful, but production migrations make routing telemetry mandatory.
+		r.logger.Warn("failed to record routing decision", "run_id", run.ID, "error", err)
+	}
+
 	_, err = r.db.ExecContext(ctx, `
 		UPDATE agent_runs
 		SET model = $1,
@@ -225,6 +241,6 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 		    total_cost = COALESCE(total_cost, 0) + $5,
 		    updated_at = $6
 		WHERE id = $7
-	`, model, provider, result.PromptTokens, result.CompletionTokens, result.Cost, now, run.ID)
+	`, model, provider, result.PromptTokens, result.CompletionTokens, accountedCost, now, run.ID)
 	return err
 }
