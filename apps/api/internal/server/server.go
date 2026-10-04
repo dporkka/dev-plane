@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/openapi"
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
+	controlplanedb "github.com/ai-dev-control-plane/db"
 	events "github.com/ai-dev-control-plane/events"
 )
 
@@ -91,6 +93,11 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	driver := "sqlite"
+	if strings.Contains(strings.ToLower(s.config.DatabaseURL), "postgres") {
+		driver = "postgres"
+	}
+	h = h.WithGoalStore(&controlplanedb.DB{DB: s.db, Driver: driver})
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
@@ -143,6 +150,12 @@ func (s *Server) routes() {
 			r.Get("/organizations", h.ListOrganizations)
 			r.Post("/organizations", h.CreateOrganization)
 			r.Get("/organizations/{id}", h.GetOrganization)
+
+			// Goals
+			r.Post("/organizations/{orgID}/goals", h.CreateGoal)
+			r.Get("/goals/{id}", h.GetGoal)
+			r.Get("/goals/{id}/evaluation", h.EvaluateGoal)
+			r.Post("/goals/{id}/work-items", h.LinkGoalWorkItem)
 
 			// Projects
 			r.Get("/organizations/{orgID}/projects", h.ListProjects)
