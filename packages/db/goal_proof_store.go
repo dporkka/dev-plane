@@ -72,7 +72,7 @@ func (db *DB) PutGoalProof(ctx context.Context, goalID string, proof models.Goal
 			return err
 		}
 		if found {
-			if existing == proof {
+			if sameGoalProof(existing, proof) {
 				return nil
 			}
 			return fmt.Errorf("goal proof evidence identity conflict for %s/%s/%s", goalID, proof.CriterionID, proof.EvidenceID)
@@ -182,4 +182,14 @@ func goalCriterion(goal models.Goal, criterionID string) (models.GoalCriterion, 
 		}
 	}
 	return models.GoalCriterion{}, false
+}
+
+func sameGoalProof(a, b models.GoalProof) bool {
+	return a.CriterionID == b.CriterionID &&
+		a.CriterionDigest == b.CriterionDigest &&
+		a.EvidenceID == b.EvidenceID &&
+		a.SubjectRevision == b.SubjectRevision &&
+		a.ProofEpoch == b.ProofEpoch &&
+		a.Status == b.Status &&
+		a.ObservedAt.Equal(b.ObservedAt)
 }
