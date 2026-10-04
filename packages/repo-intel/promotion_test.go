@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestEvaluatePromotionAllowsNoRegressionCandidate(t *testing.T) {
+func TestEvaluatePromotionAllowsCompleteRecallCandidate(t *testing.T) {
 	scenarios := []ScenarioBenchmark{
 		{
 			ID: "proposal-flow",
@@ -32,6 +32,28 @@ func TestEvaluatePromotionAllowsNoRegressionCandidate(t *testing.T) {
 	)
 	if !decision.Promote {
 		t.Fatalf("expected promotion, got reasons: %#v", decision.Reasons)
+	}
+}
+
+func TestEvaluatePromotionAllowsLowerF1WhenRequiredRecallIsComplete(t *testing.T) {
+	scenarios := []ScenarioBenchmark{
+		{
+			ID: "broad-but-complete",
+			Scores: []BenchmarkScore{
+				{Backend: BackendCodebaseMemory, Recall: 1.0, Precision: 0.25, F1: 0.4, Latency: 300 * time.Millisecond},
+				{Backend: BackendGitNexus, Recall: 1.0, Precision: 0.9, F1: 0.947, Latency: 100 * time.Millisecond},
+			},
+		},
+	}
+
+	decision := EvaluatePromotion(
+		BackendCodebaseMemory,
+		BackendGitNexus,
+		scenarios,
+		DefaultPromotionPolicy(),
+	)
+	if !decision.Promote {
+		t.Fatalf("complete required recall should not be blocked by non-exhaustive-set F1: %#v", decision.Reasons)
 	}
 }
 
@@ -81,16 +103,15 @@ func TestEvaluatePromotionRejectsFailedCandidate(t *testing.T) {
 	assertContainsReason(t, decision.Reasons, "candidate failed")
 }
 
-func TestEvaluatePromotionRejectsCandidateBelowAbsoluteQualityFloor(t *testing.T) {
+func TestEvaluatePromotionRejectsCandidateBelowAbsoluteRecallFloor(t *testing.T) {
 	policy := DefaultPromotionPolicy()
-	policy.MinRecall = 0.8
-	policy.MinF1 = 0.75
+	policy.MinRecall = 0.9
 	scenarios := []ScenarioBenchmark{
 		{
 			ID: "admission",
 			Scores: []BenchmarkScore{
-				{Backend: BackendCodebaseMemory, Recall: 0.6, Precision: 1.0, F1: 0.75},
-				{Backend: BackendGitNexus, Recall: 0.6, Precision: 1.0, F1: 0.75},
+				{Backend: BackendCodebaseMemory, Recall: 0.8, Precision: 1.0, F1: 0.889},
+				{Backend: BackendGitNexus, Recall: 0.8, Precision: 1.0, F1: 0.889},
 			},
 		},
 	}
@@ -102,7 +123,7 @@ func TestEvaluatePromotionRejectsCandidateBelowAbsoluteQualityFloor(t *testing.T
 		policy,
 	)
 	if decision.Promote {
-		t.Fatal("expected absolute recall floor to block equally-poor backends")
+		t.Fatal("expected absolute recall floor to block equally incomplete backends")
 	}
 	assertContainsReason(t, decision.Reasons, "below minimum recall")
 }
