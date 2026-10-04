@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"testing"
+	"time"
 
 	models "github.com/ai-dev-control-plane/models"
 	repoprotocol "github.com/ai-dev-control-plane/repoprotocol"
@@ -198,6 +199,115 @@ func TestLinkGoalWorkItemRejectsEmptyRevision(t *testing.T) {
 
 	if _, err := database.LinkGoalWorkItem(ctx, goal.ID, item.ID, ""); err == nil {
 		t.Fatal("LinkGoalWorkItem() error = nil, want empty revision rejection")
+	}
+}
+
+func TestGoalProofStoreRejectsStaleEpochAndPreservesHistory(t *testing.T) {
+	database := newGoalTestDB(t)
+	ctx := context.Background()
+
+	goal := models.Goal{
+		ID:             "goal-proof-1",
+		OrganizationID: "org-1",
+		CreatedBy:      "user-1",
+		Title:          "Ship",
+		Objective:      "Ship safely",
+		Status:         models.GoalStatusActive,
+		SuccessCriteria: []models.GoalCriterion{
+			{ID: "tests", Description: "Tests pass", Required: true},
+		},
+	}
+	stored, err := database.PutGoal(ctx, goal)
+	if err != nil {
+		t.Fatalf("PutGoal() error = %v", err)
+	}
+
+	proof := models.GoalProof{
+		CriterionID:     "tests",
+		CriterionDigest: stored.SuccessCriteria[0].Digest(),
+		EvidenceID:      "evidence:DEV-1:abc",
+		SubjectRevision: "git-commit:abc",
+		ProofEpoch:      stored.ProofEpoch,
+		Status:          models.GoalProofPassed,
+		ObservedAt:      time.Date(2026, 10, 4, 14, 0, 0, 0, time.UTC),
+	}
+	if err := database.PutGoalProof(ctx, stored.ID, proof); err != nil {
+		t.Fatalf("PutGoalProof() error = %v", err)
+	}
+	if err := database.PutGoalProof(ctx, stored.ID, proof); err != nil {
+		t.Fatalf("PutGoalProof(replay) error = %v", err)
+	}
+
+	proofs, err := database.ListGoalProofs(ctx, stored.ID)
+	if err != nil {
+		t.Fatalf("ListGoalProofs() error = %v", err)
+	}
+	if len(proofs) != 1 || !reflect.DeepEqual(proofs[0], proof) {
+		t.Fatalf("ListGoalProofs() = %#v, want [%#v]", proofs, proof)
+	}
+
+	stored.Objective = "Ship safely with browser verification"
+	rotated, err := database.PutGoal(ctx, stored)
+	if err != nil {
+		t.Fatalf("PutGoal(rotate) error = %v", err)
+	}
+	if rotated.ProofEpoch == proof.ProofEpoch {
+		t.Fatal("proof epoch did not rotate")
+	}
+	if err := database.PutGoalProof(ctx, rotated.ID, proof); err == nil {
+		t.Fatal("PutGoalProof(stale) error = nil, want stale epoch rejection")
+	}
+
+	historical, err := database.ListGoalProofs(ctx, rotated.ID)
+	if err != nil {
+		t.Fatalf("ListGoalProofs(historical) error = %v", err)
+	}
+	evaluation := models.EvaluateGoalProof(rotated, historical)
+	if evaluation.Status != models.GoalEvaluationUnproven {
+		t.Fatalf("evaluation status = %q, want %q", evaluation.Status, models.GoalEvaluationUnproven)
+	}
+	if len(evaluation.StaleEvidence) != 1 || evaluation.StaleEvidence[0] != proof.EvidenceID {
+		t.Fatalf("stale evidence = %#v, want [%s]", evaluation.StaleEvidence, proof.EvidenceID)
+	}
+}
+
+func TestGoalProofStoreRejectsConflictingEvidenceIdentity(t *testing.T) {
+	database := newGoalTestDB(t)
+	ctx := context.Background()
+
+	goal := models.Goal{
+		ID:             "goal-proof-2",
+		OrganizationID: "org-1",
+		CreatedBy:      "user-1",
+		Title:          "Ship",
+		Objective:      "Ship safely",
+		Status:         models.GoalStatusActive,
+		SuccessCriteria: []models.GoalCriterion{
+			{ID: "tests", Description: "Tests pass", Required: true},
+		},
+	}
+	stored, err := database.PutGoal(ctx, goal)
+	if err != nil {
+		t.Fatalf("PutGoal() error = %v", err)
+	}
+
+	proof := models.GoalProof{
+		CriterionID:     "tests",
+		CriterionDigest: stored.SuccessCriteria[0].Digest(),
+		EvidenceID:      "evidence:DEV-2:abc",
+		SubjectRevision: "git-commit:abc",
+		ProofEpoch:      stored.ProofEpoch,
+		Status:          models.GoalProofPassed,
+		ObservedAt:      time.Date(2026, 10, 4, 15, 0, 0, 0, time.UTC),
+	}
+	if err := database.PutGoalProof(ctx, stored.ID, proof); err != nil {
+		t.Fatalf("PutGoalProof() error = %v", err)
+	}
+
+	conflict := proof
+	conflict.Status = models.GoalProofFailed
+	if err := database.PutGoalProof(ctx, stored.ID, conflict); err == nil {
+		t.Fatal("PutGoalProof(conflict) error = nil, want immutable evidence conflict")
 	}
 }
 
