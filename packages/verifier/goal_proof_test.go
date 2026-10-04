@@ -1,6 +1,7 @@
 package verifier
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -28,8 +29,8 @@ func TestGoalProofFromEvidenceBundlePassed(t *testing.T) {
 	if proof.Status != models.GoalProofPassed {
 		t.Fatalf("status = %q, want %q", proof.Status, models.GoalProofPassed)
 	}
-	if proof.EvidenceID != "evidence-bundle:DEV-501:head456" {
-		t.Fatalf("evidence_id = %q", proof.EvidenceID)
+	if !strings.HasPrefix(proof.EvidenceID, "evidence-bundle:DEV-501:head456:sha256:") {
+		t.Fatalf("evidence_id = %q, want content-bound evidence bundle id", proof.EvidenceID)
 	}
 	if proof.SubjectRevision != "git-commit:head456" {
 		t.Fatalf("subject_revision = %q", proof.SubjectRevision)
@@ -60,6 +61,34 @@ func TestGoalProofFromEvidenceBundleFailedGate(t *testing.T) {
 	}
 	if proof.Status != models.GoalProofFailed {
 		t.Fatalf("status = %q, want %q", proof.Status, models.GoalProofFailed)
+	}
+}
+
+func TestGoalProofFromEvidenceBundleRerunGetsNewImmutableIdentity(t *testing.T) {
+	goal := proofTestGoal()
+	at := time.Date(2026, 10, 4, 16, 30, 0, 0, time.UTC)
+	failed := repoprotocol.EvidenceBundle{
+		WorkItemID: "DEV-505",
+		BaseSHA:    "base123",
+		HeadSHA:    "head456",
+		Gates:      []repoprotocol.GateEvidence{{Name: "test", Status: repoprotocol.GateFailed, Output: "attempt 1 failed"}},
+	}
+	passed := failed
+	passed.Gates = []repoprotocol.GateEvidence{{Name: "test", Status: repoprotocol.GatePassed, Output: "attempt 2 passed"}}
+
+	failedProof, err := GoalProofFromEvidenceBundle(goal, "tests", failed, at)
+	if err != nil {
+		t.Fatalf("failed GoalProofFromEvidenceBundle() error = %v", err)
+	}
+	passedProof, err := GoalProofFromEvidenceBundle(goal, "tests", passed, at.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("passed GoalProofFromEvidenceBundle() error = %v", err)
+	}
+	if failedProof.EvidenceID == passedProof.EvidenceID {
+		t.Fatalf("rerun reused evidence identity %q", failedProof.EvidenceID)
+	}
+	if failedProof.SubjectRevision != passedProof.SubjectRevision {
+		t.Fatalf("same-head rerun subject revisions differ: %q vs %q", failedProof.SubjectRevision, passedProof.SubjectRevision)
 	}
 }
 
