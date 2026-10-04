@@ -12,6 +12,7 @@ services:
       CODEINTEL_RUN_LIVE: "1"
       CODEINTEL_REPOS_ROOT: /repos
       HOME: /var/lib/codeintel
+      CBM_CACHE_DIR: /var/lib/codeintel/cbm
       GITNEXUS_STORAGE_ROOT: /var/lib/codeintel/gitnexus
       GITNEXUS_NO_UPDATE_NOTIFIER: "1"
       GITNEXUS_SKIP_OPTIONAL_GRAMMARS: "1"
