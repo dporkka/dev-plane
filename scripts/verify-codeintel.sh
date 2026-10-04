@@ -7,6 +7,9 @@ cd "$ROOT"
 printf '[codeintel] python harness tests\n'
 python3 scripts/test_codeintel_bakeoff.py
 
+printf '[codeintel] corpus contract tests\n'
+python3 scripts/test_codeintel_corpus.py
+
 printf '[codeintel] provenance tests\n'
 python3 scripts/test_codeintel_provenance.py
 
