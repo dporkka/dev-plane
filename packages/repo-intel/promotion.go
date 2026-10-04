@@ -8,20 +8,18 @@ type ScenarioBenchmark struct {
 	Scores []BenchmarkScore
 }
 
-// PromotionPolicy defines the quality floor for replacing a baseline backend.
-// Latency and token cost are intentionally not blockers: they are only relevant
-// after retrieval quality and reliability are at least equivalent.
+// PromotionPolicy defines the required-core-path recall floor for replacing a
+// baseline backend. The corpus intentionally is not an exhaustive list of every
+// relevant file, so precision/F1 remain diagnostic rather than safety gates.
 type PromotionPolicy struct {
 	MinRecall float64
-	MinF1     float64
 	Epsilon   float64
 }
 
-// DefaultPromotionPolicy is deliberately conservative for code-change safety.
+// DefaultPromotionPolicy requires every curated core path on every scenario.
 func DefaultPromotionPolicy() PromotionPolicy {
 	return PromotionPolicy{
-		MinRecall: 0.80,
-		MinF1:     0.75,
+		MinRecall: 1.0,
 		Epsilon:   1e-9,
 	}
 }
@@ -36,9 +34,12 @@ type PromotionDecision struct {
 	BaselineAvgF1  float64
 }
 
-// EvaluatePromotion enforces a quality-first replacement gate. A candidate must
-// succeed on every scenario, clear the absolute quality floor, and avoid any
-// per-scenario recall or F1 regression against a successful baseline result.
+// EvaluatePromotion enforces a required-recall-first replacement gate. A
+// candidate must succeed on every scenario, clear the absolute recall floor,
+// and avoid any per-scenario recall regression against a successful baseline.
+// F1 is retained in the decision for observability but does not block promotion
+// because returning additional useful files can lower precision against a
+// deliberately non-exhaustive core-path corpus.
 func EvaluatePromotion(
 	candidate Backend,
 	baseline Backend,
@@ -99,15 +100,9 @@ func EvaluatePromotion(
 				fmt.Sprintf("%s: candidate recall %.3f is below minimum recall %.3f",
 					scenario.ID, candidateScore.Recall, policy.MinRecall))
 		}
-		if candidateScore.F1+policy.Epsilon < policy.MinF1 {
-			decision.Reasons = append(decision.Reasons,
-				fmt.Sprintf("%s: candidate F1 %.3f is below minimum F1 %.3f",
-					scenario.ID, candidateScore.F1, policy.MinF1))
-		}
 
-		// A failed baseline is evidence in favor of the candidate, not a reason to
-		// waive the candidate's absolute quality floor. There is no meaningful
-		// baseline quality score to compare for this scenario.
+		// A failed baseline is evidence in favor of a successful candidate, but it
+		// never waives the candidate's absolute required-recall floor.
 		if baselineScore.Failed {
 			continue
 		}
@@ -115,11 +110,6 @@ func EvaluatePromotion(
 			decision.Reasons = append(decision.Reasons,
 				fmt.Sprintf("%s: recall regression %.3f < baseline %.3f",
 					scenario.ID, candidateScore.Recall, baselineScore.Recall))
-		}
-		if candidateScore.F1+policy.Epsilon < baselineScore.F1 {
-			decision.Reasons = append(decision.Reasons,
-				fmt.Sprintf("%s: F1 regression %.3f < baseline %.3f",
-					scenario.ID, candidateScore.F1, baselineScore.F1))
 		}
 	}
 
