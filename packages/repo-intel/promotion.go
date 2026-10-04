@@ -34,12 +34,13 @@ type PromotionDecision struct {
 	BaselineAvgF1  float64
 }
 
-// EvaluatePromotion enforces a required-recall-first replacement gate. A
-// candidate must succeed on every scenario, clear the absolute recall floor,
-// and avoid any per-scenario recall regression against a successful baseline.
-// F1 is retained in the decision for observability but does not block promotion
-// because returning additional useful files can lower precision against a
-// deliberately non-exhaustive core-path corpus.
+// EvaluatePromotion enforces a required-recall-first replacement gate. Both
+// candidate and baseline must successfully complete every scenario so the
+// comparison itself is valid. The candidate must then clear the absolute recall
+// floor and avoid any per-scenario recall regression against the baseline.
+// F1 is retained for observability but does not block promotion because
+// additional useful files can lower precision against a deliberately
+// non-exhaustive core-path corpus.
 func EvaluatePromotion(
 	candidate Backend,
 	baseline Backend,
@@ -80,10 +81,8 @@ func EvaluatePromotion(
 
 		candidateF1Total += candidateScore.F1
 		candidateCount++
-		if !baselineScore.Failed {
-			baselineF1Total += baselineScore.F1
-			baselineCount++
-		}
+		baselineF1Total += baselineScore.F1
+		baselineCount++
 
 		if candidateScore.Failed {
 			detail := candidateScore.Error
@@ -92,6 +91,16 @@ func EvaluatePromotion(
 			}
 			decision.Reasons = append(decision.Reasons,
 				fmt.Sprintf("%s: candidate failed: %s", scenario.ID, detail))
+		}
+		if baselineScore.Failed {
+			detail := baselineScore.Error
+			if detail == "" {
+				detail = "unspecified error"
+			}
+			decision.Reasons = append(decision.Reasons,
+				fmt.Sprintf("%s: baseline failed: %s", scenario.ID, detail))
+		}
+		if candidateScore.Failed || baselineScore.Failed {
 			continue
 		}
 
@@ -99,12 +108,6 @@ func EvaluatePromotion(
 			decision.Reasons = append(decision.Reasons,
 				fmt.Sprintf("%s: candidate recall %.3f is below minimum recall %.3f",
 					scenario.ID, candidateScore.Recall, policy.MinRecall))
-		}
-
-		// A failed baseline is evidence in favor of a successful candidate, but it
-		// never waives the candidate's absolute required-recall floor.
-		if baselineScore.Failed {
-			continue
 		}
 		if candidateScore.Recall+policy.Epsilon < baselineScore.Recall {
 			decision.Reasons = append(decision.Reasons,
