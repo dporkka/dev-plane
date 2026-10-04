@@ -204,6 +204,16 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 	if provider == "" {
 		provider = "unknown"
 	}
+
+	// Gateway-routed spend is enforced and metered by Bifrost. Do not insert a
+	// stale local model-price estimate into the authoritative Dev Plane ledger.
+	// routing_decisions retains result.Cost as an explicitly non-authoritative
+	// estimate if one is available for analysis.
+	accountedCost := result.Cost
+	if result.SpendAuthority == modelrouter.SpendAuthorityGateway {
+		accountedCost = 0
+	}
+
 	now := time.Now().UTC()
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO model_usage (
@@ -211,7 +221,7 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 			completion_tokens, total_tokens, cost, latency_ms, success, created_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 	`, uuid.New().String(), run.ID, task.ID, model, provider, result.PromptTokens,
-		result.CompletionTokens, result.TotalTokens, result.Cost, result.LatencyMs, true, now)
+		result.CompletionTokens, result.TotalTokens, accountedCost, result.LatencyMs, true, now)
 	if err != nil {
 		return err
 	}
@@ -231,6 +241,6 @@ func (r *Runner) recordModelUsage(ctx context.Context, run *models.AgentRun, tas
 		    total_cost = COALESCE(total_cost, 0) + $5,
 		    updated_at = $6
 		WHERE id = $7
-	`, model, provider, result.PromptTokens, result.CompletionTokens, result.Cost, now, run.ID)
+	`, model, provider, result.PromptTokens, result.CompletionTokens, accountedCost, now, run.ID)
 	return err
 }
