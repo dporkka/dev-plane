@@ -2,7 +2,9 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "queries/"
-    schema: "schema.sql"
+    schema:
+      - "schema.sql"
+      - "schema_goals.sql"
     gen:
       go:
         package: "gen"
