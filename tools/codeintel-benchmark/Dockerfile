@@ -9,10 +9,11 @@ COPY --from=go-toolchain /usr/local/go /usr/local/go
 
 ENV PATH="/usr/local/go/bin:${PATH}" \
     CI=1 \
-    GITNEXUS_NO_UPDATE_NOTIFIER=1 \
-    GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1 \
     HOME=/var/lib/codeintel \
-    GITNEXUS_STORAGE_ROOT=/var/lib/codeintel/gitnexus
+    CBM_CACHE_DIR=/var/lib/codeintel/cbm \
+    GITNEXUS_STORAGE_ROOT=/var/lib/codeintel/gitnexus \
+    GITNEXUS_NO_UPDATE_NOTIFIER=1 \
+    GITNEXUS_SKIP_OPTIONAL_GRAMMARS=1
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -22,12 +23,18 @@ RUN apt-get update \
         python3 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN mkdir -p \
+        /var/lib/codeintel/cbm \
+        /var/lib/codeintel/gitnexus \
+        /workspace/dev-plane \
+        /repos \
+    && chmod 700 /var/lib/codeintel /var/lib/codeintel/cbm /var/lib/codeintel/gitnexus
+
 RUN npm install --global \
         "codebase-memory-mcp@${CODEBASE_MEMORY_VERSION}" \
         "gitnexus@${GITNEXUS_VERSION}"
 
-RUN mkdir -p /var/lib/codeintel/gitnexus /workspace/dev-plane /repos \
-    && codebase-memory-mcp --version \
+RUN codebase-memory-mcp --version \
     && gitnexus --version \
     && go version \
     && node --version \
