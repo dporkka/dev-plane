@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "scenarios": [
     {
       "id": "adacavo-proposal-flow",
@@ -78,11 +78,12 @@
       "id": "nulang-cloud-runtime-boundary",
       "repository": "dporkka/nulang-cloud",
       "intent": "understand",
-      "prompt": "Locate the core runtime boundary between Dev Plane integration, local Nulang Cloud execution, and Firecracker-backed execution. Return the most relevant implementation or contract files.",
+      "prompt": "Locate the core runtime boundary between Dev Plane integration, local Wasmtime execution, and Firecracker-backed host-agent execution. Return the production implementation and contract files that define those boundaries.",
       "expected": [
         "docs/DEV_PLANE_RUNTIME_PROVIDER.md",
         "nlc-dev-server/src/runtime.rs",
-        "justfile"
+        "host-agent/src/main.rs",
+        "host-agent/src/vm_factory.rs"
       ],
       "backends": {
         "codebase-memory": [
@@ -90,7 +91,7 @@
             "tool": "search_graph",
             "arguments": {
               "project": "nulang-cloud",
-              "query": "Dev Plane runtime provider local execution Firecracker host-agent runtime boundary",
+              "query": "Dev Plane runtime provider local Wasmtime execution Firecracker host-agent VmFactory runtime boundary",
               "limit": 30
             }
           }
@@ -99,7 +100,7 @@
           {
             "tool": "query",
             "arguments": {
-              "search_query": "Dev Plane runtime provider local execution Firecracker host-agent runtime boundary",
+              "search_query": "Dev Plane runtime provider local Wasmtime execution Firecracker host-agent VmFactory runtime boundary",
               "maxTokens": 8000
             }
           }
