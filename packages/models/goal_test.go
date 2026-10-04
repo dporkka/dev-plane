@@ -155,3 +155,18 @@ func TestEvaluateGoalProofFailsClosedOnConflictingLatestEvidence(t *testing.T) {
 		t.Fatalf("status = %q, want %q", evaluation.Status, GoalEvaluationContradicted)
 	}
 }
+
+func TestEvaluateGoalProofNeverProvesInvalidGoal(t *testing.T) {
+	goal := Goal{
+		OrganizationID: "org-1",
+		CreatedBy:      "user-1",
+		Title:          "Ship",
+		Objective:      "Ship safely",
+		Status:         GoalStatusActive,
+	}
+
+	evaluation := EvaluateGoalProof(goal, nil)
+	if evaluation.Status != GoalEvaluationUnproven {
+		t.Fatalf("status = %q, want %q for invalid goal", evaluation.Status, GoalEvaluationUnproven)
+	}
+}
