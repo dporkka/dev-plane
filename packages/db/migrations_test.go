@@ -74,8 +74,8 @@ func TestRunMigrationsPostgres(t *testing.T) {
 	}
 }
 
-// TestSchemaMigrationDrift verifies that the canonical schema.sql produces the
-// same tables, columns, and indexes as applying all Goose migrations.
+// TestSchemaMigrationDrift verifies that the canonical schema fragments produce
+// the same tables, columns, and indexes as applying all Goose migrations.
 func TestSchemaMigrationDrift(t *testing.T) {
 	schemaDB, err := New(":memory:")
 	if err != nil {
@@ -83,17 +83,20 @@ func TestSchemaMigrationDrift(t *testing.T) {
 	}
 	defer schemaDB.Close()
 
-	// schema.sql intentionally creates tables out of FK dependency order (e.g.
-	// workspaces before tasks), so disable foreign keys while applying it.
+	// The legacy schema creates some tables out of FK dependency order (e.g.
+	// workspaces before tasks), so disable foreign keys while applying all
+	// canonical schema fragments.
 	if _, err := schemaDB.Exec("PRAGMA foreign_keys = OFF"); err != nil {
 		t.Fatalf("disable foreign keys for schema load: %v", err)
 	}
-	schemaSQL, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatalf("read schema.sql: %v", err)
-	}
-	if _, err := schemaDB.Exec(string(schemaSQL)); err != nil {
-		t.Fatalf("apply schema.sql: %v", err)
+	for _, schemaPath := range []string{"schema.sql", "schema_goals.sql"} {
+		schemaSQL, err := os.ReadFile(schemaPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", schemaPath, err)
+		}
+		if _, err := schemaDB.Exec(string(schemaSQL)); err != nil {
+			t.Fatalf("apply %s: %v", schemaPath, err)
+		}
 	}
 	if _, err := schemaDB.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		t.Fatalf("re-enable foreign keys after schema load: %v", err)
@@ -110,7 +113,7 @@ func TestSchemaMigrationDrift(t *testing.T) {
 	}
 
 	if diff := schemaDiff(t, schemaDB.DB, migrationDB.DB); diff != "" {
-		t.Fatalf("schema.sql drifts from migrations:\n%s", diff)
+		t.Fatalf("canonical schema drifts from migrations:\n%s", diff)
 	}
 }
 
@@ -122,7 +125,7 @@ func schemaDiff(t *testing.T, a, b *sql.DB) string {
 
 	var diffs []string
 	if missing := setDiff(aTables, bTables); len(missing) > 0 {
-		diffs = append(diffs, fmt.Sprintf("tables only in schema.sql: %s", strings.Join(missing, ", ")))
+		diffs = append(diffs, fmt.Sprintf("tables only in canonical schema: %s", strings.Join(missing, ", ")))
 	}
 	if missing := setDiff(bTables, aTables); len(missing) > 0 {
 		diffs = append(diffs, fmt.Sprintf("tables only in migrations: %s", strings.Join(missing, ", ")))
@@ -272,6 +275,7 @@ func intersection(a, b []string) []string {
 				out = append(out, v)
 			}
 		}
+	}
 	sort.Strings(out)
 	return out
 }
