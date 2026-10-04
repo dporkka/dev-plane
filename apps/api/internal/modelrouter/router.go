@@ -105,7 +105,8 @@ type CallRequest struct {
 	Messages        []Message
 }
 
-// CallResult contains the model response + usage.
+// CallResult contains the model response + usage and the provenance needed to
+// evaluate routing decisions against eventual task outcomes.
 type CallResult struct {
 	Content          string
 	PromptTokens     int
@@ -116,6 +117,9 @@ type CallResult struct {
 	Model            string
 	Provider         string
 	Route            string
+	RouteSource      string
+	PolicyVersion    string
+	SpendAuthority   string
 	FinishReason     string
 }
 
@@ -145,7 +149,6 @@ func (r *Router) RegisterProvider(p Provider) {
 
 // SelectModel chooses the best model for a task based on routing criteria.
 func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyReq string, contextSize int, costCap float64) (*ModelInfo, error) {
-	// Filter and score all available models
 	var scores []Score
 
 	for _, provider := range r.providers {
@@ -153,19 +156,17 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 			continue
 		}
 		for _, model := range provider.Models() {
-			// Hard filters
 			if contextSize > 0 && model.MaxContext > 0 && contextSize > model.MaxContext {
-				continue // Model can't fit the context
+				continue
 			}
 			effectiveCostCap := costCap
 			if effectiveCostCap == 0 {
 				effectiveCostCap = r.config.MaxCostPer1K
 			}
 			if effectiveCostCap > 0 && model.CostPer1KOutput > effectiveCostCap {
-				continue // Model exceeds cost cap
+				continue
 			}
 
-			// Score the model
 			s := r.scoreModel(model, taskType, difficulty, latencyReq)
 			scores = append(scores, Score{
 				Model:    model,
@@ -176,16 +177,13 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 	}
 
 	if len(scores) == 0 {
-		// Return default model as fallback
 		return r.fallbackModel(), nil
 	}
 
-	// Sort by score descending
 	sort.Slice(scores, func(i, j int) bool {
 		if scores[i].Score != scores[j].Score {
 			return scores[i].Score > scores[j].Score
 		}
-		// Tie-break by provider priority
 		return r.providerRank(scores[i].Model.Provider) < r.providerRank(scores[j].Model.Provider)
 	})
 
@@ -199,12 +197,13 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 // provider, health, price, and fallback policy. If Bifrost is unavailable,
 // the legacy local selector remains as a compatibility fallback.
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
-	if bifrost := r.availableProvider("bifrost"); bifrost != nil {
-		route, err := normalizeSemanticRoute(req.Route)
-		if err != nil {
-			return nil, err
-		}
+	route, err := normalizeSemanticRoute(req.Route)
+	if err != nil {
+		return nil, err
+	}
+	source := routeSource(req.Route)
 
+	if bifrost := r.availableProvider("bifrost"); bifrost != nil {
 		selectedReq := req
 		selectedReq.Route = route
 		selectedReq.PreferredModel = routeModelAlias(route)
@@ -221,6 +220,9 @@ func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, e
 			result.Provider = bifrost.Name()
 		}
 		result.Route = route
+		result.RouteSource = source
+		result.PolicyVersion = SemanticRoutingPolicyVersion
+		result.SpendAuthority = SpendAuthorityGateway
 		return result, nil
 	}
 
@@ -229,7 +231,6 @@ func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, e
 		return nil, fmt.Errorf("select model: %w", err)
 	}
 
-	// Find the provider for the selected model
 	var selectedProvider Provider
 	for _, p := range r.providers {
 		if p.Name() == modelInfo.Provider && p.IsAvailable() {
@@ -243,15 +244,23 @@ func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, e
 	}
 
 	selectedReq := req
+	selectedReq.Route = route
 	selectedReq.PreferredModel = modelInfo.Name
 	result, err := selectedProvider.Call(ctx, selectedReq)
 	if err != nil {
-		// Try fallback to next best model
-		return r.tryFallback(ctx, req, modelInfo)
+		result, err = r.tryFallback(ctx, selectedReq, modelInfo)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		result.Model = modelInfo.Name
+		result.Provider = modelInfo.Provider
 	}
 
-	result.Model = modelInfo.Name
-	result.Provider = modelInfo.Provider
+	result.Route = route
+	result.RouteSource = RouteSourceLegacyLocal
+	result.PolicyVersion = SemanticRoutingPolicyVersion
+	result.SpendAuthority = SpendAuthorityDevPlane
 	return result, nil
 }
 
@@ -280,9 +289,8 @@ func (r *Router) tryFallback(ctx context.Context, req CallRequest, failedModel *
 
 // scoreModel calculates a routing score for a model given the task requirements.
 func (r *Router) scoreModel(model ModelInfo, taskType, difficulty, latencyReq string) float64 {
-	score := 50.0 // Base score
+	score := 50.0
 
-	// Task type matching
 	switch taskType {
 	case TaskTypeCode, TaskTypeRefactor:
 		score += float64(model.CodingStrength) * 5
@@ -301,39 +309,32 @@ func (r *Router) scoreModel(model ModelInfo, taskType, difficulty, latencyReq st
 		}
 	case TaskTypeArchitecture:
 		score += float64(model.ReasoningStrength) * 6
-		score += float64(model.MaxContext) / 4000.0 // Favor large context
+		score += float64(model.MaxContext) / 4000.0
 	case TaskTypeDocs:
 		score += float64(model.CodingStrength) * 2
-		// Docs tasks prefer cheaper models
 		score -= model.CostPer1KOutput * 100
 	case TaskTypeSimple:
-		// Simple tasks prefer fast, cheap models
 		score -= model.CostPer1KOutput * 200
 		score -= float64(model.LatencyMs) / 50.0
 	}
 
-	// Difficulty adjustment
 	switch difficulty {
 	case DifficultyEasy:
-		score -= model.CostPer1KOutput * 50 // Prefer cheaper models
+		score -= model.CostPer1KOutput * 50
 	case DifficultyHard, DifficultyExpert:
 		score += float64(model.ReasoningStrength) * 3
 		score += float64(model.CodingStrength) * 2
 	}
 
-	// Latency requirements
 	switch latencyReq {
 	case LatencyFast:
 		score -= float64(model.LatencyMs) / 20.0
 	case LatencyNormal:
 		score -= float64(model.LatencyMs) / 50.0
 	case LatencySlowOK:
-		// No penalty for latency
 	}
 
-	// Cost efficiency bonus
 	score -= model.CostPer1KOutput * 30
-
 	return score
 }
 
