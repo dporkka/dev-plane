@@ -2,6 +2,8 @@ version: "2"
 sql:
   - engine: "postgresql"
     queries: "queries/"
+    # sqlc accepts a list of schema paths; keep proof-bound goal DDL additive
+    # while the legacy schema.sql remains the primary monolith.
     schema:
       - "schema.sql"
       - "schema_goals.sql"
