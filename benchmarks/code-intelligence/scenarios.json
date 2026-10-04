@@ -1,14 +1,16 @@
 {
-  "version": 4,
+  "version": 5,
   "scenarios": [
     {
       "id": "adacavo-proposal-flow",
       "repository": "dporkka/adacavo",
       "intent": "impact",
-      "prompt": "Trace ProposalService through proposal entry points and the durable proposal-booking workflow. Return the files that must be reviewed before changing proposal status-transition semantics.",
+      "prompt": "Trace ProposalService through proposal entry points and the durable proposal-booking workflow. Return the production files that must be reviewed before changing proposal status-transition semantics.",
       "expected": [
         "apps/api/services/proposal-service.ts",
+        "apps/api/services/proposal-service-legacy.ts",
         "apps/api/proposals/actions.ts",
+        "apps/api/proposals/booking.ts",
         "apps/api/proposals.ts",
         "temporal/workflows/proposal-booking-workflow.ts",
         "temporal/activities/proposal-booking-activities.ts"
@@ -19,7 +21,7 @@
             "tool": "search_graph",
             "arguments": {
               "project": "adacavo",
-              "query": "ProposalService proposal status transition booking workflow durable Temporal",
+              "query": "ProposalService transitionLifecycle proposal status transition booking workflow durable Temporal",
               "limit": 30
             }
           }
@@ -28,7 +30,7 @@
           {
             "tool": "query",
             "arguments": {
-              "search_query": "ProposalService proposal status transition booking workflow durable Temporal",
+              "search_query": "ProposalService transitionLifecycle proposal status transition booking workflow durable Temporal",
               "maxTokens": 8000
             }
           }
