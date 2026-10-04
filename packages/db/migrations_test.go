@@ -32,6 +32,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"deployments",
 		"evidence_bundles",
 		"detection_results",
+		"goal_proofs",
 		"goal_work_items",
 		"goals",
 		"integrations",
@@ -275,7 +276,6 @@ func intersection(a, b []string) []string {
 				out = append(out, v)
 			}
 		}
-	}
 	sort.Strings(out)
 	return out
 }
