@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -58,6 +59,13 @@ class CodeIntelProvenanceTests(unittest.TestCase):
         with mock.patch.object(provenance.subprocess, "run", return_value=completed):
             self.assertEqual(provenance.command_version(["tool", "--version"]), "error: boom")
 
+    def test_file_sha256_hashes_exact_bytes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = pathlib.Path(tmp) / "corpus.json"
+            payload = b'{"version":8}\n'
+            path.write_bytes(payload)
+            self.assertEqual(provenance.file_sha256(path), hashlib.sha256(payload).hexdigest())
+
     def test_enrich_suite_records_versions_and_repository_revisions(self):
         suite = {
             "version": 1,
@@ -88,12 +96,67 @@ class CodeIntelProvenanceTests(unittest.TestCase):
         self.assertEqual(enriched["scenarios"][0]["revision"], "abc123")
         self.assertEqual(enriched["scenarios"][1]["revision"], "abc123")
 
+    def test_enrich_suite_attaches_exact_corpus_definition(self):
+        suite = {
+            "version": 1,
+            "scenarios": [
+                {
+                    "id": "s1",
+                    "repository": "owner/repo",
+                    "repo_path": "/repos/repo",
+                    "runs": [],
+                }
+            ],
+        }
+        corpus = {
+            "version": 8,
+            "scenarios": [
+                {
+                    "id": "s1",
+                    "repository": "owner/repo",
+                    "intent": "impact",
+                    "prompt": "Find callers",
+                    "expected": ["src/a.go"],
+                    "backends": {
+                        "codebase-memory": [{"tool": "trace_path", "arguments": {"project": "repo"}}],
+                        "gitnexus": [{"tool": "impact", "arguments": {"target": "A"}}],
+                    },
+                }
+            ],
+        }
+        with mock.patch.object(provenance, "repo_revision", return_value="abc123"), mock.patch.object(
+            provenance,
+            "collect_tool_versions",
+            return_value={},
+        ):
+            enriched = provenance.enrich_suite(
+                suite,
+                corpus_document=corpus,
+                corpus_sha256="deadbeef",
+            )
+
+        self.assertEqual(enriched["corpus"]["version"], 8)
+        self.assertEqual(enriched["corpus"]["sha256"], "deadbeef")
+        scenario = enriched["scenarios"][0]
+        self.assertEqual(scenario["intent"], "impact")
+        self.assertEqual(scenario["prompt"], "Find callers")
+        self.assertEqual(scenario["backend_calls"], corpus["scenarios"][0]["backends"])
+
+    def test_enrich_suite_rejects_scenario_missing_from_corpus(self):
+        suite = {"version": 1, "scenarios": [{"id": "missing", "runs": []}]}
+        corpus = {"version": 1, "scenarios": []}
+        with self.assertRaises(ValueError):
+            provenance.enrich_suite(suite, corpus_document=corpus, corpus_sha256="abc")
+
     def test_write_enriched_suite_replaces_file_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
-            path = pathlib.Path(tmp) / "suite.json"
+            root = pathlib.Path(tmp)
+            path = root / "suite.json"
+            corpus_path = root / "corpus.json"
             path.write_text(json.dumps({"version": 1, "scenarios": []}), encoding="utf-8")
+            corpus_path.write_text(json.dumps({"version": 1, "scenarios": []}), encoding="utf-8")
             with mock.patch.object(provenance, "enrich_suite", return_value={"version": 2, "scenarios": []}):
-                provenance.write_enriched_suite(path)
+                provenance.write_enriched_suite(path, corpus_path=corpus_path)
             self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], 2)
 
 
