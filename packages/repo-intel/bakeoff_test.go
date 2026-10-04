@@ -35,7 +35,33 @@ func TestScoreRunNormalizesAndDeduplicatesResults(t *testing.T) {
 	assertFloatNear(t, score.F1, 1)
 }
 
-func TestRankRunsPrefersQualityThenLatencyThenTokens(t *testing.T) {
+func TestRankRunsPrefersRequiredRecallBeforePrecision(t *testing.T) {
+	expected := []string{"a", "b", "c", "d"}
+	ranked := RankRuns(expected, []BackendRun{
+		{
+			Backend: BackendGitNexus,
+			Results: []string{"a", "b", "c"},
+			Latency: 10 * time.Millisecond,
+		},
+		{
+			Backend: BackendCodebaseMemory,
+			Results: []string{"a", "b", "c", "d", "extra-1", "extra-2", "extra-3", "extra-4"},
+			Latency: 200 * time.Millisecond,
+		},
+	})
+
+	if ranked[0].Backend != BackendCodebaseMemory {
+		t.Fatalf("winner = %q, want backend with complete required-file recall", ranked[0].Backend)
+	}
+	if ranked[0].Recall != 1 {
+		t.Fatalf("winner recall = %f, want 1", ranked[0].Recall)
+	}
+	if ranked[0].F1 >= ranked[1].F1 {
+		t.Fatalf("test setup requires complete-recall backend to have lower F1: %#v", ranked)
+	}
+}
+
+func TestRankRunsUsesF1ThenLatencyThenTokensAfterRecallTie(t *testing.T) {
 	expected := []string{"a", "b"}
 	ranked := RankRuns(expected, []BackendRun{
 		{Backend: BackendGitNexus, Results: []string{"a", "b"}, Latency: 250 * time.Millisecond, OutputTokens: 500},
@@ -50,7 +76,7 @@ func TestRankRunsPrefersQualityThenLatencyThenTokens(t *testing.T) {
 		t.Fatalf("winner = %q, want %q", ranked[0].Backend, BackendCodebaseMemory)
 	}
 	if ranked[2].Backend != BackendZoekt {
-		t.Fatalf("last = %q, want lower-quality backend %q", ranked[2].Backend, BackendZoekt)
+		t.Fatalf("last = %q, want lower-recall backend %q", ranked[2].Backend, BackendZoekt)
 	}
 }
 
