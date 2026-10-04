@@ -14,7 +14,8 @@ import (
 // PutGoalProof persists one immutable proof reference. Admission is serialized
 // against goal proof-epoch rotation by locking the goal row in the same
 // transaction. Historical proof remains stored after later rotations, but new
-// proof for a stale epoch is rejected.
+// proof for a stale epoch is rejected. Replays are idempotent only when every
+// authority-bearing field still matches the original proof.
 func (db *DB) PutGoalProof(ctx context.Context, goalID string, proof models.GoalProof) error {
 	goalID = strings.TrimSpace(goalID)
 	if goalID == "" {
