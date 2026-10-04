@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "scenarios": [
     {
       "id": "adacavo-proposal-flow",
@@ -19,13 +19,8 @@
             "tool": "search_graph",
             "arguments": {
               "project": "adacavo",
-              "semantic_query": [
-                "ProposalService",
-                "proposal status transition",
-                "proposal booking workflow",
-                "Temporal"
-              ],
-              "semantic_limit": 30
+              "query": "ProposalService proposal status transition booking workflow durable Temporal",
+              "limit": 30
             }
           }
         ],
@@ -91,12 +86,8 @@
             "tool": "search_graph",
             "arguments": {
               "project": "nulang-cloud",
-              "semantic_query": [
-                "Dev Plane runtime provider",
-                "local execution runtime",
-                "Firecracker host-agent runtime boundary"
-              ],
-              "semantic_limit": 30
+              "query": "Dev Plane runtime provider local execution Firecracker host-agent runtime boundary",
+              "limit": 30
             }
           }
         ],
@@ -129,13 +120,8 @@
             "tool": "search_graph",
             "arguments": {
               "project": "dev-plane",
-              "semantic_query": [
-                "run admission",
-                "scheduler claim",
-                "budget CheckRunStart",
-                "executor readiness policy"
-              ],
-              "semantic_limit": 30
+              "query": "run admission scheduler claim budget CheckRunStart executor readiness policy",
+              "limit": 30
             }
           }
         ],
