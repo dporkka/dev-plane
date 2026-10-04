@@ -172,6 +172,9 @@ type criterionProofState struct {
 // treated as failure. Evidence for edited criteria is reported as stale.
 func EvaluateGoalProof(goal Goal, proofs []GoalProof) GoalEvaluation {
 	evaluation := GoalEvaluation{Status: GoalEvaluationUnproven}
+	if err := goal.Validate(); err != nil {
+		return evaluation
+	}
 
 	criteria := make(map[string]GoalCriterion, len(goal.SuccessCriteria))
 	for _, criterion := range goal.SuccessCriteria {
