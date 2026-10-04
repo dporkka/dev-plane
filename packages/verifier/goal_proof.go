@@ -18,8 +18,8 @@ import (
 // the existing EvidenceBundle authority boundary: incomplete/pending evidence
 // does not become proof, while explicit terminal gate failure becomes failed
 // proof rather than being mistaken for an adapter error. Evidence identity is
-// content-bound because the source store may rerun and replace the same
-// work-item/HEAD record with a new outcome.
+// content- and observation-bound because the source store may rerun and replace
+// the same work-item/HEAD record with a new observation.
 func GoalProofFromEvidenceBundle(goal models.Goal, criterionID string, bundle repoprotocol.EvidenceBundle, observedAt time.Time) (models.GoalProof, error) {
 	if err := goal.Validate(); err != nil {
 		return models.GoalProof{}, fmt.Errorf("validate goal: %w", err)
@@ -76,7 +76,7 @@ func GoalProofFromEvidenceBundle(goal models.Goal, criterionID string, bundle re
 		return models.GoalProof{}, fmt.Errorf("validate passing evidence: %w", err)
 	}
 
-	evidenceDigest, err := evidenceBundleDigest(bundle)
+	evidenceDigest, err := evidenceObservationDigest(bundle, observedAt)
 	if err != nil {
 		return models.GoalProof{}, err
 	}
@@ -91,13 +91,16 @@ func GoalProofFromEvidenceBundle(goal models.Goal, criterionID string, bundle re
 	}, nil
 }
 
-func evidenceBundleDigest(bundle repoprotocol.EvidenceBundle) (string, error) {
+func evidenceObservationDigest(bundle repoprotocol.EvidenceBundle, observedAt time.Time) (string, error) {
 	payload, err := json.Marshal(bundle)
 	if err != nil {
 		return "", fmt.Errorf("marshal evidence bundle identity: %w", err)
 	}
-	sum := sha256.Sum256(payload)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	h := sha256.New()
+	_, _ = h.Write(payload)
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(observedAt.UTC().Format(time.RFC3339Nano)))
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 func verifierGoalCriterion(goal models.Goal, criterionID string) (models.GoalCriterion, bool) {
