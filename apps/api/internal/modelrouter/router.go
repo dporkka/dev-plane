@@ -93,14 +93,16 @@ type ModelInfo struct {
 
 // CallRequest is a request to call a model.
 type CallRequest struct {
-	TaskType       string
-	Difficulty     string
-	LatencyReq     string // fast, normal, slow_ok
-	ContextSize    int
-	StructuredReq  bool
-	CostCap        float64
-	PreferredModel string
-	Messages       []Message
+	TaskType        string
+	Difficulty      string
+	LatencyReq      string // fast, normal, slow_ok
+	ContextSize     int
+	StructuredReq   bool
+	CostCap         float64
+	PreferredModel  string
+	Route           string
+	RoutingMetadata map[string]string
+	Messages        []Message
 }
 
 // CallResult contains the model response + usage.
@@ -113,6 +115,7 @@ type CallResult struct {
 	LatencyMs        int
 	Model            string
 	Provider         string
+	Route            string
 	FinishReason     string
 }
 
@@ -190,8 +193,37 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 	return best, nil
 }
 
-// RouteCall selects the best model and executes the call.
+// RouteCall selects the best model and executes the call. When Bifrost is
+// configured, it is the canonical model gateway: Dev Plane sends a stable
+// semantic route and task context, while Bifrost resolves the volatile model,
+// provider, health, price, and fallback policy. If Bifrost is unavailable,
+// the legacy local selector remains as a compatibility fallback.
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
+	if bifrost := r.availableProvider("bifrost"); bifrost != nil {
+		route, err := normalizeSemanticRoute(req.Route)
+		if err != nil {
+			return nil, err
+		}
+
+		selectedReq := req
+		selectedReq.Route = route
+		selectedReq.PreferredModel = routeModelAlias(route)
+		result, err := bifrost.Call(ctx, selectedReq)
+		if err != nil {
+			// Do not silently bypass gateway governance, budgets, or compliance by
+			// falling through to direct provider credentials after a gateway error.
+			return nil, fmt.Errorf("bifrost route %s: %w", route, err)
+		}
+		if result.Model == "" {
+			result.Model = selectedReq.PreferredModel
+		}
+		if result.Provider == "" {
+			result.Provider = bifrost.Name()
+		}
+		result.Route = route
+		return result, nil
+	}
+
 	modelInfo, err := r.SelectModel(ctx, req.TaskType, req.Difficulty, req.LatencyReq, req.ContextSize, req.CostCap)
 	if err != nil {
 		return nil, fmt.Errorf("select model: %w", err)
