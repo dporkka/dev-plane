@@ -67,7 +67,7 @@ func TestRoutingDecisionTelemetryCapturesVerifierOutcome(t *testing.T) {
 	}
 
 	checks := map[string]any{
-		"tests": map[string]any{"passed": true, "exit_code": float64(0)},
+		"tests":  map[string]any{"passed": true, "exit_code": float64(0)},
 		"passed": true,
 	}
 	if err := runner.recordRoutingOutcome(context.Background(), run.ID, models.AgentRunStatusCompleted, checks, ""); err != nil {
