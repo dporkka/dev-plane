@@ -6,7 +6,7 @@ Dev Plane uses a layered code-intelligence model so agents use the cheapest prec
 
 Shared services:
 
-- `codebase-memory-mcp`: persistent structural graph, architecture, call paths, impact analysis, cross-repository relationships, semantic fallback.
+- `codebase-memory-mcp`: persistent structural graph, architecture, call paths, impact analysis, cross-repository relationships, and conceptual fallback.
 - Zoekt: fast lexical and regex search over the canonical local repository set.
 
 Per-agent/worktree tools:
@@ -35,17 +35,17 @@ Supported intents are:
 - `history` — Git history and ownership;
 - `verify` — executable correctness checks.
 
-The deterministic router maps those requests to the current preferred backend. For example, exact worktree lookup routes to ripgrep, exact fleet lookup to Zoekt, symbol semantics to LSP, architecture/impact to codebase-memory, structural refactors to ast-grep, deep data flow to Joern, and verification to tests. Mutating/high-risk plans include an executable verification step rather than treating static analysis as proof.
+The deterministic router maps those requests to the current preferred backend. Exact worktree lookup routes to ripgrep, exact fleet lookup to Zoekt, symbol semantics to LSP, architecture/impact to codebase-memory, structural refactors to ast-grep, deep data flow to Joern, and verification to tests. Mutating/high-risk plans include executable verification rather than treating static analysis as proof.
 
 This indirection is intentional: codebase-memory, GitNexus, or another graph engine can be replaced without changing the operation contract used by the rest of Dev Plane.
 
 ## Install codebase-memory-mcp
 
-Install the binary from the upstream project and ensure `codebase-memory-mcp` is on `PATH`. Repository MCP configuration expects that command name directly.
+Install the binary and ensure `codebase-memory-mcp` is on `PATH`. Repository MCP configuration expects that command name directly.
 
 On the first session for a repository, index it before depending on graph answers. Keep the graph fresh after meaningful branch changes and re-index if graph output disagrees with compiler/LSP evidence.
 
-For large multi-agent installations, prefer explicit canonical-repository indexing and keep automatic worktree watchers disabled unless you actually want every ephemeral worktree registered. The bake-off harness indexes explicitly and does not require auto-watch.
+For large multi-agent installations, prefer explicit canonical-repository indexing and keep automatic worktree watchers disabled unless every ephemeral worktree should be registered. The bake-off harness indexes canonical repositories explicitly.
 
 ## Run shared Zoekt
 
@@ -59,7 +59,7 @@ docker compose -f docker-compose.code-intelligence.yml up -d zoekt
 
 The web/API endpoint is then available on `http://localhost:6070`.
 
-Re-run `zoekt-sync` after adding/removing repositories or when the canonical clones have materially changed. Agents working in isolated worktrees should use branch-local `rg`, LSP, and `ast-grep` for uncommitted delta context rather than expecting the shared Zoekt index to represent every agent branch.
+Re-run `zoekt-sync` after adding/removing repositories or when canonical clones materially change. Agents working in isolated worktrees should use branch-local `rg`, LSP, and `ast-grep` for uncommitted delta context rather than expecting the shared Zoekt index to represent every agent branch.
 
 ## Routing policy
 
@@ -67,7 +67,7 @@ Re-run `zoekt-sync` after adding/removing repositories or when the canonical clo
 2. Structural syntax pattern or mass rewrite: `ast-grep`.
 3. Definition/reference/implementation/type resolution: language server.
 4. Architecture, dependency, call path, blast radius: `codebase-memory-mcp`.
-5. Conceptual search with unknown names: semantic graph search as a fallback.
+5. Conceptual discovery when names are unknown: codebase-memory search after cheaper lexical/structural search is insufficient.
 6. Security source-to-sink/data-flow question: Joern when installed.
 7. Historical reason or ownership: Git.
 8. Correctness: tests/typecheck/lint/runtime/CI.
@@ -84,17 +84,29 @@ Do not rebuild fleet-wide indexes for every agent worktree.
 
 ## Backend bake-off
 
-The benchmark corpus is checked in at `benchmarks/code-intelligence/scenarios.json`. It starts with representative high-value scenarios from Adacavo, Nulang, Nulang Cloud, and Dev Plane rather than toy symbol lookups. Each scenario contains backend-specific MCP tool calls so the comparison is executable and reproducible.
+The benchmark corpus is checked in at `benchmarks/code-intelligence/scenarios.json`. It uses representative production paths from Adacavo, Nulang, Nulang Cloud, and Dev Plane rather than toy symbol lookups. The `expected` arrays are **curated required core paths**, not exhaustive sets of every relevant file.
+
+The current scenarios cover:
+
+- Adacavo proposal lifecycle + durable proposal booking;
+- Nulang MIR-to-bytecode code generation + core production callers;
+- Nulang Cloud's Dev Plane/local-Wasmtime/Firecracker runtime boundaries;
+- Dev Plane scheduler/readiness/budget/executor admission semantics.
+
+Each scenario contains backend-specific MCP calls. Broad codebase-memory discovery uses deterministic BM25 `search_graph(query=...)`, graph caller analysis uses `trace_path`, and every codebase-memory call is explicitly scoped to its indexed project.
 
 The harness:
 
 - optionally refreshes each backend index before measurement;
 - uses GitNexus `analyze --index-only` so benchmarking does not rewrite agent instruction/skill files;
 - calls both backends through MCP for the query phase;
-- records only repository-tracked files actually mentioned by each backend response;
-- excludes MCP startup and indexing time from query latency, while recording `index_ms` separately;
-- saves raw backend responses under the ignored `data/` directory for auditability;
-- estimates output tokens from response length for a stable relative cost signal.
+- records repository-tracked files actually mentioned by each backend response;
+- excludes MCP startup and indexing time from query latency while recording `index_ms` separately;
+- saves raw backend responses under ignored `data/` for auditability;
+- estimates output tokens from response length as a relative cost signal;
+- binds final results to exact repository SHAs, backend/tool versions, corpus version, corpus SHA-256, prompts, intents, expected paths, and backend calls.
+
+The corpus contract itself is tested by `scripts/test_codeintel_corpus.py` so stale or unscoped benchmark definitions fail before a live run.
 
 Run the non-live verification lane with:
 
@@ -102,9 +114,9 @@ Run the non-live verification lane with:
 bash scripts/verify-codeintel.sh
 ```
 
-That executes the Python harness unit tests and `packages/repo-intel` Go tests without requiring either graph backend.
+That executes the harness, corpus, and provenance tests plus `packages/repo-intel` Go tests without requiring either graph backend.
 
-To execute the live bake-off when the repositories are checked out under one root:
+To execute the live bake-off using local checkouts:
 
 ```bash
 export CODEINTEL_RUN_LIVE=1
@@ -112,23 +124,15 @@ export CODEINTEL_REPOS_ROOT="$HOME/src"
 bash scripts/verify-codeintel.sh
 ```
 
-By default the harness expects checkouts named `adacavo`, `nulang`, `nulang-cloud`, and `dev-plane` under `CODEINTEL_REPOS_ROOT`. Override any checkout explicitly when needed:
+For a pinned containerized run:
 
 ```bash
-python3 scripts/codeintel_bakeoff.py \
-  --repo dporkka/adacavo=/work/adacavo \
-  --repo nulang-org/nulang=/work/nulang
+export CODEINTEL_REPOS_ROOT="$HOME/src"
+docker compose -f docker-compose.code-intelligence-benchmark.yml build benchmark
+docker compose -f docker-compose.code-intelligence-benchmark.yml run --rm benchmark
 ```
 
-The default backend commands are:
-
-```text
-codebase-memory: codebase-memory-mcp
-gitnexus MCP:    npx -y gitnexus@1.6.12 mcp
-gitnexus index:  npx -y gitnexus@1.6.12 analyze --index-only
-```
-
-They can be overridden through `CODEINTEL_CODEBASE_MEMORY_CMD`, `CODEINTEL_GITNEXUS_MCP_CMD`, and `CODEINTEL_GITNEXUS_ANALYZE_CMD` so a runner can use preinstalled or pinned binaries without changing the corpus.
+The pinned worker installs `codebase-memory-mcp@0.11.0` and `gitnexus@1.6.12`, invokes the installed binaries directly, and isolates persistent state under `/var/lib/codeintel/cbm` and `/var/lib/codeintel/gitnexus`.
 
 Each scenario produces a scorer input in `data/codeintel-bakeoff/<scenario>.json`. Score one with:
 
@@ -144,33 +148,48 @@ cd packages/repo-intel
 go run ./cmd/codeintel-promote ../../data/codeintel-bakeoff/suite.json
 ```
 
-The default promotion gate requires the candidate backend to succeed on every scenario, achieve at least 0.80 recall and 0.75 F1 on every scenario, and have no per-scenario recall or F1 regression versus a successful GitNexus baseline. Latency and output-token cost never compensate for lower retrieval quality.
+### Promotion semantics
+
+Required-core recall is the safety metric:
+
+- the candidate must succeed on every scenario;
+- the candidate must achieve `1.00` recall on every scenario — every curated core path must be found;
+- the candidate must have no per-scenario recall regression versus a successful GitNexus result;
+- precision/F1 are retained as diagnostic noise/relevance signals but do not block promotion because the expected set is intentionally non-exhaustive;
+- latency and output-token cost are considered only after required-core recall is complete.
+
+`codeintel-bakeoff` therefore ranks successful runs by recall first, then F1, latency, and output tokens. `codeintel-promote` returns a non-zero exit code when promotion is unsafe.
 
 ## Woodpecker verification
 
-`.woodpecker/code-intelligence.yaml` provides a provider-independent verification lane for this subsystem. It runs on relevant pull-request changes and pushes to `main` and executes:
+`.woodpecker/code-intelligence.yaml` provides the normal provider-independent verification lane. It is pinned to the `linux/amd64` agent pool and runs on relevant pull requests and pushes to `main`:
 
-- the Python 3.13 harness tests;
-- the `packages/repo-intel` Go tests using Go 1.26.8.
+- Python 3.13 harness tests;
+- corpus-contract tests;
+- provenance tests;
+- `packages/repo-intel` Go tests using Go 1.26.8.
 
-Woodpecker only runs repository workflows after the repository is activated in the Woodpecker server and its forge webhook is installed. Repository activation is an infrastructure/admin operation, not something encoded in this repository.
+The live cross-repository comparison is separate and manual-only in `.woodpecker/code-intelligence-bakeoff.yaml`. It requires the repository to be activated in Woodpecker and a read-only `codeintel_github_token` repository secret for the private Adacavo and Nulang Cloud clones. The token is removed/unset before indexing and backend queries.
 
-The live cross-repository bake-off is intentionally not part of the default PR lane because it needs canonical checkouts of four repositories plus both backend binaries. Run it on a trusted benchmark worker with those dependencies preinstalled or mounted.
+See `docs/code-intelligence-bakeoff-runbook.md` for the operational setup and migration sequence.
 
 ## CI admission
 
-The code-intelligence lane is intentionally runnable outside GitHub Actions. A hosted Actions run that creates jobs but executes zero steps is an admission/infrastructure failure and must not be treated as evidence that source validation failed. Run `bash scripts/verify-codeintel.sh` on an available local, Woodpecker, Dagger, or other repository-defined runner until hosted Actions admission is healthy again.
+The code-intelligence lane is intentionally runnable outside GitHub Actions. A hosted Actions run that creates jobs but executes zero steps is an admission/infrastructure failure and must not be treated as evidence that source validation failed. Run the portable or Woodpecker lanes until hosted Actions admission is healthy again.
 
-Do not weaken or remove repository verification because a hosted CI provider is unavailable; move the same commands to a functioning runner.
+Do not weaken or remove repository verification because a hosted CI provider is unavailable; move the same checks to a functioning runner.
 
 ## Migration from GitNexus
 
-GitNexus remains a temporary fallback where existing repository policy depends on it. Do not delete GitNexus-specific scripts or safety gates until codebase-memory has been benchmarked on equivalent architecture, impact, change-detection, and cross-repository tasks.
+GitNexus remains a temporary fallback where existing repository policy depends on it. Do not delete GitNexus-specific scripts or safety gates until the pinned live corpus returns `promote: true` and a cold-cache repeat confirms the result.
 
-Removal criteria:
+Recommended cutover order:
 
-- equivalent or better call-path/impact accuracy on representative changes;
-- reliable incremental freshness;
-- no regression in pre-commit affected-scope checks;
-- lower or comparable latency/token overhead after quality is equivalent;
-- stable behavior across TypeScript, Go, Rust, and Python repositories.
+1. pass the live pinned bake-off;
+2. repeat from a cold backend cache;
+3. remove the disabled GitNexus fallback from Dev Plane only;
+4. bake in codebase-memory as Dev Plane's only graph backend and observe freshness/reliability;
+5. rerun the corpus;
+6. migrate Adacavo's GitNexus-specific safety/freshness integration in a separate rollback-friendly PR.
+
+Nulang and Nulang Cloud already point at codebase-memory and do not require a GitNexus-removal step from this migration branch.
