@@ -17,12 +17,12 @@ func TestCheckRunDelegatesDollarLimitsToExternalSpendAuthority(t *testing.T) {
 	// authoritative spend enforcer, Dev Plane must not pretend this local
 	// estimate is authoritative. Non-dollar limits still remain in force.
 	state := &RunState{
-		CostSoFar:            99,
+		CostSoFar:             99,
 		ExternalCostAuthority: true,
-		DurationMinutes:      15,
-		ModelCalls:           10,
-		ToolCalls:            5,
-		ShellCommands:        2,
+		DurationMinutes:       15,
+		ModelCalls:            10,
+		ToolCalls:             5,
+		ShellCommands:         2,
 	}
 
 	result, err := engine.CheckRun(context.Background(), budget, state)
