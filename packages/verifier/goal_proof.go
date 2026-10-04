@@ -17,7 +17,9 @@ import (
 // into a proof reference for one current goal criterion. The adapter preserves
 // the existing EvidenceBundle authority boundary: incomplete/pending evidence
 // does not become proof, while explicit terminal gate failure becomes failed
-// proof rather than being mistaken for an adapter error.
+// proof rather than being mistaken for an adapter error. Evidence identity is
+// content-bound because the source store may rerun and replace the same
+// work-item/HEAD record with a new outcome.
 func GoalProofFromEvidenceBundle(goal models.Goal, criterionID string, bundle repoprotocol.EvidenceBundle, observedAt time.Time) (models.GoalProof, error) {
 	if err := goal.Validate(); err != nil {
 		return models.GoalProof{}, fmt.Errorf("validate goal: %w", err)
