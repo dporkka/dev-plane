@@ -5,20 +5,35 @@ import (
 	"strings"
 )
 
+// SemanticRoutingPolicyVersion changes only when route semantics or precedence
+// change. Concrete model mappings live in Bifrost and may change independently.
+const SemanticRoutingPolicyVersion = "devplane-semantic-v1"
+
 // Semantic routes are stable workload intents. Concrete models and providers
 // are resolved by the model gateway so Dev Plane does not hard-code volatile
 // model IDs, prices, or provider health data.
 const (
-	RouteAuto               = "auto"
-	RouteUltraLowLatency    = "ultra_low_latency"
+	RouteAuto                = "auto"
+	RouteUltraLowLatency     = "ultra_low_latency"
 	RouteCheapClassification = "cheap_classification"
-	RouteCheapSummary       = "cheap_summary"
-	RouteBalancedChat       = "balanced_chat"
-	RouteCodingFast         = "coding_fast"
-	RouteCodingDeep         = "coding_deep"
-	RouteAgenticLongHorizon = "agentic_long_horizon"
-	RouteReasoningHigh      = "reasoning_high"
-	RouteSecurityReview     = "security_review"
+	RouteCheapSummary        = "cheap_summary"
+	RouteBalancedChat        = "balanced_chat"
+	RouteCodingFast          = "coding_fast"
+	RouteCodingDeep          = "coding_deep"
+	RouteAgenticLongHorizon  = "agentic_long_horizon"
+	RouteReasoningHigh       = "reasoning_high"
+	RouteSecurityReview      = "security_review"
+)
+
+const (
+	RouteSourceAuto        = "auto"
+	RouteSourceExplicit    = "explicit"
+	RouteSourceLegacyLocal = "legacy_local"
+)
+
+const (
+	SpendAuthorityDevPlane = "dev-plane"
+	SpendAuthorityGateway  = "gateway"
 )
 
 var semanticRoutes = map[string]struct{}{
@@ -45,6 +60,14 @@ func normalizeSemanticRoute(route string) (string, error) {
 	return route, nil
 }
 
+func routeSource(route string) string {
+	route = strings.TrimSpace(route)
+	if route == "" || route == RouteAuto {
+		return RouteSourceAuto
+	}
+	return RouteSourceExplicit
+}
+
 func routeModelAlias(route string) string {
 	return "route/" + route
 }
@@ -56,6 +79,12 @@ func (r *Router) availableProvider(name string) Provider {
 		}
 	}
 	return nil
+}
+
+// UsesExternalSpendAuthority reports whether model spend is enforced by the
+// configured model gateway rather than Dev Plane's local price estimates.
+func (r *Router) UsesExternalSpendAuthority() bool {
+	return r != nil && r.availableProvider("bifrost") != nil
 }
 
 // bifrostRoutingHeaders exposes only a fixed allowlist of routing context to
