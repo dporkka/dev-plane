@@ -104,6 +104,7 @@ class CodeIntelProvenanceTests(unittest.TestCase):
                     "id": "s1",
                     "repository": "owner/repo",
                     "repo_path": "/repos/repo",
+                    "expected": ["src/a.go"],
                     "runs": [],
                 }
             ],
@@ -148,6 +149,18 @@ class CodeIntelProvenanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             provenance.enrich_suite(suite, corpus_document=corpus, corpus_sha256="abc")
 
+    def test_enrich_suite_rejects_expected_results_that_differ_from_corpus(self):
+        suite = {
+            "version": 1,
+            "scenarios": [{"id": "s1", "expected": ["wrong.go"], "runs": []}],
+        }
+        corpus = {
+            "version": 1,
+            "scenarios": [{"id": "s1", "expected": ["right.go"]}],
+        }
+        with self.assertRaises(ValueError):
+            provenance.enrich_suite(suite, corpus_document=corpus, corpus_sha256="abc")
+
     def test_write_enriched_suite_replaces_file_atomically(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -155,9 +168,16 @@ class CodeIntelProvenanceTests(unittest.TestCase):
             corpus_path = root / "corpus.json"
             path.write_text(json.dumps({"version": 1, "scenarios": []}), encoding="utf-8")
             corpus_path.write_text(json.dumps({"version": 1, "scenarios": []}), encoding="utf-8")
-            with mock.patch.object(provenance, "enrich_suite", return_value={"version": 2, "scenarios": []}):
+            mocked_enriched = {
+                "version": 2,
+                "scenarios": [],
+                "corpus": {"version": 1, "sha256": "abc"},
+            }
+            with mock.patch.object(provenance, "enrich_suite", return_value=mocked_enriched):
                 provenance.write_enriched_suite(path, corpus_path=corpus_path)
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["version"], 2)
+            written = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(written["version"], 2)
+            self.assertEqual(written["corpus"]["path"], str(corpus_path))
 
 
 if __name__ == "__main__":
