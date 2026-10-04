@@ -2,7 +2,6 @@ package agentrunner
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -160,21 +159,4 @@ func finalChecksPassed(results map[string]any) bool {
 		return false
 	}
 	return payload.Passed
-}
-
-// routingDecisionExists is intentionally small and testable; callers may use
-// it when reconciling verifier outcomes after a crash or resumed run.
-func (r *Runner) routingDecisionExists(ctx context.Context, runID string) (bool, error) {
-	if r == nil || r.db == nil {
-		return false, nil
-	}
-	var one int
-	err := r.db.QueryRowContext(ctx, `SELECT 1 FROM routing_decisions WHERE agent_run_id = $1 LIMIT 1`, runID).Scan(&one)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
 }
