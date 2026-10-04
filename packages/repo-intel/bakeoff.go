@@ -15,8 +15,9 @@ type BackendRun struct {
 	Error        string
 }
 
-// BenchmarkScore captures retrieval quality first, with cost/latency retained
-// as tie-breakers rather than allowed to hide missed or false results.
+// BenchmarkScore captures required-result coverage plus precision/cost signals.
+// The benchmark corpus is a set of core required paths rather than an exhaustive
+// list of every relevant file, so recall is the primary safety signal.
 type BenchmarkScore struct {
 	Backend      Backend
 	Precision    float64
@@ -29,7 +30,7 @@ type BenchmarkScore struct {
 }
 
 // ScoreRun compares a backend's normalized unique result keys to the expected
-// result keys for a scenario.
+// core result keys for a scenario.
 func ScoreRun(expected []string, run BackendRun) BenchmarkScore {
 	expectedSet := normalizedSet(expected)
 	actualSet := normalizedSet(run.Results)
@@ -63,7 +64,8 @@ func ScoreRun(expected []string, run BackendRun) BenchmarkScore {
 	}
 }
 
-// RankRuns ranks successful runs by F1, then latency, then output tokens.
+// RankRuns ranks successful runs by required-result recall first. F1 is a
+// secondary relevance/noise signal, followed by latency and output-token cost.
 // Failed runs always sort after successful runs.
 func RankRuns(expected []string, runs []BackendRun) []BenchmarkScore {
 	scores := make([]BenchmarkScore, 0, len(runs))
@@ -75,6 +77,9 @@ func RankRuns(expected []string, runs []BackendRun) []BenchmarkScore {
 		a, b := scores[i], scores[j]
 		if a.Failed != b.Failed {
 			return !a.Failed
+		}
+		if a.Recall != b.Recall {
+			return a.Recall > b.Recall
 		}
 		if a.F1 != b.F1 {
 			return a.F1 > b.F1
