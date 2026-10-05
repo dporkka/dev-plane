@@ -53,6 +53,9 @@ func (f *GitHubForge) CreatePullRequest(ctx context.Context, credential ForgeCre
 		return nil, err
 	}
 	normalized := normalizeGitHubPullRequest(*created)
+	// The legacy GitHubPR DTO predates GitHub's draft field. Creation semantics
+	// are nevertheless known exactly from the request, so preserve them here.
+	normalized.Draft = pr.Draft
 	return &normalized, nil
 }
 
