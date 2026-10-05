@@ -59,7 +59,10 @@ func ParseGiteaWebhook(r *http.Request, secret string) (*WebhookEvent, error) {
 		}
 	}
 
-	eventType := strings.TrimSpace(r.Header.Get("X-Gitea-Event"))
+	eventType := strings.TrimSpace(r.Header.Get("X-Gitea-Event-Type"))
+	if eventType == "" {
+		eventType = strings.TrimSpace(r.Header.Get("X-Gitea-Event"))
+	}
 	if eventType == "" {
 		return nil, fmt.Errorf("missing X-Gitea-Event header")
 	}
@@ -73,7 +76,9 @@ func ParseGiteaWebhook(r *http.Request, secret string) (*WebhookEvent, error) {
 			Login string `json:"login"`
 		} `json:"sender"`
 	}
-	_ = json.Unmarshal(body, &payloadMeta)
+	if err := json.Unmarshal(body, &payloadMeta); err != nil {
+		return nil, fmt.Errorf("decode gitea webhook payload: %w", err)
+	}
 
 	return &WebhookEvent{
 		Source:       "gitea",
