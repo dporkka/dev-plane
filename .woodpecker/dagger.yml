@@ -37,6 +37,7 @@ steps:
       - /var/lib/dagger-sock:/run/dagger
     commands:
       - set -eux
+      - trap 'docker rm -f dev-plane-dagger-engine >/dev/null 2>&1 || true' EXIT
       - test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
       - echo "validating exact Woodpecker head $CI_COMMIT_SHA"
       - apt-get update -qq && apt-get install -y -qq curl ca-certificates
@@ -45,8 +46,8 @@ steps:
       - curl -fsSL -o /tmp/dagger.tgz https://github.com/dagger/dagger/releases/download/v0.20.3/dagger_v0.20.3_linux_amd64.tar.gz
       - tar -xzf /tmp/dagger.tgz -C /usr/local/bin dagger
       - docker rm -f dev-plane-dagger-engine >/dev/null 2>&1 || true
+      - rm -f /run/dagger/engine.sock
       - docker run -d --privileged --name dev-plane-dagger-engine -v /var/run/docker.sock:/var/run/docker.sock -v dev-plane-dagger-engine-state:/var/lib/dagger -v /var/lib/dagger-sock:/run/dagger registry.dagger.io/engine:v0.20.3
       - for i in $(seq 1 30); do [ -S /run/dagger/engine.sock ] && break; sleep 2; done
       - test -S /run/dagger/engine.sock
       - dagger --progress=plain .dagger/ci/verify.dag
-      - docker rm -f dev-plane-dagger-engine >/dev/null 2>&1 || true
