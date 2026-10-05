@@ -130,17 +130,34 @@ func (f *Factory) validateWorkspaceOrigin(ctx context.Context, workspacePath str
 	}
 	baseURL, _ := url.Parse(base)
 	wantPath := path.Join(baseURL.Path, target.Owner, target.Name+".git")
+	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
+
+	// Git commonly stores SSH remotes in SCP syntax (git@host:owner/repo.git)
+	// rather than ssh:// URLs. Treat that as SSH transport while still binding
+	// the hostname and repository path to the persisted forge authority.
+	if host, remotePath, ok := parseSCPLikeSSHRemote(origin); ok {
+		if credentialed {
+			return fmt.Errorf("workspace origin uses ssh but HTTPS Git credentials are configured")
+		}
+		if !strings.EqualFold(host, baseURL.Hostname()) {
+			return fmt.Errorf("workspace origin authority mismatch: expected host %s, got %s", baseURL.Hostname(), host)
+		}
+		wantSSHPath := path.Join("/", target.Owner, target.Name+".git")
+		if path.Clean(remotePath) != path.Clean(wantSSHPath) {
+			return fmt.Errorf("workspace origin repository mismatch: expected path %s, got %s", wantSSHPath, remotePath)
+		}
+		return nil
+	}
 
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("workspace origin %q is not an absolute HTTPS/SSH URL", origin)
+		return fmt.Errorf("workspace origin %q is not an absolute HTTPS/SSH URL or SCP-style SSH remote", origin)
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	if parsed.User != nil && parsed.Scheme != "ssh" {
 		return fmt.Errorf("workspace origin must not contain embedded HTTP credentials")
 	}
 
-	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
 	switch parsed.Scheme {
 	case "http", "https":
 		if parsed.Scheme != baseURL.Scheme {
@@ -168,4 +185,25 @@ func (f *Factory) validateWorkspaceOrigin(ctx context.Context, workspacePath str
 		return fmt.Errorf("workspace origin repository mismatch: expected path %s, got %s", wantPath, remotePath)
 	}
 	return nil
+}
+
+func parseSCPLikeSSHRemote(raw string) (host, remotePath string, ok bool) {
+	if strings.Contains(raw, "://") {
+		return "", "", false
+	}
+	at := strings.LastIndex(raw, "@")
+	if at <= 0 || at == len(raw)-1 {
+		return "", "", false
+	}
+	rest := raw[at+1:]
+	colon := strings.Index(rest, ":")
+	if colon <= 0 || colon == len(rest)-1 {
+		return "", "", false
+	}
+	host = rest[:colon]
+	remote := rest[colon+1:]
+	if strings.ContainsAny(host, "/\\") || strings.ContainsAny(remote, "\x00\r\n") {
+		return "", "", false
+	}
+	return host, "/" + strings.TrimPrefix(remote, "/"), true
 }
