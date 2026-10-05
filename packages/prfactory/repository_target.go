@@ -135,24 +135,37 @@ func (f *Factory) validateWorkspaceOrigin(ctx context.Context, workspacePath str
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return fmt.Errorf("workspace origin %q is not an absolute HTTPS/SSH URL", origin)
 	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	if parsed.User != nil && parsed.Scheme != "ssh" {
 		return fmt.Errorf("workspace origin must not contain embedded HTTP credentials")
 	}
-	if !strings.EqualFold(parsed.Hostname(), baseURL.Hostname()) {
-		return fmt.Errorf("workspace origin authority mismatch: expected host %s, got %s", baseURL.Hostname(), parsed.Hostname())
+
+	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
+	switch parsed.Scheme {
+	case "http", "https":
+		if parsed.Scheme != baseURL.Scheme {
+			return fmt.Errorf("workspace origin scheme mismatch: expected %s, got %s", baseURL.Scheme, parsed.Scheme)
+		}
+		if !strings.EqualFold(parsed.Host, baseURL.Host) {
+			return fmt.Errorf("workspace origin authority mismatch: expected %s, got %s", baseURL.Host, parsed.Host)
+		}
+	case "ssh":
+		if credentialed {
+			return fmt.Errorf("workspace origin uses ssh but HTTPS Git credentials are configured")
+		}
+		if !strings.EqualFold(parsed.Hostname(), baseURL.Hostname()) {
+			return fmt.Errorf("workspace origin authority mismatch: expected host %s, got %s", baseURL.Hostname(), parsed.Hostname())
+		}
+		// The forge's SSH service can legitimately use a port different from its
+		// web/API authority, so repository identity is bound by hostname + path.
+		wantPath = path.Join("/", target.Owner, target.Name+".git")
+	default:
+		return fmt.Errorf("workspace origin uses unsupported scheme %s", parsed.Scheme)
 	}
 
 	remotePath := path.Clean(parsed.Path)
-	if parsed.Scheme == "ssh" {
-		wantPath = path.Join("/", target.Owner, target.Name+".git")
-	}
 	if remotePath != path.Clean(wantPath) {
 		return fmt.Errorf("workspace origin repository mismatch: expected path %s, got %s", wantPath, remotePath)
-	}
-
-	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
-	if credentialed && parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return fmt.Errorf("workspace origin uses %s but HTTPS Git credentials are configured", parsed.Scheme)
 	}
 	return nil
 }
