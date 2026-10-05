@@ -13,7 +13,6 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
-	"github.com/ai-dev-control-plane/models"
 )
 
 // Repository represents a repository record.
