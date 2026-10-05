@@ -37,22 +37,38 @@ func TestValidateWorkspaceOriginRejectsCredentialRedirectBeforePush(t *testing.T
 	runGit(t, repo, "init")
 	runGit(t, repo, "remote", "add", "origin", "https://attacker.example/acme/widget.git")
 
-	factory := NewFactory(nil, nil).WithGitPushCredential(GitPushCredential{
-		Username: "agent",
-		Password: "gitea-secret",
-	})
-	target := repositoryTarget{
-		Owner: "acme",
-		Name:  "widget",
-		Forge: models.RepositoryForgeSettings{
-			Provider: models.ForgeProviderGitea,
-			BaseURL:  "https://trusted.example",
-		},
-	}
+	factory := credentialedFactory()
+	target := giteaTarget("https://trusted.example")
 
 	err := factory.validateWorkspaceOrigin(context.Background(), repo, target)
 	if err == nil || !strings.Contains(err.Error(), "origin") {
 		t.Fatalf("error = %v, want origin authority mismatch", err)
+	}
+}
+
+func TestValidateWorkspaceOriginRejectsDifferentPort(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "remote", "add", "origin", "https://trusted.example/acme/widget.git")
+
+	err := credentialedFactory().validateWorkspaceOrigin(
+		context.Background(), repo, giteaTarget("https://trusted.example:8443"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "authority") {
+		t.Fatalf("error = %v, want port/authority mismatch", err)
+	}
+}
+
+func TestValidateWorkspaceOriginRejectsHTTPSDowngrade(t *testing.T) {
+	repo := t.TempDir()
+	runGit(t, repo, "init")
+	runGit(t, repo, "remote", "add", "origin", "http://trusted.example/acme/widget.git")
+
+	err := credentialedFactory().validateWorkspaceOrigin(
+		context.Background(), repo, giteaTarget("https://trusted.example"),
+	)
+	if err == nil || !strings.Contains(err.Error(), "scheme") {
+		t.Fatalf("error = %v, want scheme downgrade rejection", err)
 	}
 }
 
@@ -61,21 +77,28 @@ func TestValidateWorkspaceOriginAcceptsCanonicalGiteaHTTPSRemote(t *testing.T) {
 	runGit(t, repo, "init")
 	runGit(t, repo, "remote", "add", "origin", "https://trusted.example/acme/widget.git")
 
-	factory := NewFactory(nil, nil).WithGitPushCredential(GitPushCredential{
+	if err := credentialedFactory().validateWorkspaceOrigin(
+		context.Background(), repo, giteaTarget("https://trusted.example"),
+	); err != nil {
+		t.Fatalf("validate workspace origin: %v", err)
+	}
+}
+
+func credentialedFactory() *Factory {
+	return NewFactory(nil, nil).WithGitPushCredential(GitPushCredential{
 		Username: "agent",
 		Password: "gitea-secret",
 	})
-	target := repositoryTarget{
+}
+
+func giteaTarget(baseURL string) repositoryTarget {
+	return repositoryTarget{
 		Owner: "acme",
 		Name:  "widget",
 		Forge: models.RepositoryForgeSettings{
 			Provider: models.ForgeProviderGitea,
-			BaseURL:  "https://trusted.example",
+			BaseURL:  baseURL,
 		},
-	}
-
-	if err := factory.validateWorkspaceOrigin(context.Background(), repo, target); err != nil {
-		t.Fatalf("validate workspace origin: %v", err)
 	}
 }
 
