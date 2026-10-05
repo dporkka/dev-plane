@@ -61,6 +61,19 @@ func TestWorkspaceOriginAcceptsCanonicalGiteaHTTPSRemote(t *testing.T) {
 	}
 }
 
+func TestWorkspaceOriginAcceptsCanonicalSCPLikeSSHRemoteWithoutHTTPSCredential(t *testing.T) {
+	repo := t.TempDir()
+	runOriginGit(t, repo, "init")
+	runOriginGit(t, repo, "remote", "add", "origin", "git@trusted.example:acme/widget.git")
+
+	factory := NewFactory(nil, nil)
+	if err := factory.validateWorkspaceOrigin(
+		context.Background(), repo, originGiteaTarget("https://trusted.example"),
+	); err != nil {
+		t.Fatalf("validate scp-style workspace origin: %v", err)
+	}
+}
+
 func originCredentialFactory() *Factory {
 	return NewFactory(nil, nil).WithGitPushCredential(GitPushCredential{
 		Username: "agent",
