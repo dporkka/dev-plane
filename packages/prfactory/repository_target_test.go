@@ -11,6 +11,28 @@ import (
 	"github.com/ai-dev-control-plane/models"
 )
 
+type namedForge struct{ name string }
+
+func (f namedForge) Name() string { return f.name }
+func (namedForge) ListRepositories(context.Context, gateway.ForgeCredential, int) ([]gateway.ForgeRepository, error) {
+	return nil, nil
+}
+func (namedForge) GetRepository(context.Context, gateway.ForgeCredential, string, string) (*gateway.ForgeRepository, error) {
+	return nil, nil
+}
+func (namedForge) CreatePullRequest(context.Context, gateway.ForgeCredential, string, string, gateway.ForgeNewPullRequest) (*gateway.ForgePullRequest, error) {
+	return nil, nil
+}
+func (namedForge) MergePullRequest(context.Context, gateway.ForgeCredential, string, string, int, gateway.ForgeMergeRequest) (*gateway.ForgeMergeResult, error) {
+	return nil, nil
+}
+func (namedForge) CreateWebhook(context.Context, gateway.ForgeCredential, string, string, string, string) (int64, error) {
+	return 0, nil
+}
+func (namedForge) DeleteWebhook(context.Context, gateway.ForgeCredential, string, string, int64) error {
+	return nil
+}
+
 func TestGetRepositoryTargetReadsForgeSettings(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
@@ -38,7 +60,7 @@ func TestGetRepositoryTargetReadsForgeSettings(t *testing.T) {
 }
 
 func TestValidateRepositoryForgeRejectsProviderMismatch(t *testing.T) {
-	factory := NewFactory(nil, nil).WithForge(fakeForge{name: "github"}, gateway.ForgeCredential{AccessToken: "token"})
+	factory := NewFactory(nil, nil).WithForge(namedForge{name: "github"}, gateway.ForgeCredential{AccessToken: "token"})
 	err := factory.validateRepositoryForge(repositoryTarget{
 		Owner: "acme",
 		Name:  "widget",
@@ -50,7 +72,7 @@ func TestValidateRepositoryForgeRejectsProviderMismatch(t *testing.T) {
 }
 
 func TestValidateRepositoryForgeAcceptsMatchingProvider(t *testing.T) {
-	factory := NewFactory(nil, nil).WithForge(fakeForge{name: "gitea"}, gateway.ForgeCredential{AccessToken: "token"})
+	factory := NewFactory(nil, nil).WithForge(namedForge{name: "gitea"}, gateway.ForgeCredential{AccessToken: "token"})
 	if err := factory.validateRepositoryForge(repositoryTarget{
 		Owner: "acme",
 		Name:  "widget",
