@@ -54,6 +54,13 @@ func TestParseRepositoryForgeSettingsRejectsCredentialBearingBaseURL(t *testing.
 	}
 }
 
+func TestParseRepositoryForgeSettingsRejectsAPIEndpointBaseURL(t *testing.T) {
+	_, err := ParseRepositoryForgeSettings(json.RawMessage(`{"forge":{"provider":"gitea","base_url":"https://git.example.test/api/v1"}}`))
+	if err == nil || !strings.Contains(err.Error(), "instance root") {
+		t.Fatalf("error = %v, want instance-root validation", err)
+	}
+}
+
 func TestPutRepositoryForgeSettingsPreservesUnrelatedSettings(t *testing.T) {
 	raw := json.RawMessage(`{"runtime":{"provider":"nulang"},"feature":true}`)
 	updated, err := PutRepositoryForgeSettings(raw, RepositoryForgeSettings{
