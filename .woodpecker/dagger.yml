@@ -1,0 +1,53 @@
+# Forge-triggered Dev Plane verification through the owned Woodpecker runner
+# and the portable Dagger execution contract in .dagger/ci/verify.dag.
+#
+# Woodpecker is intentionally thin: checkout identity + scheduling + Dagger
+# engine bootstrap. Toolchains and repository checks live in Dagger so the same
+# verification can run locally or from another CI scheduler without drift.
+
+clone:
+  git:
+    image: docker.io/woodpeckerci/plugin-git
+    settings:
+      fetch-target-branch: true
+      partial: false
+
+labels:
+  platform: linux/amd64
+  pool: bootstrap-ci
+
+when:
+  - event: pull_request
+    branch: main
+  - event: push
+    branch: main
+  - event: manual
+
+concurrency:
+  limit: 1
+  group: dev-plane-dagger-ci
+
+steps:
+  - name: dagger-ci
+    image: debian:bookworm-slim
+    environment:
+      _EXPERIMENTAL_DAGGER_RUNNER_HOST: unix:///run/dagger/engine.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/dagger-sock:/run/dagger
+    commands:
+      - set -eux
+      - trap 'docker rm -f dev-plane-dagger-engine >/dev/null 2>&1 || true' EXIT
+      - test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
+      - echo "validating exact Woodpecker head $CI_COMMIT_SHA"
+      - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+      - curl -fsSL -o /tmp/docker.tgz https://download.docker.com/linux/static/stable/x86_64/docker-27.5.1.tgz
+      - tar -xzf /tmp/docker.tgz -C /usr/local/bin docker/docker --strip-components=1
+      - curl -fsSL -o /tmp/dagger.tgz https://github.com/dagger/dagger/releases/download/v0.20.3/dagger_v0.20.3_linux_amd64.tar.gz
+      - tar -xzf /tmp/dagger.tgz -C /usr/local/bin dagger
+      - docker rm -f dev-plane-dagger-engine >/dev/null 2>&1 || true
+      - rm -f /run/dagger/engine.sock
+      - docker run -d --privileged --name dev-plane-dagger-engine -v /var/run/docker.sock:/var/run/docker.sock -v dev-plane-dagger-engine-state:/var/lib/dagger -v /var/lib/dagger-sock:/run/dagger registry.dagger.io/engine:v0.20.3
+      - for i in $(seq 1 30); do [ -S /run/dagger/engine.sock ] && break; sleep 2; done
+      - test -S /run/dagger/engine.sock
+      - dagger --progress=plain .dagger/ci/verify.dag
