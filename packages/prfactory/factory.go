@@ -1,14 +1,14 @@
 // Package prfactory creates pull requests for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive pull request descriptions and publish them through a configured forge.
 package prfactory
 
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,15 +18,17 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/oauth2"
 
 	"github.com/ai-dev-control-plane/gateway"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/reviewer"
 )
 
-type githubPRCreator interface {
-	CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr gateway.NewPR) (*gateway.GitHubPR, error)
+// GitPushCredential is deliberately separate from ForgeCredential. A forge API
+// token does not imply a Git transport username/password convention.
+type GitPushCredential struct {
+	Username string
+	Password string
 }
 
 // shortID returns the first n bytes of id, or the full id if shorter.
@@ -39,52 +41,93 @@ func shortID(id string, n int) string {
 
 // Factory creates pull requests for completed tasks.
 type Factory struct {
-	db          *sql.DB
-	logger      *slog.Logger
-	github      githubPRCreator
+	db                *sql.DB
+	logger            *slog.Logger
+	forge             gateway.Forge
+	forgeCredential   gateway.ForgeCredential
+	gitPushCredential GitPushCredential
+
+	// Deprecated compatibility mirrors for existing package callers/tests. They
+	// no longer own PR publication or Git transport behavior.
+	github      *gateway.GitHubGateway
 	githubToken string
 }
 
-// NewFactory creates a PR factory.
+// NewFactory creates a PR factory. GITHUB_TOKEN remains the backward-compatible
+// default for GitHub installations while forge and Git transport credentials are
+// represented independently internally.
 func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	f := &Factory{
-		db:          db,
-		logger:      logger,
-		githubToken: strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
+		db:     db,
+		logger: logger,
 	}
-	if f.githubToken != "" {
-		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
+		gh := gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+		f.github = gh
+		f.githubToken = token
+		f.forge = gateway.NewGitHubForge(gh)
+		f.forgeCredential = gateway.ForgeCredential{AccessToken: token}
+		f.gitPushCredential = GitPushCredential{Username: "x-access-token", Password: token}
 	}
 	return f
 }
 
-// WithGitHubGateway adds a GitHub gateway for creating actual PRs.
+// WithForge configures the provider-neutral forge API boundary.
+func (f *Factory) WithForge(forge gateway.Forge, credential gateway.ForgeCredential) *Factory {
+	f.forge = forge
+	f.forgeCredential = credential
+	return f
+}
+
+// WithGitPushCredential configures HTTPS Git transport authentication separately
+// from forge API authentication. SSH-based pushes can leave this unset.
+func (f *Factory) WithGitPushCredential(credential GitPushCredential) *Factory {
+	f.gitPushCredential = credential
+	return f
+}
+
+// WithGitHubGateway preserves the historical injection surface while routing
+// actual PR creation through the provider-neutral forge adapter.
 func (f *Factory) WithGitHubGateway(gh *gateway.GitHubGateway) *Factory {
 	f.github = gh
+	if gh == nil {
+		f.forge = nil
+	} else {
+		f.forge = gateway.NewGitHubForge(gh)
+	}
 	return f
 }
 
-// WithGitHubToken configures the token used for branch pushes and GitHub PR creation.
+// WithGitHubToken preserves the legacy GitHub configuration convention. The
+// token becomes both the GitHub API credential and the password used with
+// GitHub's x-access-token HTTPS Git username.
 func (f *Factory) WithGitHubToken(token string) *Factory {
-	f.githubToken = strings.TrimSpace(token)
+	token = strings.TrimSpace(token)
+	f.githubToken = token
+	f.forgeCredential = gateway.ForgeCredential{AccessToken: token}
+	if token == "" {
+		f.gitPushCredential = GitPushCredential{}
+	} else {
+		f.gitPushCredential = GitPushCredential{Username: "x-access-token", Password: token}
+	}
 	return f
 }
 
-// CreatePullRequest opens a GitHub PR for completed task changes.
+// CreatePullRequest opens a forge pull request for completed task changes.
 //
 // Steps:
 //  1. Load task, workspace, agent run from DB
 //  2. Verify run status is "completed" or "reviewed"
 //  3. Get git diff and review report
 //  4. Build comprehensive PR body
-//  5. Push branch to origin (if not already pushed)
-//  6. Create PR via GitHub API
-//  7. Save PR record in DB
-//  8. Update task status to "pr_created"
-//  9. Publish pr.created event
+//  5. Resolve repository forge authority before any external side effect
+//  6. Verify workspace origin, then push branch to origin (if not already pushed)
+//  7. Create PR via the configured forge
+//  8. Save PR record in DB
+//  9. Update task status to "pr_created"
 func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
 	f.logger.Info("creating pull request", "task_id", taskID)
 
@@ -103,7 +146,6 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("no completed agent run found for task %s", taskID)
 	}
 
-	// Verify run status
 	if run.Status != models.AgentRunStatusCompleted && run.Status != "reviewed" {
 		return nil, fmt.Errorf("agent run status is %q, expected completed or reviewed", run.Status)
 	}
@@ -151,27 +193,38 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		prTitle = prTitle[:253] + "..."
 	}
 
-	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured; set GITHUB_TOKEN or inject a GitHub gateway")
+	if f.forge == nil {
+		return nil, fmt.Errorf("forge is not configured")
 	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
+	if strings.TrimSpace(f.forgeCredential.AccessToken) == "" {
+		return nil, fmt.Errorf("forge API credential is not configured")
 	}
 
-	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
+	// Repository forge identity is authoritative and must match process-level
+	// configuration before any Git push or PR publication side effect occurs.
+	target, err := f.getRepositoryTarget(ctx, task.RepositoryID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
+	if err := f.validateRepositoryForge(target); err != nil {
+		return nil, err
+	}
+
 	if workspacePath != "" {
+		// A workspace is mutable agent-controlled state. Verify its actual origin
+		// against repository authority before GIT_ASKPASS can expose credentials.
+		if err := f.validateWorkspaceOrigin(ctx, workspacePath, target); err != nil {
+			return nil, fmt.Errorf("validate workspace origin: %w", err)
+		}
 		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
 			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
 		}
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.createGitHubPR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.createForgePR(ctx, target.Owner, target.Name, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
-		return nil, fmt.Errorf("create github pull request: %w", err)
+		return nil, fmt.Errorf("create %s pull request: %w", f.forge.Name(), err)
 	}
 
 	// 8. Create PR record
@@ -187,7 +240,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		BaseBranch: branch,
 		URL:        created.HTMLURL,
 		State:      models.PRStateOpen,
-		Draft:      draft,
+		Draft:      created.Draft,
 		CreatedBy:  task.CreatedBy,
 		CreatedAt:  time.Now().UTC(),
 		UpdatedAt:  time.Now().UTC(),
@@ -211,6 +264,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		"task_id", taskID,
 		"pr_id", pr.ID,
 		"pr_number", pr.Number,
+		"forge", f.forge.Name(),
 		"draft", pr.Draft,
 	)
 
@@ -221,7 +275,6 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *reviewer.ReviewReport, run *models.AgentRun) string {
 	var b strings.Builder
 
-	// Task section
 	b.WriteString("## Task\n\n")
 	b.WriteString(fmt.Sprintf("**%s**\n\n", task.Title))
 	if task.Description != nil && *task.Description != "" {
@@ -229,7 +282,6 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 		b.WriteString("\n\n")
 	}
 
-	// Implementation Summary
 	b.WriteString("## Implementation Summary\n\n")
 	if run.Summary != nil && *run.Summary != "" {
 		b.WriteString(*run.Summary)
@@ -238,7 +290,6 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 		b.WriteString("This change was generated by an AI agent.\n\n")
 	}
 
-	// Changes
 	b.WriteString("## Changes\n\n")
 	b.WriteString(fmt.Sprintf("- **Files changed:** %d\n", report.DiffSummary.FilesChanged))
 	b.WriteString(fmt.Sprintf("- **Insertions:** %d\n", report.DiffSummary.Insertions))
@@ -248,36 +299,34 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 		b.WriteString("### Files\n\n")
 		b.WriteString("| File | Status | +/- |\n")
 		b.WriteString("|------|--------|-----|\n")
-		for _, f := range report.DiffSummary.Files {
+		for _, file := range report.DiffSummary.Files {
 			b.WriteString(fmt.Sprintf("| `%s` | %s | +%d/-%d |\n",
-				f.Path, f.Status, f.Insertions, f.Deletions))
+				file.Path, file.Status, file.Insertions, file.Deletions))
 		}
 		b.WriteString("\n")
 	}
 
-	// Review Summary
 	if report.Summary != "" {
 		b.WriteString("## Review Summary\n\n")
 		b.WriteString(report.Summary)
 		b.WriteString("\n\n")
 	}
 
-	// Findings
 	if len(report.Findings) > 0 {
 		b.WriteString("## Findings\n\n")
 		for _, finding := range report.Findings {
 			icon := ""
 			switch finding.Severity {
 			case "critical":
-				icon = "\U0001F534" // red circle
+				icon = "🔴"
 			case "high":
-				icon = "\U0001F7E0" // orange circle
+				icon = "🟠"
 			case "medium":
-				icon = "\U0001F7E1" // yellow circle
+				icon = "🟡"
 			case "low":
-				icon = "\U0001F535" // blue circle
+				icon = "🔵"
 			default:
-				icon = "\U0001F518" // info
+				icon = "🔘"
 			}
 			b.WriteString(fmt.Sprintf("%s **%s** (%s) - %s\n\n", icon, finding.Severity, finding.Category, finding.Message))
 			if finding.Suggestion != "" {
@@ -286,18 +335,15 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 		}
 	}
 
-	// Test Results
 	b.WriteString("## Test Results\n\n")
 	b.WriteString(fmt.Sprintf("- **Test Coverage:** %s\n", report.TestCoverage))
 	b.WriteString(fmt.Sprintf("- **Risk Level:** %s\n", report.RiskLevel))
 	b.WriteString(fmt.Sprintf("- **Approvable:** %v\n\n", report.Approvable))
 
-	// Security Review
 	b.WriteString("## Security Review\n\n")
 	b.WriteString(report.SecurityNotes)
 	b.WriteString("\n\n")
 
-	// Known Risks
 	b.WriteString("## Known Risks\n\n")
 	if report.RiskLevel == "low" {
 		b.WriteString("No significant risks identified.\n\n")
@@ -311,7 +357,6 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 		b.WriteString("\n")
 	}
 
-	// Model Usage
 	b.WriteString("## Model Usage\n\n")
 	model := "unknown"
 	provider := "unknown"
@@ -327,15 +372,12 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 	b.WriteString(fmt.Sprintf("- **Tokens:** %d prompt + %d completion = %d total\n\n",
 		run.PromptTokens, run.CompletionTokens, run.PromptTokens+run.CompletionTokens))
 
-	// Rollback
 	b.WriteString("## Rollback\n\n")
 	b.WriteString(fmt.Sprintf("To revert this change:\n```bash\ngit revert %s-branch\n```\n\n", shortID(task.ID, 8)))
 
-	// Approval Record
 	b.WriteString("## Approval Record\n\n")
 	b.WriteString("This PR was created by an AI agent and requires human review before merging.\n\n")
 
-	// Run Timeline
 	b.WriteString("## Run Timeline\n\n")
 	b.WriteString(fmt.Sprintf("[View full run timeline](/runs/%s)\n", run.ID))
 
@@ -373,7 +415,7 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 
 	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "push", "origin", branch)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cleanup, err := configureGitAskPass(cmd, f.githubToken)
+	cleanup, err := configureGitAskPassCredential(cmd, f.gitPushCredential)
 	if err != nil {
 		return err
 	}
@@ -386,15 +428,15 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 	return nil
 }
 
-// createGitHubPR creates a PR via the GitHub API.
-func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, head, base string, draft bool) (*gateway.GitHubPR, error) {
-	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured")
+// createForgePR creates a pull request through the configured forge API.
+func (f *Factory) createForgePR(ctx context.Context, owner, name, title, body, head, base string, draft bool) (*gateway.ForgePullRequest, error) {
+	if f.forge == nil {
+		return nil, fmt.Errorf("forge is not configured")
 	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
+	if strings.TrimSpace(f.forgeCredential.AccessToken) == "" {
+		return nil, fmt.Errorf("forge API credential is not configured")
 	}
-	return f.github.CreatePR(ctx, &oauth2.Token{AccessToken: f.githubToken, TokenType: "Bearer"}, owner, name, gateway.NewPR{
+	return f.forge.CreatePullRequest(ctx, f.forgeCredential, owner, name, gateway.ForgeNewPullRequest{
 		Title: title,
 		Body:  body,
 		Head:  head,
@@ -403,6 +445,7 @@ func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, 
 	})
 }
 
+// configureGitAskPass preserves the historical GitHub helper for compatibility.
 func configureGitAskPass(cmd *exec.Cmd, token string) (func(), error) {
 	if strings.TrimSpace(token) == "" {
 		return func() {}, nil
@@ -418,6 +461,37 @@ func configureGitAskPass(cmd *exec.Cmd, token string) (func(), error) {
 		return nil, fmt.Errorf("write git askpass helper: %w", err)
 	}
 	cmd.Env = append(cmd.Env, "GIT_ASKPASS="+script, "GITHUB_TOKEN="+token)
+	return cleanup, nil
+}
+
+// configureGitAskPassCredential configures provider-neutral HTTPS Git
+// authentication. Both username and password are required when either is set.
+func configureGitAskPassCredential(cmd *exec.Cmd, credential GitPushCredential) (func(), error) {
+	username := strings.TrimSpace(credential.Username)
+	password := strings.TrimSpace(credential.Password)
+	if username == "" && password == "" {
+		return func() {}, nil
+	}
+	if username == "" || password == "" {
+		return nil, fmt.Errorf("git push credential requires both username and password")
+	}
+
+	dir, err := os.MkdirTemp("", "dev-plane-git-askpass-*")
+	if err != nil {
+		return nil, fmt.Errorf("create git askpass dir: %w", err)
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+	script := filepath.Join(dir, "askpass.sh")
+	content := "#!/bin/sh\ncase \"$1\" in\n*Username*) printf '%s\\n' \"$DEV_PLANE_GIT_USERNAME\" ;;\n*) printf '%s\\n' \"$DEV_PLANE_GIT_PASSWORD\" ;;\nesac\n"
+	if err := os.WriteFile(script, []byte(content), 0o700); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("write git askpass helper: %w", err)
+	}
+	cmd.Env = append(cmd.Env,
+		"GIT_ASKPASS="+script,
+		"DEV_PLANE_GIT_USERNAME="+username,
+		"DEV_PLANE_GIT_PASSWORD="+password,
+	)
 	return cleanup, nil
 }
 
@@ -581,6 +655,8 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 }
 
 // getRepoOwnerName extracts owner and name from repository record.
+// Deprecated: new publication paths use getRepositoryTarget so forge identity
+// is loaded and validated atomically with repository coordinates.
 func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
 	var fullName string
 	err = f.db.QueryRowContext(ctx, `

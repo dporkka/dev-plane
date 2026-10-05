@@ -2,80 +2,62 @@ package prfactory
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
-
-	"golang.org/x/oauth2"
 
 	"github.com/ai-dev-control-plane/gateway"
 )
 
-func TestCreateGitHubPRRequiresGatewayAndToken(t *testing.T) {
+func TestCreateForgePRRequiresForgeAndCredential(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	factory := NewFactory(nil, nil)
 
-	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
-		t.Fatal("expected missing gateway error")
-	} else if !strings.Contains(err.Error(), "gateway") {
-		t.Fatalf("error = %v, want gateway", err)
+	if _, err := factory.createForgePR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
+		t.Fatal("expected missing forge error")
+	} else if !strings.Contains(err.Error(), "forge") {
+		t.Fatalf("error = %v, want forge", err)
 	}
 
-	factory.github = &fakeGitHubPRCreator{}
-	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
-		t.Fatal("expected missing token error")
-	} else if !strings.Contains(err.Error(), "token") {
-		t.Fatalf("error = %v, want token", err)
+	factory.forge = &recordingForge{}
+	if _, err := factory.createForgePR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
+		t.Fatal("expected missing credential error")
+	} else if !strings.Contains(err.Error(), "credential") {
+		t.Fatalf("error = %v, want credential", err)
 	}
 }
 
-func TestCreateGitHubPRSendsTokenAndDraftPayload(t *testing.T) {
-	t.Setenv("GITHUB_TOKEN", "")
-	creator := &fakeGitHubPRCreator{result: &gateway.GitHubPR{
-		Number:  42,
-		HTMLURL: "https://github.com/owner/repo/pull/42",
-	}}
-	factory := NewFactory(nil, nil).WithGitHubToken("ghp_test")
-	factory.github = creator
+func TestCreateForgePRPropagatesProviderError(t *testing.T) {
+	wantErr := errors.New("provider rejected request")
+	forge := &errorForge{err: wantErr}
+	factory := NewFactory(nil, nil).WithForge(forge, gateway.ForgeCredential{AccessToken: "token"})
 
-	pr, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "agent/task", "main", true)
-	if err != nil {
-		t.Fatalf("createGitHubPR() error: %v", err)
-	}
-	if pr.Number != 42 {
-		t.Fatalf("PR number = %d, want 42", pr.Number)
-	}
-	if creator.token != "ghp_test" {
-		t.Fatalf("token = %q, want ghp_test", creator.token)
-	}
-	if creator.owner != "owner" || creator.name != "repo" {
-		t.Fatalf("repo = %s/%s, want owner/repo", creator.owner, creator.name)
-	}
-	if creator.request.Title != "title" || creator.request.Head != "agent/task" || creator.request.Base != "main" || !creator.request.Draft {
-		t.Fatalf("request = %+v", creator.request)
+	_, err := factory.createForgePR(context.Background(), "owner", "repo", "title", "body", "agent/task", "main", false)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
 	}
 }
 
-type fakeGitHubPRCreator struct {
-	token   string
-	owner   string
-	name    string
-	request gateway.NewPR
-	result  *gateway.GitHubPR
-	err     error
+type errorForge struct {
+	err error
 }
 
-func (f *fakeGitHubPRCreator) CreatePR(ctx context.Context, token *oauth2.Token, owner, name string, pr gateway.NewPR) (*gateway.GitHubPR, error) {
-	if token != nil {
-		f.token = token.AccessToken
-	}
-	f.owner = owner
-	f.name = name
-	f.request = pr
-	if f.err != nil {
-		return nil, f.err
-	}
-	if f.result != nil {
-		return f.result, nil
-	}
-	return &gateway.GitHubPR{Number: 1, HTMLURL: "https://github.com/owner/repo/pull/1"}, nil
+func (f *errorForge) Name() string { return "error" }
+func (f *errorForge) ListRepositories(context.Context, gateway.ForgeCredential, int) ([]gateway.ForgeRepository, error) {
+	return nil, f.err
+}
+func (f *errorForge) GetRepository(context.Context, gateway.ForgeCredential, string, string) (*gateway.ForgeRepository, error) {
+	return nil, f.err
+}
+func (f *errorForge) CreatePullRequest(context.Context, gateway.ForgeCredential, string, string, gateway.ForgeNewPullRequest) (*gateway.ForgePullRequest, error) {
+	return nil, f.err
+}
+func (f *errorForge) MergePullRequest(context.Context, gateway.ForgeCredential, string, string, int, gateway.ForgeMergeRequest) (*gateway.ForgeMergeResult, error) {
+	return nil, f.err
+}
+func (f *errorForge) CreateWebhook(context.Context, gateway.ForgeCredential, string, string, string, string) (int64, error) {
+	return 0, f.err
+}
+func (f *errorForge) DeleteWebhook(context.Context, gateway.ForgeCredential, string, string, int64) error {
+	return f.err
 }
