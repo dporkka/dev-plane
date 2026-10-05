@@ -9,7 +9,7 @@ import (
 )
 
 func TestNormalizeRepositoryConnectionDefaultsToGitHub(t *testing.T) {
-	connection, err := normalizeRepositoryConnection(ConnectRepositoryRequest{Owner: "acme", Name: "widget"})
+	connection, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{Owner: "acme", Name: "widget"})
 	if err != nil {
 		t.Fatalf("normalize connection: %v", err)
 	}
@@ -26,7 +26,7 @@ func TestNormalizeRepositoryConnectionDefaultsToGitHub(t *testing.T) {
 }
 
 func TestNormalizeRepositoryConnectionSupportsGiteaSubpath(t *testing.T) {
-	connection, err := normalizeRepositoryConnection(ConnectRepositoryRequest{
+	connection, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{
 		Owner:    "acme_team",
 		Name:     "widget",
 		Provider: "gitea",
@@ -48,21 +48,21 @@ func TestNormalizeRepositoryConnectionSupportsGiteaSubpath(t *testing.T) {
 }
 
 func TestNormalizeRepositoryConnectionRejectsUnknownProvider(t *testing.T) {
-	_, err := normalizeRepositoryConnection(ConnectRepositoryRequest{Owner: "acme", Name: "widget", Provider: "unknown"})
+	_, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{Owner: "acme", Name: "widget", Provider: "unknown"})
 	if err == nil || !strings.Contains(err.Error(), "unsupported forge provider") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestNormalizeRepositoryConnectionRejectsGiteaWithoutBaseURL(t *testing.T) {
-	_, err := normalizeRepositoryConnection(ConnectRepositoryRequest{Owner: "acme", Name: "widget", Provider: "gitea"})
+	_, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{Owner: "acme", Name: "widget", Provider: "gitea"})
 	if err == nil || !strings.Contains(err.Error(), "base_url") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
 func TestNormalizeRepositoryConnectionRejectsCustomGitHubBaseURL(t *testing.T) {
-	_, err := normalizeRepositoryConnection(ConnectRepositoryRequest{
+	_, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{
 		Owner:    "acme",
 		Name:     "widget",
 		Provider: "github",
@@ -74,7 +74,7 @@ func TestNormalizeRepositoryConnectionRejectsCustomGitHubBaseURL(t *testing.T) {
 }
 
 func TestNormalizeRepositoryConnectionStoresNoCredentials(t *testing.T) {
-	connection, err := normalizeRepositoryConnection(ConnectRepositoryRequest{
+	connection, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{
 		Owner:    "acme",
 		Name:     "widget",
 		Provider: "gitea",
