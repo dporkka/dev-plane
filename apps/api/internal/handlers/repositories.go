@@ -13,6 +13,7 @@ import (
 
 	"github.com/ai-dev-control-plane/api/internal/authz"
 	"github.com/ai-dev-control-plane/api/internal/respond"
+	"github.com/ai-dev-control-plane/models"
 )
 
 // Repository represents a repository record.
@@ -35,8 +36,10 @@ type Repository struct {
 
 // ConnectRepositoryRequest is the request body for connecting a repository.
 type ConnectRepositoryRequest struct {
-	Owner string `json:"owner"`
-	Name  string `json:"name"`
+	Owner    string `json:"owner"`
+	Name     string `json:"name"`
+	Provider string `json:"provider,omitempty"`
+	BaseURL  string `json:"base_url,omitempty"`
 }
 
 // ListRepositories returns all repositories for a project.
@@ -102,7 +105,9 @@ func (h *Handler) ListRepositories(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, repos)
 }
 
-// ConnectRepository connects a GitHub repository to a project.
+// ConnectRepository connects a repository to a project. Existing callers that
+// omit provider retain GitHub behavior; Gitea callers provide provider=gitea
+// and an instance base_url. Credentials are never persisted in repository settings.
 func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)
@@ -127,31 +132,25 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req.Owner = strings.TrimSpace(req.Owner)
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Owner == "" || req.Name == "" {
-		respond.Error(w, http.StatusBadRequest, errors.New("owner and name are required"))
-		return
-	}
-	if err := validateGitHubOwner(req.Owner); err != nil {
-		respond.Error(w, http.StatusBadRequest, err)
-		return
-	}
-	if err := validateGitHubRepoName(req.Name); err != nil {
+	connection, err := normalizeRepositoryConnection(ForgeRepositoryConnectionRequest{
+		Owner:    req.Owner,
+		Name:     req.Name,
+		Provider: req.Provider,
+		BaseURL:  req.BaseURL,
+	})
+	if err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
 
 	id := uuid.New().String()
 	now := time.Now().UTC()
-	fullName := req.Owner + "/" + req.Name
-	cloneURL := "https://github.com/" + fullName + ".git"
-
-	_, err := h.db.ExecContext(ctx, `
+	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO repositories (id, project_id, owner, name, full_name, clone_url,
 			default_branch, connection_status, settings, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'main', 'connected', '{}', $7, $8)
-	`, id, projectID, req.Owner, req.Name, fullName, cloneURL, now, now)
+		VALUES ($1, $2, $3, $4, $5, $6, 'main', 'connected', $7, $8, $9)
+	`, id, projectID, connection.Owner, connection.Name, connection.FullName, connection.CloneURL,
+		connection.Settings, now, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -160,12 +159,13 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusCreated, Repository{
 		ID:               id,
 		ProjectID:        projectID,
-		Owner:            req.Owner,
-		Name:             req.Name,
-		FullName:         fullName,
-		CloneURL:         cloneURL,
+		Owner:            connection.Owner,
+		Name:             connection.Name,
+		FullName:         connection.FullName,
+		CloneURL:         connection.CloneURL,
 		DefaultBranch:    "main",
 		ConnectionStatus: "connected",
+		Settings:         connection.Settings,
 		CreatedAt:        now,
 		UpdatedAt:        now,
 	})
