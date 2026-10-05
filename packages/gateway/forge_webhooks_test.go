@@ -51,6 +51,35 @@ func TestParseGiteaWebhookNormalizesCanonicalFields(t *testing.T) {
 	}
 }
 
+func TestParseGiteaWebhookPrefersSpecificEventType(t *testing.T) {
+	payload := []byte(`{"repository":{"id":77,"full_name":"acme/widget"}}`)
+	secret := "webhook-secret"
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(payload))
+	req.Header.Set("X-Gitea-Event", "pull_request")
+	req.Header.Set("X-Gitea-Event-Type", "pull_request_review_approved")
+	req.Header.Set("X-Gitea-Signature", ComputeGiteaWebhookSignature(payload, secret))
+
+	event, err := ParseGiteaWebhook(req, secret)
+	if err != nil {
+		t.Fatalf("parse gitea webhook: %v", err)
+	}
+	if event.EventType != "pull_request_review_approved" {
+		t.Fatalf("event type = %q, want specific X-Gitea-Event-Type", event.EventType)
+	}
+}
+
+func TestParseGiteaWebhookRejectsSignedMalformedJSON(t *testing.T) {
+	payload := []byte(`{"repository":`)
+	secret := "webhook-secret"
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(payload))
+	req.Header.Set("X-Gitea-Event", "push")
+	req.Header.Set("X-Gitea-Signature", ComputeGiteaWebhookSignature(payload, secret))
+
+	if _, err := ParseGiteaWebhook(req, secret); err == nil {
+		t.Fatal("expected malformed signed payload to fail")
+	}
+}
+
 func TestParseGiteaWebhookAcceptsDocumentedHubSignatureFallback(t *testing.T) {
 	payload := []byte(`{"repository":{"id":77,"full_name":"acme/widget"}}`)
 	secret := "webhook-secret"
