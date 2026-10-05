@@ -29,7 +29,7 @@ container |
   with-env-variable SECRET_ENCRYPTION_KEYS "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" |
   with-env-variable NEXT_PUBLIC_API_URL http://localhost:8080 |
   with-exec -- sh -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential ca-certificates curl git make && rm -rf /var/lib/apt/lists/*' |
-  with-exec -- sh -lc 'curl -fsSLo /tmp/go.tgz https://go.dev/dl/go1.26.8.linux-amd64.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz' |
+  with-exec -- sh -lc 'curl -fsSLo /tmp/go.tgz https://go.dev/dl/go1.26.8.linux-amd64.tar.gz && echo "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b  /tmp/go.tgz" | sha256sum -c - && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz' |
   with-exec -- go version |
   with-exec -- node --version |
   with-exec -- npm --version |
