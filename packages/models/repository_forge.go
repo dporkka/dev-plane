@@ -126,6 +126,10 @@ func normalizeRepositoryForgeSettings(settings RepositoryForgeSettings) (Reposit
 		if parsed.RawQuery != "" || parsed.Fragment != "" {
 			return RepositoryForgeSettings{}, fmt.Errorf("gitea forge base_url must not contain query or fragment components")
 		}
+		normalizedPath := strings.TrimRight(parsed.Path, "/")
+		if normalizedPath == "/api/v1" || strings.HasSuffix(normalizedPath, "/api/v1") {
+			return RepositoryForgeSettings{}, fmt.Errorf("gitea forge base_url must be the instance root, not the /api/v1 API endpoint")
+		}
 		settings.BaseURL = strings.TrimRight(settings.BaseURL, "/")
 		return settings, nil
 
