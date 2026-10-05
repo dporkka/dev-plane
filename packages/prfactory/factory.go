@@ -123,11 +123,11 @@ func (f *Factory) WithGitHubToken(token string) *Factory {
 //  2. Verify run status is "completed" or "reviewed"
 //  3. Get git diff and review report
 //  4. Build comprehensive PR body
-//  5. Push branch to origin (if not already pushed)
-//  6. Create PR via the configured forge
-//  7. Save PR record in DB
-//  8. Update task status to "pr_created"
-//  9. Publish pr.created event
+//  5. Resolve repository forge authority before any external side effect
+//  6. Push branch to origin (if not already pushed)
+//  7. Create PR via the configured forge
+//  8. Save PR record in DB
+//  9. Update task status to "pr_created"
 func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
 	f.logger.Info("creating pull request", "task_id", taskID)
 
@@ -201,10 +201,16 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, fmt.Errorf("forge API credential is not configured")
 	}
 
-	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
+	// Repository forge identity is authoritative and must match process-level
+	// configuration before any Git push or PR publication side effect occurs.
+	target, err := f.getRepositoryTarget(ctx, task.RepositoryID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
+	if err := f.validateRepositoryForge(target); err != nil {
+		return nil, err
+	}
+
 	if workspacePath != "" {
 		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
 			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
@@ -212,7 +218,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.createForgePR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.createForgePR(ctx, target.Owner, target.Name, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
 		return nil, fmt.Errorf("create %s pull request: %w", f.forge.Name(), err)
 	}
@@ -657,6 +663,8 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 }
 
 // getRepoOwnerName extracts owner and name from repository record.
+// Deprecated: new publication paths use getRepositoryTarget so forge identity
+// is loaded and validated atomically with repository coordinates.
 func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
 	var fullName string
 	err = f.db.QueryRowContext(ctx, `
