@@ -11,6 +11,20 @@ import (
 // intent (for example, creating a normal pull request when a draft was asked for).
 var ErrUnsupportedForgeCapability = errors.New("unsupported forge capability")
 
+// ForgeAuthority identifies the exact credential-bearing forge instance.
+// BaseURL is the canonical instance root, never an API endpoint.
+type ForgeAuthority struct {
+	Provider string
+	BaseURL  string
+}
+
+// ForgeAuthorityProvider is implemented by production adapters that can bind
+// credentials to one exact forge instance. Security-sensitive callers should
+// fail closed when an adapter cannot provide this identity.
+type ForgeAuthorityProvider interface {
+	Authority() ForgeAuthority
+}
+
 // ForgeCredential contains the credential material required by a forge adapter.
 // It is intentionally small so higher layers do not depend on provider-specific
 // OAuth or personal-access-token types.

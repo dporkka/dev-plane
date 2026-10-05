@@ -15,32 +15,60 @@ import (
 
 // GiteaForge implements Forge against Gitea's v1 API.
 type GiteaForge struct {
-	apiBaseURL string
-	httpClient *http.Client
+	instanceURL string
+	apiBaseURL  string
+	httpClient  *http.Client
 }
 
 var _ Forge = (*GiteaForge)(nil)
+var _ ForgeAuthorityProvider = (*GiteaForge)(nil)
 
 // NewGiteaForge creates a provider for a Gitea instance URL. instanceURL may
-// include a deployment subpath; /api/v1 is appended unless it is already present.
+// include a deployment subpath or a trailing /api/v1 endpoint; credentials are
+// bound to the canonical instance root returned by Authority.
 func NewGiteaForge(instanceURL string, client *http.Client) (*GiteaForge, error) {
-	instanceURL = strings.TrimSpace(instanceURL)
-	parsed, err := url.Parse(instanceURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("invalid gitea instance URL %q", instanceURL)
-	}
-
-	base := strings.TrimRight(instanceURL, "/")
-	if !strings.HasSuffix(base, "/api/v1") {
-		base += "/api/v1"
+	root, err := canonicalGiteaInstanceURL(instanceURL)
+	if err != nil {
+		return nil, err
 	}
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &GiteaForge{apiBaseURL: base, httpClient: client}, nil
+	return &GiteaForge{
+		instanceURL: root,
+		apiBaseURL:  root + "/api/v1",
+		httpClient:  client,
+	}, nil
+}
+
+func canonicalGiteaInstanceURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("invalid gitea instance URL %q", raw)
+	}
+	parsed.Scheme = strings.ToLower(parsed.Scheme)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("invalid gitea instance URL %q: scheme must be http or https", raw)
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("invalid gitea instance URL %q: userinfo, query, and fragment are not allowed", raw)
+	}
+	parsed.Host = strings.ToLower(parsed.Host)
+	path := strings.TrimRight(parsed.Path, "/")
+	if strings.HasSuffix(path, "/api/v1") {
+		path = strings.TrimSuffix(path, "/api/v1")
+	}
+	parsed.Path = strings.TrimRight(path, "/")
+	parsed.RawPath = ""
+	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
 func (f *GiteaForge) Name() string { return "gitea" }
+
+func (f *GiteaForge) Authority() ForgeAuthority {
+	return ForgeAuthority{Provider: "gitea", BaseURL: f.instanceURL}
+}
 
 func (f *GiteaForge) ListRepositories(ctx context.Context, credential ForgeCredential, page int) ([]ForgeRepository, error) {
 	if page < 1 {

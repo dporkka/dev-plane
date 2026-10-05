@@ -13,12 +13,17 @@ type GitHubForge struct {
 }
 
 var _ Forge = (*GitHubForge)(nil)
+var _ ForgeAuthorityProvider = (*GitHubForge)(nil)
 
 func NewGitHubForge(gateway *GitHubGateway) *GitHubForge {
 	return &GitHubForge{gateway: gateway}
 }
 
 func (f *GitHubForge) Name() string { return "github" }
+
+func (f *GitHubForge) Authority() ForgeAuthority {
+	return ForgeAuthority{Provider: "github", BaseURL: "https://github.com"}
+}
 
 func (f *GitHubForge) ListRepositories(ctx context.Context, credential ForgeCredential, page int) ([]ForgeRepository, error) {
 	repos, err := f.gateway.ListRepos(ctx, githubForgeToken(credential), page)
