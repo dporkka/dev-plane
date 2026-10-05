@@ -40,6 +40,7 @@ steps:
       - case "$${_EXPERIMENTAL_DAGGER_RUNNER_HOST}" in unix:///var/run/docker.sock|unix:///run/docker.sock) echo 'refusing host Docker socket as Dagger runner' >&2; exit 1 ;; esac
       - apt-get update -qq && apt-get install -y -qq curl ca-certificates
       - curl -fsSL -o /tmp/dagger.tgz https://github.com/dagger/dagger/releases/download/v0.20.3/dagger_v0.20.3_linux_amd64.tar.gz
+      - echo '1a0a4779592c5136725c4839ae71dbfc3aaa59bb22cd4b01f2ca55a583f26b9d  /tmp/dagger.tgz' | sha256sum -c -
       - tar -xzf /tmp/dagger.tgz -C /usr/local/bin dagger
       - dagger version
       - dagger --progress=plain .dagger/ci/verify.dag
