@@ -14,6 +14,13 @@ import (
 type namedForge struct{ name string }
 
 func (f namedForge) Name() string { return f.name }
+func (f namedForge) Authority() gateway.ForgeAuthority {
+	baseURL := "https://github.com"
+	if f.name == "gitea" {
+		baseURL = "https://git.example.test"
+	}
+	return gateway.ForgeAuthority{Provider: f.name, BaseURL: baseURL}
+}
 func (namedForge) ListRepositories(context.Context, gateway.ForgeCredential, int) ([]gateway.ForgeRepository, error) {
 	return nil, nil
 }
