@@ -10,8 +10,9 @@
 # Run locally with Dagger v0.20.3:
 #   dagger --progress=plain .dagger/ci/verify.dag
 #
-# Preserve .git so git diff --check and revision diagnostics operate on the
-# actual checkout. node_modules is intentionally excluded and installed cleanly.
+# Preserve .git so committed-range verification and revision diagnostics operate
+# on the actual checkout. node_modules is intentionally excluded and installed
+# cleanly.
 src=$(host | directory . --exclude node_modules)
 
 container |
@@ -41,5 +42,5 @@ container |
   with-exec -- make lint-sdk |
   with-exec -- sh -lc 'set -eu; rm -rf /tmp/dev-plane-jetstream; nats-server --js --http_port 8222 --store_dir /tmp/dev-plane-jetstream >/tmp/nats.log 2>&1 & i=0; until curl -fsS http://127.0.0.1:8222/healthz >/dev/null; do i=$((i + 1)); if [ "$i" -ge 30 ]; then cat /tmp/nats.log; exit 1; fi; sleep 1; done; make test; cd apps/web && npm test' |
   with-exec -- make build |
-  with-exec -- git diff --check |
+  with-exec -- sh -lc 'set -eu; if git rev-parse --verify origin/main >/dev/null 2>&1; then if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then git diff --check HEAD^..HEAD; else base=$(git merge-base HEAD origin/main); git diff --check "$base"..HEAD; fi; else git diff --check HEAD^..HEAD; fi' |
   sync
