@@ -1,0 +1,46 @@
+# Forge-triggered Dev Plane verification through the owned Woodpecker runner
+# and the portable Dagger execution contract in .dagger/ci/verify.dag.
+#
+# SECURITY: PR-controlled workflow code must never receive the Woodpecker host
+# Docker socket. The Dagger Engine is operator-managed outside this workflow and
+# its endpoint is injected by the Woodpecker control plane via
+# _EXPERIMENTAL_DAGGER_RUNNER_HOST.
+
+clone:
+  git:
+    image: docker.io/woodpeckerci/plugin-git
+    settings:
+      fetch-target-branch: true
+      partial: false
+
+labels:
+  platform: linux/amd64
+  pool: bootstrap-ci
+
+when:
+  - event: pull_request
+    branch: main
+  - event: push
+    branch: main
+  - event: manual
+
+concurrency:
+  limit: 1
+  group: dev-plane-dagger-ci
+
+steps:
+  - name: dagger-ci
+    image: debian:bookworm-slim
+    commands:
+      - set -eux
+      - test "$(git rev-parse HEAD)" = "$CI_COMMIT_SHA"
+      - echo "validating exact Woodpecker head $CI_COMMIT_SHA"
+      - test -n "$${_EXPERIMENTAL_DAGGER_RUNNER_HOST:-}"
+      - test ! -S /var/run/docker.sock
+      - case "$${_EXPERIMENTAL_DAGGER_RUNNER_HOST}" in unix:///var/run/docker.sock|unix:///run/docker.sock) echo 'refusing host Docker socket as Dagger runner' >&2; exit 1 ;; esac
+      - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+      - curl -fsSL -o /tmp/dagger.tgz https://github.com/dagger/dagger/releases/download/v0.20.3/dagger_v0.20.3_linux_amd64.tar.gz
+      - echo '1a0a4779592c5136725c4839ae71dbfc3aaa59bb22cd4b01f2ca55a583f26b9d  /tmp/dagger.tgz' | sha256sum -c -
+      - tar -xzf /tmp/dagger.tgz -C /usr/local/bin dagger
+      - dagger version
+      - dagger --progress=plain .dagger/ci/verify.dag
