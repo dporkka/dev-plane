@@ -4,6 +4,8 @@ export interface EditorBuffer {
   language: "typescript" | "javascript" | "json" | "markdown";
   content: string;
   savedContent: string;
+  /** Revision returned by the workspace API, not an editor change counter. */
+  revision?: string;
   isDirty: boolean;
 }
 
@@ -11,8 +13,9 @@ export function makeEditorBuffer(
   path: string,
   content: string,
   language: EditorBuffer["language"],
+  revision?: string,
 ): EditorBuffer {
-  return { path, content, savedContent: content, language, isDirty: false };
+  return { path, content, savedContent: content, language, revision, isDirty: false };
 }
 
 export function editEditorBuffer(
@@ -26,10 +29,12 @@ export function editEditorBuffer(
 export function acknowledgeSavedContent(
   file: EditorBuffer,
   savedContent: string,
+  revision?: string,
 ): EditorBuffer {
   return {
     ...file,
     savedContent,
+    revision: revision ?? file.revision,
     isDirty: file.content !== savedContent,
   };
 }

@@ -173,13 +173,15 @@ func (h *Handler) ReadWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		"path":    requestedPath,
 		"content": string(content),
 		"size":    len(content),
+		"revision": workspaceContentRevision(content),
 	})
 }
 
 // WriteFileRequest is the request body for writing a file.
 type WriteFileRequest struct {
-	Path    string `json:"path"`
-	Content string `json:"content"`
+	Path             string  `json:"path"`
+	Content          string  `json:"content"`
+	ExpectedRevision *string `json:"expected_revision,omitempty"`
 }
 
 // WriteWorkspaceFile writes content to a file in a workspace.
@@ -219,6 +221,10 @@ func (h *Handler) WriteWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, errors.New("path is required"))
 		return
 	}
+	if err := validateWorkspaceRevision(req.ExpectedRevision); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
 	if workspacePath == "" {
 		h.writeRuntimeWorkspaceFile(w, r, workspaceID, req)
 		return
@@ -231,21 +237,19 @@ func (h *Handler) WriteWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	targetFile := filepath.Join(workspacePath, req.Path)
-	// Ensure parent directory exists
-	if err := os.MkdirAll(filepath.Dir(targetFile), 0755); err != nil {
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create directory: %w", err))
+	revision, err := writeLocalWorkspaceRevision(ctx, workspacePath, req.Path, []byte(req.Content), req.ExpectedRevision)
+	if errors.Is(err, errWorkspaceRevisionConflict) {
+		respond.Error(w, http.StatusConflict, err)
 		return
 	}
-
-	if err := os.WriteFile(targetFile, []byte(req.Content), 0644); err != nil {
+	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("write file: %w", err))
 		return
 	}
-
 	respond.JSON(w, http.StatusOK, map[string]string{
 		"status": "written",
-		"path":   req.Path,
+		"path": req.Path,
+		"revision": revision,
 	})
 }
 
@@ -703,6 +707,7 @@ func (h *Handler) readRuntimeWorkspaceFile(w http.ResponseWriter, r *http.Reques
 		"path":    requestedPath,
 		"content": string(content),
 		"size":    len(content),
+		"revision": workspaceContentRevision(content),
 	})
 }
 
@@ -723,13 +728,19 @@ func (h *Handler) writeRuntimeWorkspaceFile(w http.ResponseWriter, r *http.Reque
 	if !h.authorizeWorkspaceOperationForWorkspace(w, r, workspace, capability.OpWriteFile, req.Path, nil) {
 		return
 	}
-	if err := provider.WriteFile(r.Context(), *workspace.RuntimeSessionID, req.Path, []byte(req.Content)); err != nil {
+	revision, err := writeRuntimeWorkspaceRevision(r.Context(), workspaceID, provider, *workspace.RuntimeSessionID, req.Path, []byte(req.Content), req.ExpectedRevision)
+	if errors.Is(err, errWorkspaceRevisionConflict) {
+		respond.Error(w, http.StatusConflict, err)
+		return
+	}
+	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("write runtime file: %w", err))
 		return
 	}
 	respond.JSON(w, http.StatusOK, map[string]string{
 		"status": "written",
-		"path":   req.Path,
+		"path": req.Path,
+		"revision": revision,
 	})
 }
 
@@ -1033,21 +1044,39 @@ func validateWorkspacePath(workspacePath, requestedPath string) error {
 	if filepath.IsAbs(requestedPath) {
 		return fmt.Errorf("absolute paths are not allowed: %s", requestedPath)
 	}
-	fullPath := filepath.Join(workspacePath, requestedPath)
-	resolved, err := filepath.EvalSymlinks(fullPath)
+	root, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
-		// If the file doesn't exist yet (for writes), validate the parent directory
-		if os.IsNotExist(err) {
-			resolved = fullPath
-		} else {
+		return err
+	}
+	candidate := filepath.Join(root, requestedPath)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			rel, err := filepath.Rel(root, resolved)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				return fmt.Errorf("path traversal detected: %s", requestedPath)
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
 			return err
 		}
+		// EvalSymlinks can report ENOENT for a dangling link itself.
+		// Do not follow such a link when subsequently creating a file.
+		if info, lerr := os.Lstat(candidate); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path traversal detected: %s", requestedPath)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return fmt.Errorf("path traversal detected: %s", requestedPath)
+		}
+		missing = append(missing, filepath.Base(candidate))
+		candidate = parent
 	}
-	cleanWorkspace := filepath.Clean(workspacePath) + string(os.PathSeparator)
-	if !strings.HasPrefix(resolved+string(os.PathSeparator), cleanWorkspace) && resolved != filepath.Clean(workspacePath) {
-		return fmt.Errorf("path traversal detected: %s", requestedPath)
-	}
-	return nil
 }
 
 func (h *Handler) authorizeWorkspaceOperation(w http.ResponseWriter, r *http.Request, workspaceID, workspacePath, operation, resource string, details map[string]any) bool {

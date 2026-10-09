@@ -136,7 +136,8 @@ export const api = {
     id: string,
     path: string,
     content: string,
-  ): Promise<any> => getClient().writeWorkspaceFile(id, path, content),
+    expectedRevision: string,
+  ): Promise<any> => getClient().writeWorkspaceFile(id, path, content, expectedRevision),
 
   execWorkspaceCommand: (
     id: string,
