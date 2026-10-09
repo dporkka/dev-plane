@@ -27,6 +27,8 @@ import (
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
+func emptyFileRevisionForTest() *string { value := ""; return &value }
+
 func setupWorkspace(t *testing.T) (workspacePath string, cleanup func()) {
 	t.Helper()
 	workspacePath = t.TempDir()
@@ -172,6 +174,7 @@ func TestWriteWorkspaceFile(t *testing.T) {
 	body, _ := json.Marshal(WriteFileRequest{
 		Path:    "newfile.txt",
 		Content: "new content",
+		ExpectedRevision: emptyFileRevisionForTest(),
 	})
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
@@ -233,6 +236,7 @@ func TestWriteWorkspaceFile_Traversal(t *testing.T) {
 	body, _ := json.Marshal(WriteFileRequest{
 		Path:    "../outside/malicious.txt",
 		Content: "malicious",
+		ExpectedRevision: emptyFileRevisionForTest(),
 	})
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
@@ -275,6 +279,7 @@ func TestWriteWorkspaceFile_DefaultPolicyRequiresApproval(t *testing.T) {
 	body, _ := json.Marshal(WriteFileRequest{
 		Path:    "blocked.txt",
 		Content: "blocked",
+		ExpectedRevision: emptyFileRevisionForTest(),
 	})
 	req := httptest.NewRequest(http.MethodPut, "/workspaces/"+workspaceID+"/files", bytes.NewReader(body))
 	rctx := chi.NewRouteContext()
@@ -313,7 +318,7 @@ func TestWriteWorkspaceFilePersistsCapabilityAudit(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := NewHandler(db, logger).WithCapabilityKernel(capability.NewKernel(allowAll, nil, audit.NewLogger(db, logger), logger))
 
-	body, _ := json.Marshal(WriteFileRequest{Path: "audited.txt", Content: "audited"})
+	body, _ := json.Marshal(WriteFileRequest{Path: "audited.txt", Content: "audited", ExpectedRevision: emptyFileRevisionForTest()})
 	req := workspaceRequest(http.MethodPost, "/workspaces/ws-audit/files/write", "ws-audit", bytes.NewReader(body))
 	req = req.WithContext(auth.WithUser(req.Context(), &auth.Claims{
 		UserID: "11111111-1111-1111-1111-111111111111",
@@ -854,7 +859,7 @@ func TestRuntimeWorkspaceFileOperationsUseProvider(t *testing.T) {
 		h.WithRuntimeProvider("docker", provider)
 		expectDockerRuntimeWorkspace(mock, "ws-runtime")
 
-		body, _ := json.Marshal(WriteFileRequest{Path: "src/app.go", Content: "package main\n"})
+		body, _ := json.Marshal(WriteFileRequest{Path: "src/app.go", Content: "package main\n", ExpectedRevision: emptyFileRevisionForTest()})
 		req := workspaceRequest(http.MethodPost, "/workspaces/ws-runtime/files/write", "ws-runtime", bytes.NewReader(body))
 		rec := httptest.NewRecorder()
 		h.WriteWorkspaceFile(rec, req)
