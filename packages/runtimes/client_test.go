@@ -419,3 +419,59 @@ func TestRemoteProviderAuthToken(t *testing.T) {
 		t.Fatal("expected auth error")
 	}
 }
+
+func TestRemoteProviderConditionalFileWriteUsesRunnerOwner(t *testing.T) {
+	wantRevision := FileContentRevision([]byte("remote edit"))
+	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/workspaces/session-1/files-revision/src/main.ts" {
+			t.Errorf("unexpected conditional write path: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("X-Dev-Plane-Expected-Revision") != FileContentRevision([]byte("original")) {
+			t.Errorf("expected revision not forwarded")
+		}
+		data, err := io.ReadAll(r.Body)
+		if err != nil || string(data) != "remote edit" {
+			t.Errorf("unexpected request payload: %q %v", data, err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"revision": wantRevision})
+	}))
+	defer runner.Close()
+
+	provider := NewRemoteProvider(runner.URL, "")
+	old := FileContentRevision([]byte("original"))
+	got, err := WriteRuntimeFileRevision(context.Background(), provider, "session-1", "src/main.ts", []byte("remote edit"), &old)
+	if err != nil || got != wantRevision {
+		t.Fatalf("write via runner owner failed: revision=%q err=%v", got, err)
+	}
+}
+
+func TestRemoteProviderConditionalFileWriteRejectsOldRunner(t *testing.T) {
+	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("404 page not found"))
+	}))
+	defer runner.Close()
+
+	provider := NewRemoteProvider(runner.URL, "")
+	rev := FileContentRevision([]byte("before"))
+	_, err := WriteRuntimeFileRevision(context.Background(), provider, "session", "file.txt", []byte("after"), &rev)
+	if !errors.Is(err, ErrConditionalWriteUnavailable) {
+		t.Fatalf("old runner must fail closed, got %v", err)
+	}
+}
+
+func TestRemoteProviderConditionalFileWritePreserves409(t *testing.T) {
+	runner := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer runner.Close()
+	provider := NewRemoteProvider(runner.URL, "")
+	rev := FileContentRevision([]byte("before"))
+	_, err := provider.WriteFileIfRevision(context.Background(), "session", "file.txt", []byte("after"), rev)
+	if !errors.Is(err, ErrFileRevisionConflict) {
+		t.Fatalf("409 should produce revision conflict: %v", err)
+	}
+}
