@@ -242,6 +242,10 @@ func (h *Handler) WriteWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusConflict, err)
 		return
 	}
+	if errors.Is(err, runtimes.ErrUnsafeWorkspacePath) {
+		respond.Error(w, http.StatusForbidden, err)
+		return
+	}
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("write file: %w", err))
 		return
@@ -731,6 +735,10 @@ func (h *Handler) writeRuntimeWorkspaceFile(w http.ResponseWriter, r *http.Reque
 	revision, err := writeRuntimeWorkspaceRevision(r.Context(), workspaceID, provider, *workspace.RuntimeSessionID, req.Path, []byte(req.Content), req.ExpectedRevision)
 	if errors.Is(err, errWorkspaceRevisionConflict) {
 		respond.Error(w, http.StatusConflict, err)
+		return
+	}
+	if errors.Is(err, runtimes.ErrUnsafeWorkspacePath) {
+		respond.Error(w, http.StatusForbidden, err)
 		return
 	}
 	if err != nil {
