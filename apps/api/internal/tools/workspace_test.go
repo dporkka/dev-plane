@@ -2,10 +2,13 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ai-dev-control-plane/runtimes"
 
 	"log/slog"
 )
@@ -55,7 +58,7 @@ func TestWorkspaceTools_WriteFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	wt := NewWorkspaceTools(slog.Default())
 
-	input := json.RawMessage(`{"path": "new/file.txt", "content": "new content"}`)
+	input := json.RawMessage(`{"path": "new/file.txt", "content": "new content", "expected_revision": ""}`)
 
 	result, err := wt.WriteFile(context.Background(), tmpDir, input)
 	if err != nil {
@@ -83,6 +86,51 @@ func TestWorkspaceTools_WriteFile(t *testing.T) {
 	}
 	if string(content) != "new content" {
 		t.Errorf("content: got %q, want %q", string(content), "new content")
+	}
+}
+
+
+func TestWorkspaceToolsWriteRejectsStaleAgentRevision(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "shared.ts")
+	if err := os.WriteFile(path, []byte("before"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewWorkspaceTools(slog.Default())
+	read, err := tool.ReadFile(context.Background(), root, json.RawMessage(`{"path":"shared.ts"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed struct {
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(read, &observed); err != nil || observed.Revision == "" {
+		t.Fatalf("read revision missing: %v %s", err, read)
+	}
+	if err := os.WriteFile(path, []byte("human edit"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := json.Marshal(map[string]string{
+		"path": "shared.ts", "content": "stale agent edit", "expected_revision": observed.Revision,
+	})
+	if _, err := tool.WriteFile(context.Background(), root, input); !errors.Is(err, runtimes.ErrFileRevisionConflict) {
+		t.Fatalf("stale agent edit should conflict, got %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || string(after) != "human edit" {
+		t.Fatalf("agent clobbered human edit: %q %v", after, err)
+	}
+}
+
+func TestWorkspaceToolsWriteRequiresRevisionPrecondition(t *testing.T) {
+	root := t.TempDir()
+	tool := NewWorkspaceTools(slog.Default())
+	_, err := tool.WriteFile(context.Background(), root, json.RawMessage(`{"path":"new.txt","content":"unsafe"}`))
+	if err == nil {
+		t.Fatal("missing expected_revision must fail closed")
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing revision created file: %v", err)
 	}
 }
 
