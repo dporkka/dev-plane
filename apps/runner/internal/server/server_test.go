@@ -167,3 +167,16 @@ func TestDestroyMissingWorkspaceReturns404(t *testing.T) {
 func testLogger(t *testing.T) *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
+
+func TestRunnerLegacyUnconditionalFileWriteIsRejected(t *testing.T) {
+	h := NewHandler(stubProvider{}, testLogger(t))
+	router := chi.NewRouter()
+	h.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPut, "/v1/workspaces/sess-1/files/src/main.ts", bytes.NewBufferString("unsafe"))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPreconditionRequired {
+		t.Fatalf("legacy runner write should reject missing revision, status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
