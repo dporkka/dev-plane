@@ -42,6 +42,7 @@ func TestBuildSystemPrompt(t *testing.T) {
 		"Available Tools",
 		"read_file",
 		"write_file",
+		"expected_revision",
 		"search_files",
 		"list_directory",
 		"apply_patch",

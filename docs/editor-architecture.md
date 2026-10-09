@@ -52,10 +52,28 @@ legacy clients that omit `expected_revision` can still perform unconditional
 writes. Treat these as outstanding promotion blockers for shared writable
 agent/human workspaces, rather than claiming lossless multi-writer editing.
 
-**Next hardening:** make every workspace mutation route through one runtime
-write service with cross-process/node serialization, explicit file versions,
-atomic local/restricted runtime writes, and capability checks. Continue using
-separate agent worktrees until the execution boundary is proven.
+**Implemented on the next stacked branch:** the per-file lock and revision
+check have one shared implementation in `packages/runtimes`. HTTP editor
+writes and built-in `write_file` tools (both local and Docker-backed) use
+the same lock namespace. Agents must supply the SHA-256 token from
+`read_file`, or an explicit empty revision to create a missing file. The
+shared local writer rejects writes through symlink path components.
+
+**Still blocked:** `run_command`, `run_tests`, `apply_patch`, Git
+operations, direct runtime-provider calls and external tools can write files
+without acquiring the shared lock. Cross-host runner clients also need
+single-authority or transactional compare-and-swap enforcement at the
+runtime owner; the current host-local lock is insufficient. Shell tooling
+must therefore remain isolated in separate agent worktrees. This feature
+is **not** a multi-writer-safe shared shell workspace.
+
+**Next hardening:** route all workspace mutations through one runtime owner
+with cross-process/node serialization, explicit file versions, atomic
+local/restricted runtime writes, and capability checks. The path-symlink
+checks do not replace fd-relative filesystem operations (for example,
+Linux `openat2`) when untrusted local processes can modify the directories.
+Continue using separate agent worktrees until the execution boundary is
+proven.
 
 Client-side route transitions need the same unsaved-buffer guard as browser
 unload before the system can claim complete navigation protection.

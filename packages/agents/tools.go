@@ -20,11 +20,11 @@ type ToolHandler func(ctx context.Context, input json.RawMessage) (json.RawMessa
 var StandardTools = []Tool{
 	{
 		Name:        "read_file",
-		Description: "Read the contents of a file at a given path. Returns the file content as a string.",
+		Description: "Read a file with its content and SHA-256 revision. Pass that revision to write_file.",
 	},
 	{
 		Name:        "write_file",
-		Description: "Write content to a file at a given path. Creates the file if it does not exist, overwrites if it does.",
+		Description: "Write a file only when expected_revision matches the last read revision. Use empty expected_revision to create a missing file. Never omit the precondition.",
 	},
 	{
 		Name:        "search_files",
