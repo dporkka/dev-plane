@@ -178,6 +178,53 @@ func (p *RemoteProvider) WriteFile(ctx context.Context, sessionID, filePath stri
 	return nil
 }
 
+// WriteFileIfRevision forwards a conditional write to its authoritative
+// runner. Never replace this with client-side read-then-WriteFile: that races
+// when multiple API processes share one runner.
+func (p *RemoteProvider) WriteFileIfRevision(ctx context.Context, sessionID, filePath string, data []byte, expectedRevision string) (string, error) {
+	if err := ValidateFileRevision(&expectedRevision); err != nil {
+		return "", err
+	}
+	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/files-revision/" + escapePath(filePath)
+	req, err := p.newRequest(ctx, http.MethodPut, path, bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/octet-stream")
+	// An empty header value is meaningful: it means the file must be absent.
+	req.Header.Set("X-Dev-Plane-Expected-Revision", expectedRevision)
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("conditional runner file write: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		var result struct {
+			Revision string `json:"revision"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return "", fmt.Errorf("decode conditional file result: %w", err)
+		}
+		if err := ValidateFileRevision(&result.Revision); err != nil || result.Revision == "" {
+			return "", fmt.Errorf("runner returned an invalid revision")
+		}
+		if result.Revision != FileContentRevision(data) {
+			return "", fmt.Errorf("runner acknowledged a different file revision")
+		}
+		return result.Revision, nil
+	case http.StatusConflict:
+		return "", ErrFileRevisionConflict
+	case http.StatusPreconditionRequired:
+		return "", ErrFileRevisionRequired
+	case http.StatusNotFound, http.StatusMethodNotAllowed:
+		return "", fmt.Errorf("%w (status %d)", ErrConditionalWriteUnavailable, resp.StatusCode)
+	default:
+		return "", p.readError(resp)
+	}
+}
+
 // ApplyPatch applies a unified diff patch to a workspace session on the runner.
 func (p *RemoteProvider) ApplyPatch(ctx context.Context, sessionID, patch string) error {
 	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/patches"
