@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -55,6 +54,9 @@ func TestRunnerConditionalFileWriteRejectsMissingAndStaleRevisions(t *testing.T)
 	if rec := doWrite("unguarded", "", false); rec.Code != http.StatusPreconditionRequired {
 		t.Fatalf("missing precondition status=%d body=%s", rec.Code, rec.Body.String())
 	}
+	if rec := doWrite("invalid", "not-a-digest", true); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed revision status=%d body=%s", rec.Code, rec.Body.String())
+	}
 	if rec := doWrite("stale", runtimes.FileContentRevision([]byte("something else")), true); rec.Code != http.StatusConflict {
 		t.Fatalf("stale precondition status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -79,6 +81,20 @@ func TestRunnerConditionalFileWriteRejectsMissingAndStaleRevisions(t *testing.T)
 	defer owner.mu.Unlock()
 	if string(owner.content) != "accepted" {
 		t.Fatalf("unexpected file content %q", owner.content)
+	}
+}
+
+func TestRunnerConditionalFileWriteRejectsEscapingPath(t *testing.T) {
+	owner := &revisionOwnerProvider{content: []byte("safe")}
+	h := NewHandler(owner, testLogger(t))
+	router := chi.NewRouter()
+	h.RegisterRoutes(router)
+	req := httptest.NewRequest(http.MethodPut, "/v1/workspaces/session/files-revision/../../other", bytes.NewBufferString("unsafe"))
+	req.Header.Set("X-Dev-Plane-Expected-Revision", runtimes.FileContentRevision([]byte("safe")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code == http.StatusOK {
+		t.Fatal("traversal unexpectedly admitted")
 	}
 }
 
@@ -120,5 +136,3 @@ func TestRunnerConditionalFileWriteHasOneWinnerAcrossClients(t *testing.T) {
 		t.Fatalf("runner did not serialize requests: successes=%d conflicts=%d", success, conflict)
 	}
 }
-
-var _ = errors.Is
