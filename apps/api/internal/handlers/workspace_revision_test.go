@@ -73,3 +73,27 @@ func TestLocalWorkspaceRevisionConcurrentSavesHaveOneWinner(t *testing.T) {
     }
     if success != 1 || conflicts != 1 { t.Fatalf("successes=%d conflicts=%d", success, conflicts) }
 }
+
+func TestLocalWorkspaceRevisionRejectsNonexistentLeafUnderEscapingSymlink(t *testing.T) {
+    dir := t.TempDir()
+    outside := t.TempDir()
+    if err := os.Symlink(outside, filepath.Join(dir, "external")); err != nil { t.Fatal(err) }
+    missing := ""
+    _, err := writeLocalWorkspaceRevision(context.Background(), dir, "external/new.txt", []byte("blocked"), &missing)
+    if err == nil { t.Fatal("expected symlink path rejection") }
+    if _, err := os.Stat(filepath.Join(outside, "new.txt")); !errors.Is(err, os.ErrNotExist) {
+        t.Fatalf("symlink traversal created external file: %v", err)
+    }
+}
+
+func TestLocalWorkspaceRevisionRejectsDanglingFileSymlink(t *testing.T) {
+    dir := t.TempDir()
+    outside := t.TempDir()
+    if err := os.Symlink(filepath.Join(outside, "missing.txt"), filepath.Join(dir, "dangling.txt")); err != nil { t.Fatal(err) }
+    missing := ""
+    _, err := writeLocalWorkspaceRevision(context.Background(), dir, "dangling.txt", []byte("blocked"), &missing)
+    if err == nil { t.Fatal("expected dangling symlink rejection") }
+    if _, err := os.Stat(filepath.Join(outside, "missing.txt")); !errors.Is(err, os.ErrNotExist) {
+        t.Fatalf("dangling symlink wrote outside workspace: %v", err)
+    }
+}
