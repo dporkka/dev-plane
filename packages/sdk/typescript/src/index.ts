@@ -487,13 +487,13 @@ export class DevPlaneClient {
     return this.request<WorkspaceFileContent>(`/api/v1/workspaces/${id}/files/content${qs}`);
   }
 
-  writeWorkspaceFile(id: string, path: string, content: string, expectedRevision?: string) {
+  writeWorkspaceFile(id: string, path: string, content: string, expectedRevision: string) {
     return this.request<WriteWorkspaceFileResponse>(`/api/v1/workspaces/${id}/files/write`, {
       method: 'POST',
       body: JSON.stringify({
         path,
         content,
-        ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }),
+        expected_revision: expectedRevision,
       } satisfies WriteWorkspaceFileRequest),
     });
   }
