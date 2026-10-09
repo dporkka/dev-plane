@@ -366,8 +366,8 @@ func TestRemoteProviderReadWriteFile(t *testing.T) {
 	ctx := context.Background()
 
 	sess, _ := client.CreateWorkspace(ctx, CreateRequest{RepositoryID: "repo-1", CloneURL: "https://example.invalid/repo.git", Branch: "feat", BaseBranch: "main"})
-	if err := client.WriteFile(ctx, sess.ID, "test.txt", []byte("hello")); err != nil {
-		t.Fatalf("WriteFile error: %v", err)
+	if err := client.WriteFile(ctx, sess.ID, "test.txt", []byte("hello")); !errors.Is(err, ErrFileRevisionRequired) {
+		t.Fatalf("legacy unconditional WriteFile should fail closed: %v", err)
 	}
 	data, err := client.ReadFile(ctx, sess.ID, "test.txt")
 	if err != nil {
