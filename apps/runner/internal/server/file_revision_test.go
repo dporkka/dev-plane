@@ -98,6 +98,26 @@ func TestRunnerConditionalFileWriteRejectsEscapingPath(t *testing.T) {
 	}
 }
 
+func TestRunnerConditionalFileWriteRejectsOversizedPayload(t *testing.T) {
+	owner := &revisionOwnerProvider{content: []byte("original")}
+	h := NewHandler(owner, testLogger(t))
+	router := chi.NewRouter()
+	h.RegisterRoutes(router)
+	tooBig := bytes.Repeat([]byte("x"), (8<<20)+1)
+	req := httptest.NewRequest(http.MethodPut, "/v1/workspaces/session/files-revision/big.ts", bytes.NewReader(tooBig))
+	req.Header.Set("X-Dev-Plane-Expected-Revision", runtimes.FileContentRevision([]byte("original")))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized write status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	owner.mu.Lock()
+	defer owner.mu.Unlock()
+	if string(owner.content) != "original" {
+		t.Fatal("oversized request modified the file")
+	}
+}
+
 func TestRunnerConditionalFileWriteHasOneWinnerAcrossClients(t *testing.T) {
 	owner := &revisionOwnerProvider{content: []byte("before")}
 	h := NewHandler(owner, testLogger(t))
