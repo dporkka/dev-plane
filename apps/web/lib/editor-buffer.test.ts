@@ -36,6 +36,17 @@ describe("CodeMirror workspace drafts", () => {
     assert.strictEqual(acknowledged.isDirty, true);
   });
 
+  it("updates the acknowledged remote revision while keeping later typing dirty", () => {
+    const original = makeEditorBuffer("src/App.tsx", "base", "typescript", "revision-1");
+    const first = editEditorBuffer(original, "saved");
+    const later = editEditorBuffer(first, "new typing");
+    const acknowledged = acknowledgeSavedContent(later, "saved", "revision-2");
+    assert.strictEqual(acknowledged.revision, "revision-2");
+    assert.strictEqual(acknowledged.savedContent, "saved");
+    assert.strictEqual(acknowledged.content, "new typing");
+    assert.strictEqual(acknowledged.isDirty, true);
+  });
+
   it("detects a remote edit made since opening the file", () => {
     const file = editEditorBuffer(
       makeEditorBuffer("src/App.tsx", "base", "typescript"),
