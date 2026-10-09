@@ -2,6 +2,7 @@ package agentrunner
 
 import (
 	"context"
+	"errors"
 	"database/sql"
 	"encoding/json"
 	"log/slog"
@@ -19,6 +20,39 @@ import (
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
 )
+
+
+func TestRuntimeAgentWriteRequiresRevisionAndRejectsStaleEdit(t *testing.T) {
+	provider := &fakeRuntimeProvider{
+		files: map[string][]byte{"shared.ts": []byte("before")},
+	}
+	read, err := runtimeReadFile(context.Background(), provider, "sess-1", json.RawMessage(`{"path":"shared.ts"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var observed struct {
+		Revision string `json:"revision"`
+	}
+	if err := json.Unmarshal(read, &observed); err != nil || observed.Revision == "" {
+		t.Fatalf("missing read revision: %v %s", err, read)
+	}
+	provider.files["shared.ts"] = []byte("human update")
+	payload, err := json.Marshal(map[string]string{
+		"path": "shared.ts", "content": "stale agent", "expected_revision": observed.Revision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeWriteFile(context.Background(), provider, "sess-1", payload); !errors.Is(err, runtimes.ErrFileRevisionConflict) {
+		t.Fatalf("expected stale runtime revision conflict, got %v", err)
+	}
+	if got := string(provider.files["shared.ts"]); got != "human update" {
+		t.Fatalf("agent overwritten runtime file: %q", got)
+	}
+	if _, err := runtimeWriteFile(context.Background(), provider, "sess-1", json.RawMessage(`{"path":"shared.ts","content":"unconditional"}`)); err == nil {
+		t.Fatal("missing agent write revision must fail closed")
+	}
+}
 
 func TestExecuteToolUsesRuntimeProviderForDockerWorkspace(t *testing.T) {
 	sessionID := "runtime-1"
