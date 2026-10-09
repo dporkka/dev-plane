@@ -154,28 +154,10 @@ func (p *RemoteProvider) ReadFile(ctx context.Context, sessionID, filePath strin
 	return io.ReadAll(resp.Body)
 }
 
-// WriteFile writes data to a file in a workspace session on the runner.
+// WriteFile intentionally rejects unconditional writes. Call the explicit
+// conditional interface with the last observed file revision instead.
 func (p *RemoteProvider) WriteFile(ctx context.Context, sessionID, filePath string, data []byte) error {
-	path := "/v1/workspaces/" + url.PathEscape(sessionID) + "/files/" + escapePath(filePath)
-	httpReq, err := p.newRequest(ctx, http.MethodPut, path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/octet-stream")
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("write file request: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return ErrSessionNotFound
-	}
-	if resp.StatusCode != http.StatusOK {
-		return p.readError(resp)
-	}
-	return nil
+	return ErrFileRevisionRequired
 }
 
 // WriteFileIfRevision forwards a conditional write to its authoritative
