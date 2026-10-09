@@ -15,6 +15,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 // WorkspaceTools provides real implementations of agent tools.
@@ -70,43 +72,39 @@ func (t *WorkspaceTools) ReadFile(ctx context.Context, workspacePath string, inp
 		"content": content,
 		"size":    len(data),
 		"lines":   lines,
+		"revision": runtimes.FileContentRevision(data),
 	})
 }
 
-// WriteFile writes content to a file in the workspace.
-// Input: {"path": "src/main.go", "content": "..."}
-// Output: {"success": true, "bytes_written": 1234}
-// SECURITY: Validates path is within workspace (prevents traversal).
+// WriteFile performs a revision-aware write to the same local file authority
+// used by the browser API. Every agent write must carry the revision from
+// read_file or an empty precondition to create a previously absent file.
+// Input: {"path":"src/main.go","content":"...","expected_revision":"sha256"}
+// Output: {"success":true,"bytes_written":1234,"revision":"sha256"}
 func (t *WorkspaceTools) WriteFile(ctx context.Context, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
 	var req struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path             string  `json:"path"`
+		Content          string  `json:"content"`
+		ExpectedRevision *string `json:"expected_revision"`
 	}
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, fmt.Errorf("invalid input for write_file: %w", err)
 	}
-
-	filePath, err := resolveWorkspacePath(workspacePath, req.Path)
-	if err != nil {
+	if req.ExpectedRevision == nil {
+		return nil, fmt.Errorf("write_file requires expected_revision from read_file (empty string to create a new file)")
+	}
+	if _, err := resolveWorkspacePath(workspacePath, req.Path); err != nil {
 		return nil, err
 	}
-
-	// Ensure the directory exists
-	dir := filepath.Dir(filePath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return nil, fmt.Errorf("create directory %s: %w", dir, err)
-	}
-
-	bytesWritten := len(req.Content)
-	if err := os.WriteFile(filePath, []byte(req.Content), 0644); err != nil {
+	revision, err := runtimes.WriteLocalFileRevision(ctx, workspacePath, req.Path, []byte(req.Content), req.ExpectedRevision)
+	if err != nil {
 		return nil, fmt.Errorf("write file %s: %w", req.Path, err)
 	}
-
-	t.logger.Debug("write_file", "path", req.Path, "bytes_written", bytesWritten)
-
+	t.logger.Debug("write_file", "path", req.Path, "bytes_written", len(req.Content))
 	return json.Marshal(map[string]any{
-		"success":       true,
-		"bytes_written": bytesWritten,
+		"success": true,
+		"bytes_written": len(req.Content),
+		"revision": revision,
 	})
 }
 
