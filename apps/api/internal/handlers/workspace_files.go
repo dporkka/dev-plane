@@ -1044,21 +1044,39 @@ func validateWorkspacePath(workspacePath, requestedPath string) error {
 	if filepath.IsAbs(requestedPath) {
 		return fmt.Errorf("absolute paths are not allowed: %s", requestedPath)
 	}
-	fullPath := filepath.Join(workspacePath, requestedPath)
-	resolved, err := filepath.EvalSymlinks(fullPath)
+	root, err := filepath.EvalSymlinks(workspacePath)
 	if err != nil {
-		// If the file doesn't exist yet (for writes), validate the parent directory
-		if os.IsNotExist(err) {
-			resolved = fullPath
-		} else {
+		return err
+	}
+	candidate := filepath.Join(root, requestedPath)
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(candidate)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			rel, err := filepath.Rel(root, resolved)
+			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+				return fmt.Errorf("path traversal detected: %s", requestedPath)
+			}
+			return nil
+		}
+		if !os.IsNotExist(err) {
 			return err
 		}
+		// EvalSymlinks can report ENOENT for a dangling link itself.
+		// Do not follow such a link when subsequently creating a file.
+		if info, lerr := os.Lstat(candidate); lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path traversal detected: %s", requestedPath)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return fmt.Errorf("path traversal detected: %s", requestedPath)
+		}
+		missing = append(missing, filepath.Base(candidate))
+		candidate = parent
 	}
-	cleanWorkspace := filepath.Clean(workspacePath) + string(os.PathSeparator)
-	if !strings.HasPrefix(resolved+string(os.PathSeparator), cleanWorkspace) && resolved != filepath.Clean(workspacePath) {
-		return fmt.Errorf("path traversal detected: %s", requestedPath)
-	}
-	return nil
 }
 
 func (h *Handler) authorizeWorkspaceOperation(w http.ResponseWriter, r *http.Request, workspaceID, workspacePath, operation, resource string, details map[string]any) bool {
