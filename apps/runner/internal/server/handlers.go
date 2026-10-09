@@ -133,7 +133,12 @@ func (h *Handler) writeFileRevision(w http.ResponseWriter, r *http.Request) {
 	const maxWriteBytes = 8 << 20
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWriteBytes))
 	if err != nil {
-		respondError(w, http.StatusBadRequest, fmt.Errorf("read conditional file body: %w", err))
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			respondError(w, http.StatusRequestEntityTooLarge, err)
+		} else {
+			respondError(w, http.StatusBadRequest, fmt.Errorf("read conditional file body: %w", err))
+		}
 		return
 	}
 	revision, err := runtimes.WriteRuntimeFileRevision(r.Context(), h.provider, sessionID, path, data, &expected)
