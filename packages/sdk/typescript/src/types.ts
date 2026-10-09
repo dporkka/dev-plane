@@ -537,16 +537,21 @@ export interface WorkspaceFileContent {
   path: string;
   content: string;
   size: number;
+  /** SHA-256 of the exact bytes returned. */
+  revision: string;
 }
 
 export interface WriteWorkspaceFileRequest {
   path: string;
   content: string;
+  /** Empty string means the file must not exist. */
+  expected_revision?: string;
 }
 
 export interface WriteWorkspaceFileResponse {
   status: 'written';
   path: string;
+  revision: string;
 }
 
 export interface PatchRequest {
