@@ -67,3 +67,17 @@ func TestWorkspaceRevisionMissingFileAndSymlinkWrite(t *testing.T) {
 		t.Fatalf("dangling symlink should be rejected: %v", err)
 	}
 }
+
+func TestWorkspaceRevisionRejectsMissingPrecondition(t *testing.T) {
+ root := t.TempDir()
+ if err := os.WriteFile(filepath.Join(root, "existing.ts"), []byte("agent"), 0644); err != nil {
+  t.Fatal(err)
+ }
+ if _, err := WriteLocalFileRevision(context.Background(), root, "existing.ts", []byte("overwrite"), nil); !errors.Is(err, ErrFileRevisionRequired) {
+  t.Fatalf("nil revision unexpectedly admitted: %v", err)
+ }
+ after, err := os.ReadFile(filepath.Join(root, "existing.ts"))
+ if err != nil || string(after) != "agent" {
+  t.Fatalf("existing bytes changed: %q err=%v", after, err)
+ }
+}
