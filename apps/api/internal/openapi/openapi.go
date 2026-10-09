@@ -858,7 +858,7 @@ func buildComponents() Components {
 			},
 			"WriteFileRequest": {
 				Type:     "object",
-				Required: []string{"path", "content"},
+				Required: []string{"path", "content", "expected_revision"},
 				Properties: map[string]*Schema{
 					"path":    {Type: "string"},
 					"content": {Type: "string"},
@@ -2128,6 +2128,7 @@ func buildPaths() map[string]PathItem {
 				"403": {Description: "Path traversal detected or operation denied"},
 				"404": {Description: "Workspace not found"},
 				"409": {Description: "File revision conflict: remote content differs from expected_revision"},
+				"428": {Description: "Precondition required: expected_revision was omitted"},
 			},
 		},
 	}

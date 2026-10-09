@@ -43,14 +43,18 @@ The browser maintains a saved baseline and a draft for every open file.
 5. API-mediated writes on one host serialize through a filesystem lock. Local
    files are replaced with a same-directory rename to avoid partial reads.
    Files that did not exist may be created using an empty-string precondition.
+6. Every HTTP and built-in agent write must supply `expected_revision`;
+   absent revisions are rejected with HTTP 428 at the API boundary. This is
+   intentionally a compatibility-breaking change for older API clients.
 
 **Safety boundary:** This is a conditional API write, not yet a globally
 atomic workspace transaction. Direct agent shell/git operations do not hold
 the API lock; remote runner nodes may have independent lock directories; and
-other programs can write files during the check/write interval. Likewise,
-legacy clients that omit `expected_revision` can still perform unconditional
-writes. Treat these as outstanding promotion blockers for shared writable
-agent/human workspaces, rather than claiming lossless multi-writer editing.
+other programs can write files during the check/write interval. The API
+and built-in agent tool now refuse missing preconditions; **direct provider,
+shell, patch, and Git mutations are still outside this lock**. Treat these as
+outstanding promotion blockers for shared writable agent/human workspaces,
+rather than claiming lossless multi-writer editing.
 
 **Implemented on the next stacked branch:** the per-file lock and revision
 check have one shared implementation in `packages/runtimes`. HTTP editor

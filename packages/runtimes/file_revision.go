@@ -16,6 +16,7 @@ import (
 var (
 	ErrFileRevisionConflict = errors.New("workspace file changed since supplied revision")
 	ErrInvalidFileRevision  = errors.New("expected revision must be empty or a lowercase SHA-256 hex digest")
+	ErrFileRevisionRequired = errors.New("expected_revision is required for workspace writes")
 	ErrUnsafeWorkspacePath  = errors.New("unsafe workspace file path")
 )
 
@@ -25,7 +26,10 @@ func FileContentRevision(data []byte) string {
 }
 
 func ValidateFileRevision(expected *string) error {
-	if expected == nil || *expected == "" {
+	if expected == nil {
+		return ErrFileRevisionRequired
+	}
+	if *expected == "" {
 		return nil
 	}
 	if len(*expected) != 64 {
@@ -41,7 +45,7 @@ func ValidateFileRevision(expected *string) error {
 
 func matchesFileRevision(previous []byte, exists bool, expected *string) bool {
 	if expected == nil {
-		return true
+		return false
 	}
 	if !exists {
 		return *expected == ""
