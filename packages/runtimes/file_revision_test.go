@@ -81,3 +81,47 @@ func TestWorkspaceRevisionRejectsMissingPrecondition(t *testing.T) {
   t.Fatalf("existing bytes changed: %q err=%v", after, err)
  }
 }
+
+type conditionalRevisionProvider struct {
+	Provider
+	called bool
+}
+
+func (p *conditionalRevisionProvider) WriteFileIfRevision(ctx context.Context, sessionID, path string, data []byte, expected string) (string, error) {
+	p.called = true
+	if sessionID != "runtime-1" || path != "nested/main.ts" {
+		return "", ErrUnsafeWorkspacePath
+	}
+	if expected != FileContentRevision([]byte("old")) {
+		return "", ErrFileRevisionConflict
+	}
+	return FileContentRevision(data), nil
+}
+
+func TestWriteRuntimeRevisionDelegatesToAuthoritativeProvider(t *testing.T) {
+	provider := &conditionalRevisionProvider{}
+	expected := FileContentRevision([]byte("old"))
+	next, err := WriteRuntimeFileRevision(context.Background(), provider, "runtime-1", "nested/main.ts", []byte("new"), &expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !provider.called {
+		t.Fatal("conditional provider was bypassed")
+	}
+	if next != FileContentRevision([]byte("new")) {
+		t.Fatalf("revision = %q", next)
+	}
+}
+
+func TestWriteRuntimeRevisionRejectsInvalidPathBeforeDispatch(t *testing.T) {
+	provider := &conditionalRevisionProvider{}
+	expected := FileContentRevision([]byte("old"))
+	for _, path := range []string{"../other", "/absolute", ".", "", "sub/../../other"} {
+		if _, err := WriteRuntimeFileRevision(context.Background(), provider, "runtime-1", path, []byte("new"), &expected); !errors.Is(err, ErrUnsafeWorkspacePath) {
+			t.Errorf("path %q: expected unsafe path, got %v", path, err)
+		}
+	}
+	if provider.called {
+		t.Fatal("unsafe path reached conditional provider")
+	}
+}
