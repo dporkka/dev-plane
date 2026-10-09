@@ -63,11 +63,25 @@ the same lock namespace. Agents must supply the SHA-256 token from
 `read_file`, or an explicit empty revision to create a missing file. The
 shared local writer rejects writes through symlink path components.
 
+**Runner-owned conditional writes (this stacked change):** RemoteProvider
+sends the exact bytes and expected SHA-256 revision in one request to the
+runner's `PUT /v1/workspaces/{sessionID}/files-revision/*` endpoint. The
+runner performs read/check/write under its own per-file advisory lock and
+returns the resulting revision. A 409 is returned for stale content; omitted
+preconditions are 428. The old unconditional runner write endpoint rejects
+writes with 428 and RemoteProvider.WriteFile fails closed. Older runners do
+not support the new endpoint: the client refuses to downgrade.
+
+This removes the separate-API-node read/write race **provided all requests
+for the session are routed to the same runner host**. It does not provide
+global consensus, leader fencing, or host-independent lock state. Deploy the
+new runner before enabling the new API flow; otherwise edits must remain
+disabled rather than silently overwriting files.
+
 **Still blocked:** `run_command`, `run_tests`, `apply_patch`, Git
 operations, direct runtime-provider calls and external tools can write files
-without acquiring the shared lock. Cross-host runner clients also need
-single-authority or transactional compare-and-swap enforcement at the
-runtime owner; the current host-local lock is insufficient. Shell tooling
+without acquiring the shared lock. Multiple runner hosts serving the same session without a fencing/ownership
+contract would still race; the current lock is only host-local. Shell tooling
 must therefore remain isolated in separate agent worktrees. This feature
 is **not** a multi-writer-safe shared shell workspace.
 

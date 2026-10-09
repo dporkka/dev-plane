@@ -32,6 +32,8 @@ func (h *Handler) RegisterRoutes(r chi.Router) {
 	r.Post("/v1/workspaces/{sessionID}/commands", h.executeCommand)
 	r.Get("/v1/workspaces/{sessionID}/files/*", h.readFile)
 	r.Put("/v1/workspaces/{sessionID}/files/*", h.writeFile)
+	// Conditional writes are handled at the runner owning this session.
+	r.Put("/v1/workspaces/{sessionID}/files-revision/*", h.writeFileRevision)
 	r.Post("/v1/workspaces/{sessionID}/patches", h.applyPatch)
 	r.Get("/v1/workspaces/{sessionID}/snapshot", h.snapshot)
 	r.Post("/v1/workspaces/{sessionID}/restore", h.restore)
@@ -105,27 +107,57 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// writeFile is the legacy unconditional endpoint. It must never bypass the
+// runner-owned revision protocol, including during rolling upgrades.
 func (h *Handler) writeFile(w http.ResponseWriter, r *http.Request) {
+	respondError(w, http.StatusPreconditionRequired, runtimes.ErrFileRevisionRequired)
+}
+
+// writeFileRevision performs compare-and-write on the runner side. API nodes
+// must never implement this as two independent network requests.
+func (h *Handler) writeFileRevision(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionID")
-	path := chi.URLParam(r, "*")
-	path = strings.TrimPrefix(path, "/")
-
-	data, err := io.ReadAll(r.Body)
+	path := strings.TrimPrefix(chi.URLParam(r, "*"), "/")
+	const headerName = "X-Dev-Plane-Expected-Revision"
+	expectedValues, present := r.Header[http.CanonicalHeaderKey(headerName)]
+	if !present || len(expectedValues) != 1 {
+		respondError(w, http.StatusPreconditionRequired, runtimes.ErrFileRevisionRequired)
+		return
+	}
+	expected := expectedValues[0]
+	if err := runtimes.ValidateFileRevision(&expected); err != nil {
+		respondError(w, http.StatusBadRequest, err)
+		return
+	}
+	// Bound the payload before any filesystem operation.
+	const maxWriteBytes = 8 << 20
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxWriteBytes))
 	if err != nil {
-		respondError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
-		return
-	}
-
-	if err := h.provider.WriteFile(r.Context(), sessionID, path, data); err != nil {
-		if err == runtimes.ErrSessionNotFound {
-			respondError(w, http.StatusNotFound, err)
-			return
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			respondError(w, http.StatusRequestEntityTooLarge, err)
+		} else {
+			respondError(w, http.StatusBadRequest, fmt.Errorf("read conditional file body: %w", err))
 		}
-		respondError(w, http.StatusInternalServerError, err)
 		return
 	}
-
-	respondJSON(w, http.StatusOK, map[string]string{"status": "written"})
+	revision, err := runtimes.WriteRuntimeFileRevision(r.Context(), h.provider, sessionID, path, data, &expected)
+	switch {
+	case err == nil:
+		respondJSON(w, http.StatusOK, map[string]string{"status": "written", "revision": revision})
+	case errors.Is(err, runtimes.ErrFileRevisionConflict):
+		respondError(w, http.StatusConflict, err)
+	case errors.Is(err, runtimes.ErrFileRevisionRequired):
+		respondError(w, http.StatusPreconditionRequired, err)
+	case errors.Is(err, runtimes.ErrInvalidFileRevision):
+		respondError(w, http.StatusBadRequest, err)
+	case errors.Is(err, runtimes.ErrUnsafeWorkspacePath):
+		respondError(w, http.StatusForbidden, err)
+	case errors.Is(err, runtimes.ErrSessionNotFound):
+		respondError(w, http.StatusNotFound, err)
+	default:
+		respondError(w, http.StatusInternalServerError, err)
+	}
 }
 
 func (h *Handler) applyPatch(w http.ResponseWriter, r *http.Request) {

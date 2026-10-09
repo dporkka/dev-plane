@@ -18,6 +18,7 @@ var (
 	ErrInvalidFileRevision  = errors.New("expected revision must be empty or a lowercase SHA-256 hex digest")
 	ErrFileRevisionRequired = errors.New("expected_revision is required for workspace writes")
 	ErrUnsafeWorkspacePath  = errors.New("unsafe workspace file path")
+	ErrConditionalWriteUnavailable = errors.New("runtime owner does not support conditional writes")
 )
 
 func FileContentRevision(data []byte) string {
@@ -187,14 +188,28 @@ func WriteLocalFileRevision(ctx context.Context, workspaceRoot, relative string,
 	return revision, err
 }
 
-// WriteRuntimeFileRevision coordinates API and agent-provider writes on one
-// host. Remote nodes and arbitrary shell commands are NOT protected.
+// ConditionalFileWriter moves the read/compare/write boundary to the
+// authoritative runtime owner (for example, a remote runner). Implementations
+// must serialize competing conditional writers before comparing file bytes.
+type ConditionalFileWriter interface {
+	WriteFileIfRevision(ctx context.Context, sessionID, path string, data []byte, expectedRevision string) (string, error)
+}
+
+// WriteRuntimeFileRevision delegates to the remote runner's conditional-write
+// endpoint when supported. The fallback coordinates providers on one host;
+// arbitrary shell commands and direct provider writes remain outside it.
 func WriteRuntimeFileRevision(ctx context.Context, provider Provider, sessionID, path string, data []byte, expected *string) (string, error) {
 	if err := ValidateFileRevision(expected); err != nil {
 		return "", err
 	}
-	if path == "" || path == "." || filepath.IsAbs(path) || strings.HasPrefix(filepath.Clean(path), "..") {
+	clean := filepath.Clean(path)
+	if path == "" || clean == "." || filepath.IsAbs(path) || clean == ".." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || strings.ContainsRune(path, '\x00') {
 		return "", ErrUnsafeWorkspacePath
+	}
+	// Remote providers enforce the precondition at the runner owner instead
+	// of letting different API nodes race on independent local locks.
+	if conditional, ok := provider.(ConditionalFileWriter); ok {
+		return conditional.WriteFileIfRevision(ctx, sessionID, clean, data, *expected)
 	}
 	var revision string
 	err := WithWorkspaceFileLock(ctx, "runtime:"+sessionID+":"+filepath.Clean(path), func() error {
