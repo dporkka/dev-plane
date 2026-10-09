@@ -545,7 +545,7 @@ export interface WriteWorkspaceFileRequest {
   path: string;
   content: string;
   /** Empty string means the file must not exist. */
-  expected_revision?: string;
+  expected_revision: string;
 }
 
 export interface WriteWorkspaceFileResponse {
