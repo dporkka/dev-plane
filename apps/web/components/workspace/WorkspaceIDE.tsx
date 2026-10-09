@@ -4,11 +4,11 @@ import { CodeEditor } from "@/components/code/CodeMirror";
 import { DiffViewer } from "@/components/code/DiffViewer";
 import { Terminal } from "@/components/run/Terminal";
 import { api } from "@/lib/api";
+import { DevPlaneHTTPError } from "@ai-cp/dev-plane-sdk";
 import {
   makeEditorBuffer,
   editEditorBuffer,
   acknowledgeSavedContent,
-  remoteMatchesBaseline,
 } from "@/lib/editor-buffer";
 import type { EditorBuffer } from "@/lib/editor-buffer";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -82,8 +82,10 @@ export function WorkspaceIDE({
 
   // Write file mutation
   const writeMutation = useMutation({
-    mutationFn: ({ path, content }: { path: string; content: string }) =>
-      api.writeWorkspaceFile(workspaceId, path, content),
+    mutationFn: ({
+      path, content, expectedRevision,
+    }: { path: string; content: string; expectedRevision: string }) =>
+      api.writeWorkspaceFile(workspaceId, path, content, expectedRevision),
   });
 
   // Exec command mutation
@@ -127,7 +129,10 @@ export function WorkspaceIDE({
           typeof result === "string" ? result : result.content || "";
         const lang = detectLanguage(path);
 
-        const openFile = makeEditorBuffer(path, content, lang);
+        const openFile = makeEditorBuffer(
+          path, content, lang,
+          typeof result === "string" ? undefined : result.revision,
+        );
 
         setOpenFiles((prev) => new Map(prev).set(path, openFile));
         setEditorTabs((prev) => [
@@ -189,38 +194,39 @@ export function WorkspaceIDE({
       savingPaths.current.add(path);
       const snapshot = file.content;
       try {
-        // Agents may update files while a human is editing. Refuse obvious
-        // stale writes; true atomic compare-and-swap belongs in the API.
-        const remote = await api.readWorkspaceFile(workspaceId, path);
-        const remoteContent =
-          typeof remote === "string" ? remote : remote.content;
-        if (
-          typeof remoteContent !== "string" ||
-          !remoteMatchesBaseline(file, remoteContent)
-        ) {
-          setConflictedPath(path);
-          setTerminalLogs((prev) => [
-            ...prev,
-            `[Conflict] ${path} changed in the workspace. Local edits kept; reload only after saving a copy.`,
-          ]);
-          return;
+        // Always send the version observed when opening or last saving.
+        // An older API cannot safely accept this editor's writes.
+        if (typeof file.revision !== "string") {
+          throw new Error("Workspace revision unavailable; refusing unguarded save.");
         }
-
-        await writeMutation.mutateAsync({ path, content: snapshot });
+        const result = await writeMutation.mutateAsync({
+          path, content: snapshot, expectedRevision: file.revision,
+        });
+        if (typeof result.revision !== "string") {
+          throw new Error("Save response had no revision; reload before editing further.");
+        }
         setOpenFiles((prev) => {
           const current = prev.get(path);
           if (!current) return prev;
           const next = new Map(prev);
-          next.set(path, acknowledgeSavedContent(current, snapshot));
+          next.set(path, acknowledgeSavedContent(current, snapshot, result.revision));
           return next;
         });
         setConflictedPath((current) => current === path ? null : current);
         setTerminalLogs((prev) => [...prev, `[Saved] ${path}`]);
       } catch (err) {
-        setTerminalLogs((prev) => [
-          ...prev,
-          `[Error] Failed to save ${path}: ${(err as Error).message}`,
-        ]);
+        if (err instanceof DevPlaneHTTPError && err.status === 409) {
+          setConflictedPath(path);
+          setTerminalLogs((prev) => [
+            ...prev,
+            `[Conflict] ${path} changed in the workspace. Your draft is preserved.`,
+          ]);
+        } else {
+          setTerminalLogs((prev) => [
+            ...prev,
+            `[Error] Failed to save ${path}: ${(err as Error).message}`,
+          ]);
+        }
       } finally {
         savingPaths.current.delete(path);
       }
@@ -272,7 +278,10 @@ export function WorkspaceIDE({
       setOpenFiles((prev) => {
         if (!prev.has(conflictedPath)) return prev;
         const next = new Map(prev);
-        next.set(conflictedPath, makeEditorBuffer(file.path, text, file.language));
+        next.set(conflictedPath, makeEditorBuffer(
+          file.path, text, file.language,
+          typeof remote === "string" ? undefined : remote.revision,
+        ));
         return next;
       });
       setConflictedPath(null);
