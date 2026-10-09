@@ -107,27 +107,10 @@ func (h *Handler) readFile(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
+// writeFile is the legacy unconditional endpoint. It must never bypass the
+// runner-owned revision protocol, including during rolling upgrades.
 func (h *Handler) writeFile(w http.ResponseWriter, r *http.Request) {
-	sessionID := chi.URLParam(r, "sessionID")
-	path := chi.URLParam(r, "*")
-	path = strings.TrimPrefix(path, "/")
-
-	data, err := io.ReadAll(r.Body)
-	if err != nil {
-		respondError(w, http.StatusBadRequest, fmt.Errorf("read body: %w", err))
-		return
-	}
-
-	if err := h.provider.WriteFile(r.Context(), sessionID, path, data); err != nil {
-		if err == runtimes.ErrSessionNotFound {
-			respondError(w, http.StatusNotFound, err)
-			return
-		}
-		respondError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{"status": "written"})
+	respondError(w, http.StatusPreconditionRequired, runtimes.ErrFileRevisionRequired)
 }
 
 // writeFileRevision performs compare-and-write on the runner side. API nodes
