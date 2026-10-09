@@ -222,7 +222,11 @@ func (h *Handler) WriteWorkspaceFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := validateWorkspaceRevision(req.ExpectedRevision); err != nil {
-		respond.Error(w, http.StatusBadRequest, err)
+		if errors.Is(err, runtimes.ErrFileRevisionRequired) {
+			respond.Error(w, http.StatusPreconditionRequired, err)
+		} else {
+			respond.Error(w, http.StatusBadRequest, err)
+		}
 		return
 	}
 	if workspacePath == "" {
