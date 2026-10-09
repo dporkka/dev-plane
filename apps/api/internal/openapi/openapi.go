@@ -848,11 +848,12 @@ func buildComponents() Components {
 			},
 			"WorkspaceFileContent": {
 				Type:     "object",
-				Required: []string{"path", "content", "size"},
+				Required: []string{"path", "content", "size", "revision"},
 				Properties: map[string]*Schema{
 					"path":    {Type: "string"},
 					"content": {Type: "string"},
 					"size":    {Type: "integer", Format: "int64"},
+					"revision": {Type: "string", Description: "SHA-256 digest of returned file bytes"},
 				},
 			},
 			"WriteFileRequest": {
@@ -861,6 +862,7 @@ func buildComponents() Components {
 				Properties: map[string]*Schema{
 					"path":    {Type: "string"},
 					"content": {Type: "string"},
+					"expected_revision": {Type: "string", Description: "SHA-256 revision observed by caller; empty requires file to be absent. Omitted for legacy unconditional writes"},
 				},
 			},
 			"PatchRequest": {
@@ -2119,11 +2121,13 @@ func buildPaths() map[string]PathItem {
 					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
 						"status": {Type: "string"},
 						"path":   {Type: "string"},
+						"revision": {Type: "string"},
 					}}},
 				}},
 				"400": {Description: "Invalid request"},
 				"403": {Description: "Path traversal detected or operation denied"},
 				"404": {Description: "Workspace not found"},
+				"409": {Description: "File revision conflict: remote content differs from expected_revision"},
 			},
 		},
 	}
