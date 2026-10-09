@@ -37,25 +37,34 @@ The browser maintains a saved baseline and a draft for every open file.
 2. If a save is in flight, subsequently typed content remains dirty even after
    the earlier save is acknowledged.
 3. Closing a dirty tab or unloading the browser requires a warning.
-4. Before a write, the current client performs a **best-effort** read comparison
-   against the saved baseline. If it differs, the client blocks the write and
-   offers copying the local draft or explicitly reloading the remote version.
+4. Reads now return a SHA-256 revision of exact file bytes. CodeMirror sends
+   `expected_revision` on save; the API compares it with current bytes before
+   writing and returns HTTP 409 on mismatch. The client does not discard drafts.
+5. API-mediated writes on one host serialize through a filesystem lock. Local
+   files are replaced with a same-directory rename to avoid partial reads.
+   Files that did not exist may be created using an empty-string precondition.
 
-**Important:** Step 4 is not an atomic concurrency guarantee. Another agent
-could write between the client read and write. The next backend change must
-implement conditional writes in the workspace runtime using an expected
-content revision/digest, with write-side synchronization and a 409 conflict
-response. Every editor, agent tool, and runtime writer must participate in
-that enforcement; browser-only preflight cannot be advertised as lossless
-multi-writer editing.
+**Safety boundary:** This is a conditional API write, not yet a globally
+atomic workspace transaction. Direct agent shell/git operations do not hold
+the API lock; remote runner nodes may have independent lock directories; and
+other programs can write files during the check/write interval. Likewise,
+legacy clients that omit `expected_revision` can still perform unconditional
+writes. Treat these as outstanding promotion blockers for shared writable
+agent/human workspaces, rather than claiming lossless multi-writer editing.
+
+**Next hardening:** make every workspace mutation route through one runtime
+write service with cross-process/node serialization, explicit file versions,
+atomic local/restricted runtime writes, and capability checks. Continue using
+separate agent worktrees until the execution boundary is proven.
 
 Client-side route transitions need the same unsaved-buffer guard as browser
 unload before the system can claim complete navigation protection.
 
 ## Near-term editing milestones
 
-1. Complete conditional workspace-file writes (server-side compare-and-swap)
-   and conflict diff/rebase UX; cover concurrent agent-human writes in tests.
+1. Complete **runtime-wide** conditional workspace-file writes (including
+   direct agent writers and remote nodes) and conflict diff/rebase UX; cover
+   agent-human concurrency and crash recovery in executable tests.
 2. Add CodeMirror 6 language-server support via a scoped LSP bridge to the
    workspace. Include completion, hover, references, rename, code actions,
    diagnostics, and formatting. Gate LSP traffic by workspace identity.
