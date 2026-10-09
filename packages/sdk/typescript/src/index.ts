@@ -66,6 +66,13 @@ export interface DevPlaneClientOptions {
   token?: string;
 }
 
+export class DevPlaneHTTPError extends Error {
+  constructor(readonly status: number, detail: string) {
+    super(detail || `HTTP ${status}`);
+    this.name = 'DevPlaneHTTPError';
+  }
+}
+
 /**
  * RunStream consumes the server-sent events stream for an agent run.
  * It exposes typed callbacks instead of leaking JWTs into query strings.
@@ -187,7 +194,7 @@ export class DevPlaneClient {
     });
 
     if (!response.ok) {
-      throw new Error((await response.text()) || `HTTP ${response.status}`);
+      throw new DevPlaneHTTPError(response.status, await response.text());
     }
 
     if (response.status === 204) {
@@ -480,10 +487,14 @@ export class DevPlaneClient {
     return this.request<WorkspaceFileContent>(`/api/v1/workspaces/${id}/files/content${qs}`);
   }
 
-  writeWorkspaceFile(id: string, path: string, content: string) {
+  writeWorkspaceFile(id: string, path: string, content: string, expectedRevision?: string) {
     return this.request<WriteWorkspaceFileResponse>(`/api/v1/workspaces/${id}/files/write`, {
       method: 'POST',
-      body: JSON.stringify({ path, content } satisfies WriteWorkspaceFileRequest),
+      body: JSON.stringify({
+        path,
+        content,
+        ...(expectedRevision === undefined ? {} : { expected_revision: expectedRevision }),
+      } satisfies WriteWorkspaceFileRequest),
     });
   }
 
