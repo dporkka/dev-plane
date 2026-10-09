@@ -107,23 +107,30 @@ func runtimeReadFile(ctx context.Context, provider runtimes.Provider, sessionID 
 		"content": content,
 		"size":    len(data),
 		"lines":   lines,
+		"revision": runtimes.FileContentRevision(data),
 	})
 }
 
 func runtimeWriteFile(ctx context.Context, provider runtimes.Provider, sessionID string, input json.RawMessage) (json.RawMessage, error) {
 	var req struct {
-		Path    string `json:"path"`
-		Content string `json:"content"`
+		Path             string  `json:"path"`
+		Content          string  `json:"content"`
+		ExpectedRevision *string `json:"expected_revision"`
 	}
 	if err := json.Unmarshal(input, &req); err != nil {
 		return nil, fmt.Errorf("invalid input for write_file: %w", err)
 	}
-	if err := provider.WriteFile(ctx, sessionID, req.Path, []byte(req.Content)); err != nil {
+	if req.ExpectedRevision == nil {
+		return nil, fmt.Errorf("write_file requires expected_revision from read_file (empty string to create a new file)")
+	}
+	revision, err := runtimes.WriteRuntimeFileRevision(ctx, provider, sessionID, req.Path, []byte(req.Content), req.ExpectedRevision)
+	if err != nil {
 		return nil, err
 	}
 	return json.Marshal(map[string]any{
 		"success":       true,
 		"bytes_written": len(req.Content),
+		"revision":      revision,
 	})
 }
 
