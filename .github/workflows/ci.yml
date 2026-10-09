@@ -3,8 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+  # Run against every PR base, including stacked feature branches.
   pull_request:
-    branches: [main]
+
+permissions:
+  contents: read
+
+# Avoid spending runner time on superseded heads in an actively rebased stack.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   GO_VERSION: "1.26.8"
