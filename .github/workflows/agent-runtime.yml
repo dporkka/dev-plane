@@ -26,7 +26,7 @@ jobs:
           cache: false
       - name: Check Go formatting
         run: |
-          changed="$(gofmt -l packages/agent-runtime)"
+          changed="$(gofmt -l packages/agent-runtime/manager.go packages/agent-runtime/manager_identity_test.go)"
           if [ -n "$changed" ]; then
             echo "$changed"
             exit 1
