@@ -1,0 +1,37 @@
+name: Agent Runtime Contract
+
+on:
+  pull_request:
+    paths:
+      - "packages/agent-runtime/**"
+      - ".github/workflows/agent-runtime.yml"
+  push:
+    branches: [main]
+    paths:
+      - "packages/agent-runtime/**"
+      - ".github/workflows/agent-runtime.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    name: Agent runtime tests and vet
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Check Go formatting
+        run: |
+          changed="$(gofmt -l packages/agent-runtime)"
+          if [ -n "$changed" ]; then
+            echo "$changed"
+            exit 1
+          fi
+      - name: Run agent runtime race tests
+        run: cd packages/agent-runtime && go test -race -count=1 ./...
+      - name: Vet agent runtime
+        run: cd packages/agent-runtime && go vet ./...
