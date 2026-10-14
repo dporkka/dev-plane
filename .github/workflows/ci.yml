@@ -52,6 +52,9 @@ jobs:
           version: v2.13.2
           install-only: true
 
+      - name: Validate golangci-lint v2 configuration
+        run: golangci-lint config verify
+
       - name: Go lint and vet
         run: make lint-go
 
