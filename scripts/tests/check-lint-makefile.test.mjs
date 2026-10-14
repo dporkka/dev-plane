@@ -14,7 +14,7 @@ test("Go lint Makefile expands shell loop variables and retains fail-closed exit
   });
   assert.equal(result.status, 0, result.stderr);
   const plan = result.stdout;
-  assert.match(plan, /for mod in packages\/agent-runtime; do/);
+  assert.match(plan, /for mod in packages\/agent-runtime\s*; do/);
   assert.match(plan, /echo "  --> \$mod"/);
   assert.match(plan, /cd "\$mod" && golangci-lint run --config/);
   assert.match(plan, /if \[ "\$failed" -ne 0 \]; then/);
