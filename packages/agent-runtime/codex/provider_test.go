@@ -368,7 +368,7 @@ func TestProviderRejectsInvalidRawInput(t *testing.T) {
 
 	_, err := provider.RunTurn(context.Background(), agentruntime.RunTurnRequest{
 		ThreadID: "thread-1",
-		Input:     agentruntime.TurnInput{Data: json.RawMessage(`{"type":"text"}`)},
+		Input:    agentruntime.TurnInput{Data: json.RawMessage(`{"type":"text"}`)},
 	})
 	if err == nil {
 		t.Fatal("RunTurn() error = nil, want raw input array validation error")
