@@ -259,10 +259,10 @@ lint-go: ## Run golangci-lint across all Go modules
 	@echo "$(BLUE)[lint]$(RESET) Running golangci-lint..."
 	@failed=0; \
 	for mod in $(GO_PACKAGES) $(GO_APPS); do \
-		echo "  --> $mod"; \
-		(cd "$mod" && golangci-lint run ./...) || failed=1; \
+		echo "  --> $$mod"; \
+		(cd "$$mod" && golangci-lint run --config "$(CURDIR)/.golangci.yml" ./...) || failed=1; \
 	done; \
-	if [ "$failed" -ne 0 ]; then \
+	if [ "$$failed" -ne 0 ]; then \
 		echo "[lint] One or more modules failed lint; see diagnostics above."; \
 		exit 1; \
 	fi
