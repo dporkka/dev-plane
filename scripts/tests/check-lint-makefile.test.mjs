@@ -20,4 +20,13 @@ test("Go lint Makefile expands shell loop variables and retains fail-closed exit
   assert.match(plan, /if \[ "\$failed" -ne 0 \]; then/);
   assert.match(plan, /exit 1;/);
   assert.doesNotMatch(plan, /cd "od"/);
+
+  const ratchet = spawnSync("make", ["-n", "lint-go", "GO_PACKAGES=packages/agent-runtime", "GO_APPS=", "LINT_BASE_REV=abc123"], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  assert.equal(ratchet.status, 0, ratchet.stderr);
+  assert.match(ratchet.stdout, /--new-from-rev="abc123" --whole-files/);
+  assert.match(ratchet.stdout, /if \[ "\$failed" -ne 0 \]; then/);
 });

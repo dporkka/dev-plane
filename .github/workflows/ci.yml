@@ -22,6 +22,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -58,8 +60,18 @@ jobs:
       - name: Validate golangci-lint v2 configuration
         run: golangci-lint config verify
 
+      - name: Verify incremental lint catches an introduced issue
+        env:
+          LINT_BASE_REV: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/tests/verify-lint-ratchet.sh
+
       - name: Go lint and vet
-        run: make lint-go
+        env:
+          LINT_BASE_REV: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          test -n "$LINT_BASE_REV"
+          git cat-file -e "${LINT_BASE_REV}^{commit}"
+          make lint-go
 
       - name: Web lint
         run: make lint-web
