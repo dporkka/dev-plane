@@ -56,13 +56,15 @@ func TestManagerCreateThreadRejectsProviderOwnershipMismatch(t *testing.T) {
 func TestManagerResumeThreadRejectsProviderIdentityMismatch(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
+		threadID       string
 		workspace      string
 		provider       string
 		providerThread string
 	}{
-		{"different workspace", "workspace-other", "codex", "native-owner"},
-		{"different provider", "workspace-owner", "other-agent", "native-owner"},
-		{"different native session", "workspace-owner", "codex", "native-other"},
+		{"different Dev Plane thread", "thread-other", "workspace-owner", "codex", "native-owner"},
+		{"different workspace", "thread-1", "workspace-other", "codex", "native-owner"},
+		{"different provider", "thread-1", "workspace-owner", "other-agent", "native-owner"},
+		{"different native session", "thread-1", "workspace-owner", "codex", "native-other"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			store := newManagerStore()
@@ -74,7 +76,7 @@ func TestManagerResumeThreadRejectsProviderIdentityMismatch(t *testing.T) {
 				t.Fatal(err)
 			}
 			p := &misboundProvider{resumed: &Thread{
-				ID: original.ID, WorkspaceID: tc.workspace, Provider: tc.provider,
+				ID: tc.threadID, WorkspaceID: tc.workspace, Provider: tc.provider,
 				ProviderThreadID: tc.providerThread, Status: ThreadStatusActive,
 			}}
 			registry := NewRegistry()
