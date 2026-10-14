@@ -40,6 +40,9 @@ jobs:
       - name: Verify local SDK lockfile
         run: node --test scripts/tests/check-web-sdk-lock.test.mjs
 
+      - name: Verify Go lint failure propagation
+        run: node --test scripts/tests/check-lint-makefile.test.mjs
+
       - name: Build local TypeScript SDK
         run: cd packages/sdk/typescript && npm ci && npm run build
 
