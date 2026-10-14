@@ -27,7 +27,7 @@ type PromptError struct {
 	Provider   string `json:"provider,omitempty"`
 	Model      string `json:"model,omitempty"`
 	HTTPStatus int    `json:"httpStatus,omitempty"`
-	Retryable bool   `json:"retryable"`
+	Retryable  bool   `json:"retryable"`
 }
 
 // Frame is the subset of OMP RPC frames Dev Plane currently normalizes.
@@ -212,7 +212,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 
 func (c *StdioClient) OpenSession(ctx context.Context, sessionDir string) (SessionBinding, error) {
 	var data struct {
-		Canceled    bool   `json:"cancelled"`
+		Canceled    bool   `json:"cancelled"` //nolint:misspell // JSON contract requires upstream field spelling
 		Resumed     bool   `json:"resumed"`
 		SessionID   string `json:"sessionId"`
 		SessionFile string `json:"sessionFile"`

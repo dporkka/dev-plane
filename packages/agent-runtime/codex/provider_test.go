@@ -352,7 +352,6 @@ func TestInterruptSteerAndCompactMapToCodexMethods(t *testing.T) {
 	}
 }
 
-
 func TestSendEventReturnsWhenContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
