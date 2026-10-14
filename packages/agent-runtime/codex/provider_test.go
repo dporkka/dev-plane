@@ -166,10 +166,10 @@ func TestCreateThreadMapsWorkspaceAndCodexOptions(t *testing.T) {
 		t.Fatal("thread/start was not called")
 	}
 	want := map[string]any{
-		"model":                "gpt-5.6-codex",
-		"cwd":                  "/worktrees/workspace-1",
-		"approvalPolicy":       "never",
-		"sandbox":              "workspace-write",
+		"model":                 "gpt-5.6-codex",
+		"cwd":                   "/worktrees/workspace-1",
+		"approvalPolicy":        "never",
+		"sandbox":               "workspace-write",
 		"developerInstructions": "Use repository conventions.",
 	}
 	for key, value := range want {
@@ -359,7 +359,7 @@ func TestSendEventReturnsWhenContextIsCancelled(t *testing.T) {
 
 	out := make(chan agentruntime.Event)
 	if sendEvent(ctx, out, agentruntime.Event{}) {
-		t.Fatal("sendEvent() = true, want false for cancelled context")
+		t.Fatal("sendEvent() = true, want false for canceled context")
 	}
 }
 
