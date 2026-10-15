@@ -1,0 +1,48 @@
+name: Promotion Contracts
+
+on:
+  pull_request:
+    paths:
+      - "packages/promotion/**"
+      - "packages/repoprotocol/**"
+      - "packages/db/**"
+      - "go.work"
+      - ".github/workflows/promotion-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promotion:
+    name: Exact-candidate contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Go formatting
+        run: |
+          test -z "$(gofmt -l packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go)"
+      - name: Test protocol and evaluator
+        run: |
+          (cd packages/repoprotocol && go test ./...)
+          (cd packages/promotion && go test ./...)
+
+  verification-db:
+    name: Verification attempt schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Test SQLite migration, append-only insertion, and schema parity
+        run: |
+          cd packages/db
+          go test ./... -run 'TestVerificationAttempt|TestRunMigrationsSQLite|TestSchemaMigrationDrift' -count=1
