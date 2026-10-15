@@ -40,7 +40,10 @@ func (db *DB) RunMigrations(migrationsDir string) error {
 	if err := goose.SetDialect(gooseDialect(db.Driver)); err != nil {
 		return fmt.Errorf("set goose dialect: %w", err)
 	}
-	return goose.Up(db.DB, migrationsDir)
+	if err := goose.Up(db.DB, migrationsDir); err != nil {
+		return err
+	}
+	return db.ensureVerificationAttemptGuards(context.Background())
 }
 
 // RunMigrationsDown rolls back all migrations (use with caution — mainly for testing).

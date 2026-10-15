@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -39,7 +40,7 @@ func readinessRequest(id, attempt string) *http.Request {
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 func testAttempt() protocol.VerificationAttempt {
-	return protocol.VerificationAttempt{
+	attempt := protocol.VerificationAttempt{
 		ID: "attempt-1", WorkItemID: "task-1", Repository: "acme/widget", TargetBranch: "main",
 		SourceHeadSHA: strings.Repeat("a", 40), TargetBaseSHA: strings.Repeat("b", 40),
 		CandidateCommitSHA: strings.Repeat("c", 40), CandidateTreeSHA: strings.Repeat("d", 40),
@@ -47,6 +48,15 @@ func testAttempt() protocol.VerificationAttempt {
 		RequiredGates: []string{"unit"}, Gates: []protocol.VerificationGate{{Name: "unit", Status: protocol.GatePassed, SubjectSHA: strings.Repeat("c", 40), LogDigest: "sha256:" + strings.Repeat("1", 64)}},
 		CompletedAt: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC),
 	}
+	signed, err := protocol.SignVerificationAttempt(attempt, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		panic(err)
+	}
+	return signed
+}
+func configureAttestationTest(t *testing.T) {
+	t.Helper()
+	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("s", 32))))
 }
 func goodObservation() gh.Observation {
 	a := testAttempt()
@@ -93,6 +103,7 @@ func assertDecision(t *testing.T, body []byte, eligible bool, blocker string) {
 	}
 }
 func TestPromotionReadinessEvaluatesStoredAttemptAndProtectedObservation(t *testing.T) {
+	configureAttestationTest(t)
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 	expectPromotionPR(mock)
@@ -114,6 +125,7 @@ func TestPromotionReadinessEvaluatesStoredAttemptAndProtectedObservation(t *test
 	}
 }
 func TestPromotionReadinessRejectsStaleCandidate(t *testing.T) {
+	configureAttestationTest(t)
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 	expectPromotionPR(mock)
@@ -134,6 +146,7 @@ func TestPromotionReadinessRejectsStaleCandidate(t *testing.T) {
 	assertDecision(t, rec.Body.Bytes(), false, "stale_target")
 }
 func TestPromotionReadinessMissingAttemptFailsClosedWithoutCallingGitHub(t *testing.T) {
+	configureAttestationTest(t)
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 	expectPromotionPR(mock)
@@ -157,4 +170,37 @@ func TestPromotionReadinessCannotBeUsedByUnauthenticatedCaller(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status %d, want 401", rec.Code)
 	}
+}
+
+func TestPromotionReadinessRejectsTamperedSignedEvidenceBeforeGitHub(t *testing.T) {
+	configureAttestationTest(t)
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	expectPromotionPR(mock)
+	a := testAttempt()
+	a.PolicyDigest = "sha256:" + strings.Repeat("9", 64)
+	raw, _ := json.Marshal(a)
+	mock.ExpectQuery("SELECT payload FROM verification_attempts").
+		WithArgs(a.ID, a.WorkItemID, a.Repository).
+		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(raw))
+	reader := &fakePromotionReader{observation: goodObservation()}
+	h.WithPromotionObserver(reader)
+	rec := httptest.NewRecorder()
+	h.GetPullRequestPromotionReadiness(rec, readinessRequest("pr-1", a.ID))
+	if rec.Code != 200 || reader.called {
+		t.Fatalf("tampered evidence reached observer: %s", rec.Body)
+	}
+	assertDecision(t, rec.Body.Bytes(), false, "invalid_evidence")
+}
+func TestPromotionReadinessRejectsMissingAttestationKeyBeforeQuery(t *testing.T) {
+	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64", "")
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	expectPromotionPR(mock)
+	rec := httptest.NewRecorder()
+	h.GetPullRequestPromotionReadiness(rec, readinessRequest("pr-1", "attempt-1"))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	assertDecision(t, rec.Body.Bytes(), false, "invalid_evidence")
 }

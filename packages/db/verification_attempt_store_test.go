@@ -2,6 +2,8 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -46,6 +48,13 @@ func TestVerificationAttemptStoreIsAppendOnlyByID(t *testing.T) {
 	if err := db.InsertVerificationAttempt(context.Background(), altered); err == nil {
 		t.Fatal("duplicate attempt ID must not overwrite existing evidence")
 	}
+	// Even direct SQL writers must not be able to rewrite or delete concluded evidence.
+	if _, err := db.Exec("UPDATE verification_attempts SET policy_digest = ? WHERE id = ?", "forged", original.ID); err == nil {
+		t.Fatal("direct SQL UPDATE changed immutable evidence")
+	}
+	if _, err := db.Exec("DELETE FROM verification_attempts WHERE id = ?", original.ID); err == nil {
+		t.Fatal("direct SQL DELETE removed immutable evidence")
+	}
 	stored, err := db.GetVerificationAttempt(context.Background(), original.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -69,5 +78,35 @@ func TestVerificationAttemptStoreRejectsIncompleteEvidence(t *testing.T) {
 	invalid.CandidateTreeSHA = ""
 	if err := db.InsertVerificationAttempt(context.Background(), invalid); err == nil {
 		t.Fatal("incomplete evidence must never be persisted as a concluded attempt")
+	}
+}
+
+func TestVerificationAttemptPostgresImmutableAgainstDirectSQL(t *testing.T) {
+	url := os.Getenv("POSTGRES_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("POSTGRES_TEST_DATABASE_URL required")
+	}
+	database, err := New(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.RunMigrations("migrations"); err != nil {
+		t.Fatal(err)
+	}
+	a := storedVerificationAttempt()
+	a.ID = fmt.Sprintf("attempt-%d", time.Now().UnixNano())
+	if err := database.InsertVerificationAttempt(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.Exec("UPDATE verification_attempts SET policy_digest = $1 WHERE id = $2", "forged", a.ID); err == nil {
+		t.Fatal("PostgreSQL direct UPDATE bypassed immutable evidence")
+	}
+	if _, err := database.Exec("DELETE FROM verification_attempts WHERE id = $1", a.ID); err == nil {
+		t.Fatal("PostgreSQL direct DELETE bypassed immutable evidence")
+	}
+	stored, err := database.GetVerificationAttempt(context.Background(), a.ID)
+	if err != nil || stored.PolicyDigest != a.PolicyDigest {
+		t.Fatalf("attempt changed after forbidden SQL: %v %+v", err, stored)
 	}
 }
