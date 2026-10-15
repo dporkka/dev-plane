@@ -26,8 +26,10 @@ jobs:
           cache: false
       - name: Go formatting
         run: |
+          gofmt -d packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go
           test -z "$(gofmt -l packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go)"
       - name: Test protocol and evaluator
+        if: always()
         run: |
           (cd packages/repoprotocol && go test ./...)
           (cd packages/promotion && go test ./...)
