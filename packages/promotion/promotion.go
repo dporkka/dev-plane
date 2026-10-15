@@ -10,15 +10,17 @@ import (
 type BlockerCode string
 
 const (
-	BlockInvalidSnapshot   BlockerCode = "invalid_snapshot"
-	BlockInvalidPolicy     BlockerCode = "invalid_policy"
-	BlockInvalidEvidence   BlockerCode = "invalid_evidence"
-	BlockStaleSource       BlockerCode = "stale_source"
-	BlockStaleTarget       BlockerCode = "stale_target"
-	BlockCandidateMismatch BlockerCode = "candidate_mismatch"
-	BlockPolicyMismatch    BlockerCode = "policy_mismatch"
-	BlockVerification      BlockerCode = "verification_incomplete"
-	BlockApprovals         BlockerCode = "approvals_incomplete"
+	BlockInvalidSnapshot     BlockerCode = "invalid_snapshot"
+	BlockInvalidPolicy       BlockerCode = "invalid_policy"
+	BlockInvalidEvidence     BlockerCode = "invalid_evidence"
+	BlockMissingAttempt      BlockerCode = "missing_attempt"
+	BlockProviderUnavailable BlockerCode = "provider_unavailable"
+	BlockStaleSource         BlockerCode = "stale_source"
+	BlockStaleTarget         BlockerCode = "stale_target"
+	BlockCandidateMismatch   BlockerCode = "candidate_mismatch"
+	BlockPolicyMismatch      BlockerCode = "policy_mismatch"
+	BlockVerification        BlockerCode = "verification_incomplete"
+	BlockApprovals           BlockerCode = "approvals_incomplete"
 )
 
 // Snapshot must be assembled by a trusted provider adapter from currently observed remote refs.

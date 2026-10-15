@@ -26,7 +26,7 @@ jobs:
           cache: false
       - name: Go formatting
         run: |
-          gofmt -d packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go
+          gofmt -d packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/promotion/github/*.go apps/api/internal/handlers/promotion_readiness*.go packages/db/verification_attempt*.go
           test -z "$(gofmt -l packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go)"
       - name: Test protocol and evaluator
         if: always()
@@ -68,3 +68,18 @@ jobs:
         run: |
           cd packages/db
           go test ./... -run '^TestRunMigrationsPostgres$' -count=1
+
+  readiness-api:
+    name: Read-only promotion API
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Test authenticated readiness endpoint
+        run: |
+          cd apps/api
+          go test ./internal/handlers -run '^TestPromotionReadiness' -count=1
