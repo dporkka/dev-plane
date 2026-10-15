@@ -192,6 +192,7 @@ func (s *Server) routes() {
 			// Pull Requests
 			r.Get("/projects/{projectID}/pull-requests", h.ListPullRequests)
 			r.Get("/pull-requests/{id}", h.GetPullRequest)
+			r.Get("/pull-requests/{id}/promotion-readiness", h.GetPullRequestPromotionReadiness)
 			r.Post("/tasks/{taskId}/pull-request", h.CreatePullRequest)
 			r.Post("/pull-requests/{id}/merge", h.MergePullRequest)
 
