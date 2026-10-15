@@ -5,6 +5,8 @@ on:
     paths:
       - "packages/promotion/**"
       - "packages/repoprotocol/**"
+      - "packages/verifier/**"
+      - "apps/api/internal/handlers/promotion_readiness*.go"
       - "packages/db/**"
       - "go.work"
       - ".github/workflows/promotion-contracts.yml"
@@ -26,13 +28,14 @@ jobs:
           cache: false
       - name: Go formatting
         run: |
-          gofmt -d packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/promotion/github/*.go apps/api/internal/handlers/promotion_readiness*.go packages/db/verification_attempt*.go
-          test -z "$(gofmt -l packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go)"
+          gofmt -d packages/repoprotocol/verification_*.go packages/verifier/promotion_candidate*.go packages/promotion/*.go packages/promotion/github/*.go apps/api/internal/handlers/promotion_readiness*.go packages/db/verification_*.go
+          test -z "$(gofmt -l packages/repoprotocol/verification_*.go packages/verifier/promotion_candidate*.go packages/promotion/*.go packages/promotion/github/*.go apps/api/internal/handlers/promotion_readiness*.go packages/db/verification_*.go)"
       - name: Test protocol and evaluator
         if: always()
         run: |
           (cd packages/repoprotocol && go test ./...)
           (cd packages/promotion && go test ./...)
+          (cd packages/verifier && go test ./... -run '^TestTrustedCandidate' -count=1)
 
   verification-db:
     name: Verification attempt schema
@@ -67,7 +70,7 @@ jobs:
           POSTGRES_TEST_DATABASE_URL: postgres://verify:verify@localhost:5432/verify?sslmode=disable
         run: |
           cd packages/db
-          go test ./... -run '^TestRunMigrationsPostgres$' -count=1
+          go test ./... -run '^TestRunMigrationsPostgres$|^TestVerificationAttemptPostgresImmutableAgainstDirectSQL$' -count=1
 
   readiness-api:
     name: Read-only promotion API
