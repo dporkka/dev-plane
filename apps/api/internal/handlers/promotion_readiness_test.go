@@ -2,8 +2,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -48,13 +48,15 @@ func testAttempt() protocol.VerificationAttempt {
 		RequiredGates: []string{"unit"}, Gates: []protocol.VerificationGate{{Name: "unit", Status: protocol.GatePassed, SubjectSHA: strings.Repeat("c", 40), LogDigest: "sha256:" + strings.Repeat("1", 64)}},
 		CompletedAt: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC),
 	}
-	signed, err := protocol.SignVerificationAttempt(attempt, []byte(strings.Repeat("s",32)))
-	if err != nil {panic(err)}
+	signed, err := protocol.SignVerificationAttempt(attempt, []byte(strings.Repeat("s", 32)))
+	if err != nil {
+		panic(err)
+	}
 	return signed
 }
 func configureAttestationTest(t *testing.T) {
 	t.Helper()
-	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("s",32))))
+	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64", base64.StdEncoding.EncodeToString([]byte(strings.Repeat("s", 32))))
 }
 func goodObservation() gh.Observation {
 	a := testAttempt()
@@ -172,29 +174,33 @@ func TestPromotionReadinessCannotBeUsedByUnauthenticatedCaller(t *testing.T) {
 
 func TestPromotionReadinessRejectsTamperedSignedEvidenceBeforeGitHub(t *testing.T) {
 	configureAttestationTest(t)
-	h,mock,cleanup:=setupTest(t)
+	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 	expectPromotionPR(mock)
-	a:=testAttempt()
-	a.PolicyDigest="sha256:"+strings.Repeat("9",64)
-	raw,_:=json.Marshal(a)
+	a := testAttempt()
+	a.PolicyDigest = "sha256:" + strings.Repeat("9", 64)
+	raw, _ := json.Marshal(a)
 	mock.ExpectQuery("SELECT payload FROM verification_attempts").
-		WithArgs(a.ID,a.WorkItemID,a.Repository).
+		WithArgs(a.ID, a.WorkItemID, a.Repository).
 		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(raw))
-	reader:=&fakePromotionReader{observation:goodObservation()}
+	reader := &fakePromotionReader{observation: goodObservation()}
 	h.WithPromotionObserver(reader)
-	rec:=httptest.NewRecorder()
-	h.GetPullRequestPromotionReadiness(rec,readinessRequest("pr-1",a.ID))
-	if rec.Code!=200||reader.called {t.Fatalf("tampered evidence reached observer: %s",rec.Body)}
-	assertDecision(t,rec.Body.Bytes(),false,"invalid_evidence")
+	rec := httptest.NewRecorder()
+	h.GetPullRequestPromotionReadiness(rec, readinessRequest("pr-1", a.ID))
+	if rec.Code != 200 || reader.called {
+		t.Fatalf("tampered evidence reached observer: %s", rec.Body)
+	}
+	assertDecision(t, rec.Body.Bytes(), false, "invalid_evidence")
 }
 func TestPromotionReadinessRejectsMissingAttestationKeyBeforeQuery(t *testing.T) {
-	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64","")
-	h,mock,cleanup:=setupTest(t)
+	t.Setenv("PROMOTION_ATTESTATION_KEY_BASE64", "")
+	h, mock, cleanup := setupTest(t)
 	defer cleanup()
 	expectPromotionPR(mock)
-	rec:=httptest.NewRecorder()
-	h.GetPullRequestPromotionReadiness(rec,readinessRequest("pr-1","attempt-1"))
-	if rec.Code!=200 {t.Fatalf("status %d: %s",rec.Code,rec.Body)}
-	assertDecision(t,rec.Body.Bytes(),false,"invalid_evidence")
+	rec := httptest.NewRecorder()
+	h.GetPullRequestPromotionReadiness(rec, readinessRequest("pr-1", "attempt-1"))
+	if rec.Code != 200 {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body)
+	}
+	assertDecision(t, rec.Body.Bytes(), false, "invalid_evidence")
 }
