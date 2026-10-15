@@ -124,6 +124,7 @@ func TestPromotionReadinessRejectsStaleCandidate(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"payload"}).AddRow(raw))
 	obs := goodObservation()
 	obs.Snapshot.CurrentTargetHeadSHA = strings.Repeat("9", 40)
+	obs.PolicyRevisionSHA = obs.Snapshot.CurrentTargetHeadSHA // A new protected target may contain identical policy bytes.
 	h.WithPromotionObserver(&fakePromotionReader{observation: obs})
 	rec := httptest.NewRecorder()
 	h.GetPullRequestPromotionReadiness(rec, readinessRequest("pr-1", "attempt-1"))
