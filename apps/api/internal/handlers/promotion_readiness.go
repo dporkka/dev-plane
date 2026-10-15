@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"os"
@@ -87,6 +88,15 @@ func (h *Handler) GetPullRequestPromotionReadiness(w http.ResponseWriter, r *htt
 		return
 	}
 
+	// Never accept structurally valid but unauthenticated DB rows as promotion proof.
+	// The verifier's HMAC secret must be provisioned only for trusted verifier
+	// workers and this read-only assessor, never for coding agents or CI jobs.
+	signingKey, keyErr := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("PROMOTION_ATTESTATION_KEY_BASE64")))
+	if keyErr != nil || len(signingKey) < 32 {
+		block(promotion.BlockInvalidEvidence)
+		return
+	}
+
 	// An attempt must be associated with *this* PR task and repository.
 	// Cross-tenant/cross-task evidence must not be accepted merely by attempt ID.
 	var raw []byte
@@ -104,7 +114,8 @@ func (h *Handler) GetPullRequestPromotionReadiness(w http.ResponseWriter, r *htt
 	var attempt protocol.VerificationAttempt
 	if err := json.Unmarshal(raw, &attempt); err != nil || attempt.ID != attemptID ||
 		attempt.WorkItemID != taskID || attempt.Repository != repository ||
-		attempt.Validate() != nil {
+		attempt.Validate() != nil ||
+		protocol.VerifyVerificationAttemptSignature(attempt, signingKey) != nil {
 		block(promotion.BlockInvalidEvidence)
 		return
 	}
