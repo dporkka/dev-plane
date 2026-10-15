@@ -31,6 +31,7 @@ type VerificationAttempt struct {
 	RequiredGates      []string           `json:"required_gates"`
 	Gates              []VerificationGate `json:"gates"`
 	CompletedAt        time.Time          `json:"completed_at"`
+	Signature          string             `json:"signature,omitempty"`
 }
 
 // Validate checks structural integrity, including failed attempts, so failures can be audited.
