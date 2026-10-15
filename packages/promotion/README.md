@@ -50,3 +50,41 @@ No mutation endpoint has been added. The legacy manual merge endpoint is unchang
 - Approval events are current-head GitHub reviews, **not** proof of every possible external branch-protection or organizational review rule.
 - The API reads concluded attempts; connecting a trusted verifier to produce them is future work. Until valid attempts exist, the endpoint fails closed with `missing_attempt`.
 - The exact production trust chain still needs signed runner attestations, persisted trusted identities, protected policy management, and privileged promotion reconciliation.
+
+## Authenticated verification attempts (stacked draft #176)
+
+A separate internal-only `verifier.VerifyTrustedCandidate` path runs mandatory gates from
+**trusted protected policy bytes** against a clean checkout at the exact two-parent
+integration candidate commit and tree. It checks `git rev-parse HEAD`, `HEAD^{tree}`,
+merge parents, and non-ignored tracked/untracked changes before and after each gate.
+Both success and test failure can be recorded as signed append-only evidence;
+failures never become a promotion pass.
+
+**Important:** The trusted worker (not an agent or API caller) must provision the
+protected policy bytes, merge identities, disposable sandbox, runner digest and
+signing key. Git status cannot prove filesystem or network hermeticity,
+including ignored files, container mounts and remote dependencies. This path
+is not yet invoked by the existing agent worker and does not silently upgrade
+legacy evidence.
+
+The read-only readiness API now refuses even structurally valid evidence if it
+cannot verify its HMAC-SHA256 signature. Set
+`PROMOTION_ATTESTATION_KEY_BASE64` to a securely generated base64-encoded
+secret with at least 32 decoded bytes, distributed only to the trusted
+verification worker and read-only assessment service. **No fallback key exists.**
+Keep it inaccessible to coding agents, test processes, logs, and task payloads.
+Key rotation/versioning and separation into asymmetric signing/verification keys
+are intentionally not yet provided.
+
+Database migration initialization now installs SQLite and PostgreSQL triggers
+that reject `UPDATE` and `DELETE` against `verification_attempts`.
+Production still needs separate schema-migration and application roles:
+owners, superusers, or DDL-capable actors can remove triggers. Do not give
+arbitrary SQL or DDL access to coding agents. Run migrations through a
+privileged migration identity before starting a restricted runtime role.
+
+**No merge endpoint is wired to signed evidence.** The only new operation is
+read-only eligibility evaluation. Do not enable automated promotion until the
+trusted worker is integrated end-to-end, independent code review is complete,
+GitHub base and candidate identities are rechecked at merge time, and crash
+reconciliation and live disposable-repo tests pass.
