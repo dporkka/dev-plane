@@ -3,8 +3,8 @@ package handlers
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"os"
