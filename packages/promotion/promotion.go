@@ -13,6 +13,8 @@ const (
 	BlockInvalidSnapshot   BlockerCode = "invalid_snapshot"
 	BlockInvalidPolicy     BlockerCode = "invalid_policy"
 	BlockInvalidEvidence   BlockerCode = "invalid_evidence"
+	BlockMissingAttempt    BlockerCode = "missing_attempt"
+	BlockProviderUnavailable BlockerCode = "provider_unavailable"
 	BlockStaleSource       BlockerCode = "stale_source"
 	BlockStaleTarget       BlockerCode = "stale_target"
 	BlockCandidateMismatch BlockerCode = "candidate_mismatch"
