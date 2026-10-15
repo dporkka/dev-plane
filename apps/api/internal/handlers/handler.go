@@ -37,6 +37,7 @@ type Handler struct {
 	secretManager     *secrets.Manager
 	githubGateway     githubGateway
 	githubToken       string
+	promotionObserver promotionObserver
 	deployGateway     deployGateway
 	deployToken       string
 
