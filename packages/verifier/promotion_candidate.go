@@ -33,6 +33,12 @@ type TrustedCandidateRequest struct {
 	SigningKey []byte
 }
 
+// CandidateRuntime intentionally lacks workspace file reads: policies arrive from the
+// protected revision via the privileged orchestrator, never from candidate files.
+type CandidateRuntime interface {
+	ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult,error)
+}
+
 // CandidateAttemptStore only accepts insert-only concluded attempts.
 type CandidateAttemptStore interface {
 	InsertVerificationAttempt(ctx context.Context, attempt protocol.VerificationAttempt) error
@@ -41,7 +47,7 @@ type CandidateAttemptStore interface {
 // VerifyTrustedCandidate checks exact Git identity and clean working tree before
 // and after each mandatory gate. It stores authenticated *positive or negative*
 // evidence, without granting merge authority or modifying the work item state.
-func VerifyTrustedCandidate(ctx context.Context, runtime Runtime, store CandidateAttemptStore, req TrustedCandidateRequest) (protocol.VerificationAttempt,error) {
+func VerifyTrustedCandidate(ctx context.Context, runtime CandidateRuntime, store CandidateAttemptStore, req TrustedCandidateRequest) (protocol.VerificationAttempt,error) {
 	if runtime==nil || store==nil {return protocol.VerificationAttempt{},errors.New("trusted runtime and attempt store required")}
 	if strings.TrimSpace(req.SessionID)=="" || strings.TrimSpace(req.WorkItemID)=="" ||
 		strings.TrimSpace(req.Repository)=="" || strings.TrimSpace(req.TargetBranch)=="" ||
@@ -109,13 +115,13 @@ func gitSHA(value string) bool {
 	}
 	return true
 }
-func candidateGit(ctx context.Context,runtime Runtime, session string,args ...string)(string,error){
+func candidateGit(ctx context.Context,runtime CandidateRuntime, session string,args ...string)(string,error){
 	res,err:=runtime.ExecuteCommand(ctx,session,runtimes.Command{Args:append([]string{"git"},args...),Timeout:30*time.Second})
 	if err!=nil{return "",err}
 	if res==nil || res.ExitCode!=0{return "",fmt.Errorf("git %s failed",strings.Join(args," "))}
 	return strings.TrimSpace(res.Stdout),nil
 }
-func assertCandidateSnapshot(ctx context.Context,runtime Runtime,req TrustedCandidateRequest) error{
+func assertCandidateSnapshot(ctx context.Context,runtime CandidateRuntime,req TrustedCandidateRequest) error{
 	head,err:=candidateGit(ctx,runtime,req.SessionID,"rev-parse","HEAD")
 	if err!=nil{return err}
 	tree,err:=candidateGit(ctx,runtime,req.SessionID,"rev-parse","HEAD^{tree}")
