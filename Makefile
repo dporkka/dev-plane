@@ -257,14 +257,19 @@ lint: lint-go lint-web ## Run all linters (Go + frontend)
 
 lint-go: ## Run golangci-lint across all Go modules
 	@echo "$(BLUE)[lint]$(RESET) Running golangci-lint..."
-	@for pkg in $(GO_PACKAGES); do \
-		echo "  --> $$pkg"; \
-		cd $$pkg && golangci-lint run ./... && cd - > /dev/null || exit 1; \
-	done
-	@for app in $(GO_APPS); do \
-		echo "  --> $$app"; \
-		cd $$app && golangci-lint run ./... && cd - > /dev/null || exit 1; \
-	done
+	@failed=0; \
+	for mod in $(GO_PACKAGES) $(GO_APPS); do \
+		echo "  --> $$mod"; \
+		if [ -n "$(LINT_BASE_REV)" ]; then \
+			(cd "$$mod" && golangci-lint run --config "$(CURDIR)/.golangci.yml" --new-from-rev="$(LINT_BASE_REV)" --whole-files ./...) || failed=1; \
+		else \
+			(cd "$$mod" && golangci-lint run --config "$(CURDIR)/.golangci.yml" ./...) || failed=1; \
+		fi; \
+	done; \
+	if [ "$$failed" -ne 0 ]; then \
+		echo "[lint] One or more modules failed lint; see diagnostics above."; \
+		exit 1; \
+	fi
 	@echo "$(BLUE)[lint]$(RESET) Running Go vet as secondary check..."
 	@for pkg in $(GO_PACKAGES); do \
 		echo "  --> $$pkg"; \

@@ -292,7 +292,8 @@ func TestManagerRunTurnInjectsProviderIdentityAndPersistsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
-	for range stream.Events {
+	for event := range stream.Events {
+		_ = event // Drain provider events before checking the terminal result.
 	}
 	if err := <-stream.Errors; err != nil {
 		t.Fatalf("stream persistence error = %v", err)
@@ -353,7 +354,8 @@ func TestManagerRunTurnFailsClosedWhenPersistenceFails(t *testing.T) {
 		t.Fatalf("RunTurn() error = %v", err)
 	}
 
-	for range stream.Events {
+	for event := range stream.Events {
+		_ = event // Drain provider events before checking the terminal result.
 	}
 	if err := <-stream.Errors; err == nil {
 		t.Fatal("stream persistence error = nil, want error")

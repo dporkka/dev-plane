@@ -23,11 +23,11 @@ type SessionBinding struct {
 
 // PromptError is the provider failure payload carried by prompt_result.
 type PromptError struct {
-	Message   string `json:"message"`
-	Provider  string `json:"provider,omitempty"`
-	Model     string `json:"model,omitempty"`
-	HTTPStatus int   `json:"httpStatus,omitempty"`
-	Retryable bool   `json:"retryable"`
+	Message    string `json:"message"`
+	Provider   string `json:"provider,omitempty"`
+	Model      string `json:"model,omitempty"`
+	HTTPStatus int    `json:"httpStatus,omitempty"`
+	Retryable  bool   `json:"retryable"`
 }
 
 // Frame is the subset of OMP RPC frames Dev Plane currently normalizes.
@@ -212,7 +212,7 @@ func (c *StdioClient) start(ctx context.Context) error {
 
 func (c *StdioClient) OpenSession(ctx context.Context, sessionDir string) (SessionBinding, error) {
 	var data struct {
-		Cancelled   bool   `json:"cancelled"`
+		Canceled    bool   `json:"cancelled"` //nolint:misspell // JSON contract requires upstream field spelling
 		Resumed     bool   `json:"resumed"`
 		SessionID   string `json:"sessionId"`
 		SessionFile string `json:"sessionFile"`
@@ -221,8 +221,8 @@ func (c *StdioClient) OpenSession(ctx context.Context, sessionDir string) (Sessi
 	if err != nil {
 		return SessionBinding{}, fmt.Errorf("omp open_session: %w", err)
 	}
-	if data.Cancelled {
-		return SessionBinding{}, errors.New("omp open_session was cancelled")
+	if data.Canceled {
+		return SessionBinding{}, errors.New("omp open_session was canceled")
 	}
 	if strings.TrimSpace(data.SessionID) == "" {
 		return SessionBinding{}, errors.New("omp open_session returned empty session id")
