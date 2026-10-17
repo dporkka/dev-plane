@@ -11,7 +11,8 @@ describe("buildBriefHandoffPayload", () => {
       briefUrl: "",
       briefProjectId: " brief-42 ",
       description: " Include access control. ",
-      acceptanceCriteria: " Users can sign in.\n\n Reports are tenant-scoped.\nusers can sign in.",
+      acceptanceCriteria:
+        " Users can sign in.\n\n Reports are tenant-scoped.\nusers can sign in.",
     });
 
     assert.deepEqual(payload, {
@@ -40,7 +41,10 @@ describe("buildBriefHandoffPayload", () => {
       briefUrl: " https://build.davidporkka.com/public/briefs/example ",
       acceptanceCriteria: "Landing page has a working contact form.",
     });
-    assert.equal(payload.brief_url, "https://build.davidporkka.com/public/briefs/example");
+    assert.equal(
+      payload.brief_url,
+      "https://build.davidporkka.com/public/briefs/example",
+    );
     assert.equal(payload.documents, undefined);
     assert.equal(payload.risk_level, "medium");
   });
@@ -53,9 +57,18 @@ describe("buildBriefHandoffPayload", () => {
       briefUrl: "",
       acceptanceCriteria: "Works in the browser",
     };
-    assert.throws(() => buildBriefHandoffPayload({ ...base, repositoryId: " " }), /repository/i);
-    assert.throws(() => buildBriefHandoffPayload({ ...base, briefContent: " " }), /brief/i);
-    assert.throws(() => buildBriefHandoffPayload({ ...base, acceptanceCriteria: " \n " }), /acceptance/i);
+    assert.throws(
+      () => buildBriefHandoffPayload({ ...base, repositoryId: " " }),
+      /repository/i,
+    );
+    assert.throws(
+      () => buildBriefHandoffPayload({ ...base, briefContent: " " }),
+      /brief/i,
+    );
+    assert.throws(
+      () => buildBriefHandoffPayload({ ...base, acceptanceCriteria: " \n " }),
+      /acceptance/i,
+    );
   });
 
   it("rejects insecure or credential-bearing links and ambiguous sources", () => {
@@ -66,19 +79,48 @@ describe("buildBriefHandoffPayload", () => {
       briefUrl: "https://example.com/brief",
       acceptanceCriteria: "Works in the browser",
     };
-    assert.throws(() => buildBriefHandoffPayload({ ...base, briefUrl: "http://example.com/brief" }), /HTTPS/);
-    assert.throws(() => buildBriefHandoffPayload({ ...base, briefUrl: "https://user:pass@example.com/brief" }), /credential/i);
-    assert.throws(() => buildBriefHandoffPayload({ ...base, briefUrl: "https://example.com/brief?token=secret" }), /query|fragment/i);
-    assert.throws(() => buildBriefHandoffPayload({ ...base, briefContent: "# Requirements" }), /one brief source/i);
+    assert.throws(
+      () =>
+        buildBriefHandoffPayload({
+          ...base,
+          briefUrl: "http://example.com/brief",
+        }),
+      /HTTPS/,
+    );
+    assert.throws(
+      () =>
+        buildBriefHandoffPayload({
+          ...base,
+          briefUrl: "https://user:pass@example.com/brief",
+        }),
+      /credential/i,
+    );
+    assert.throws(
+      () =>
+        buildBriefHandoffPayload({
+          ...base,
+          briefUrl: "https://example.com/brief?token=secret",
+        }),
+      /query|fragment/i,
+    );
+    assert.throws(
+      () =>
+        buildBriefHandoffPayload({ ...base, briefContent: "# Requirements" }),
+      /one brief source/i,
+    );
   });
 
   it("rejects oversized pasted briefs to avoid unbounded task payloads", () => {
-    assert.throws(() => buildBriefHandoffPayload({
-      repositoryId: "repo",
-      title: "Website",
-      briefContent: "x".repeat(80001),
-      briefUrl: "",
-      acceptanceCriteria: "Works",
-    }), /80,000/);
+    assert.throws(
+      () =>
+        buildBriefHandoffPayload({
+          repositoryId: "repo",
+          title: "Website",
+          briefContent: "x".repeat(80001),
+          briefUrl: "",
+          acceptanceCriteria: "Works",
+        }),
+      /80,000/,
+    );
   });
 });
