@@ -605,30 +605,26 @@ func TestKernel_buildReason(t *testing.T) {
 	}
 }
 
-// TestResult_EffectMapping verifies that Result.Effect maps correctly from policy effects.
+// TestResult_EffectMapping verifies approval and audit flags for policy effects.
 func TestResult_EffectMapping(t *testing.T) {
 	tests := []struct {
 		name      string
 		effect    policies.Effect
 		wantReq   bool
 		wantAudit bool
-		wantRisk  string
 	}{
-		{"allow", policies.EffectAllow, false, false, RiskLevelLow},
-		{"ask", policies.EffectAsk, true, false, RiskLevelMedium},
-		{"deny", policies.EffectDeny, false, true, RiskLevelHigh},
-		{"admin_only", policies.EffectAdminOnly, true, true, RiskLevelCritical},
+		{"allow", policies.EffectAllow, false, false},
+		{"ask", policies.EffectAsk, true, false},
+		{"deny", policies.EffectDeny, false, true},
+		{"admin_only", policies.EffectAdminOnly, true, true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := &Result{
-				Effect:           tt.effect,
 				RequiredApproval: tt.effect == policies.EffectAsk || tt.effect == policies.EffectAdminOnly,
 				AuditRequired:    tt.effect == policies.EffectDeny || tt.effect == policies.EffectAdminOnly,
-				RiskLevel:        tt.wantRisk,
 			}
-
 			if result.RequiredApproval != tt.wantReq {
 				t.Errorf("RequiredApproval = %v, want %v", result.RequiredApproval, tt.wantReq)
 			}
