@@ -5,7 +5,7 @@ import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
 import { TaskBoard } from "@/components/task/TaskBoard";
 import { api } from "@/lib/api";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Plus } from "lucide-react";
+import { ArrowLeft, BookOpen, Plus } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useState } from "react";
@@ -50,13 +50,22 @@ export default function ProjectTaskBoardPage() {
             </p>
           </div>
         </div>
-        <button
-          onClick={() => setDialogOpen(true)}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          New Task
-        </button>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/projects/${projectId}/brief-handoff`}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <BookOpen className="w-4 h-4" aria-hidden="true" />
+            Build from Brief
+          </Link>
+          <button
+            onClick={() => setDialogOpen(true)}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            New Task
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 min-h-0">
