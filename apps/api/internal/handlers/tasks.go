@@ -59,20 +59,20 @@ type CreateTaskRequest struct {
 }
 
 type createTaskOptions struct {
-	ProjectID    string
-	RepositoryID string
-	CreatedBy    string
-	Source       string
-	SourceID     *string
-	Title        string
-	Description  string
-	Priority     string
-	RiskLevel    string
-	TargetBranch string
-	MaxCost      *float64
-	Spec         json.RawMessage
+	ProjectID          string
+	RepositoryID       string
+	CreatedBy          string
+	Source             string
+	SourceID           *string
+	Title              string
+	Description        string
+	Priority           string
+	RiskLevel          string
+	TargetBranch       string
+	MaxCost            *float64
+	Spec               json.RawMessage
 	AcceptanceCriteria json.RawMessage
-	Metadata     json.RawMessage
+	Metadata           json.RawMessage
 }
 
 // UpdateTaskRequest is the request body for updating a task.
