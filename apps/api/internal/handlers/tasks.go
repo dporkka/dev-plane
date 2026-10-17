@@ -124,18 +124,22 @@ func decodeApproveSpecRequest(r *http.Request) (ApproveSpecRequest, error) {
 	return req, nil
 }
 
+// The persisted status is spelled "cancelled" in database and API contracts.
+//nolint:misspell // Changing this spelling would break existing clients.
+const taskStatusCancelled = "cancelled"
+
 // Valid status transitions: map[current_status] -> []allowed_next_statuses
 var validStatusTransitions = map[string][]string{
-	"backlog":     {"spec_review", "cancelled"},
-	"spec_review": {"approved", "backlog", "cancelled"},
-	"approved":    {"running", "cancelled"},
-	"running":     {"reviewing", "failed", "cancelled"},
-	"reviewing":   {"pr_created", "running", "failed", "cancelled"},
-	"pr_created":  {"deploying", "done", "running", "cancelled"},
-	"deploying":   {"done", "failed", "cancelled"},
+	"backlog":     {"spec_review", taskStatusCancelled},
+	"spec_review": {"approved", "backlog", taskStatusCancelled},
+	"approved":    {"running", taskStatusCancelled},
+	"running":     {"reviewing", "failed", taskStatusCancelled},
+	"reviewing":   {"pr_created", "running", "failed", taskStatusCancelled},
+	"pr_created":  {"deploying", "done", "running", taskStatusCancelled},
+	"deploying":   {"done", "failed", taskStatusCancelled},
 	"done":        {},
-	"failed":      {"backlog", "running", "cancelled"},
-	"cancelled":   {"backlog"},
+	"failed":      {"backlog", "running", taskStatusCancelled},
+	taskStatusCancelled:   {"backlog"},
 }
 
 func isValidTransition(from, to string) bool {
@@ -193,7 +197,11 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			h.logger.Warn("failed to close task rows", "error", err)
+		}
+	}()
 
 	var tasks []Task
 	for rows.Next() {
@@ -203,6 +211,10 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if tasks == nil {
@@ -468,7 +480,7 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"status": "approved"})
 }
 
-// CancelTask transitions a task to cancelled status.
+// CancelTask transitions a task to the persisted canceled state.
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)
@@ -488,6 +500,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
+	//nolint:misspell // The SQL statement uses the existing persisted status spelling.
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE tasks SET status = 'cancelled', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
@@ -499,11 +512,11 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		respond.Error(w, http.StatusBadRequest, errors.New("task cannot be cancelled or not found"))
+		respond.Error(w, http.StatusBadRequest, errors.New("task cannot be canceled or not found"))
 		return
 	}
 
-	respond.JSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	respond.JSON(w, http.StatusOK, map[string]string{"status": taskStatusCancelled})
 }
 
 type taskScanner interface {
