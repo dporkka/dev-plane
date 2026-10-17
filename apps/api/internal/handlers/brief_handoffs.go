@@ -69,6 +69,23 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The project's authorization does not imply that a caller-selected repo
+	// belongs to that project. Reject cross-project IDs before creating a task.
+	var repositoryInProject bool
+	if err := h.db.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM repositories
+			WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL
+		)
+	`, req.RepositoryID, projectID).Scan(&repositoryInProject); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if !repositoryInProject {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = "Build from Builder's Brief"
