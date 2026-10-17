@@ -318,11 +318,20 @@ func (g *Generator) buildImplementationPlan(task *models.Task, config *models.Pr
 
 // buildAcceptanceCriteria generates acceptance criteria from task description.
 func (g *Generator) buildAcceptanceCriteria(task *models.Task) []string {
-	criteria := []string{
+	// Explicit, reviewed requirements from a Builder's Brief take precedence
+	// over inferred heuristics. These are goals, not execution evidence.
+	var imported []string
+	if len(task.AcceptanceCriteria) > 0 {
+		if err := json.Unmarshal(task.AcceptanceCriteria, &imported); err != nil {
+			g.logger.Warn("invalid canonical acceptance criteria; falling back to generated criteria", "task_id", task.ID, "error", err)
+		}
+	}
+	criteria := append([]string(nil), imported...)
+	criteria = append(criteria,
 		fmt.Sprintf("The implementation satisfies: %s", task.Title),
 		"All existing tests continue to pass",
 		"New functionality has appropriate test coverage",
-	}
+	)
 
 	// Add criteria based on description if available
 	if task.Description != nil && *task.Description != "" {
