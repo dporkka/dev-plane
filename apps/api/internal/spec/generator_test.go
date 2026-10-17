@@ -2,8 +2,8 @@ package spec
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
