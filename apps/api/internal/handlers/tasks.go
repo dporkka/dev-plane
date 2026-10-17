@@ -130,16 +130,16 @@ const taskStatusCancelled = "cancelled"
 
 // Valid status transitions: map[current_status] -> []allowed_next_statuses
 var validStatusTransitions = map[string][]string{
-	"backlog":     {"spec_review", taskStatusCancelled},
-	"spec_review": {"approved", "backlog", taskStatusCancelled},
-	"approved":    {"running", taskStatusCancelled},
-	"running":     {"reviewing", "failed", taskStatusCancelled},
-	"reviewing":   {"pr_created", "running", "failed", taskStatusCancelled},
-	"pr_created":  {"deploying", "done", "running", taskStatusCancelled},
-	"deploying":   {"done", "failed", taskStatusCancelled},
-	"done":        {},
-	"failed":      {"backlog", "running", taskStatusCancelled},
-	taskStatusCancelled:   {"backlog"},
+	"backlog":           {"spec_review", taskStatusCancelled},
+	"spec_review":       {"approved", "backlog", taskStatusCancelled},
+	"approved":          {"running", taskStatusCancelled},
+	"running":           {"reviewing", "failed", taskStatusCancelled},
+	"reviewing":         {"pr_created", "running", "failed", taskStatusCancelled},
+	"pr_created":        {"deploying", "done", "running", taskStatusCancelled},
+	"deploying":         {"done", "failed", taskStatusCancelled},
+	"done":              {},
+	"failed":            {"backlog", "running", taskStatusCancelled},
+	taskStatusCancelled: {"backlog"},
 }
 
 func isValidTransition(from, to string) bool {
