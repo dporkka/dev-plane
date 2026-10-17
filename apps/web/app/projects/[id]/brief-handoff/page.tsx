@@ -7,8 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import { api } from "@/lib/api";
 import {
-  buildBriefHandoffPayload,
   type BriefHandoffForm,
+  buildBriefHandoffPayload,
 } from "@/lib/brief-handoff";
 import type { Repository } from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -36,7 +36,11 @@ export default function BuildFromBriefPage() {
   const [sourceMode, setSourceMode] = useState<"paste" | "url">("paste");
   const [formError, setFormError] = useState<string | null>(null);
 
-  const { data: repositories, isLoading, isError } = useQuery({
+  const {
+    data: repositories,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: ["repos", projectId],
     queryFn: () => api.listRepos(projectId),
     enabled: !!projectId,
@@ -116,7 +120,10 @@ export default function BuildFromBriefPage() {
         className="space-y-5 rounded-xl border border-gray-800 bg-gray-900/40 p-5"
       >
         <div className="space-y-2">
-          <label htmlFor="brief-repo" className="block text-sm font-medium text-gray-300">
+          <label
+            htmlFor="brief-repo"
+            className="block text-sm font-medium text-gray-300"
+          >
             Target repository
           </label>
           <Select
@@ -147,7 +154,10 @@ export default function BuildFromBriefPage() {
         </div>
 
         <div className="space-y-2">
-          <label htmlFor="brief-title" className="block text-sm font-medium text-gray-300">
+          <label
+            htmlFor="brief-title"
+            className="block text-sm font-medium text-gray-300"
+          >
             Task title
           </label>
           <Input
@@ -161,7 +171,9 @@ export default function BuildFromBriefPage() {
         </div>
 
         <fieldset className="space-y-3">
-          <legend className="mb-2 text-sm font-medium text-gray-300">Brief source</legend>
+          <legend className="mb-2 text-sm font-medium text-gray-300">
+            Brief source
+          </legend>
           <div className="flex flex-wrap gap-4 text-sm text-gray-300">
             <label className="flex items-center gap-2">
               <input
@@ -186,26 +198,34 @@ export default function BuildFromBriefPage() {
           </div>
           {sourceMode === "paste" ? (
             <div className="space-y-2">
-              <label htmlFor="brief-content" className="block text-sm text-gray-300">
+              <label
+                htmlFor="brief-content"
+                className="block text-sm text-gray-300"
+              >
                 Builder's Brief content
               </label>
               <Textarea
                 id="brief-content"
                 value={form.briefContent}
-                onChange={(event) => setField("briefContent", event.target.value)}
+                onChange={(event) =>
+                  setField("briefContent", event.target.value)
+                }
                 placeholder="# Product requirements\n\nDescribe the users, scope, screens, and technical requirements..."
                 rows={12}
                 maxLength={80000}
                 disabled={createHandoff.isPending}
               />
               <p className="text-xs text-gray-500">
-                Pasted content is stored in the authenticated task. You do not need
-                to make a private Dev Plan brief public.
+                Pasted content is stored in the authenticated task. You do not
+                need to make a private Dev Plan brief public.
               </p>
             </div>
           ) : (
             <div className="space-y-2">
-              <label htmlFor="brief-url" className="block text-sm text-gray-300">
+              <label
+                htmlFor="brief-url"
+                className="block text-sm text-gray-300"
+              >
                 Public HTTPS brief URL
               </label>
               <Input
@@ -234,8 +254,12 @@ export default function BuildFromBriefPage() {
           <Textarea
             id="brief-acceptance"
             value={form.acceptanceCriteria}
-            onChange={(event) => setField("acceptanceCriteria", event.target.value)}
-            placeholder={"A customer can sign up and sign in.\nA user cannot read another tenant's records.\nThe main user journey passes browser tests."}
+            onChange={(event) =>
+              setField("acceptanceCriteria", event.target.value)
+            }
+            placeholder={
+              "A customer can sign up and sign in.\nA user cannot read another tenant's records.\nThe main user journey passes browser tests."
+            }
             rows={4}
             disabled={createHandoff.isPending}
           />
@@ -247,18 +271,26 @@ export default function BuildFromBriefPage() {
 
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
-            <label htmlFor="brief-project-id" className="block text-sm text-gray-300">
+            <label
+              htmlFor="brief-project-id"
+              className="block text-sm text-gray-300"
+            >
               Dev Plan project ID (optional)
             </label>
             <Input
               id="brief-project-id"
               value={form.briefProjectId}
-              onChange={(event) => setField("briefProjectId", event.target.value)}
+              onChange={(event) =>
+                setField("briefProjectId", event.target.value)
+              }
               disabled={createHandoff.isPending}
             />
           </div>
           <div className="space-y-2">
-            <label htmlFor="brief-description" className="block text-sm text-gray-300">
+            <label
+              htmlFor="brief-description"
+              className="block text-sm text-gray-300"
+            >
               Additional instructions (optional)
             </label>
             <Input
@@ -272,19 +304,27 @@ export default function BuildFromBriefPage() {
         </div>
 
         {formError && (
-          <p role="alert" className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+          <p
+            role="alert"
+            className="rounded-md border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300"
+          >
             {formError}
           </p>
         )}
 
         <div className="flex items-center justify-between gap-3 border-t border-gray-800 pt-4">
           <p className="max-w-md text-xs text-gray-500">
-            Creates a backlog task for later specification and approval. It does not automatically
-            approve execution, merge code, or deploy.
+            Creates a backlog task for later specification and approval. It does
+            not automatically approve execution, merge code, or deploy.
           </p>
           <Button
             type="submit"
-            disabled={createHandoff.isPending || isLoading || isError || repoList.length === 0}
+            disabled={
+              createHandoff.isPending ||
+              isLoading ||
+              isError ||
+              repoList.length === 0
+            }
           >
             {createHandoff.isPending ? "Creating task..." : "Create Brief Task"}
           </Button>

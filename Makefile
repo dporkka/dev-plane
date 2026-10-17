@@ -283,7 +283,7 @@ lint-go: ## Run golangci-lint across all Go modules
 
 lint-web: ## Run npm lint in frontend
 	@echo "$(BLUE)[lint]$(RESET) Running web lint..."
-	cd apps/web && npx biome check --max-diagnostics=200 .
+	cd apps/web && npm run lint
 
 lint-fix-web: ## Run web linter with auto-fix
 	@echo "$(BLUE)[lint]$(RESET) Running web lint with auto-fix..."
