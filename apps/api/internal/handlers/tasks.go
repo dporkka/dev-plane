@@ -59,19 +59,20 @@ type CreateTaskRequest struct {
 }
 
 type createTaskOptions struct {
-	ProjectID    string
-	RepositoryID string
-	CreatedBy    string
-	Source       string
-	SourceID     *string
-	Title        string
-	Description  string
-	Priority     string
-	RiskLevel    string
-	TargetBranch string
-	MaxCost      *float64
-	Spec         json.RawMessage
-	Metadata     json.RawMessage
+	ProjectID          string
+	RepositoryID       string
+	CreatedBy          string
+	Source             string
+	SourceID           *string
+	Title              string
+	Description        string
+	Priority           string
+	RiskLevel          string
+	TargetBranch       string
+	MaxCost            *float64
+	Spec               json.RawMessage
+	AcceptanceCriteria json.RawMessage
+	Metadata           json.RawMessage
 }
 
 // UpdateTaskRequest is the request body for updating a task.
@@ -584,6 +585,10 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 	if len(opts.Spec) > 0 {
 		spec = opts.Spec
 	}
+	criteria := json.RawMessage(`[]`)
+	if len(opts.AcceptanceCriteria) > 0 {
+		criteria = opts.AcceptanceCriteria
+	}
 	metadata := json.RawMessage(`{}`)
 	if len(opts.Metadata) > 0 {
 		metadata = opts.Metadata
@@ -594,30 +599,31 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 			description, status, priority, risk_level, target_branch, spec,
 			acceptance_criteria, max_cost, max_runtime_minutes, approval_requirements, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9, $10, $11, $12,
-			'[]', $13, 60, '[]', $14, $15, $15)
-	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, opts.MaxCost, metadata, now)
+			$13, $14, 60, '[]', $15, $16, $16)
+	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, criteria, opts.MaxCost, metadata, now)
 	if err != nil {
 		return Task{}, err
 	}
 
 	task := Task{
-		ID:                id,
-		ProjectID:         opts.ProjectID,
-		RepositoryID:      opts.RepositoryID,
-		CreatedBy:         opts.CreatedBy,
-		Source:            source,
-		SourceID:          opts.SourceID,
-		Title:             opts.Title,
-		Status:            "backlog",
-		Priority:          priority,
-		RiskLevel:         riskLevel,
-		TargetBranch:      targetBranch,
-		Spec:              opts.Spec,
-		Metadata:          metadata,
-		MaxCost:           opts.MaxCost,
-		MaxRuntimeMinutes: 60,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                 id,
+		ProjectID:          opts.ProjectID,
+		RepositoryID:       opts.RepositoryID,
+		CreatedBy:          opts.CreatedBy,
+		Source:             source,
+		SourceID:           opts.SourceID,
+		Title:              opts.Title,
+		Status:             "backlog",
+		Priority:           priority,
+		RiskLevel:          riskLevel,
+		TargetBranch:       targetBranch,
+		Spec:               opts.Spec,
+		AcceptanceCriteria: criteria,
+		Metadata:           metadata,
+		MaxCost:            opts.MaxCost,
+		MaxRuntimeMinutes:  60,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if opts.Description != "" {
 		desc := opts.Description

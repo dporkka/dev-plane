@@ -158,7 +158,7 @@ func TestCreateTask(t *testing.T) {
 
 	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO tasks").
-		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", nil, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", nil, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	body, _ := json.Marshal(CreateTaskRequest{
