@@ -5,10 +5,11 @@ package spec
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -379,7 +380,7 @@ func (g *Generator) buildTestPlan(task *models.Task, config *models.ProjectConfi
 
 	// Add test command if available
 	if config != nil && config.TestCommand != "" {
-		parts = append(parts, fmt.Sprintf("### Test Command"))
+		parts = append(parts, "### Test Command")
 		parts = append(parts, fmt.Sprintf("```bash\n%s\n```", config.TestCommand))
 	}
 
@@ -524,10 +525,11 @@ func (g *Generator) loadTask(ctx context.Context, taskID string) (*models.Task, 
 		task.AcceptanceCriteria = []byte(ac.String)
 	}
 	if maxCost.Valid {
-		// Parse as float64
-		var f float64
-		fmt.Sscanf(maxCost.String, "%f", &f)
-		task.MaxCost = &f
+		value, parseErr := strconv.ParseFloat(maxCost.String, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse task max_cost: %w", parseErr)
+		}
+		task.MaxCost = &value
 	}
 	if apr.Valid {
 		task.ApprovalRequirements = []byte(apr.String)
