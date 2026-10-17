@@ -91,6 +91,10 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 		title = "Build from Builder's Brief"
 	}
 
+	// Preserve [] rather than JSON null for callers omitting optional criteria.
+	if req.AcceptanceCriteria == nil {
+		req.AcceptanceCriteria = []string{}
+	}
 	criteria, err := json.Marshal(req.AcceptanceCriteria)
 	if err != nil {
 		respond.Error(w, http.StatusBadRequest, err)
