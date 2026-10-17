@@ -626,8 +626,9 @@ func TestCancelTask(t *testing.T) {
 		t.Fatalf("failed to decode response: %v", err)
 	}
 
+	//nolint:misspell // The API uses the persisted wire spelling.
 	if resp["status"] != "cancelled" {
-		t.Errorf("expected status 'cancelled', got %q", resp["status"])
+		t.Errorf("expected status 'cancelled', got %q", resp["status"]) //nolint:misspell // Wire contract.
 	}
 
 	if err := mock.ExpectationsWereMet(); err != nil {
