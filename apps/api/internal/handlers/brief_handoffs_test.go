@@ -21,6 +21,9 @@ func TestCreateBriefHandoff(t *testing.T) {
 	briefProjectID := "brief-123"
 
 	expectAuthorizeProject(mock, projectID)
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs("repo-1", projectID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
 	mock.ExpectExec("INSERT INTO tasks").
 		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "dev_plan_brief", &briefProjectID, "Implement Brief", sqlmock.AnyArg(), "high", "medium", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -100,5 +103,34 @@ func TestCreateBriefHandoff_RequiresBriefPointer(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+}
+
+func TestCreateBriefHandoff_RejectsRepositoryFromDifferentProject(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	expectAuthorizeProject(mock, "proj-1")
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs("repo-other-project", "proj-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+
+	body, _ := json.Marshal(CreateBriefHandoffRequest{
+		RepositoryID: "repo-other-project",
+		Documents: []BriefDocument{{Slug: "prd", Title: "PRD", Content: "# Requirements"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/brief-handoffs", bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectID", "proj-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.CreateBriefHandoff(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("repo outside project: status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
 	}
 }
