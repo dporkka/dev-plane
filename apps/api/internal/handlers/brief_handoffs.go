@@ -133,19 +133,19 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task, err := h.insertTask(ctx, createTaskOptions{
-		ProjectID:    projectID,
-		RepositoryID: req.RepositoryID,
-		CreatedBy:    user.UserID,
-		Source:       "dev_plan_brief",
-		SourceID:     sourceID,
-		Title:        title,
-		Description:  req.Description,
-		Priority:     req.Priority,
-		RiskLevel:    req.RiskLevel,
-		TargetBranch: req.TargetBranch,
-		Spec:         spec,
+		ProjectID:          projectID,
+		RepositoryID:       req.RepositoryID,
+		CreatedBy:          user.UserID,
+		Source:             "dev_plan_brief",
+		SourceID:           sourceID,
+		Title:              title,
+		Description:        req.Description,
+		Priority:           req.Priority,
+		RiskLevel:          req.RiskLevel,
+		TargetBranch:       req.TargetBranch,
+		Spec:               spec,
 		AcceptanceCriteria: criteria,
-		Metadata:     metadata,
+		Metadata:           metadata,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)

@@ -2,8 +2,8 @@ package spec
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
@@ -37,7 +37,7 @@ func TestGenerate_Success(t *testing.T) {
 		}).AddRow(
 			taskID, "proj-1", repoID, nil, "user-1", "web", nil,
 			"Fix login bug", "The login page crashes", "backlog", "high",
-			"medium", "main", nil, nil,
+			"medium", "main", nil, `["Login works after fix"]`,
 			nil, 60, nil, nil,
 			nil, nil, now, now, nil,
 		))
@@ -91,6 +91,9 @@ func TestGenerate_Success(t *testing.T) {
 	}
 	if len(spec.ImplementationPlan) == 0 {
 		t.Error("expected at least one implementation step")
+	}
+	if len(spec.AcceptanceCriteria) == 0 || spec.AcceptanceCriteria[0] != "Login works after fix" {
+		t.Fatalf("generated spec must retain canonical task criteria: %#v", spec.AcceptanceCriteria)
 	}
 }
 

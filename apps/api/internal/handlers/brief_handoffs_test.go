@@ -117,7 +117,7 @@ func TestCreateBriefHandoff_RejectsRepositoryFromDifferentProject(t *testing.T) 
 
 	body, _ := json.Marshal(CreateBriefHandoffRequest{
 		RepositoryID: "repo-other-project",
-		Documents: []BriefDocument{{Slug: "prd", Title: "PRD", Content: "# Requirements"}},
+		Documents:    []BriefDocument{{Slug: "prd", Title: "PRD", Content: "# Requirements"}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/brief-handoffs", bytes.NewReader(body))
 	req = req.WithContext(withTestUser(req.Context()))
@@ -132,5 +132,49 @@ func TestCreateBriefHandoff_RejectsRepositoryFromDifferentProject(t *testing.T) 
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestCreateBriefHandoff_OmittedCriteriaAreEmptyArray(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	expectAuthorizeProject(mock, "proj-1")
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs("repo-1", "proj-1").
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+	mock.ExpectExec("INSERT INTO tasks").
+		WithArgs(
+			sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", "dev_plan_brief",
+			sqlmock.AnyArg(), "Build from Builder's Brief", sqlmock.AnyArg(),
+			"medium", "low", "main", sqlmock.AnyArg(), []byte("[]"),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	body, _ := json.Marshal(CreateBriefHandoffRequest{
+		RepositoryID: "repo-1",
+		Documents: []BriefDocument{{Slug: "prd", Title: "Requirements", Content: "# Scope"}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/brief-handoffs", bytes.NewReader(body))
+	req = req.WithContext(withTestUser(req.Context()))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectID", "proj-1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.CreateBriefHandoff(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201: %s", rec.Code, rec.Body.String())
+	}
+	var task Task
+	if err := json.Unmarshal(rec.Body.Bytes(), &task); err != nil {
+		t.Fatal(err)
+	}
+	if string(task.AcceptanceCriteria) != "[]" {
+		t.Fatalf("acceptance criteria = %s, want []", task.AcceptanceCriteria)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
