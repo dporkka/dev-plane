@@ -69,6 +69,14 @@ func TestCreateBriefHandoff(t *testing.T) {
 		t.Error("expected spec to be populated")
 	}
 
+	var importedCriteria []string
+	if err := json.Unmarshal(task.AcceptanceCriteria, &importedCriteria); err != nil {
+		t.Fatalf("acceptance_criteria should be a JSON array: %v", err)
+	}
+	if len(importedCriteria) != 1 || importedCriteria[0] != "All brief MVP items are implemented" {
+		t.Fatalf("canonical acceptance criteria lost: %v", importedCriteria)
+	}
+
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
