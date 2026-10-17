@@ -143,7 +143,7 @@ const (
 	ItemStatusRunning   ItemStatus = "running"
 	ItemStatusCompleted ItemStatus = "completed"
 	ItemStatusFailed    ItemStatus = "failed"
-	ItemStatusCancelled ItemStatus = "cancelled"
+	ItemStatusCancelled ItemStatus = "cancelled" //nolint:misspell // stable wire status; do not alter serialized value
 )
 
 // Thread is the durable provider-neutral conversation container.
@@ -367,15 +367,15 @@ const (
 
 // Event is the ordered provider-neutral stream emitted while a turn executes.
 type Event struct {
-	Sequence   int64      `json:"sequence"`
-	Type       EventType  `json:"type"`
+	Sequence       int64      `json:"sequence"`
+	Type           EventType  `json:"type"`
 	ThreadID       string     `json:"thread_id"`
 	TurnID         string     `json:"turn_id,omitempty"`
 	ProviderTurnID string     `json:"provider_turn_id,omitempty"`
 	Status         TurnStatus `json:"status,omitempty"`
-	Item       *Item      `json:"item,omitempty"`
-	Error      string     `json:"error,omitempty"`
-	OccurredAt time.Time  `json:"occurred_at"`
+	Item           *Item      `json:"item,omitempty"`
+	Error          string     `json:"error,omitempty"`
+	OccurredAt     time.Time  `json:"occurred_at"`
 }
 
 // Provider is the minimum contract every coding-agent adapter must implement.

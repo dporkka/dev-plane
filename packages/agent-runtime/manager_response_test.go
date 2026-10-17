@@ -104,7 +104,7 @@ func TestManagerRespondApprovalDenialCancelsApprovalItemAndResumesProvider(t *te
 	}
 	storedItem, _ := store.GetItem(context.Background(), item.ID)
 	if storedItem.Status != ItemStatusCancelled {
-		t.Fatalf("item status = %q, want cancelled", storedItem.Status)
+		t.Fatalf("item status = %q, want canceled", storedItem.Status)
 	}
 	storedTurn, _ := store.GetTurn(context.Background(), turn.ID)
 	if storedTurn.Status != TurnStatusRunning {
