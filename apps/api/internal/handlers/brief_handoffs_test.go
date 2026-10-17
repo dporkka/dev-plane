@@ -154,7 +154,7 @@ func TestCreateBriefHandoff_OmittedCriteriaAreEmptyArray(t *testing.T) {
 
 	body, _ := json.Marshal(CreateBriefHandoffRequest{
 		RepositoryID: "repo-1",
-		Documents: []BriefDocument{{Slug: "prd", Title: "Requirements", Content: "# Scope"}},
+		Documents:    []BriefDocument{{Slug: "prd", Title: "Requirements", Content: "# Scope"}},
 	})
 	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/brief-handoffs", bytes.NewReader(body))
 	req = req.WithContext(withTestUser(req.Context()))
