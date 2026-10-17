@@ -626,6 +626,12 @@ func TestResult_EffectMapping(t *testing.T) {
 				AuditRequired:    tt.effect == policies.EffectDeny || tt.effect == policies.EffectAdminOnly,
 			}
 
+			if result.Effect != tt.effect {
+				t.Errorf("Effect = %v, want %v", result.Effect, tt.effect)
+			}
+			if result.RiskLevel != tt.wantRisk {
+				t.Errorf("RiskLevel = %q, want %q", result.RiskLevel, tt.wantRisk)
+			}
 			if result.RequiredApproval != tt.wantReq {
 				t.Errorf("RequiredApproval = %v, want %v", result.RequiredApproval, tt.wantReq)
 			}
