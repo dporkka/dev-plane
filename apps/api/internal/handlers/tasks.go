@@ -125,6 +125,7 @@ func decodeApproveSpecRequest(r *http.Request) (ApproveSpecRequest, error) {
 }
 
 // The persisted status is spelled "cancelled" in database and API contracts.
+//
 //nolint:misspell // Changing this spelling would break existing clients.
 const taskStatusCancelled = "cancelled"
 
