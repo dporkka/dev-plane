@@ -612,18 +612,21 @@ func TestResult_EffectMapping(t *testing.T) {
 		effect    policies.Effect
 		wantReq   bool
 		wantAudit bool
+		wantRisk  string
 	}{
-		{"allow", policies.EffectAllow, false, false},
-		{"ask", policies.EffectAsk, true, false},
-		{"deny", policies.EffectDeny, false, true},
-		{"admin_only", policies.EffectAdminOnly, true, true},
+		{"allow", policies.EffectAllow, false, false, RiskLevelLow},
+		{"ask", policies.EffectAsk, true, false, RiskLevelMedium},
+		{"deny", policies.EffectDeny, false, true, RiskLevelHigh},
+		{"admin_only", policies.EffectAdminOnly, true, true, RiskLevelCritical},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := &Result{
+				Effect:           tt.effect,
 				RequiredApproval: tt.effect == policies.EffectAsk || tt.effect == policies.EffectAdminOnly,
 				AuditRequired:    tt.effect == policies.EffectDeny || tt.effect == policies.EffectAdminOnly,
+				RiskLevel:        tt.wantRisk,
 			}
 
 			if result.Effect != tt.effect {
