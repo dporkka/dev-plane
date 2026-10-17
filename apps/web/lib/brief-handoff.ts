@@ -60,15 +60,17 @@ export function buildBriefHandoffPayload(input: BriefHandoffForm): BriefHandoffP
     // must still enforce its own network/SSRF policy.
   }
 
-  const acceptanceCriteria = Array.from(
-    new Map(
-      input.acceptanceCriteria
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => [line.toLocaleLowerCase(), line] as const),
-    ).values(),
-  );
+  const seen = new Set<string>();
+  const acceptanceCriteria = input.acceptanceCriteria
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      if (!line) return false;
+      const key = line.toLocaleLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
   if (acceptanceCriteria.length === 0) {
     throw new Error("Add at least one acceptance criterion, one per line.");
   }
