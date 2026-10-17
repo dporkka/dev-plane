@@ -22,7 +22,7 @@ func TestCreateBriefHandoff(t *testing.T) {
 
 	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO tasks").
-		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "dev_plan_brief", &briefProjectID, "Implement Brief", sqlmock.AnyArg(), "high", "medium", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "dev_plan_brief", &briefProjectID, "Implement Brief", sqlmock.AnyArg(), "high", "medium", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	body, _ := json.Marshal(CreateBriefHandoffRequest{
