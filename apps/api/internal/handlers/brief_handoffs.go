@@ -74,6 +74,12 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 		title = "Build from Builder's Brief"
 	}
 
+	criteria, err := json.Marshal(req.AcceptanceCriteria)
+	if err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
+		return
+	}
+
 	spec, err := json.Marshal(map[string]any{
 		"kind":                "dev_plan_brief",
 		"brief_project_id":    req.BriefProjectID,
@@ -117,6 +123,7 @@ func (h *Handler) CreateBriefHandoff(w http.ResponseWriter, r *http.Request) {
 		RiskLevel:    req.RiskLevel,
 		TargetBranch: req.TargetBranch,
 		Spec:         spec,
+		AcceptanceCriteria: criteria,
 		Metadata:     metadata,
 	})
 	if err != nil {
