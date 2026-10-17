@@ -49,7 +49,7 @@ export default function BuildFromBriefPage() {
       api.createBriefHandoff(projectId, buildBriefHandoffPayload(form)),
     onSuccess: async (task) => {
       await queryClient.invalidateQueries({ queryKey: ["tasks", projectId] });
-      addToast("Brief task created for review", "success");
+      addToast("Brief task added to backlog", "success");
       router.push(`/tasks/${task.id}`);
     },
     onError: (error) => {
@@ -171,7 +171,7 @@ export default function BuildFromBriefPage() {
                 onChange={() => switchSource("paste")}
                 disabled={createHandoff.isPending}
               />
-              Paste Markdown (private)
+              Paste Markdown (no public link)
             </label>
             <label className="flex items-center gap-2">
               <input
@@ -279,7 +279,7 @@ export default function BuildFromBriefPage() {
 
         <div className="flex items-center justify-between gap-3 border-t border-gray-800 pt-4">
           <p className="max-w-md text-xs text-gray-500">
-            Creates a task for specification review. It does not automatically
+            Creates a backlog task for later specification and approval. It does not automatically
             approve execution, merge code, or deploy.
           </p>
           <Button
