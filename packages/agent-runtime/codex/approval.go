@@ -81,7 +81,7 @@ func mapServerRequest(
 		return agentruntime.Event{}, false, nil
 	}
 	if strings.TrimSpace(itemID) == "" {
-		return agentruntime.Event{}, false, fmt.Errorf("Codex approval request is missing itemId")
+		return agentruntime.Event{}, false, fmt.Errorf("codex approval request is missing itemId")
 	}
 
 	now := time.Now().UTC()
@@ -123,7 +123,7 @@ func (p *Provider) RespondApproval(ctx context.Context, response agentruntime.Ap
 		return fmt.Errorf("no pending Codex approval request for item %q", response.ItemID)
 	}
 
-	decision := "decline"
+	var decision string
 	switch response.Decision {
 	case agentruntime.ApprovalDecisionApproved:
 		decision = "accept"
