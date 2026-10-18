@@ -21,6 +21,10 @@ A token must have **read-only** Pull requests/Contents/Checks access to the sele
 
 **Terminology:** cohort totals count PRs *created in the lookback*, classified by their current state; they are not a throughput metric for PRs merged during the lookback. `All open` includes older PRs from all creation dates. `Stale` means no `updated_at` activity in the selected interval; it does not imply safe closure. Checks are inspected only on the exact current PR head of the top `--inspect` items. `passing-observed-only` does not establish branch protection, mandatory contexts, Woodpecker, CodeQL, test correctness, human approval, staging smoke tests, or production deployment. `no-evidence`, `pending`, `failed`, and `incomplete` are never passing states. `not-inspected` means no CI calls were made for that PR. Results can change immediately after snapshot collection.
 
+## Stacked verification branches
+
+When a CI repair and a feature are verified on a disposable combined candidate, **do not merge the disposable verification PR**. First merge the separately reviewed repair through the normal gates, then put the feature's unchanged source blobs onto the newly accepted `main` commit, verify the source file hashes, and run checks against the feature PR's **new exact head**. A successful run on the disposable combined tree is useful compatibility evidence but is not a substitute for this final run. Close the verification-only PR after its evidence has been recorded and the real feature PR has been accepted; never let it become product history.
+
 ## Execution policy: finish before starting
 
 For the next two weeks, start with **at most two implementation lanes and one dedicated integration/CI-repair lane across the active portfolio**. This is an operating hypothesis, not a new branch-protection rule. Avoid writing additional queue-automation products until the pilot improves completion speed and defect rates.
