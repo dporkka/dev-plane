@@ -32,6 +32,7 @@ type RunHandler struct {
 	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
+	verifier  RunCompletionVerifier
 }
 
 // RunExecutor executes queued agent runs.
@@ -57,6 +58,17 @@ type ReviewService interface {
 	Review(ctx context.Context, runID string) (*reviewer.ReviewReport, error)
 }
 
+// CompletionVerification binds a completed run to the exact candidate and base.
+type CompletionVerification struct {
+	BaseSHA string
+	HeadSHA string
+}
+
+// RunCompletionVerifier performs independent repository-declared checks.
+type RunCompletionVerifier interface {
+	VerifyCompletedRun(ctx context.Context, runID, taskID string) (CompletionVerification, error)
+}
+
 // NewRunHandler creates a new run handler.
 func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublisher) *RunHandler {
 	return &RunHandler{db: db, logger: logger, eventBus: eventBus}
@@ -76,6 +88,12 @@ func (h *RunHandler) WithRunAdmission(admission RunAdmission) *RunHandler {
 // WithReviewer enables completed-run review generation before approval flow.
 func (h *RunHandler) WithReviewer(reviewer ReviewService) *RunHandler {
 	h.reviewer = reviewer
+	return h
+}
+
+// WithCompletionVerifier requires independent exact-HEAD evidence before review.
+func (h *RunHandler) WithCompletionVerifier(v RunCompletionVerifier) *RunHandler {
+	h.verifier = v
 	return h
 }
 
@@ -107,23 +125,44 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		return ackMessage(msg)
 	}
 
-	// Update task status to reviewing
-	now := time.Now().UTC()
-	_, err := h.db.Exec(`
-		UPDATE tasks SET status = 'reviewing', updated_at = $1
-		WHERE id = $2 AND deleted_at IS NULL
-	`, now, event.TaskID)
-	if err != nil {
-		h.logger.Warn("failed to update task status to reviewing", "error", err)
-	}
-
 	if h.reviewer == nil {
 		return fmt.Errorf("reviewer is not configured")
 	}
-
-	report, err := h.reviewer.Review(context.Background(), event.RunID)
+	ctx := context.Background()
+	var verified CompletionVerification
+	if h.verifier != nil {
+		var err error
+		verified, err = h.verifier.VerifyCompletedRun(ctx, event.RunID, event.TaskID)
+		if err != nil {
+			return fmt.Errorf("verify completed run %s: %w", event.RunID, err)
+		}
+		if verified.BaseSHA == "" || verified.HeadSHA == "" {
+			return fmt.Errorf("verify completed run %s: missing exact revision identity", event.RunID)
+		}
+	}
+	report, err := h.reviewer.Review(ctx, event.RunID)
 	if err != nil {
 		return fmt.Errorf("review completed run %s: %w", event.RunID, err)
+	}
+	if report == nil {
+		return fmt.Errorf("review completed run %s: missing report", event.RunID)
+	}
+	if h.verifier != nil && (report.RunID != event.RunID ||
+		report.DiffSummary.BaseSHA != verified.BaseSHA ||
+		report.DiffSummary.HeadSHA != verified.HeadSHA) {
+		return fmt.Errorf("review completed run %s: review revision does not match verified candidate", event.RunID)
+	}
+	if h.verifier != nil && !report.Approvable {
+		return fmt.Errorf("review completed run %s: independent reviewer rejected candidate", event.RunID)
+	}
+
+	// Do not advance the task into review while verification is blocked or stale.
+	now := time.Now().UTC()
+	if _, err := h.db.ExecContext(ctx, `
+		UPDATE tasks SET status = 'reviewing', updated_at = $1
+		WHERE id = $2 AND deleted_at IS NULL
+	`, now, event.TaskID); err != nil {
+		return fmt.Errorf("update verified task to reviewing: %w", err)
 	}
 	if h.eventBus != nil {
 		reviewCompletedEvent := map[string]interface{}{
@@ -214,7 +253,7 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if err != nil {
 		return false, "", "", fmt.Errorf("begin follow-on run transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	handoff, err := h.nextUnconsumedHandoff(ctx, tx, run)
 	if err != nil {

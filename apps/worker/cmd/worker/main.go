@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -92,7 +93,7 @@ func main() {
 
 	// Set up graceful shutdown context.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// Release the signal subscription during graceful shutdown below.
 
 	// Connect to database
 	database, err := db.New(*dbURL)
@@ -100,7 +101,6 @@ func main() {
 		logger.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
 
 	if err := database.Ping(ctx); err != nil {
 		logger.Error("database ping failed", "error", err)
@@ -114,7 +114,6 @@ func main() {
 		logger.Error("failed to connect to NATS", "error", err)
 		os.Exit(1)
 	}
-	defer eventBus.Close()
 
 	if err := eventBus.CreateStreams(); err != nil {
 		logger.Error("failed to create NATS streams", "error", err)
@@ -154,6 +153,20 @@ func main() {
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
 		WithReviewer(reviewService)
+
+	// Until approved-task provisioning persists trusted WorkItem contracts,
+	// operators must explicitly opt in to the strict fail-closed gate. Required
+	// mode never falls back to legacy review if evidence is missing.
+	switch mode := strings.TrimSpace(os.Getenv("DEVPLANE_EXACT_HEAD_VERIFICATION")); mode {
+	case "", "legacy":
+		logger.Warn("worker exact-HEAD verifier is not enforced; legacy review mode active")
+	case "required":
+		runHandler.WithCompletionVerifier(handlers.NewRepositoryCompletionVerifier(database, runtimeProvider))
+		logger.Info("worker requires persisted exact-HEAD verification before review")
+	default:
+		logger.Error("invalid DEVPLANE_EXACT_HEAD_VERIFICATION; expected required or legacy", "mode", mode)
+		os.Exit(1)
+	}
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -338,6 +351,13 @@ func main() {
 	logger.Info("shutdown signal received")
 	shutdownCtx.shutdown()
 	stopHealth()
+	stop()
+	if err := eventBus.Close(); err != nil {
+		logger.Warn("close worker event bus", "error", err)
+	}
+	if err := database.Close(); err != nil {
+		logger.Warn("close worker database", "error", err)
+	}
 	logger.Info("worker service stopped gracefully")
 }
 
@@ -420,7 +440,7 @@ func envFloatOrDefault(key string, defaultValue float64) float64 {
 
 // startHealthServer starts a minimal HTTP server for container health checks.
 // It listens on the configured port and responds to GET /health with a JSON
-// status payload. The server is shut down when the provided context is cancelled.
+// status payload. The server is shut down when the provided context is canceled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
 func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
