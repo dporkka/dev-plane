@@ -93,7 +93,7 @@ func main() {
 
 	// Set up graceful shutdown context.
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	// Release the signal subscription during graceful shutdown below.
 
 	// Connect to database
 	database, err := db.New(*dbURL)
@@ -101,7 +101,6 @@ func main() {
 		logger.Error("failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
 
 	if err := database.Ping(ctx); err != nil {
 		logger.Error("database ping failed", "error", err)
@@ -115,7 +114,6 @@ func main() {
 		logger.Error("failed to connect to NATS", "error", err)
 		os.Exit(1)
 	}
-	defer eventBus.Close()
 
 	if err := eventBus.CreateStreams(); err != nil {
 		logger.Error("failed to create NATS streams", "error", err)
@@ -353,6 +351,13 @@ func main() {
 	logger.Info("shutdown signal received")
 	shutdownCtx.shutdown()
 	stopHealth()
+	stop()
+	if err := eventBus.Close(); err != nil {
+		logger.Warn("close worker event bus", "error", err)
+	}
+	if err := database.Close(); err != nil {
+		logger.Warn("close worker database", "error", err)
+	}
 	logger.Info("worker service stopped gracefully")
 }
 
@@ -435,7 +440,7 @@ func envFloatOrDefault(key string, defaultValue float64) float64 {
 
 // startHealthServer starts a minimal HTTP server for container health checks.
 // It listens on the configured port and responds to GET /health with a JSON
-// status payload. The server is shut down when the provided context is cancelled.
+// status payload. The server is shut down when the provided context is canceled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
 func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
