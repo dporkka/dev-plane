@@ -14,11 +14,11 @@ import (
 
 type completionTestRuntime struct {
 	*fakeRuntimeProvider
-	head        string
-	dirty       bool
-	gateFailure bool
-	staleAfter  bool
-	commands    []runtimes.Command
+	head          string
+	dirty         bool
+	gateFailure   bool
+	policyChanged bool
+	commands      []runtimes.Command
 }
 
 func (r *completionTestRuntime) ReadFile(_ context.Context, _, path string) ([]byte, error) {
@@ -41,14 +41,13 @@ func (r *completionTestRuntime) ExecuteCommand(_ context.Context, _ string, comm
 	}
 	switch {
 	case len(command.Args) >= 3 && command.Args[1] == "rev-parse":
-		head := r.head
-		if r.staleAfter && len(r.commands) > 6 {
-			head = strings.Repeat("c", 40)
-		}
-		return &runtimes.CommandResult{Stdout: head + "\n"}, nil
+		return &runtimes.CommandResult{Stdout: r.head + "\n"}, nil
 	case len(command.Args) > 1 && command.Args[1] == "merge-base":
 		return &runtimes.CommandResult{ExitCode: 0}, nil
 	case len(command.Args) > 1 && command.Args[1] == "diff":
+		if r.policyChanged {
+			return &runtimes.CommandResult{Stdout: "devplane.yaml\x00"}, nil
+		}
 		return &runtimes.CommandResult{Stdout: "src/change.go\x00"}, nil
 	case len(command.Args) > 1 && command.Args[1] == "status":
 		if r.dirty {
@@ -148,6 +147,9 @@ func TestRepositoryCompletionVerifierFailsClosed(t *testing.T) {
 			if err := store.PutWorkItem(context.Background(), w); err != nil {
 				t.Fatal(err)
 			}
+		}},
+		{name: "candidate changed verification policy", prepare: func(_ *testing.T, _ *db.DB, rt *completionTestRuntime, _ repoprotocol.WorkItem) {
+			rt.policyChanged = true
 		}},
 		{name: "dirty worktree", prepare: func(_ *testing.T, _ *db.DB, rt *completionTestRuntime, _ repoprotocol.WorkItem) { rt.dirty = true }},
 		{name: "failed focused gate", prepare: func(_ *testing.T, _ *db.DB, rt *completionTestRuntime, _ repoprotocol.WorkItem) {
