@@ -81,7 +81,14 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 		return Result{}, err
 	}
 
+	if len(executable) == 0 {
+		return Result{}, errors.New("verification requires at least one executable verification gate")
+	}
+
 	if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, false); err != nil {
+		return Result{}, err
+	}
+	if err := v.assertClean(ctx, req.SessionID); err != nil {
 		return Result{}, err
 	}
 
@@ -105,6 +112,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 		commandResult, runErr := v.runtime.ExecuteCommand(ctx, req.SessionID, command)
 
 		if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, true); err != nil {
+			return Result{}, err
+		}
+		if err := v.assertClean(ctx, req.SessionID); err != nil {
 			return Result{}, err
 		}
 
@@ -205,6 +215,27 @@ func (v *Verifier) assertHead(ctx context.Context, sessionID, candidate string, 
 		return fmt.Errorf("head changed during verification: candidate=%s actual=%s", candidate, actual)
 	}
 	return fmt.Errorf("head mismatch before verification: candidate=%s actual=%s", candidate, actual)
+}
+
+// assertClean ensures verification evidence describes the candidate commit,
+// not uncommitted tracked changes or untracked files in the test workspace.
+// This check deliberately runs before and after each executable gate:
+// a successful gate must not leave changes that are absent from candidate HEAD.
+func (v *Verifier) assertClean(ctx context.Context, sessionID string) error {
+	result, err := v.runtime.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Args:    []string{"git", "status", "--porcelain=v1", "--untracked-files=all"},
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("read workspace status: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		return errors.New("read workspace status failed")
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return errors.New("workspace has uncommitted changes; verification requires a clean candidate commit")
+	}
+	return nil
 }
 
 func profileTimeout(seconds int) time.Duration {
