@@ -152,6 +152,9 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 		report.DiffSummary.HeadSHA != verified.HeadSHA) {
 		return fmt.Errorf("review completed run %s: review revision does not match verified candidate", event.RunID)
 	}
+	if h.verifier != nil && !report.Approvable {
+		return fmt.Errorf("review completed run %s: independent reviewer rejected candidate", event.RunID)
+	}
 
 	// Do not advance the task into review while verification is blocked or stale.
 	now := time.Now().UTC()
