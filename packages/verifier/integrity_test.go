@@ -20,7 +20,7 @@ type integrityRuntime struct {
 
 func (r *integrityRuntime) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
 	if reflect.DeepEqual(cmd.Args, []string{"git", "status", "--porcelain=v1", "--untracked-files=all"}) {
-		r.fakeRuntime.commands = append(r.fakeRuntime.commands, cmd)
+		r.commands = append(r.commands, cmd)
 		if len(r.statusResponses) == 0 {
 			return nil, errors.New("unexpected git status call")
 		}
