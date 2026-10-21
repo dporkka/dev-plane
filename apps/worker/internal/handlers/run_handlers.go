@@ -214,7 +214,7 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if err != nil {
 		return false, "", "", fmt.Errorf("begin follow-on run transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	handoff, err := h.nextUnconsumedHandoff(ctx, tx, run)
 	if err != nil {
