@@ -402,7 +402,7 @@ func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID strin
 	if err != nil {
 		return false, fmt.Errorf("load existing queued runs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var runID, metadata string
