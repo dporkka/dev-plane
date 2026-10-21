@@ -82,7 +82,7 @@ func setupCompletionAuthority(t *testing.T) (*db.DB, repoprotocol.WorkItem) {
 	}
 	work := repoprotocol.WorkItem{
 		ID: "task-1", Repository: "example/repo", Objective: "Fix exact SHA candidate", BaseSHA: base,
-		OwnershipPaths: []string{"src/change.go"}, RequiredGates: []string{"changed"},
+		OwnershipPaths: []string{"src/change.go"}, RequiredGates: []string{"changed", repoprotocol.GateIndependentReview},
 		State: repoprotocol.WorkImplementing, Risk: repoprotocol.RiskLow, Cost: 1,
 	}
 	store := &db.DB{DB: raw, Driver: "sqlite"}
@@ -116,7 +116,7 @@ func TestRepositoryCompletionVerifierUsesPersistedBaseAndTestEvidence(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.State != repoprotocol.WorkReadyToLand {
+	if stored.State != repoprotocol.WorkReviewing {
 		t.Fatalf("work state=%s", stored.State)
 	}
 }
@@ -133,6 +133,12 @@ func TestRepositoryCompletionVerifierFailsClosed(t *testing.T) {
 		}},
 		{name: "untrusted base revision", prepare: func(t *testing.T, store *db.DB, _ *completionTestRuntime, w repoprotocol.WorkItem) {
 			w.BaseSHA = strings.Repeat("f", 40)
+			if err := store.PutWorkItem(context.Background(), w); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "independent review not required", prepare: func(t *testing.T, store *db.DB, _ *completionTestRuntime, w repoprotocol.WorkItem) {
+			w.RequiredGates = []string{"changed"}
 			if err := store.PutWorkItem(context.Background(), w); err != nil {
 				t.Fatal(err)
 			}
