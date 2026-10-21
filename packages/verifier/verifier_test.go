@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"reflect"
 	"strings"
@@ -14,6 +16,7 @@ import (
 
 type fakeRuntime struct {
 	config        []byte
+	files         map[string][]byte
 	headResponses []string
 	commands      []runtimes.Command
 	results       map[string]*runtimes.CommandResult
@@ -21,10 +24,13 @@ type fakeRuntime struct {
 }
 
 func (f *fakeRuntime) ReadFile(_ context.Context, _ string, path string) ([]byte, error) {
-	if path != "devplane.yaml" {
-		return nil, errors.New("unexpected file")
+	if path == "devplane.yaml" {
+		return f.config, nil
 	}
-	return f.config, nil
+	if data, ok := f.files[path]; ok {
+		return append([]byte(nil), data...), nil
+	}
+	return nil, errors.New("unexpected file")
 }
 
 func (f *fakeRuntime) ExecuteCommand(_ context.Context, _ string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
@@ -356,5 +362,70 @@ func TestVerifyDoesNotAdvanceWorkWhenExecutableGateFails(t *testing.T) {
 	}
 	if len(store.workItems) != 0 {
 		t.Fatalf("failed verification advanced work: %#v", store.workItems)
+	}
+}
+
+func TestVerifyExecutesBrowserProfileAndPersistsHashedArtifacts(t *testing.T) {
+	command := "pnpm exec playwright test tests/e2e/checkout.spec.ts"
+	screenshot := []byte("fake-png")
+	sum := sha256.Sum256(screenshot)
+
+	runtime := &fakeRuntime{
+		config: []byte(`version: 1
+verification:
+  browser:
+    browser:
+      command: pnpm exec playwright test tests/e2e/checkout.spec.ts
+      report_path: artifacts/browser/report.txt
+      artifact_paths:
+        - artifacts/browser/checkout.png
+work:
+  isolation: worktree
+  max_parallel_cost: 1
+`),
+		files: map[string][]byte{
+			"artifacts/browser/report.txt":   []byte("2 passed; console errors: 0"),
+			"artifacts/browser/checkout.png": screenshot,
+		},
+		headResponses: []string{"head456", "head456"},
+		results: map[string]*runtimes.CommandResult{
+			command: {Stdout: "playwright passed", ExitCode: 0},
+		},
+		errors: map[string]error{},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"browser"}
+
+	result, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID:     "session-1",
+		WorkItem:      item,
+		CandidateHead: "head456",
+	})
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if len(result.Evidence.Gates) != 1 {
+		t.Fatalf("len(Evidence.Gates) = %d, want 1", len(result.Evidence.Gates))
+	}
+	gate := result.Evidence.Gates[0]
+	if gate.Kind != repoprotocol.VerificationKindBrowser {
+		t.Fatalf("gate.Kind = %q, want %q", gate.Kind, repoprotocol.VerificationKindBrowser)
+	}
+	if !strings.Contains(gate.Output, "playwright passed") || !strings.Contains(gate.Output, "2 passed; console errors: 0") {
+		t.Fatalf("gate.Output = %q, want command and browser report output", gate.Output)
+	}
+	if len(gate.Artifacts) != 1 {
+		t.Fatalf("len(gate.Artifacts) = %d, want 1", len(gate.Artifacts))
+	}
+	artifact := gate.Artifacts[0]
+	if artifact.Path != "artifacts/browser/checkout.png" {
+		t.Fatalf("artifact.Path = %q", artifact.Path)
+	}
+	if artifact.SizeBytes != int64(len(screenshot)) {
+		t.Fatalf("artifact.SizeBytes = %d, want %d", artifact.SizeBytes, len(screenshot))
+	}
+	if artifact.SHA256 != hex.EncodeToString(sum[:]) {
+		t.Fatalf("artifact.SHA256 = %q, want %q", artifact.SHA256, hex.EncodeToString(sum[:]))
 	}
 }

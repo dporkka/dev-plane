@@ -52,9 +52,14 @@ func (h *Handler) runtimeProvider(name string) (runtimes.Provider, error) {
 	runnerToken := os.Getenv("RUNNER_AUTH_TOKEN")
 	baseDir := workspaceRuntimeBaseDir()
 
-	// If a remote runner URL is configured, route all runtime traffic through it.
+	// If a remote runtime URL is configured, preserve the selected protocol.
 	if runnerURL != "" {
-		provider := runtimes.NewRemoteProvider(runnerURL, runnerToken)
+		var provider runtimes.Provider
+		if name == "nulang" {
+			provider = runtimes.NewNulangCloudProvider(runnerURL, runnerToken)
+		} else {
+			provider = runtimes.NewRemoteProvider(runnerURL, runnerToken)
+		}
 		h.runtimeProviders[name] = provider
 		return provider, nil
 	}

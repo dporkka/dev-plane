@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestInitRuntimeProvider_RejectsLocalInProduction(t *testing.T) {
@@ -102,5 +104,18 @@ func TestStartHealthServer_Shutdown(t *testing.T) {
 	_, err := client.Get(url)
 	if err == nil {
 		t.Fatal("expected error after shutdown")
+	}
+}
+
+func TestInitRuntimeProvider_UsesNulangProviderWhenConfigured(t *testing.T) {
+	provider, name, err := initRuntimeProvider("nulang", "/tmp/workspaces", "http://localhost:8096", "internal-token")
+	if err != nil {
+		t.Fatalf("initRuntimeProvider(nulang) error: %v", err)
+	}
+	if name != "nulang" {
+		t.Fatalf("name = %q, want nulang", name)
+	}
+	if _, ok := provider.(*runtimes.NulangCloudProvider); !ok {
+		t.Fatalf("provider type = %T, want *runtimes.NulangCloudProvider", provider)
 	}
 }
