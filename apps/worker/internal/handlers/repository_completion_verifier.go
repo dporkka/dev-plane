@@ -124,6 +124,9 @@ func (v *RepositoryCompletionVerifier) VerifyCompletedRun(ctx context.Context, r
 			path == ".." || strings.HasPrefix(path, "../") {
 			return CompletionVerification{}, fmt.Errorf("invalid changed path %q", path)
 		}
+		if path == "devplane.yaml" {
+			return CompletionVerification{}, errors.New("candidate cannot modify its own verification policy")
+		}
 	}
 	if err := v.assertClean(ctx, session); err != nil {
 		return CompletionVerification{}, err
