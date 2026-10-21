@@ -7,8 +7,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/hex"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -356,7 +356,7 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		return provisionedWorkspace{}, fmt.Errorf("capture immutable workspace base: %v (result: %v)", baseErr, baseResult)
 	}
 	workspace.BaseSHA = strings.TrimSpace(baseResult.Stdout)
-	if (len(workspace.BaseSHA) != 40 && len(workspace.BaseSHA) != 64) {
+	if len(workspace.BaseSHA) != 40 && len(workspace.BaseSHA) != 64 {
 		_ = h.runtimeProvider.DestroyWorkspace(context.Background(), session.ID)
 		return provisionedWorkspace{}, errors.New("runtime returned invalid base revision length")
 	}
