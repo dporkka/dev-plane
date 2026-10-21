@@ -17,6 +17,34 @@ GH_TOKEN="$(gh auth token)" node scripts/pr-queue-report.mjs --format json > /tm
 
 Pass `--repos owner/repo,owner/repo` to change the portfolio. `--days 7` sets the creation-cohort lookback, `--stale-days 3` marks unchanged open PRs, `--inspect 5` checks the first five priority PR heads per repository, `--show 10` limits displayed priority rows, and `--max-pages 20` limits GitHub API pagination. Increase `--max-pages` if the command reports a truncated queue. The report is printed only after *every* repository and CI query succeeds; an HTTP failure or incomplete inventory returns a nonzero exit status, not misleading partial totals.
 
+## Exact-head CI evidence triage
+
+For every inspected PR, the reporter fetches check runs and commit statuses at the
+listed head SHA, then **re-fetches the live PR head**. If that head changes or
+the PR is closed during collection, the entire snapshot fails without output.
+If an individual check run advertises a different head SHA, the snapshot also
+fails closed. This narrows, but cannot eliminate, races after the final check.
+
+The JSON report includes `ciTriage` and up to ten `failedChecks` records
+with source, check/context name, and GitHub conclusion/state. These are
+**observations, not a first failing step or root-cause diagnosis**. Proposed
+operator actions are:
+
+| CI observation | Triage label | Required next action |
+| --- | --- | --- |
+| No observed contexts | `investigate-workflow-trigger-or-runner` | Confirm event trigger, job admission, runners and CI configuration |
+| `startup_failure` | `investigate-runner-admission` | Diagnose checkout, scheduler/runner admission and setup before editing product code |
+| `timed_out` | `investigate-timeout` | Inspect job timing and resource evidence; do not automatically relax timeouts |
+| Other failing check | `inspect-failing-job-logs` | Obtain first confirmed failing step and reproduce before a repair |
+| Pending | `wait-for-terminal-checks` | Wait for terminal evidence |
+| Missing/unknown/truncated evidence | `inspect-missing-or-unrecognized-evidence` | Fetch the missing evidence, never assume green |
+| Observed passing | `verify-required-gates` | Separately verify required contexts, reviews, security gates and deployment readiness |
+
+The reporter does not download job logs, infer flaky tests, retry jobs, repair
+source files, or certify promotion. Any future repair orchestrator must take
+explicitly scoped actions only after obtaining a confirmed failing step and
+revalidating the candidate head.
+
 A token must have **read-only** Pull requests/Contents/Checks access to the selected repositories. Public repositories may work without a token but unauthenticated GitHub rate limits are low. Never store the token in source, shell history, issues, CI logs, or report artifacts. The script never calls mutation endpoints and writes no repository state. The report includes publicly visible PR links and short commit SHAs, but review confidentiality before sharing reports that include private repositories.
 
 **Terminology:** cohort totals count PRs *created in the lookback*, classified by their current state; they are not a throughput metric for PRs merged during the lookback. `All open` includes older PRs from all creation dates. `Stale` means no `updated_at` activity in the selected interval; it does not imply safe closure. Checks are inspected only on the exact current PR head of the top `--inspect` items. `passing-observed-only` does not establish branch protection, mandatory contexts, Woodpecker, CodeQL, test correctness, human approval, staging smoke tests, or production deployment. `no-evidence`, `pending`, `failed`, and `incomplete` are never passing states. `not-inspected` means no CI calls were made for that PR. Results can change immediately after snapshot collection.
