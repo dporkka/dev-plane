@@ -2,10 +2,8 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"strings"
 	"testing"
 
@@ -139,6 +137,3 @@ func TestRepositoryCompletionVerifierRejectsCrossTaskEvent(t *testing.T) {
 	}
 }
 
-// Keep the unit fixture backed by the real SQLite work/evidence persistence
-// implementation rather than a mock of the verifier's database writes.
-var _ *sql.DB
