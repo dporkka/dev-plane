@@ -348,7 +348,7 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		return provisionedWorkspace{}, errors.New("provisioned runtime did not return a session id")
 	}
 	baseResult, baseErr := h.runtimeProvider.ExecuteCommand(provisionCtx, session.ID, runtimes.Command{
-		Args: []string{"git", "rev-parse", "--verify", "HEAD"},
+		Args:    []string{"git", "rev-parse", "--verify", "HEAD"},
 		Timeout: 30 * time.Second,
 	})
 	if baseErr != nil || baseResult == nil || baseResult.ExitCode != 0 {
