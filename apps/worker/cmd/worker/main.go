@@ -26,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -154,6 +155,20 @@ func main() {
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
 		WithReviewer(reviewService)
+
+	// Until approved-task provisioning persists trusted WorkItem contracts,
+	// operators must explicitly opt in to the strict fail-closed gate. Required
+	// mode never falls back to legacy review if evidence is missing.
+	switch mode := strings.TrimSpace(os.Getenv("DEVPLANE_EXACT_HEAD_VERIFICATION")); mode {
+	case "", "legacy":
+		logger.Warn("worker exact-HEAD verifier is not enforced; legacy review mode active")
+	case "required":
+		runHandler.WithCompletionVerifier(handlers.NewRepositoryCompletionVerifier(database, runtimeProvider))
+		logger.Info("worker requires persisted exact-HEAD verification before review")
+	default:
+		logger.Error("invalid DEVPLANE_EXACT_HEAD_VERIFICATION; expected required or legacy", "mode", mode)
+		os.Exit(1)
+	}
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
