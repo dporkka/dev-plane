@@ -383,6 +383,7 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 			runtime_provider TEXT NOT NULL,
 			runtime_session_id TEXT,
 			status TEXT NOT NULL,
+			settings TEXT DEFAULT '{}',
 			created_at DATETIME,
 			updated_at DATETIME
 		);
