@@ -284,7 +284,7 @@ func (r *Reviewer) getAgentSteps(ctx context.Context, runID string) ([]models.Ag
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var steps []models.AgentStep
 	for rows.Next() {
@@ -408,12 +408,13 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 	}
 
 	// Test coverage assessment
-	if testResults != nil {
+	switch {
+	case testResults != nil:
 		report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
-	} else if hasTests {
+	case hasTests:
 		report.TestCoverage = "Tests included"
-	} else {
-		riskScore += 1
+	default:
+		riskScore++
 		report.TestCoverage = "No tests detected"
 		report.Findings = append(report.Findings, Finding{
 			Severity:   "medium",
@@ -440,7 +441,7 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 			})
 		}
 		if !testResults.LintPassed {
-			riskScore += 1
+			riskScore++
 			report.Findings = append(report.Findings, Finding{
 				Severity:   "low",
 				File:       "*",
@@ -835,13 +836,19 @@ func (r *Reviewer) Get(ctx context.Context, runID string) (*ReviewReport, error)
 	}
 
 	if findingsJSON.Valid {
-		json.Unmarshal([]byte(findingsJSON.String), &report.Findings)
+		if err := json.Unmarshal([]byte(findingsJSON.String), &report.Findings); err != nil {
+			return nil, fmt.Errorf("decode review findings: %w", err)
+		}
 	}
 	if suggestionsJSON.Valid {
-		json.Unmarshal([]byte(suggestionsJSON.String), &report.Suggestions)
+		if err := json.Unmarshal([]byte(suggestionsJSON.String), &report.Suggestions); err != nil {
+			return nil, fmt.Errorf("decode review suggestions: %w", err)
+		}
 	}
 	if diffSummaryJSON.Valid {
-		json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary)
+		if err := json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary); err != nil {
+			return nil, fmt.Errorf("decode review diffSummary: %w", err)
+		}
 	}
 
 	return &report, nil
