@@ -84,13 +84,20 @@ func (v *RepositoryCompletionVerifier) VerifyCompletedRun(ctx context.Context, r
 	// A reserved human approval or reviewer gate cannot substitute for executing
 	// an actual independent test/check command.
 	hasExecutable := false
+	hasIndependentReview := false
 	for _, name := range item.RequiredGates {
+		if name == repoprotocol.GateIndependentReview {
+			hasIndependentReview = true
+		}
 		if name != repoprotocol.GateIndependentReview && name != repoprotocol.GateHumanApproval && strings.TrimSpace(name) != "" {
 			hasExecutable = true
 		}
 	}
 	if !hasExecutable {
 		return CompletionVerification{}, errors.New("work item requires at least one executable verification gate")
+	}
+	if !hasIndependentReview {
+		return CompletionVerification{}, errors.New("work item must require independent review before landing")
 	}
 	session := sessionID.String
 	head, err := v.gitOutput(ctx, session, "rev-parse", "--verify", "HEAD")
