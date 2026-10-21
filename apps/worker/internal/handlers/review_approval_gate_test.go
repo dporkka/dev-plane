@@ -66,13 +66,13 @@ func approvalCount(t *testing.T, db *sql.DB) int {
 
 func TestReviewCompletedAuthorizesFromPersistedReviewNotEvent(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		persisted    bool
-		approvable   bool
-		runStatus    string
-		taskStatus   string
-		eventTask    string
-		expectCount  int
+		name        string
+		persisted   bool
+		approvable  bool
+		runStatus   string
+		taskStatus  string
+		eventTask   string
+		expectCount int
 	}{
 		{name: "persisted approvable review", persisted: true, approvable: true, runStatus: "completed", taskStatus: "reviewing", eventTask: "task-1", expectCount: 1},
 		{name: "legacy API event omits task id", persisted: true, approvable: true, runStatus: "completed", taskStatus: "reviewing", eventTask: "", expectCount: 1},
