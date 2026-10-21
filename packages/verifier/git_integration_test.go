@@ -86,10 +86,10 @@ func disposableGitVerifierWorkspace(t *testing.T, gate string) (*realGitRuntime,
 
 func TestVerifierUsesRealGitToRejectUncommittedWorkspaceChanges(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		gate         string
-		modify       func(*testing.T, string)
-		wantError    string
+		name      string
+		gate      string
+		modify    func(*testing.T, string)
+		wantError string
 	}{
 		{name: "clean checkout", gate: "git rev-parse HEAD"},
 		{
