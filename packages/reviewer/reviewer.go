@@ -6,8 +6,8 @@ package reviewer
 
 import (
 	"context"
-	"encoding/hex"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
