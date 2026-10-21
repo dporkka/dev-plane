@@ -106,9 +106,9 @@ func TestRunCompletionRejectsNonApprovableReview(t *testing.T) {
 	head := strings.Repeat("b", 40)
 	verified := &recordingCompletionVerifier{receipt: CompletionVerification{BaseSHA: base, HeadSHA: head}}
 	review := &fakeReviewer{report: &reviewer.ReviewReport{
-		RunID: "run-1",
-		RiskLevel: "high",
-		Approvable: false,
+		RunID:       "run-1",
+		RiskLevel:   "high",
+		Approvable:  false,
 		DiffSummary: reviewer.DiffSummary{BaseSHA: base, HeadSHA: head},
 	}}
 	handler := NewRunHandler(db, slog.Default(), nil).WithCompletionVerifier(verified).WithReviewer(review)
