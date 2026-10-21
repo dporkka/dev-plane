@@ -846,7 +846,11 @@ func (r *Reviewer) Get(ctx context.Context, runID string) (*ReviewReport, error)
 		}
 	}
 	if diffSummaryJSON.Valid {
-		if err := json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary); err != nil {
+		// Older stored reports can contain [] instead of an object. Preserve
+		// that empty legacy representation without accepting arbitrary corrupt data.
+		if strings.TrimSpace(diffSummaryJSON.String) == "[]" {
+			report.DiffSummary = DiffSummary{Files: []FileChange{}}
+		} else if err := json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary); err != nil {
 			return nil, fmt.Errorf("decode review diffSummary: %w", err)
 		}
 	}
