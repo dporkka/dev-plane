@@ -18,7 +18,7 @@ import (
 )
 
 type fakeRuntimeProvider struct {
-	req runtimes.CreateRequest
+	req        runtimes.CreateRequest
 	baseOutput string
 }
 
