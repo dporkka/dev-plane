@@ -20,7 +20,7 @@ import (
 // workspace, not agent-provided revision IDs, to verify the completed candidate.
 // WorkItem provisioning is a prerequisite: missing work or base evidence fails.
 type RepositoryCompletionVerifier struct {
-	store *storedb.DB
+	store   *storedb.DB
 	runtime runtimes.Provider
 }
 
