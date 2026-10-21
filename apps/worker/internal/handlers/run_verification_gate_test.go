@@ -95,3 +95,32 @@ func TestRunCompletionDoesNotVerifyIntermediateMailboxHandoff(t *testing.T) {
 		t.Fatalf("verified intermediate run %d times", verify.calls)
 	}
 }
+
+// A passing repository verifier does not authorize publishing a review that
+// the independent reviewer explicitly marked non-approvable.
+func TestRunCompletionRejectsNonApprovableReview(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
+	base := strings.Repeat("a", 40)
+	head := strings.Repeat("b", 40)
+	verified := &recordingCompletionVerifier{receipt: CompletionVerification{BaseSHA: base, HeadSHA: head}}
+	review := &fakeReviewer{report: &reviewer.ReviewReport{
+		RunID: "run-1",
+		RiskLevel: "high",
+		Approvable: false,
+		DiffSummary: reviewer.DiffSummary{BaseSHA: base, HeadSHA: head},
+	}}
+	handler := NewRunHandler(db, slog.Default(), nil).WithCompletionVerifier(verified).WithReviewer(review)
+	err := handler.HandleRunCompleted(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
+	if err == nil {
+		t.Fatal("non-approvable review advanced despite exact-HEAD verification")
+	}
+	var status string
+	if err := db.QueryRow("SELECT status FROM tasks WHERE id='task-1'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == "reviewing" {
+		t.Fatal("non-approvable review advanced the task")
+	}
+}
