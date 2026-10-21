@@ -11,7 +11,7 @@ This worker integration is intentionally staged behind `DEVPLANE_EXACT_HEAD_VERI
 ## Required preconditions
 
 - Immutable workspace `settings.base_sha` from the pre-agent provisioning flow (#185).
-- A task-keyed, trusted `work_items` row in the `023` schema, with nonempty executable `RequiredGates`, based on approved task specifications and repository policy (#186 still requires production onboarding).
+- A task-keyed, trusted `work_items` row in the `023` schema, with executable and `independent_review` gates in `RequiredGates`, based on approved task specifications and repository policy (#186 still requires production onboarding).
 - A trusted root `devplane.yaml` defining executable verification profiles (#139) and a suitable isolated runtime with a stable session.
 - Verification hardening and real runtime smoke on #188; explicit review-to-approval checks on #189.
 
@@ -26,7 +26,7 @@ Do not switch production tenants until the complete onboarding flow is qualified
 4. Resolve the workspace candidate with `git rev-parse HEAD`; require it to descend from the base and have tracked changes.
 5. Check for dirty tracked/untracked files; execute repository verification profiles through the runtime provider.
 6. Validate the saved evidence bundle against candidate HEAD. Check the workspace remains clean and HEAD unchanged.
-7. Run code review. Require `ReviewReport.DiffSummary.BaseSHA/HeadSHA` and run ID to match the verifier receipt before moving the task to `reviewing` or publishing `review.completed`.
+7. Run code review. Require an approvable report, and require `ReviewReport.DiffSummary.BaseSHA/HeadSHA` and run ID to match the verifier receipt before moving the task to `reviewing` or publishing `review.completed`.
 
 ## Limitations
 
