@@ -115,8 +115,8 @@ func TestVerifierUsesRealGitToRejectUncommittedWorkspaceChanges(t *testing.T) {
 			wantError: "uncommitted changes",
 		},
 		{
-			name: "passing gate writes an untracked artifact",
-			gate: "printf generated > generated.txt",
+			name:      "passing gate writes an untracked artifact",
+			gate:      "printf generated > generated.txt",
 			wantError: "uncommitted changes",
 		},
 	} {
