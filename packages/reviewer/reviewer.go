@@ -6,6 +6,7 @@ package reviewer
 
 import (
 	"context"
+	"encoding/hex"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -60,6 +61,8 @@ type Finding struct {
 
 // DiffSummary contains statistics about the changes.
 type DiffSummary struct {
+	BaseSHA      string       `json:"base_sha"`
+	HeadSHA      string       `json:"head_sha"`
 	FilesChanged int          `json:"files_changed"`
 	Insertions   int          `json:"insertions"`
 	Deletions    int          `json:"deletions"`
@@ -130,22 +133,19 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 		return nil, fmt.Errorf("agent run %s has no workspace", runID)
 	}
 
-	// 2. Get workspace path and git diff
-	worktreePath, err := r.getWorkspacePath(ctx, *run.WorkspaceID)
+	// 2. Only review a clean, immutable base-to-head candidate. Missing
+	// provenance is a blocking error, never an apparently empty review.
+	worktreePath, baseSHA, err := r.getWorkspaceReviewSource(ctx, *run.WorkspaceID)
 	if err != nil {
-		r.logger.Warn("failed to get workspace path, proceeding without diff or security scan", "error", err)
-		worktreePath = ""
+		return nil, fmt.Errorf("load review provenance: %w", err)
 	}
-
-	diff := ""
-	if worktreePath != "" {
-		diff, err = r.getGitDiff(ctx, worktreePath)
-	} else {
-		err = nil
-	}
+	headSHA, err := r.readGitHead(ctx, worktreePath)
 	if err != nil {
-		r.logger.Warn("failed to get git diff, proceeding with empty diff", "error", err)
-		diff = ""
+		return nil, fmt.Errorf("resolve review head: %w", err)
+	}
+	diff, err := r.getGitDiff(ctx, worktreePath, baseSHA, headSHA)
+	if err != nil {
+		return nil, fmt.Errorf("read immutable review diff: %w", err)
 	}
 
 	// 3. Get agent run steps
@@ -157,7 +157,13 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 
 	report := r.generateReview(diff, nil, steps)
 	report.RunID = runID
+	report.DiffSummary.BaseSHA = baseSHA
+	report.DiffSummary.HeadSHA = headSHA
 	r.applySecurityScan(ctx, report, worktreePath)
+	// An agent or scanner must not mutate the reviewed candidate before persistence.
+	if err := r.assertGitCandidate(ctx, worktreePath, headSHA); err != nil {
+		return nil, fmt.Errorf("review candidate changed during security scan: %w", err)
+	}
 
 	// 5. Save review report
 	if err := r.Save(ctx, report); err != nil {
@@ -174,29 +180,97 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 	return report, nil
 }
 
-func (r *Reviewer) getWorkspacePath(ctx context.Context, workspaceID string) (string, error) {
-	var worktreePath string
+func (r *Reviewer) getWorkspaceReviewSource(ctx context.Context, workspaceID string) (string, string, error) {
+	var worktreePath, baseSHA sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-		SELECT worktree_path FROM workspaces WHERE id = $1
-	`, workspaceID).Scan(&worktreePath)
+		SELECT worktree_path, COALESCE(settings->>'base_sha', '')
+		FROM workspaces WHERE id = $1
+	`, workspaceID).Scan(&worktreePath, &baseSHA)
 	if err != nil {
-		return "", fmt.Errorf("get workspace path: %w", err)
+		return "", "", fmt.Errorf("get workspace review source: %w", err)
 	}
-	if worktreePath == "" {
-		return "", fmt.Errorf("workspace %s has no worktree path", workspaceID)
+	if !worktreePath.Valid || strings.TrimSpace(worktreePath.String) == "" {
+		return "", "", fmt.Errorf("workspace %s has no local worktree path", workspaceID)
 	}
-
-	return worktreePath, nil
+	if !validReviewSHA(baseSHA.String) {
+		return "", "", fmt.Errorf("workspace %s lacks immutable base_sha", workspaceID)
+	}
+	return worktreePath.String, baseSHA.String, nil
 }
 
-// getGitDiff retrieves the git diff from a workspace path.
-func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", worktreePath, "diff", "--no-ext-diff", "--binary", "HEAD", "--")
+func validReviewSHA(sha string) bool {
+	if len(sha) != 40 && len(sha) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(sha)
+	return err == nil
+}
+
+func gitInReview(ctx context.Context, worktreePath string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", worktreePath}, args...)...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("git diff workspace path %s: %w: %s", worktreePath, err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return string(out), nil
+}
+
+func (r *Reviewer) readGitHead(ctx context.Context, worktreePath string) (string, error) {
+	out, err := gitInReview(ctx, worktreePath, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	head := strings.TrimSpace(out)
+	if !validReviewSHA(head) {
+		return "", errors.New("git returned invalid HEAD revision")
+	}
+	return head, nil
+}
+
+func (r *Reviewer) assertGitCandidate(ctx context.Context, worktreePath, headSHA string) error {
+	current, err := r.readGitHead(ctx, worktreePath)
+	if err != nil {
+		return err
+	}
+	if current != headSHA {
+		return fmt.Errorf("review head changed: expected %s, got %s", headSHA, current)
+	}
+	status, err := gitInReview(ctx, worktreePath, "status", "--porcelain", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(status) != "" {
+		return errors.New("review workspace contains uncommitted or untracked changes")
+	}
+	return nil
+}
+
+// getGitDiff reviews exactly the committed base-to-head range, never a
+// working-tree-only diff which becomes empty after an agent commits.
+func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath, baseSHA, headSHA string) (string, error) {
+	if !validReviewSHA(baseSHA) || !validReviewSHA(headSHA) {
+		return "", errors.New("review requires full immutable base and head SHAs")
+	}
+	if baseSHA == headSHA {
+		return "", errors.New("review candidate has no committed changes")
+	}
+	if err := r.assertGitCandidate(ctx, worktreePath, headSHA); err != nil {
+		return "", err
+	}
+	if _, err := gitInReview(ctx, worktreePath, "merge-base", "--is-ancestor", baseSHA, headSHA); err != nil {
+		return "", fmt.Errorf("review base is not an ancestor of head: %w", err)
+	}
+	diff, err := gitInReview(ctx, worktreePath, "diff", "--no-ext-diff", "--binary", baseSHA, headSHA, "--")
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(diff) == "" {
+		return "", errors.New("review candidate has empty committed diff")
+	}
+	if err := r.assertGitCandidate(ctx, worktreePath, headSHA); err != nil {
+		return "", err
+	}
+	return diff, nil
 }
 
 // getAgentSteps retrieves the steps for an agent run.
