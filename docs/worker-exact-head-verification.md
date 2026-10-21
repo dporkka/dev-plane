@@ -23,7 +23,7 @@ Do not switch production tenants until the complete onboarding flow is qualified
 1. Ensure the final agent run has no outstanding mailbox handoff.
 2. Load run, task, workspace, runtime session and immutable base from the database.
 3. Load the task's canonical WorkItem. Reject mismatched bases, unsupported state and no executable gate.
-4. Resolve the workspace candidate with `git rev-parse HEAD`; require it to descend from the base and have tracked changes.
+4. Resolve the workspace candidate with `git rev-parse HEAD`; require it to descend from the base and have tracked changes. Reject candidates that modify `devplane.yaml` so an agent cannot weaken its own verification policy.
 5. Check for dirty tracked/untracked files; execute repository verification profiles through the runtime provider.
 6. Validate the saved evidence bundle against candidate HEAD. Check the workspace remains clean and HEAD unchanged.
 7. Run code review. Require an approvable report, and require `ReviewReport.DiffSummary.BaseSHA/HeadSHA` and run ID to match the verifier receipt before moving the task to `reviewing` or publishing `review.completed`.
