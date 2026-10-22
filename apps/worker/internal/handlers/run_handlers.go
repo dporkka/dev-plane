@@ -214,7 +214,7 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if err != nil {
 		return false, "", "", fmt.Errorf("begin follow-on run transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	handoff, err := h.nextUnconsumedHandoff(ctx, tx, run)
 	if err != nil {
@@ -378,62 +378,115 @@ func validAgentRole(role string) bool {
 	}
 }
 
-// HandleReviewCompleted processes review.completed events.
-// 1. Request human approval for PR creation
+// persistedReviewAuthority is derived exclusively from database-owned rows, never
+// from event claims such as task_id, risk_level, or approvable.
+type persistedReviewAuthority struct {
+	TaskID     string
+	RunStatus  string
+	TaskStatus string
+	RiskLevel  string
+	Approvable bool
+}
+
+func (h *RunHandler) loadReviewAuthority(ctx context.Context, runID string) (persistedReviewAuthority, error) {
+	var authority persistedReviewAuthority
+	if strings.TrimSpace(runID) == "" {
+		return authority, errors.New("review completed event requires run_id")
+	}
+	err := h.db.QueryRowContext(ctx, `
+		SELECT ar.task_id, ar.status, t.status, rr.risk_level, rr.approvable
+		FROM agent_runs ar
+		JOIN tasks t ON t.id = ar.task_id AND t.deleted_at IS NULL
+		JOIN review_reports rr ON rr.run_id = ar.id
+		WHERE ar.id = $1
+	`, runID).Scan(
+		&authority.TaskID,
+		&authority.RunStatus,
+		&authority.TaskStatus,
+		&authority.RiskLevel,
+		&authority.Approvable,
+	)
+	if err != nil {
+		return persistedReviewAuthority{}, fmt.Errorf("load persisted review authority for run %s: %w", runID, err)
+	}
+	return authority, nil
+}
+
+// HandleReviewCompleted processes review.completed notifications. An event is a
+// trigger, not authority: only an approvable persisted review for a completed
+// run and reviewing task may request human approval for PR creation.
 func (h *RunHandler) HandleReviewCompleted(msg *nats.Msg) error {
 	var payload struct {
-		RunID     string `json:"run_id"`
-		TaskID    string `json:"task_id"`
-		Status    string `json:"status"`
-		RiskLevel string `json:"risk_level"`
+		RunID  string `json:"run_id"`
+		TaskID string `json:"task_id"`
 	}
 	if err := json.Unmarshal(msg.Data, &payload); err != nil {
 		return fmt.Errorf("unmarshal review completed event: %w", err)
 	}
 
-	h.logger.Info("handling review completed", "run_id", payload.RunID, "task_id", payload.TaskID)
-
-	// Check if there's already a pending approval for this task
-	var pendingCount int
-	err := h.db.QueryRow(`
-		SELECT COUNT(*) FROM approvals
-		WHERE task_id = $1 AND response IS NULL
-		AND (expires_at IS NULL OR expires_at > $2)
-	`, payload.TaskID, time.Now().UTC()).Scan(&pendingCount)
+	ctx := context.Background()
+	authority, err := h.loadReviewAuthority(ctx, payload.RunID)
 	if err != nil {
-		h.logger.Warn("failed to check pending approvals", "error", err)
+		return err
 	}
-	if pendingCount > 0 {
-		h.logger.Info("approval request already pending for task", "task_id", payload.TaskID)
+	if payload.TaskID != "" && payload.TaskID != authority.TaskID {
+		return fmt.Errorf("review completed event task %s does not match run %s task %s", payload.TaskID, payload.RunID, authority.TaskID)
+	}
+	if authority.RunStatus != "completed" {
+		return fmt.Errorf("review completed run %s has status %s, require completed", payload.RunID, authority.RunStatus)
+	}
+	if authority.TaskStatus != "reviewing" {
+		return fmt.Errorf("review completed task %s has status %s, require reviewing", authority.TaskID, authority.TaskStatus)
+	}
+	if !authority.Approvable {
+		h.logger.Warn("persisted review is not approvable; no PR approval requested",
+			"run_id", payload.RunID, "task_id", authority.TaskID)
 		return ackMessage(msg)
 	}
 
-	// Create approval request for PR creation
+	h.logger.Info("handling trusted review completed",
+		"run_id", payload.RunID, "task_id", authority.TaskID)
+
+	// Check if there's already a pending approval for this task.
+	var pendingCount int
+	err = h.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM approvals
+		WHERE task_id = $1 AND response IS NULL
+		AND (expires_at IS NULL OR expires_at > $2)
+	`, authority.TaskID, time.Now().UTC()).Scan(&pendingCount)
+	if err != nil {
+		return fmt.Errorf("check pending PR approvals: %w", err)
+	}
+	if pendingCount > 0 {
+		h.logger.Info("approval request already pending for task", "task_id", authority.TaskID)
+		return ackMessage(msg)
+	}
+
+	// Persist the trusted run/task association, not the event's optional task_id.
 	approvalID := uuid.New().String()
 	now := time.Now().UTC()
 	metadata := map[string]interface{}{
 		"auto_created": true,
 		"reason":       "review_completed",
 		"run_id":       payload.RunID,
+		"risk_level":   authority.RiskLevel,
 	}
-	metadataJSON, _ := json.Marshal(metadata)
-
-	_, err = h.db.Exec(`
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return fmt.Errorf("encode PR approval metadata: %w", err)
+	}
+	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO approvals (
 			id, task_id, agent_run_id, approval_type, requested_by,
 			requested_at, metadata, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, 'system', $5, $6, $5, $5)
-	`, approvalID, payload.TaskID, payload.RunID, models.ApprovalTypePRCreate, now, metadataJSON)
+	`, approvalID, authority.TaskID, payload.RunID, models.ApprovalTypePRCreate, now, metadataJSON)
 	if err != nil {
 		return fmt.Errorf("create approval request: %w", err)
 	}
 
 	h.logger.Info("approval request created for PR creation",
-		"approval_id", approvalID,
-		"task_id", payload.TaskID,
-		"run_id", payload.RunID,
-	)
-
+		"approval_id", approvalID, "task_id", authority.TaskID, "run_id", payload.RunID)
 	return ackMessage(msg)
 }
 
