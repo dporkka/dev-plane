@@ -1,0 +1,31 @@
+version: 1
+
+verification:
+  fast:
+    command: make test-cli
+    timeout_seconds: 300
+  full:
+    command: make test
+    timeout_seconds: 1800
+
+work:
+  isolation: worktree
+  max_parallel_cost: 4
+  require_clean_handoff: true
+
+review:
+  independent: true
+  exact_head: true
+
+risk:
+  - paths:
+      - .github/workflows/**
+      - packages/db/migrations/**
+      - packages/policies/**
+      - packages/securityscan/**
+      - infra/**
+    level: high
+    requires:
+      - full
+      - independent_review
+      - human_approval
