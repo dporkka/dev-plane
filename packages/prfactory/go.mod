@@ -1,7 +1,7 @@
 // Package prfactory creates pull requests for completed agent tasks.
 //
 // The Factory loads task data, review reports, and workspace information to build
-// comprehensive PR descriptions and create GitHub pull requests.
+// comprehensive pull request descriptions and publish them through a configured forge.
 module github.com/ai-dev-control-plane/prfactory
 
 go 1.25.11
@@ -13,10 +13,7 @@ require (
 	github.com/google/uuid v1.6.0
 )
 
-require (
-	github.com/DATA-DOG/go-sqlmock v1.5.2
-	golang.org/x/oauth2 v0.36.0
-)
+require github.com/DATA-DOG/go-sqlmock v1.5.2
 
 require github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
 
