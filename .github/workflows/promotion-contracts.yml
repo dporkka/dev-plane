@@ -1,0 +1,70 @@
+name: Promotion Contracts
+
+on:
+  pull_request:
+    paths:
+      - "packages/promotion/**"
+      - "packages/repoprotocol/**"
+      - "packages/db/**"
+      - "go.work"
+      - ".github/workflows/promotion-contracts.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  promotion:
+    name: Exact-candidate contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Go formatting
+        run: |
+          gofmt -d packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go
+          test -z "$(gofmt -l packages/repoprotocol/verification_attempt*.go packages/promotion/*.go packages/db/verification_attempt*.go)"
+      - name: Test protocol and evaluator
+        if: always()
+        run: |
+          (cd packages/repoprotocol && go test ./...)
+          (cd packages/promotion && go test ./...)
+
+  verification-db:
+    name: Verification attempt schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: verify
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: verify
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U verify -d verify"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+      - name: Test SQLite migration, append-only insertion, and schema parity
+        run: |
+          cd packages/db
+          go test ./... -run 'TestVerificationAttempt|TestRunMigrationsSQLite|TestSchemaMigrationDrift' -count=1
+      - name: Test PostgreSQL 16 migrations
+        env:
+          POSTGRES_TEST_DATABASE_URL: postgres://verify:verify@localhost:5432/verify?sslmode=disable
+        run: |
+          cd packages/db
+          go test ./... -run '^TestRunMigrationsPostgres$' -count=1

@@ -654,3 +654,20 @@ CREATE INDEX IF NOT EXISTS idx_agent_items_turn_id ON agent_items(turn_id);
 CREATE INDEX IF NOT EXISTS idx_agent_items_type ON agent_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_agent_items_status ON agent_items(status);
 
+
+-- =====================================================
+-- Append-only verification attempts (separate from legacy evidence bundles)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS verification_attempts (
+    id                   TEXT PRIMARY KEY,
+    work_item_id         TEXT NOT NULL,
+    repository           TEXT NOT NULL,
+    source_head_sha      TEXT NOT NULL,
+    target_base_sha      TEXT NOT NULL,
+    candidate_commit_sha TEXT NOT NULL,
+    policy_digest        TEXT NOT NULL,
+    payload              JSONB NOT NULL,
+    completed_at         TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_verification_attempts_work_item ON verification_attempts(work_item_id);
+CREATE INDEX IF NOT EXISTS idx_verification_attempts_candidate ON verification_attempts(repository, candidate_commit_sha);
