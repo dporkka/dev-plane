@@ -68,7 +68,8 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
+	// Preserve the socket peer address. Untrusted X-Forwarded-For must not
+	// replace RemoteAddr; any proxy trust must be configured explicitly.
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))

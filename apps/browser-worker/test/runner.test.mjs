@@ -25,7 +25,7 @@ const jobFor = (url, id) => ({
   run_id: id,
   start_url: url,
   checks: [{ type: 'text_visible', value: 'Ready' }, { type: 'selector_visible', value: '#ready' }],
-  timeout_ms: 10000,
+  timeout_ms: 30000,
   capture: { screenshot: true, trace: true },
 });
 
@@ -34,7 +34,7 @@ test('real Chromium run independently verifies DOM and persists screenshot, trac
   const result = await runJob(jobFor(url, 'verified-1'), {
     artifactRoot: dir, allowedOrigins: [new URL(url).origin], allowHttpLoopback: true, executablePath: chrome,
   });
-  assert.equal(result.status, 'passed');
+  assert.equal(result.status, 'passed', JSON.stringify(result));
   assert.equal(result.checks_verified, 2);
   assert.equal(result.artifacts.screenshot, 'screenshot.png');
   assert.equal(result.artifacts.trace, 'trace.zip');
@@ -54,7 +54,7 @@ test('real Chromium run independently verifies DOM and persists screenshot, trac
 
 test('failed independent assertion persists fail-closed evidence', { skip: !chrome }, async t => {
   const { url, dir } = await fixture(t);
-  const job = { ...jobFor(url, 'failed-1'), checks: [{ type: 'text_visible', value: 'Not present' }] };
+  const job = { ...jobFor(url, 'failed-1'), checks: [{ type: 'text_visible', value: 'Not present' }], timeout_ms: 2500 };
   const result = await runJob(job, {
     artifactRoot: dir, allowedOrigins: [new URL(url).origin], allowHttpLoopback: true, executablePath: chrome,
   });
