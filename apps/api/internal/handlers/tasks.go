@@ -244,11 +244,26 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var sourceID *string
+	if key := r.Header.Get("Idempotency-Key"); key != "" {
+		sourceID = &key
+		existing, lookupErr := h.getTaskBySourceID(ctx, projectID, "web", key)
+		if lookupErr == nil {
+			respond.JSON(w, http.StatusOK, existing)
+			return
+		}
+		if !errors.Is(lookupErr, sql.ErrNoRows) {
+			respond.Error(w, http.StatusInternalServerError, lookupErr)
+			return
+		}
+	}
+
 	task, err := h.insertTask(ctx, createTaskOptions{
 		ProjectID:    projectID,
 		RepositoryID: req.RepositoryID,
 		CreatedBy:    user.UserID,
 		Source:       "web",
+		SourceID:     sourceID,
 		Title:        req.Title,
 		Description:  req.Description,
 		Priority:     req.Priority,
@@ -258,6 +273,15 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Spec:         req.Spec,
 	})
 	if err != nil {
+		// A concurrent request with the same key may have won after the
+		// pre-insert lookup. Resolve that race by returning the canonical row.
+		if sourceID != nil {
+			existing, lookupErr := h.getTaskBySourceID(ctx, projectID, "web", *sourceID)
+			if lookupErr == nil {
+				respond.JSON(w, http.StatusOK, existing)
+				return
+			}
+		}
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -510,6 +534,24 @@ type taskScanner interface {
 }
 
 // scanTask scans a task row into a Task struct.
+func (h *Handler) getTaskBySourceID(
+	ctx context.Context,
+	projectID string,
+	source string,
+	sourceID string,
+) (Task, error) {
+	var task Task
+	err := scanTask(h.db.QueryRowContext(ctx, `
+		SELECT id, project_id, repository_id, workspace_id, created_by, source, source_id,
+		       title, description, status, priority, risk_level, target_branch,
+		       spec, acceptance_criteria, max_cost, max_runtime_minutes,
+		       approval_requirements, metadata, started_at, completed_at, created_at, updated_at
+		FROM tasks
+		WHERE project_id = $1 AND source = $2 AND source_id = $3 AND deleted_at IS NULL
+	`, projectID, source, sourceID), &task)
+	return task, err
+}
+
 func scanTask(scanner taskScanner, t *Task) error {
 	var workspaceID, sourceID, description, spec, acceptanceCriteria, approvalRequirements, metadata sql.NullString
 	var maxCost sql.NullFloat64
