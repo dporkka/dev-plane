@@ -1,3 +1,15 @@
+# Dev Plane code-intelligence policy:
+# - codebase-memory-mcp is the primary structural/impact-analysis backend.
+# - GitNexus remains configured but disabled during the migration bake-off.
+# - Use rg/Zoekt for exact text, ast-grep for structural rewrites, and LSP/SCIP
+#   for definition/reference/type truth before escalating to graph analysis.
+
+[mcp_servers.codebase-memory-mcp]
+command = "codebase-memory-mcp"
+args = []
+enabled = true
+
 [mcp_servers.gitnexus]
 command = "npx"
 args = ["-y", "gitnexus@1.6.12", "mcp"]
+enabled = false
