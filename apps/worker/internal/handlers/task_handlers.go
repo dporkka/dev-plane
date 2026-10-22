@@ -8,6 +8,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -160,17 +161,22 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		}
 	}()
 
+	workspaceSettings, err := json.Marshal(map[string]string{"base_sha": workspace.BaseSHA})
+	if err != nil {
+		h.cleanupProvisionedWorkspace(context.Background(), workspace)
+		return fmt.Errorf("encode immutable workspace base: %w", err)
+	}
 	_, err = tx.Exec(`
 		INSERT INTO workspaces (
 			id, repository_id, task_id, name, branch, base_branch,
-			worktree_path, runtime_provider, runtime_session_id, status,
+			worktree_path, runtime_provider, runtime_session_id, status, settings,
 			created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
 	`, workspaceID, task.RepositoryID, task.ID,
 		workspace.Name,
 		workspace.BranchName, workspace.BaseBranch,
 		workspace.WorktreePath, workspace.RuntimeProvider, workspace.RuntimeSessionID, workspace.Status,
-		now,
+		string(workspaceSettings), now,
 	)
 	if err != nil {
 		h.cleanupProvisionedWorkspace(context.Background(), workspace)
@@ -241,6 +247,7 @@ type approvedTask struct {
 }
 
 type provisionedWorkspace struct {
+	BaseSHA          string
 	Name             string
 	BranchName       string
 	BaseBranch       string
@@ -335,6 +342,28 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 	if session.WorktreePath != "" {
 		workspace.WorktreePath = &session.WorktreePath
 	}
+	// Capture the base before the first coding agent is dispatched. Branch
+	// names are mutable and cannot be used later as review provenance.
+	if session.ID == "" {
+		return provisionedWorkspace{}, errors.New("provisioned runtime did not return a session id")
+	}
+	baseResult, baseErr := h.runtimeProvider.ExecuteCommand(provisionCtx, session.ID, runtimes.Command{
+		Args:    []string{"git", "rev-parse", "--verify", "HEAD"},
+		Timeout: 30 * time.Second,
+	})
+	if baseErr != nil || baseResult == nil || baseResult.ExitCode != 0 {
+		_ = h.runtimeProvider.DestroyWorkspace(context.Background(), session.ID)
+		return provisionedWorkspace{}, fmt.Errorf("capture immutable workspace base: %v (result: %v)", baseErr, baseResult)
+	}
+	workspace.BaseSHA = strings.TrimSpace(baseResult.Stdout)
+	if len(workspace.BaseSHA) != 40 && len(workspace.BaseSHA) != 64 {
+		_ = h.runtimeProvider.DestroyWorkspace(context.Background(), session.ID)
+		return provisionedWorkspace{}, errors.New("runtime returned invalid base revision length")
+	}
+	if _, err := hex.DecodeString(workspace.BaseSHA); err != nil {
+		_ = h.runtimeProvider.DestroyWorkspace(context.Background(), session.ID)
+		return provisionedWorkspace{}, fmt.Errorf("runtime returned invalid base revision: %w", err)
+	}
 	return workspace, nil
 }
 
@@ -373,7 +402,7 @@ func (h *TaskHandler) publishExistingQueuedRun(ctx context.Context, taskID strin
 	if err != nil {
 		return false, fmt.Errorf("load existing queued runs: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
 		var runID, metadata string

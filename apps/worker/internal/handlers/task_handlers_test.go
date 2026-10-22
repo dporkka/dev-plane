@@ -18,7 +18,8 @@ import (
 )
 
 type fakeRuntimeProvider struct {
-	req runtimes.CreateRequest
+	req        runtimes.CreateRequest
+	baseOutput string
 }
 
 func (p *fakeRuntimeProvider) CreateWorkspace(ctx context.Context, req runtimes.CreateRequest) (*runtimes.Session, error) {
@@ -37,7 +38,11 @@ func (p *fakeRuntimeProvider) DestroyWorkspace(ctx context.Context, sessionID st
 	return nil
 }
 func (p *fakeRuntimeProvider) ExecuteCommand(ctx context.Context, sessionID string, cmd runtimes.Command) (*runtimes.CommandResult, error) {
-	return nil, nil
+	output := p.baseOutput
+	if output == "" {
+		output = strings.Repeat("a", 40)
+	}
+	return &runtimes.CommandResult{Stdout: output + "\n", ExitCode: 0}, nil
 }
 func (p *fakeRuntimeProvider) ReadFile(ctx context.Context, sessionID, path string) ([]byte, error) {
 	return nil, nil
@@ -82,6 +87,9 @@ func TestProvisionWorkspaceUsesRuntimeProvider(t *testing.T) {
 
 	if workspace.Status != "ready" {
 		t.Fatalf("Status = %q, want ready", workspace.Status)
+	}
+	if workspace.BaseSHA != strings.Repeat("a", 40) {
+		t.Fatalf("BaseSHA = %q, want an immutable revision", workspace.BaseSHA)
 	}
 	if workspace.RuntimeSessionID == nil || *workspace.RuntimeSessionID != "runtime-session-1" {
 		t.Fatalf("RuntimeSessionID = %v, want runtime-session-1", workspace.RuntimeSessionID)
@@ -152,6 +160,17 @@ func TestHandleTaskApprovedCreatesWorkspaceRunAndPublishesRunTriggered(t *testin
 		t.Fatalf("task status/workspace = %q/%q, want running/non-empty", taskStatus, workspaceID)
 	}
 
+	var settingsJSON string
+	if err := db.QueryRow(`SELECT settings FROM workspaces WHERE id = $1`, workspaceID).Scan(&settingsJSON); err != nil {
+		t.Fatalf("query workspace settings: %v", err)
+	}
+	var persistedSettings map[string]string
+	if err := json.Unmarshal([]byte(settingsJSON), &persistedSettings); err != nil {
+		t.Fatalf("decode workspace settings: %v", err)
+	}
+	if persistedSettings["base_sha"] != strings.Repeat("a", 40) {
+		t.Fatalf("workspace base_sha = %q", persistedSettings["base_sha"])
+	}
 	var runID, runStatus, runMetadata string
 	if err := db.QueryRow(`SELECT id, status, metadata FROM agent_runs WHERE task_id = 'task-1'`).Scan(&runID, &runStatus, &runMetadata); err != nil {
 		t.Fatalf("query run: %v", err)
@@ -364,6 +383,7 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 			runtime_provider TEXT NOT NULL,
 			runtime_session_id TEXT,
 			status TEXT NOT NULL,
+			settings TEXT DEFAULT '{}',
 			created_at DATETIME,
 			updated_at DATETIME
 		);
@@ -398,5 +418,16 @@ func insertApprovedTaskFixture(t *testing.T, db *sql.DB) {
 	`)
 	if err != nil {
 		t.Fatalf("insert approved task fixture: %v", err)
+	}
+}
+
+func TestProvisionWorkspaceRejectsUnverifiableBaseBeforeDispatch(t *testing.T) {
+	provider := &fakeRuntimeProvider{baseOutput: "not-a-commit"}
+	handler := NewTaskHandler(nil, slog.Default()).WithRuntimeProvider(provider, "local")
+	_, err := handler.provisionWorkspace(context.Background(), approvedTask{
+		ID: "task-123456789", RepositoryID: "repo-1", DefaultBranch: "main",
+	}, time.Unix(1234, 0).UTC())
+	if err == nil || !strings.Contains(err.Error(), "invalid base revision") {
+		t.Fatalf("expected invalid base revision rejection, got %v", err)
 	}
 }
