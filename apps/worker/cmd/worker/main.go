@@ -54,6 +54,7 @@ func main() {
 		logLevel             = flag.String("log-level", os.Getenv("LOG_LEVEL"), "Log level (debug, info, warn, error)")
 		runtimeName          = flag.String("workspace-runtime", os.Getenv("WORKSPACE_RUNTIME"), "Workspace runtime: local, docker, or remote")
 		runtimeBaseDir       = flag.String("workspace-base-dir", os.Getenv("WORKSPACE_BASE_DIR"), "Workspace runtime base directory")
+		projectBrainEnabled  = flag.Bool("project-brain", envBoolOrDefault("PROJECT_BRAIN_ENABLED", false), "Enable revision-bound Project Brain context using first-party repo intelligence")
 		schedulerMaxParallel = flag.Int("scheduler-max-parallel", envIntOrDefault("SCHEDULER_MAX_PARALLEL", 2), "Maximum concurrently admitted scheduler-enabled runs per worker")
 		schedulerCPU         = flag.Float64("scheduler-cpu", envFloatOrDefault("SCHEDULER_CPU", 4), "Scheduler CPU capacity units")
 		schedulerMemoryMB    = flag.Int("scheduler-memory-mb", envIntOrDefault("SCHEDULER_MEMORY_MB", 8192), "Scheduler memory capacity in MiB")
@@ -88,6 +89,7 @@ func main() {
 		"nats_url", *natsURL,
 		"db_driver", detectDriver(*dbURL),
 		"workspace_runtime", *runtimeName,
+		"project_brain", *projectBrainEnabled,
 	)
 
 	// Set up graceful shutdown context.
@@ -144,6 +146,10 @@ func main() {
 	// Create handlers
 	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
 	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
+	if *projectBrainEnabled {
+		runExecutor.EnableProjectBrain()
+		logger.Info("project brain enabled", "sources", []string{"repo-intel"})
+	}
 	reviewService := reviewer.NewReviewer(database.DB, logger)
 	runAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
 		MaxParallel: *schedulerMaxParallel,
@@ -392,6 +398,18 @@ func envOrDefault(key, defaultValue string) string {
 		return v
 	}
 	return defaultValue
+}
+
+func envBoolOrDefault(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		return defaultValue
+	}
+	return parsed
 }
 
 func envIntOrDefault(key string, defaultValue int) int {
