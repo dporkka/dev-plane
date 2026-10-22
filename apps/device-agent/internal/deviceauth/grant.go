@@ -38,6 +38,7 @@ var readOnlyToolNames = map[string]bool{
 	"workspaces_list": true,
 	"files_list":      true,
 	"files_read":      true,
+	"files_search":    true,
 	"jobs_start":      true,
 	"jobs_status":     true,
 	"jobs_cancel":     true,

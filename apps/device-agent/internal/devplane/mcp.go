@@ -15,6 +15,7 @@ const ProtocolVersion = "2025-03-26"
 type Server struct {
 	workspace *Workspace
 	runner    *JobRunner
+	search    *SearchManager
 }
 
 func NewServer(root string) (*Server, error) {
@@ -22,7 +23,9 @@ func NewServer(root string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{workspace: ws, runner: NewJobRunner(2)}, nil
+	search, err := NewSearchManager(ws)
+	if err != nil { ws.Close(); return nil, err }
+	return &Server{workspace: ws, runner: NewJobRunner(2), search: search}, nil
 }
 func (s *Server) Close() error { s.runner.Shutdown(); return s.workspace.Close() }
 
@@ -49,7 +52,7 @@ func response(id json.RawMessage, result any, failure *rpcFailure) []byte {
 	return data
 }
 
-func (s *Server) Handle(_ context.Context, line []byte) ([]byte, bool) {
+func (s *Server) Handle(ctx context.Context, line []byte) ([]byte, bool) {
 	var req rpcRequest
 	if err := json.Unmarshal(line, &req); err != nil {
 		return response(json.RawMessage("null"), nil, &rpcFailure{-32700, "parse error"}), true
@@ -83,7 +86,7 @@ func (s *Server) Handle(_ context.Context, line []byte) ([]byte, bool) {
 		if err := json.Unmarshal(req.Params, &p); err != nil || p.Name == "" {
 			return response(req.ID, nil, &rpcFailure{-32602, "invalid tool arguments"}), true
 		}
-		result, err := s.callTool(p.Name, p.Arguments)
+		result, err := s.callTool(ctx, p.Name, p.Arguments)
 		if err != nil {
 			return response(req.ID, map[string]any{"content": []any{map[string]any{"type": "text", "text": err.Error()}}, "isError": true}, nil), true
 		}
@@ -115,13 +118,14 @@ func toolCatalog() []any {
 		tool("workspaces_list", "Show the single explicitly authorized workspace", paramSchema(map[string]any{})),
 		tool("files_list", "List one directory without following symlinks, limited to authorized workspace", paramSchema(map[string]any{"path": strSchema("Workspace-relative directory; default .")})),
 		tool("files_read", "Read text from regular file in authorized workspace (max 65536 bytes)", paramSchema(map[string]any{"path": strSchema("Workspace-relative file path"), "offset": intSchema("Byte offset, >= 0"), "maxBytes": intSchema("Byte count, max 65536")}, "path")),
+		tool("files_search", "Bounded local literal search, no symlinks, with paginated results", paramSchema(map[string]any{"query": strSchema("Literal case-insensitive query, 1-200 bytes"), "directory": strSchema("Relative directory, default ."), "pageSize": intSchema("Page size 1-50; default 20"), "cursor": strSchema("Opaque cursor from previous result; omit query on continuation")})),
 		tool("jobs_start", "Start a bounded, read-only Git inspection job; no shell execution", paramSchema(map[string]any{"profile": map[string]any{"type": "string", "enum": []string{"git-status", "git-diff", "git-log"}}}, "profile")),
 		tool("jobs_status", "Read a job's status and bounded output", paramSchema(map[string]any{"id": strSchema("Job ID")}, "id")),
 		tool("jobs_cancel", "Cancel a running job", paramSchema(map[string]any{"id": strSchema("Job ID")}, "id")),
 	}
 }
 
-func (s *Server) callTool(name string, raw json.RawMessage) (any, error) {
+func (s *Server) callTool(ctx context.Context, name string, raw json.RawMessage) (any, error) {
 	if len(raw) == 0 {
 		raw = []byte("{}")
 	}
@@ -175,12 +179,26 @@ func (s *Server) callTool(name string, raw json.RawMessage) (any, error) {
 				return nil, errors.New("invalid maxBytes")
 			}
 		}
-		data, err := s.workspace.ReadFile(path, offset, maxBytes)
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"path": path, "offset": offset, "text": data, "bytes": len(data)}, nil
-	case "jobs_start":
+        if maxBytes == 0 { maxBytes = MaxReadBytes }
+        return s.workspace.ReadPage(path, offset, maxBytes)
+    case "files_search":
+        pageSize := 20
+        if v, ok := args["pageSize"]; ok {
+            if err := json.Unmarshal(v, &pageSize); err != nil { return nil, errors.New("invalid pageSize") }
+        }
+        cursor, err := readStr("cursor", false)
+        if err != nil { return nil, err }
+        if cursor != "" {
+            if _, ok := args["query"]; ok { return nil, errors.New("query cannot be supplied with cursor") }
+            if _, ok := args["directory"]; ok { return nil, errors.New("directory cannot be supplied with cursor") }
+            return s.search.Continue(cursor, pageSize)
+        }
+        query, err := readStr("query", true)
+        if err != nil { return nil, err }
+        directory, err := readStr("directory", false)
+        if err != nil { return nil, err }
+        return s.search.Start(ctx, query, directory, pageSize)
+    case "jobs_start":
 		profile, err := readStr("profile", true)
 		if err != nil {
 			return nil, err

@@ -96,3 +96,13 @@ func TestMCPStdioMultiplexingAndNoNotificationReply(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPSearchAndPaginatedRead(t *testing.T) {
+    dir:=t.TempDir()
+    os.WriteFile(filepath.Join(dir,"a.txt"),[]byte("needle\nneedle\n"),0600)
+    s,err:=NewServer(dir);if err!=nil{t.Fatal(err)};defer s.Close()
+    raw,ok:=s.Handle(context.Background(),[]byte("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"files_search\",\"arguments\":{\"query\":\"needle\",\"pageSize\":1}}}"))
+    if !ok || !strings.Contains(string(raw),"nextCursor"){t.Fatalf("search failed %s",raw)}
+    raw,ok=s.Handle(context.Background(),[]byte("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"files_read\",\"arguments\":{\"path\":\"a.txt\",\"maxBytes\":4}}}"))
+    if !ok || !strings.Contains(string(raw),"nextOffset") || !strings.Contains(string(raw),"hasMore"){t.Fatalf("paginated file read failed %s",raw)}
+}
