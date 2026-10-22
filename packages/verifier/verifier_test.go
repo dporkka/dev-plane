@@ -13,11 +13,13 @@ import (
 )
 
 type fakeRuntime struct {
-	config        []byte
-	headResponses []string
-	commands      []runtimes.Command
-	results       map[string]*runtimes.CommandResult
-	errors        map[string]error
+	config          []byte
+	headResponses   []string
+	statusResponses []string
+	statusError     error
+	commands        []runtimes.Command
+	results         map[string]*runtimes.CommandResult
+	errors          map[string]error
 }
 
 func (f *fakeRuntime) ReadFile(_ context.Context, _ string, path string) ([]byte, error) {
@@ -36,6 +38,17 @@ func (f *fakeRuntime) ExecuteCommand(_ context.Context, _ string, cmd runtimes.C
 		head := f.headResponses[0]
 		f.headResponses = f.headResponses[1:]
 		return &runtimes.CommandResult{Stdout: head + "\n", ExitCode: 0}, nil
+	}
+	if reflect.DeepEqual(cmd.Args, []string{"git", "status", "--porcelain=v1", "--untracked-files=all"}) {
+		if f.statusError != nil {
+			return nil, f.statusError
+		}
+		if len(f.statusResponses) > 0 {
+			status := f.statusResponses[0]
+			f.statusResponses = f.statusResponses[1:]
+			return &runtimes.CommandResult{Stdout: status, ExitCode: 0}, nil
+		}
+		return &runtimes.CommandResult{ExitCode: 0}, nil
 	}
 	if err := f.errors[cmd.Command]; err != nil {
 		return nil, err
@@ -356,5 +369,78 @@ func TestVerifyDoesNotAdvanceWorkWhenExecutableGateFails(t *testing.T) {
 	}
 	if len(store.workItems) != 0 {
 		t.Fatalf("failed verification advanced work: %#v", store.workItems)
+	}
+}
+
+func TestVerifyRejectsUncommittedChangesBeforeVerification(t *testing.T) {
+	runtime := &fakeRuntime{
+		config:          verifierConfig(),
+		headResponses:   []string{"head456", "head456"},
+		statusResponses: []string{" M packages/verifier/verifier.go\n"},
+		results:         map[string]*runtimes.CommandResult{},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"changed"}
+
+	_, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID: "session-1", WorkItem: item, CandidateHead: "head456",
+	})
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("Verify() error = %v, want uncommitted changes", err)
+	}
+	if len(store.bundles) != 0 || len(store.workItems) != 0 {
+		t.Fatalf("dirty workspace produced evidence or state transition: %#v %#v", store.bundles, store.workItems)
+	}
+	for _, cmd := range runtime.commands {
+		if cmd.Command != "" {
+			t.Fatalf("profile ran on dirty workspace: %#v", cmd)
+		}
+	}
+}
+
+func TestVerifyRejectsChangesProducedBySuccessfulGate(t *testing.T) {
+	runtime := &fakeRuntime{
+		config:          verifierConfig(),
+		headResponses:   []string{"head456", "head456"},
+		statusResponses: []string{"", "?? untracked-source.go\n"},
+		results: map[string]*runtimes.CommandResult{
+			"make verify-changed": {ExitCode: 0},
+		},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"changed"}
+
+	_, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID: "session-1", WorkItem: item, CandidateHead: "head456",
+	})
+	if err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+		t.Fatalf("Verify() error = %v, want uncommitted changes", err)
+	}
+	if len(store.bundles) != 0 || len(store.workItems) != 0 {
+		t.Fatalf("dirty post-test workspace produced evidence or state transition: %#v %#v", store.bundles, store.workItems)
+	}
+}
+
+func TestVerifyFailsClosedWhenWorkspaceStatusUnavailable(t *testing.T) {
+	runtime := &fakeRuntime{
+		config:        verifierConfig(),
+		headResponses: []string{"head456", "head456"},
+		statusError:   errors.New("git status unavailable"),
+		results:       map[string]*runtimes.CommandResult{},
+	}
+	store := &fakeStore{}
+	item := verifyingWorkItem()
+	item.RequiredGates = []string{"changed"}
+
+	_, err := New(runtime, store).Verify(context.Background(), Request{
+		SessionID: "session-1", WorkItem: item, CandidateHead: "head456",
+	})
+	if err == nil || !strings.Contains(err.Error(), "workspace status") {
+		t.Fatalf("Verify() error = %v, want workspace status failure", err)
+	}
+	if len(store.bundles) != 0 || len(store.workItems) != 0 {
+		t.Fatalf("unreadable workspace produced evidence or state transition: %#v %#v", store.bundles, store.workItems)
 	}
 }
