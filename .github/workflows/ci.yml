@@ -121,6 +121,17 @@ jobs:
       - name: Run web tests
         run: cd apps/web && npm test
 
+      - name: Test browser verifier worker
+        run: |
+          cd apps/browser-worker
+          npm ci --ignore-scripts
+          CHROME=$(command -v google-chrome || command -v chromium || command -v chromium-browser || true)
+          if [ -n "$CHROME" ]; then
+            PLAYWRIGHT_CHROMIUM_EXECUTABLE="$CHROME" node --test test/*.test.mjs
+          else
+            node --test test/*.test.mjs
+          fi
+
   build:
     name: Build
     runs-on: ubuntu-latest
