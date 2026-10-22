@@ -79,6 +79,11 @@ linters:
       - linters:
           - gocritic
         text: "singleCaseSwitch|sloppyReassign|unnamedResult|unnecessaryBlock|whyNoLint|appendAssign|offBy1"
+      # Stable JSON API enum uses British spelling. Do not rename wire values.
+      - path: '(^|/)internal/openapi/openapi\.go$'
+        linters:
+          - misspell
+        text: 'cancelled'
 
 formatters:
   enable:

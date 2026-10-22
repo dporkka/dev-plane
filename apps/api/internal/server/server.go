@@ -68,7 +68,8 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
+	// Preserve the socket peer address. Untrusted X-Forwarded-For must not
+	// replace RemoteAddr; any proxy trust must be configured explicitly.
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))
@@ -143,6 +144,11 @@ func (s *Server) routes() {
 			r.Get("/organizations", h.ListOrganizations)
 			r.Post("/organizations", h.CreateOrganization)
 			r.Get("/organizations/{id}", h.GetOrganization)
+
+			// Browser verification queue (JWT + organization-scoped, operator allowlist).
+			browserJobs := handlers.NewBrowserJobHandler(s.db, config.BrowserAllowedOrigins())
+			r.Post("/organizations/{orgID}/browser-jobs", browserJobs.Create)
+			r.Get("/organizations/{orgID}/browser-jobs/{id}", browserJobs.Get)
 
 			// Projects
 			r.Get("/organizations/{orgID}/projects", h.ListProjects)
