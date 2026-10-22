@@ -1,0 +1,60 @@
+# Self-hosted CI fallback for Dev Plane.
+#
+# This intentionally mirrors .github/workflows/ci.yml instead of defining a
+# second verification contract. GitHub Actions remains valid when hosted runner
+# dispatch is healthy; this workflow provides an owned execution lane on the
+# existing bootstrap-ci Woodpecker pool.
+
+labels:
+  platform: linux/amd64
+  pool: bootstrap-ci
+
+when:
+  - event: pull_request
+    branch: main
+  - event: push
+    branch: main
+  - event: manual
+
+concurrency:
+  limit: 1
+  group: dev-plane-ci
+
+steps:
+  - name: ci
+    image: node:24-bookworm
+    environment:
+      DATABASE_URL: "file:./data/dev.db?_journal_mode=WAL"
+      NATS_URL: "nats://127.0.0.1:4222"
+      JWT_SECRET: "ci-secret-change-me-min-32-chars-long"
+      SECRET_ENCRYPTION_KEYS: "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      NEXT_PUBLIC_API_URL: "http://localhost:8080"
+      GO_VERSION: "1.26.8"
+      GOLANGCI_LINT_VERSION: "v2.13.2"
+      NATS_SERVER_VERSION: "v2.10.0"
+    commands:
+      - set -eux
+      - actual_head="$(git rev-parse HEAD)"; test "$actual_head" = "$CI_COMMIT_SHA"; echo "validated exact Woodpecker head $actual_head"
+      - apt-get update
+      - DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl git make
+      - curl -fsSLo /tmp/go.tgz "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz"
+      - rm -rf /usr/local/go
+      - tar -C /usr/local -xzf /tmp/go.tgz
+      - export PATH="/usr/local/go/bin:/root/go/bin:$PATH"
+      - go version
+      - node --version
+      - npm --version
+      - go install "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$GOLANGCI_LINT_VERSION"
+      - go install "github.com/nats-io/nats-server/v2@$NATS_SERVER_VERSION"
+      - nats-server --js --http_port 8222 --store_dir /tmp/dev-plane-jetstream >/tmp/nats.log 2>&1 &
+      - trap 'cat /tmp/nats.log || true' EXIT
+      - i=0; until curl -fsS http://127.0.0.1:8222/healthz >/dev/null; do i=$((i + 1)); if [ "$i" -ge 30 ]; then cat /tmp/nats.log; exit 1; fi; sleep 1; done
+      - cd apps/web && npm ci && cd ../..
+      - make lint-go
+      - make lint-web
+      - cd apps/web && npm run typecheck && cd ../..
+      - make lint-sdk
+      - make test
+      - cd apps/web && npm test && cd ../..
+      - make build
+      - git diff --check
