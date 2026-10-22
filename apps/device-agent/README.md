@@ -21,10 +21,13 @@ The only MCP transport is newline-delimited JSON-RPC over stdin/stdout. The proc
 | --- | --- |
 | `workspaces_list` | Display the single, explicitly selected local workspace |
 | `files_list` | List entries within that workspace, without following symlinks |
-| `files_read` | Read up to 64 KiB of UTF-8 text using Linux `openat` + `O_NOFOLLOW` |
+| `files_read` | UTF-8-safe bounded reads with `nextOffset` and `hasMore`, using `openat` + `O_NOFOLLOW` | 
+| `files_search` | Case-insensitive literal search with integrity-protected cursors and explicit partial-result status |
 | `jobs_start` | Run a fixed Git inspection profile (`git-status`, `git-diff`, `git-log`) |
 | `jobs_status` | Read bounded, ephemeral job results |
 | `jobs_cancel` | Request cancellation of a running job |
+
+Search scans at most 2,000 files / 8 MiB / 512 KiB per file for two seconds, caps matches at 200, and retains up to eight result snapshots for two minutes. `outcome=partial` means coverage is incomplete even if no cursor remains. Searches do not spawn `rg` on the host. Credentials with arbitrary filenames may still appear in results; use only safe checkouts.
 
 No arbitrary shell, filesystem writes, remote execution, deployments or production credentials are exposed. Job results exist in memory only. Git inspection output can contain secrets from tracked files or commit messages; use an explicitly safe workspace.
 

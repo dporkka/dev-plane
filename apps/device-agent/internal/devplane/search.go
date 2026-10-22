@@ -1,0 +1,197 @@
+//go:build linux
+
+package devplane
+
+// Local-only bounded literal search, with the same no-symlink filesystem
+// boundary as files_read. Does not spawn rg, shells, or other subprocesses.
+
+import (
+    "context"
+    "crypto/hmac"
+    "crypto/rand"
+    "crypto/sha256"
+    "encoding/base64"
+    "errors"
+    "fmt"
+    "io"
+    "os"
+    "path"
+    "strconv"
+    "strings"
+    "sync"
+    "time"
+    "unicode/utf8"
+)
+
+const (
+    maxSearchPage = 50
+    maxSearchMatches = 200
+    maxSearchFiles = 2000
+    maxSearchFileBytes = 512 * 1024
+    maxSearchTotalBytes = 8 * 1024 * 1024
+    maxSearchSnapshots = 8
+    searchTTL = 2 * time.Minute
+)
+
+type SearchMatch struct {
+    Path string `json:"path"`
+    Line int `json:"line"`
+    Text string `json:"text"`
+}
+
+type SearchPage struct {
+    Matches []SearchMatch `json:"matches"`
+    NextCursor string `json:"nextCursor,omitempty"`
+    Outcome string `json:"outcome"`
+    Reason string `json:"reason,omitempty"`
+    Truncated bool `json:"truncated"`
+    ScannedFiles int `json:"scannedFiles"`
+    SkippedFiles int `json:"skippedFiles"`
+}
+
+type searchSnapshot struct {
+    matches []SearchMatch
+    outcome, reason string
+    scanned, skipped int
+    expires time.Time
+}
+
+type searchNode struct { path string; directory bool }
+
+type SearchManager struct {
+    workspace *Workspace
+    mu sync.Mutex
+    secret [32]byte
+    sessions map[string]*searchSnapshot
+}
+
+func NewSearchManager(w *Workspace) (*SearchManager,error) {
+    s:=&SearchManager{workspace:w,sessions:map[string]*searchSnapshot{}}
+    if _,err:=rand.Read(s.secret[:]);err!=nil{return nil,err}
+    return s,nil
+}
+
+func (s *SearchManager) Start(ctx context.Context, query, directory string, pageSize int)(SearchPage,error) {
+    if query=="" || len(query)>200 || strings.TrimSpace(query)=="" || strings.IndexFunc(query, func(r rune) bool { return r==0 || r==10 || r==13 }) >= 0{
+        return SearchPage{},errors.New("literal query must be 1–200 bytes and contain no newlines")
+    }
+    if pageSize<1 || pageSize>maxSearchPage{return SearchPage{},errors.New("invalid page size")}
+    if directory==""{directory="."}
+    if _,err:=pathParts(directory);err!=nil{return SearchPage{},err}
+    fd,err:=s.workspace.openRelative(directory,true)
+    if err!=nil{return SearchPage{},err}
+    _=os.NewFile(uintptr(fd),"search-root").Close()
+
+    ctx,cancel:=context.WithTimeout(ctx,2*time.Second)
+    defer cancel()
+    pending:=[]searchNode{{path:directory,directory:true}}
+    snap:=&searchSnapshot{matches:make([]SearchMatch,0),outcome:"complete",expires:time.Now().Add(searchTTL)}
+    scannedBytes:=int64(0)
+    needle:=strings.ToLower(query)
+
+searchLoop:
+    for len(pending)>0 {
+        if ctx.Err()!=nil{snap.outcome,snap.reason="partial","time_limit";break}
+        node:=pending[len(pending)-1]
+        pending=pending[:len(pending)-1]
+        if node.directory {
+            children,err:=s.workspace.ListDir(node.path)
+            if err!=nil{snap.skipped++;snap.outcome,snap.reason="partial","inaccessible_path";continue}
+            if len(pending)+len(children)>maxSearchFiles {snap.outcome,snap.reason="partial","file_limit";break}
+            for i:=len(children)-1;i>=0;i--{
+                e:=children[i]
+                if e.Type!="file" && e.Type!="directory"{continue}
+                name:=e.Name
+                if node.path!="."{name=path.Join(node.path,name)}
+                pending=append(pending,searchNode{path:name,directory:e.Type=="directory"})
+            }
+            continue
+        }
+        name:=node.path
+        if snap.scanned>=maxSearchFiles{snap.outcome,snap.reason="partial","file_limit";break searchLoop}
+        fd,err:=s.workspace.openRelative(name,false)
+        if err!=nil{snap.skipped++;continue}
+        f:=os.NewFile(uintptr(fd),name)
+        info,statErr:=f.Stat()
+        if statErr!=nil || !info.Mode().IsRegular(){snap.skipped++;f.Close();continue}
+        if info.Size()>maxSearchFileBytes || info.Size()>maxSearchTotalBytes-scannedBytes{
+            snap.skipped++
+            snap.outcome="partial"
+            if snap.reason==""{snap.reason="byte_limit"}
+            f.Close()
+            continue
+        }
+        data,readErr:=io.ReadAll(io.LimitReader(f,maxSearchFileBytes+1))
+        f.Close()
+        if readErr!=nil || len(data)>maxSearchFileBytes{snap.skipped++;snap.outcome,snap.reason="partial","byte_limit";continue}
+        snap.scanned++
+        scannedBytes+=int64(len(data))
+        if !utf8.Valid(data) || strings.ContainsRune(string(data),0){snap.skipped++;continue}
+        for lineNumber,line:=range strings.Split(string(data),string(rune(10))){
+            if strings.Contains(strings.ToLower(line),needle){
+                if len(line)>512{line=truncateUTF8(line,512)}
+                snap.matches=append(snap.matches,SearchMatch{Path:name,Line:lineNumber+1,Text:strings.TrimSuffix(line,string(rune(13)))})
+                if len(snap.matches)>=maxSearchMatches{snap.outcome,snap.reason="partial","result_limit";break searchLoop}
+            }
+        }
+    }
+    id,err:=randomSearchID()
+    if err!=nil{return SearchPage{},err}
+    s.mu.Lock()
+    now:=time.Now()
+    for key,v:=range s.sessions{if !now.Before(v.expires){delete(s.sessions,key)}}
+    if len(s.sessions)>=maxSearchSnapshots{
+        oldest:=""
+        var expires time.Time
+        for key,v:=range s.sessions{if oldest=="" || v.expires.Before(expires){oldest,expires=key,v.expires}}
+        delete(s.sessions,oldest)
+    }
+    s.sessions[id]=snap
+    page:=s.pageLocked(id,snap,0,pageSize)
+    s.mu.Unlock()
+    return page,nil
+}
+
+func truncateUTF8(src string,maxBytes int)string{
+    if len(src)<=maxBytes{return src}
+    cut:=maxBytes
+    for cut>0 && !utf8.ValidString(src[:cut]){cut--}
+    return src[:cut]
+}
+
+func randomSearchID()(string,error){
+    b:=make([]byte,16)
+    if _,err:=rand.Read(b);err!=nil{return "",err}
+    return base64.RawURLEncoding.EncodeToString(b),nil
+}
+
+func (s *SearchManager) cursor(id string,offset int)string{
+    msg:=id+"."+strconv.Itoa(offset)
+    mac:=hmac.New(sha256.New,s.secret[:])
+    _,_=mac.Write([]byte(msg))
+    return msg+"."+base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (s *SearchManager) pageLocked(id string,snap *searchSnapshot,offset,limit int)SearchPage{
+    end:=offset+limit
+    if end>len(snap.matches){end=len(snap.matches)}
+    matches:=append([]SearchMatch{},snap.matches[offset:end]...)
+    p:=SearchPage{Matches:matches,Outcome:snap.outcome,Reason:snap.reason,Truncated:snap.outcome=="partial",ScannedFiles:snap.scanned,SkippedFiles:snap.skipped}
+    if end<len(snap.matches){p.NextCursor=s.cursor(id,end)}
+    return p
+}
+
+func (s *SearchManager) Continue(cursor string,pageSize int)(SearchPage,error){
+    if pageSize<1 || pageSize>maxSearchPage{return SearchPage{},errors.New("invalid page size")}
+    chunks:=strings.Split(cursor,".")
+    if len(chunks)!=3 || len(cursor)>160{return SearchPage{},errors.New("invalid cursor")}
+    pos,err:=strconv.Atoi(chunks[1])
+    if err!=nil || pos<1{return SearchPage{},errors.New("invalid cursor")}
+    s.mu.Lock()
+    defer s.mu.Unlock()
+    if !hmac.Equal([]byte(cursor),[]byte(s.cursor(chunks[0],pos))){return SearchPage{},errors.New("invalid cursor signature")}
+    snap,ok:=s.sessions[chunks[0]]
+    if !ok || !time.Now().Before(snap.expires){return SearchPage{},errors.New("expired or unknown cursor")}
+    if pos>=len(snap.matches){return SearchPage{},fmt.Errorf("cursor offset out of range")}
+    return s.pageLocked(chunks[0],snap,pos,pageSize),nil
+}

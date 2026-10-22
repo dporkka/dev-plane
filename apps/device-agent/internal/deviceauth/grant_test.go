@@ -55,3 +55,13 @@ func TestGrantRejectsExpiredOverbroadAndUnknownTools(t *testing.T) {
 		t.Fatal("accepted untrusted gateway")
 	}
 }
+
+func TestGrantAllowsSearchButNotRawReads(t *testing.T) {
+    now:=time.Date(2026,10,22,16,0,0,0,time.UTC)
+    pub,priv,_:=ed25519.GenerateKey(rand.Reader)
+    device,_:=GenerateIdentity()
+    token,err:=SignGrant(Grant{Audience:GrantAudience,DeviceID:device.ID,ActorID:"actor",OrganizationID:"org",WorkspaceID:"repo",Tools:[]string{"files_search"},IssuedAt:now.Unix(),ExpiresAt:now.Add(time.Minute).Unix()},priv)
+    if err!=nil{t.Fatal(err)}
+    if err:=VerifyGrant(token,pub,now,device.ID,"repo","files_search");err!=nil{t.Fatal(err)}
+    if err:=VerifyGrant(token,pub,now,device.ID,"repo","files_read");err==nil{t.Fatal("search grant authorized file read")}
+}
