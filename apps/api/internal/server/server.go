@@ -144,6 +144,11 @@ func (s *Server) routes() {
 			r.Post("/organizations", h.CreateOrganization)
 			r.Get("/organizations/{id}", h.GetOrganization)
 
+			// Browser verification queue (JWT + organization-scoped, operator allowlist).
+			browserJobs := handlers.NewBrowserJobHandler(s.db, config.BrowserAllowedOrigins())
+			r.Post("/organizations/{orgID}/browser-jobs", browserJobs.Create)
+			r.Get("/organizations/{orgID}/browser-jobs/{id}", browserJobs.Get)
+
 			// Projects
 			r.Get("/organizations/{orgID}/projects", h.ListProjects)
 			r.Post("/organizations/{orgID}/projects", h.CreateProject)

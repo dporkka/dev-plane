@@ -47,4 +47,4 @@ CLI exit status: `0` verified, `1` verification failed, `2` invalid job or unabl
 
 ## Next integration milestone
 
-Attach the worker to Dev Plane via an authenticated, tenant-scoped job adapter and durable PostgreSQL job ledger; store artifact references in an access-controlled object store. Reuse `packages/execution` authority/receipt primitives before enabling browser actions with side effects. Nulang Cloud should be a separate, qualification-gated execution provider; Chromium requires a browser-capable Linux runtime rather than Wasmtime alone.
+The separate Dev Plane API and durable PostgreSQL job ledger now support authenticated, tenant-scoped enqueue and status operations (see `docs/browser-job-service.md`). The remaining step is an authenticated worker adapter with network-isolated execution, reconciled delivery, and artifact references in an access-controlled object store. Reuse `packages/execution` authority/receipt primitives before enabling browser actions with side effects. Nulang Cloud should be a separate, qualification-gated execution provider; Chromium requires a browser-capable Linux runtime rather than Wasmtime alone.
