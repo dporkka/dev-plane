@@ -79,6 +79,24 @@ Client-directed JSON-RPC requests that the adapter does not yet understand fail 
 
 Callers may explicitly configure a different sandbox or approval policy, but the adapter is not yet wired into the production API/worker execution path.
 
+## Durable identity fencing
+
+The manager treats stored thread ownership as authoritative. Provider responses
+must not silently rebind a Dev Plane thread to another workspace, agent
+provider, or provider-native session. On resume, identity changes fail before
+updating the durable store.
+
+`RunTurn` also rejects a caller-supplied `provider_thread_id` that differs
+from the stored native session. Callers may omit that field; the manager
+injects the stored value. Turn inputs are validated before an agent starts.
+
+This is a **defense-in-depth control-plane check**, not authorization by
+itself. API callers must still be authorized for the stored workspace, and
+each provider must run inside a policy-enforced sandbox; provider-native
+approval settings and OpenCode/Codex prompts are not security boundaries.
+Do not enable shared writable workspaces or cross-tenant provider sessions
+based on these checks alone.
+
 ## Persistence
 
 `packages/db` implements `agentruntime.Store` with:
