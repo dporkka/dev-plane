@@ -159,6 +159,7 @@ func (s *Server) routes() {
 			// Tasks
 			r.Get("/projects/{projectID}/tasks", h.ListTasks)
 			r.Post("/projects/{projectID}/tasks", h.CreateTask)
+			r.Post("/projects/{projectID}/nlap/tasks", h.CreateNLAPTask)
 			r.Post("/projects/{projectID}/brief-handoffs", h.CreateBriefHandoff)
 			r.Get("/tasks/{id}", h.GetTask)
 			r.Patch("/tasks/{id}", h.UpdateTask)
