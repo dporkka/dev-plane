@@ -4,7 +4,7 @@
 // management, agent run execution, reviews, approvals, and PR creation.
 module github.com/ai-dev-control-plane/worker
 
-go 1.25.11
+go 1.26.0
 
 require (
 	github.com/ai-dev-control-plane/api v0.0.0
@@ -21,12 +21,12 @@ require (
 	github.com/ai-dev-control-plane/scheduler v0.0.0
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-sqlite3 v1.14.47
-	github.com/nats-io/nats.go v1.52.0
+	github.com/nats-io/nats.go v1.54.0
 )
 
 require (
 	github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.20.0 // indirect
 	github.com/lib/pq v1.12.3 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/nats-io/nkeys v0.4.16 // indirect
@@ -34,10 +34,10 @@ require (
 	github.com/pressly/goose/v3 v3.27.1 // indirect
 	github.com/sethvargo/go-retry v0.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/crypto v0.53.0 // indirect
+	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.21.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
 )
 
 replace (
