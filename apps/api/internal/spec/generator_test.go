@@ -3,11 +3,13 @@ package spec
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/ai-dev-control-plane/models"
 )
 
 func TestGenerate_Success(t *testing.T) {
@@ -35,7 +37,7 @@ func TestGenerate_Success(t *testing.T) {
 		}).AddRow(
 			taskID, "proj-1", repoID, nil, "user-1", "web", nil,
 			"Fix login bug", "The login page crashes", "backlog", "high",
-			"medium", "main", nil, nil,
+			"medium", "main", nil, `["Login works after fix"]`,
 			nil, 60, nil, nil,
 			nil, nil, now, now, nil,
 		))
@@ -89,6 +91,9 @@ func TestGenerate_Success(t *testing.T) {
 	}
 	if len(spec.ImplementationPlan) == 0 {
 		t.Error("expected at least one implementation step")
+	}
+	if len(spec.AcceptanceCriteria) == 0 || spec.AcceptanceCriteria[0] != "Login works after fix" {
+		t.Fatalf("generated spec must retain canonical task criteria: %#v", spec.AcceptanceCriteria)
 	}
 }
 
@@ -146,5 +151,26 @@ func TestGetSpec_Success(t *testing.T) {
 	}
 	if spec.TaskID != taskID {
 		t.Errorf("expected task ID %q, got %q", taskID, spec.TaskID)
+	}
+}
+
+func TestBuildAcceptanceCriteriaPreservesImportedRequirements(t *testing.T) {
+	g := &Generator{}
+	task := &models.Task{
+		Title:              "Customer portal",
+		AcceptanceCriteria: json.RawMessage(`["Users can sign in","Reports are tenant-scoped"]`),
+	}
+	criteria := g.buildAcceptanceCriteria(task)
+	if len(criteria) < 2 || criteria[0] != "Users can sign in" || criteria[1] != "Reports are tenant-scoped" {
+		t.Fatalf("imported acceptance criteria must be preserved first: %#v", criteria)
+	}
+}
+
+func TestBuildAcceptanceCriteriaKeepsLegacyFallback(t *testing.T) {
+	g := &Generator{}
+	task := &models.Task{Title: "Repair checkout"}
+	criteria := g.buildAcceptanceCriteria(task)
+	if len(criteria) == 0 || criteria[0] != "The implementation satisfies: Repair checkout" {
+		t.Fatalf("legacy task must receive standard criteria: %#v", criteria)
 	}
 }
