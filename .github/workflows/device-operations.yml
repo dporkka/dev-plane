@@ -1,0 +1,32 @@
+name: Device operations (staged)
+on:
+  pull_request:
+    paths:
+      - 'apps/api/internal/devices/**'
+      - 'packages/db/migrations/026_device_operation_receipts.sql'
+      - 'scripts/tests/test_device_operation_sqlite.py'
+      - '.github/workflows/device-operations.yml'
+  workflow_dispatch:
+jobs:
+  test:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Go unit, race and static analysis
+        working-directory: apps/api/internal/devices
+        env:
+          GO111MODULE: 'off'
+        run: |
+          go test -race ./...
+          go vet ./...
+      - name: SQL security regression
+        run: python3 scripts/tests/test_device_operation_sqlite.py
