@@ -84,6 +84,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 	if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, false); err != nil {
 		return Result{}, err
 	}
+	if err := v.assertClean(ctx, req.SessionID); err != nil {
+		return Result{}, err
+	}
 
 	result := Result{
 		Evidence: repoprotocol.EvidenceBundle{
@@ -105,6 +108,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 		commandResult, runErr := v.runtime.ExecuteCommand(ctx, req.SessionID, command)
 
 		if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, true); err != nil {
+			return Result{}, err
+		}
+		if err := v.assertClean(ctx, req.SessionID); err != nil {
 			return Result{}, err
 		}
 
@@ -205,6 +211,26 @@ func (v *Verifier) assertHead(ctx context.Context, sessionID, candidate string, 
 		return fmt.Errorf("head changed during verification: candidate=%s actual=%s", candidate, actual)
 	}
 	return fmt.Errorf("head mismatch before verification: candidate=%s actual=%s", candidate, actual)
+}
+
+// assertClean prevents tests of an uncommitted workspace from being attributed
+// to an otherwise unchanged Git HEAD. Check before and after each gate: a
+// verification command may itself modify tracked files or create new sources.
+func (v *Verifier) assertClean(ctx context.Context, sessionID string) error {
+	result, err := v.runtime.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Args:    []string{"git", "status", "--porcelain=v1", "--untracked-files=all"},
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("read workspace status: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		return errors.New("read workspace status failed")
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return errors.New("workspace contains uncommitted changes; commit or discard them before verification")
+	}
+	return nil
 }
 
 func profileTimeout(seconds int) time.Duration {
