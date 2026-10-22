@@ -192,12 +192,17 @@ func (r *JobRunner) Status(id string) (Job, error) {
 func (r *JobRunner) Cancel(id string) error {
 	r.mu.Lock()
 	item, ok := r.jobs[id]
-	r.mu.Unlock()
 	if !ok {
+		r.mu.Unlock()
 		return fmt.Errorf("unknown job")
 	}
-	if item.job.State == "running" {
-		item.cancel()
+	// finish() updates State under the same mutex. Capture the cancellation
+	// callback while locked to avoid racing with process completion.
+	running := item.job.State == "running"
+	cancel := item.cancel
+	r.mu.Unlock()
+	if running {
+		cancel()
 	}
 	return nil
 }

@@ -33,3 +33,7 @@ No arbitrary shell, filesystem writes, remote execution, deployments or producti
 Dev Plane, not this agent, must own authenticated principals, device enrollment, durable receipts, approval decisions, workspace-to-repository identity, and job orchestration. Introduce an **outbound-only** connection only after the gateway verifies a principal × device × workspace × operation grant, and the device independently revalidates a signed short-lived grant. For mutations, delegate execution to `packages/runtimes.Provider` in a properly isolated workspace, using the existing `packages/execution` activation/epoch/receipt contracts. Do not expose `packages/runtimes.LocalProvider` to remote requests.
 
 See [the integration ADR](../../docs/device-agent-integration.md) and [security review](docs/SECURITY.md).
+
+## Device identity foundation (no remote access)
+
+A separate `devplane-identity` helper can generate a local Ed25519 key for eventual enrollment. This does **not** create a paired device, open a relay connection, or grant tools. See [docs/DEVICE-TRUST.md](docs/DEVICE-TRUST.md) for precise scope and security requirements.

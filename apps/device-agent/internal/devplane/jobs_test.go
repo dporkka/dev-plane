@@ -46,3 +46,22 @@ func initGit(t *testing.T, dir string) {
 		t.Fatalf("git init: %v %s", err, b)
 	}
 }
+
+func TestConcurrentCancellationAndCompletion(t *testing.T) {
+	dir := t.TempDir()
+	initGit(t, dir)
+	runner := NewJobRunner(4)
+	defer runner.Shutdown()
+	for i := 0; i < 80; i++ {
+		job, err := runner.Start(context.Background(), dir, "git-status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() { defer close(done); _ = runner.Cancel(job.ID) }()
+		if _, err := runner.Wait(job.ID, 5*time.Second); err != nil {
+			t.Fatal(err)
+		}
+		<-done
+	}
+}
