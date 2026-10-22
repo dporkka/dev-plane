@@ -54,8 +54,8 @@ func (f *fakeRuntime) ExecuteCommand(_ context.Context, _ string, cmd runtimes.C
 		return nil, err
 	}
 	if result := f.results[cmd.Command]; result != nil {
-		copy := *result
-		return &copy, nil
+		resultCopy := *result
+		return &resultCopy, nil
 	}
 	return &runtimes.CommandResult{ExitCode: 0}, nil
 }
