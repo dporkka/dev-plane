@@ -4,7 +4,7 @@
 // comprehensive PR descriptions and create GitHub pull requests.
 module github.com/ai-dev-control-plane/prfactory
 
-go 1.25.11
+go 1.26.0
 
 require (
 	github.com/ai-dev-control-plane/gateway v0.0.0
@@ -15,7 +15,7 @@ require (
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
-	golang.org/x/oauth2 v0.36.0
+	golang.org/x/oauth2 v0.37.0
 )
 
 require github.com/ai-dev-control-plane/securityscan v0.0.0 // indirect
