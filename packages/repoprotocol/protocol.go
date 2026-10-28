@@ -44,7 +44,7 @@ const (
 	WorkReadyToLand  WorkState = "ready_to_land"
 	WorkLanded       WorkState = "landed"
 	WorkFailed       WorkState = "failed"
-	WorkCancelled    WorkState = "cancelled"
+	WorkCancelled    WorkState = "cancelled" //nolint:misspell // Stable serialized state; changing the spelling breaks persisted work items.
 )
 
 type GateStatus string
