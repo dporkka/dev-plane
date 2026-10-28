@@ -131,7 +131,7 @@ func TestEvidenceStoreRoundTripAndExactHeadLookup(t *testing.T) {
 	if !reflect.DeepEqual(got, bundle) {
 		t.Fatalf("GetEvidenceBundle() = %#v, want %#v", got, bundle)
 	}
-	if err := got.ValidateHead("head456"); err != nil {
-		t.Fatalf("ValidateHead() error = %v", err)
+	if err := got.ValidateHead("head456"); err == nil {
+		t.Fatal("stored passed reviewer flag is not trusted approval proof")
 	}
 }
