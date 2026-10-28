@@ -22,7 +22,7 @@ import (
 // ErrWoodpeckerAssignmentUnproven is a blocking trust-boundary error. The
 // public Woodpecker pipeline API gives workflow agent_id and step start, but
 // not necessarily an independently established agent assignment timestamp.
-var ErrWoodpeckerAssignmentUnproven = errors.New("Woodpecker lacks authoritative job assignment timestamp for signed release proof")
+var ErrWoodpeckerAssignmentUnproven = errors.New("woodpecker lacks authoritative job assignment timestamp for signed release proof")
 
 // WoodpeckerReader is a read-only, authenticated diagnostic adapter for the
 // Woodpecker API. It does not supply signed release evidence.
@@ -80,7 +80,7 @@ type wpConfig struct {
 
 func (w WoodpeckerReader) client() (*http.Client, string, error) {
 	if strings.TrimSpace(w.Token) == "" || strings.TrimSpace(w.Repository) == "" || w.RepositoryID <= 0 {
-		return nil, "", errors.New("Woodpecker API token, repository name and numeric repository ID required")
+		return nil, "", errors.New("woodpecker API token, repository name and numeric repository ID required")
 	}
 	u, err := url.Parse(w.BaseURL)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" ||
@@ -90,19 +90,19 @@ func (w WoodpeckerReader) client() (*http.Client, string, error) {
 	host := u.Hostname()
 	ip := net.ParseIP(host)
 	loopback := host == "localhost" || (ip != nil && ip.IsLoopback())
-	if u.Scheme != "https" && !(u.Scheme == "http" && loopback) {
-		return nil, "", errors.New("Woodpecker API requires TLS except loopback development")
+	if u.Scheme != "https" && (u.Scheme != "http" || !loopback) {
+		return nil, "", errors.New("woodpecker API requires TLS except loopback development")
 	}
 	c := &http.Client{Timeout: 10 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	if w.Client != nil {
-		copy := *w.Client
-		if copy.Timeout == 0 {
-			copy.Timeout = 10 * time.Second
+		clientCopy := *w.Client
+		if clientCopy.Timeout == 0 {
+			clientCopy.Timeout = 10 * time.Second
 		}
-		copy.CheckRedirect = c.CheckRedirect
-		c = &copy
+		clientCopy.CheckRedirect = c.CheckRedirect
+		c = &clientCopy
 	}
 	return c, strings.TrimRight(w.BaseURL, "/"), nil
 }
@@ -116,11 +116,11 @@ func (w WoodpeckerReader) get(ctx context.Context, c *http.Client, base, resourc
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.Do(req)
 	if err != nil {
-		return fmt.Errorf("Woodpecker GET failed: %w", err)
+		return fmt.Errorf("woodpecker GET failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("Woodpecker GET returned HTTP %d", resp.StatusCode)
+		return fmt.Errorf("woodpecker GET returned HTTP %d", resp.StatusCode)
 	}
 	// Prevent a buggy server response from consuming unbounded memory.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
@@ -128,7 +128,7 @@ func (w WoodpeckerReader) get(ctx context.Context, c *http.Client, base, resourc
 		return fmt.Errorf("read Woodpecker response: %w", err)
 	}
 	if len(data) > 2<<20 {
-		return errors.New("Woodpecker response too large")
+		return errors.New("woodpecker response too large")
 	}
 	if err := json.Unmarshal(data, dst); err != nil {
 		return fmt.Errorf("decode Woodpecker response: %w", err)
@@ -138,7 +138,7 @@ func (w WoodpeckerReader) get(ctx context.Context, c *http.Client, base, resourc
 
 func configDigest(files []wpConfig) (string, error) {
 	if len(files) == 0 {
-		return "", errors.New("Woodpecker executed configuration unavailable")
+		return "", errors.New("woodpecker executed configuration unavailable")
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 	h := sha256.New()
@@ -195,7 +195,7 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 		return WoodpeckerObservation{}, err
 	}
 	if repo.ID != w.RepositoryID || repo.FullName != w.Repository {
-		return WoodpeckerObservation{}, errors.New("Woodpecker repository identity mismatch")
+		return WoodpeckerObservation{}, errors.New("woodpecker repository identity mismatch")
 	}
 	pipelineRoot := fmt.Sprintf("%s/pipelines/%d", repoRoot, run)
 	var pipeline wpPipeline
@@ -203,8 +203,8 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 		return WoodpeckerObservation{}, err
 	}
 	if pipeline.ID != pid || pipeline.Number != run || pipeline.RerunCount != attempt ||
-		pipeline.Commit != q.HeadSHA || !(len(pipeline.Commit) == 40 || len(pipeline.Commit) == 64) {
-		return WoodpeckerObservation{}, errors.New("Woodpecker exact pipeline/head/attempt mismatch")
+		pipeline.Commit != q.HeadSHA || (len(pipeline.Commit) != 40 && len(pipeline.Commit) != 64) {
+		return WoodpeckerObservation{}, errors.New("woodpecker exact pipeline/head/attempt mismatch")
 	}
 	var observed *wpStep
 	var worker int64

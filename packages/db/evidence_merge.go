@@ -40,7 +40,8 @@ func (db *DB) MergeEvidenceGates(ctx context.Context, incoming repoprotocol.Evid
 		if err != nil {
 			return fmt.Errorf("reserve evidence merge connection: %w", err)
 		}
-		defer conn.Close()
+		// Connection close is best-effort cleanup after the commit or rollback path.
+		defer func() { _ = conn.Close() }()
 		if _, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 			return fmt.Errorf("begin serialized SQLite evidence merge: %w", err)
 		}
@@ -66,7 +67,8 @@ func (db *DB) MergeEvidenceGates(ctx context.Context, incoming repoprotocol.Evid
 	if err != nil {
 		return fmt.Errorf("begin evidence merge transaction: %w", err)
 	}
-	defer tx.Rollback()
+	// Rollback after commit is harmless (sql.ErrTxDone); cleanup is best effort.
+	defer func() { _ = tx.Rollback() }()
 	if err = mergeEvidenceLocked(ctx, tx, db.Driver, incoming); err != nil {
 		return err
 	}
