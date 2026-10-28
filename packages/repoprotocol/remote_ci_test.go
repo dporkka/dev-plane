@@ -186,3 +186,9 @@ func TestRemoteCIProofRejectsLocalAndRemoteEvidenceOnSameGate(t *testing.T) {
 		t.Fatal("ambiguous local and remote execution accepted")
 	}
 }
+
+func TestNewRemoteCICancelOutcomeUsesUSWireSpelling(t *testing.T) {
+	if CIOutcomeCanceled != CIOutcome("canceled") {
+		t.Fatalf("new remote CI cancellation outcome changed: %q", CIOutcomeCanceled)
+	}
+}

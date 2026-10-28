@@ -29,7 +29,7 @@ const (
 	CIOutcomePassed                CIOutcome = "passed"
 	CIOutcomeTestsFailed           CIOutcome = "tests_failed"
 	CIOutcomeInfrastructureFailure CIOutcome = "infrastructure_failed"
-	CIOutcomeCancelled             CIOutcome = "cancelled"
+	CIOutcomeCanceled              CIOutcome = "canceled"
 )
 
 type CIArtifact struct {
@@ -98,7 +98,7 @@ func (r RemoteCIRecord) Validate() error {
 			return errors.New("remote CI identity missing or malformed")
 		}
 	}
-	if !(validHexDigest(r.HeadSHA, 40) || validHexDigest(r.HeadSHA, 64)) {
+	if !validHexDigest(r.HeadSHA, 40) && !validHexDigest(r.HeadSHA, 64) {
 		return errors.New("remote CI source SHA must be a full lowercase Git SHA")
 	}
 	if !validHexDigest(r.DefinitionSHA256, 64) {
@@ -150,7 +150,7 @@ func (r RemoteCIRecord) Validate() error {
 		if r.ExitCode == nil || *r.ExitCode == 0 {
 			return errors.New("failed test CI job requires nonzero exit")
 		}
-	case CIOutcomeInfrastructureFailure, CIOutcomeCancelled:
+	case CIOutcomeInfrastructureFailure, CIOutcomeCanceled:
 		if r.ExitCode != nil {
 			return errors.New("non-executable CI failure must not claim an exit code")
 		}
