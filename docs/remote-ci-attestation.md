@@ -23,6 +23,14 @@ are modified by this change.
   is explicitly passed. It verifies the attestation signature and release
   semantics; normal local gates use their existing runtime proof validation.
 
+The release service must populate `RemoteCIPolicy.PipelineID`, `RunID`,
+`JobID`, and `AttemptID` from its own trusted scheduler state, **not** from a
+receipt or webhook. It must update the expected attempt when an execution is
+retried or superseded and reject stale approvals. `VerifyObservation` can
+validate a signature without these release-only pins for diagnostic purposes;
+`Verify` and the privileged `RemoteCIAttestor.Attest` cannot approve or sign
+out-of-policy attempts.
+
 A valid signature establishes that the holder of the pinned attestation key
 signed those facts. **It does not prove the adapter actually queried a CI API.**
 Only a reviewed and independently tested provider adapter, restricted
@@ -34,7 +42,10 @@ A remote gate qualifies only if all of the following hold:
 
 1. Repository and full Git source SHA exactly match the approved candidate.
 2. Provider identity and pipeline definition hash match the pinned policy.
-3. Pipeline, run, job, and retry-attempt identities are present.
+3. Pipeline, run, job, and retry-attempt identities are present **and match
+   the specific expected current attempt pinned by trusted server-side release
+   policy**. Missing pins fail closed; a previously signed green attempt for
+   the same commit cannot be replayed after the policy advances to a rerun.
 4. A nonempty worker ID is tied to an assignment, start, and finish in
    nondecreasing time order. No synthetic timestamp substitutions are allowed.
 5. The job reached a terminal `passed` result with an actual exit code of 0.

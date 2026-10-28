@@ -48,6 +48,7 @@ func remoteCISetup(t *testing.T) (RemoteCIAttestor, RemoteCIQuery, *ciSourceStub
 	return RemoteCIAttestor{Source: src, Policy: repoprotocol.RemoteCIPolicy{
 		Provider: "woodpecker", Repository: "dporkka/dev-plane",
 		DefinitionSHA256: record.DefinitionSHA256, SignerKeyID: "attestor-1", PublicKey: pub,
+		PipelineID: record.PipelineID, RunID: record.RunID, JobID: record.JobID, AttemptID: record.AttemptID,
 	}, PrivateKey: priv}, q, src
 }
 func ciCode(n int) *int { return &n }
@@ -131,5 +132,29 @@ func TestAttestRemoteCIPendingReceiptCannotPassReleaseGate(t *testing.T) {
 	}
 	if err := receipt.Verify(query.HeadSHA, attestor.Policy); err == nil {
 		t.Fatal("queued job passed release gate")
+	}
+}
+
+func TestAttestorRejectsPolicyAttemptMismatchBeforeProviderFetch(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*repoprotocol.RemoteCIPolicy)
+	}{
+		{"unbound policy", func(p *repoprotocol.RemoteCIPolicy) { p.AttemptID = "" }},
+		{"other pipeline", func(p *repoprotocol.RemoteCIPolicy) { p.PipelineID = "different" }},
+		{"other run", func(p *repoprotocol.RemoteCIPolicy) { p.RunID = "different" }},
+		{"other job", func(p *repoprotocol.RemoteCIPolicy) { p.JobID = "different" }},
+		{"other attempt", func(p *repoprotocol.RemoteCIPolicy) { p.AttemptID = "different" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			attestor, query, src := remoteCISetup(t)
+			tc.mutate(&attestor.Policy)
+			if _, err := attestor.Attest(context.Background(), query); err == nil {
+				t.Fatal("attestor signed attempt outside trusted policy")
+			}
+			if src.called != 0 {
+				t.Fatal("provider queried before policy rejected mismatched attempt")
+			}
+		})
 	}
 }

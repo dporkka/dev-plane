@@ -36,7 +36,8 @@ func testRemoteCI(t *testing.T) (RemoteCIReceipt, RemoteCIPolicy) {
 		t.Fatal(err)
 	}
 	return receipt, RemoteCIPolicy{Provider: "woodpecker", Repository: "dporkka/dev-plane",
-		DefinitionSHA256: def, SignerKeyID: "attestor-1", PublicKey: pub}
+		DefinitionSHA256: def, SignerKeyID: "attestor-1", PublicKey: pub,
+		PipelineID: record.PipelineID, RunID: record.RunID, JobID: record.JobID, AttemptID: record.AttemptID}
 }
 
 func codePtr(n int) *int { return &n }
@@ -190,5 +191,43 @@ func TestRemoteCIProofRejectsLocalAndRemoteEvidenceOnSameGate(t *testing.T) {
 func TestNewRemoteCICancelOutcomeUsesUSWireSpelling(t *testing.T) {
 	if CIOutcomeCanceled != CIOutcome("canceled") {
 		t.Fatalf("new remote CI cancellation outcome changed: %q", CIOutcomeCanceled)
+	}
+}
+
+func TestRemoteCIReleasePolicyMustPinActualAttempt(t *testing.T) {
+	receipt, trusted := testRemoteCI(t)
+	expected := receipt.Record
+	// Ordinary observation signature verification is permitted without an
+	// authorized release target; release approval is not.
+	unpinned := trusted
+	unpinned.PipelineID = ""
+	unpinned.RunID = ""
+	unpinned.JobID = ""
+	unpinned.AttemptID = ""
+	if err := receipt.VerifyObservation(unpinned); err != nil {
+		t.Fatalf("valid diagnostic signature rejected: %v", err)
+	}
+	if err := receipt.Verify(expected.HeadSHA, unpinned); err == nil {
+		t.Fatal("release accepted signed receipt without a server-pinned exact attempt")
+	}
+	for _, tc := range []struct {
+		name   string
+		mutate func(*RemoteCIPolicy)
+	}{
+		{"wrong pipeline", func(p *RemoteCIPolicy) { p.PipelineID = "other" }},
+		{"wrong run", func(p *RemoteCIPolicy) { p.RunID = "other" }},
+		{"wrong job", func(p *RemoteCIPolicy) { p.JobID = "other" }},
+		{"old attempt replay", func(p *RemoteCIPolicy) { p.AttemptID = "attempt-2" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := trusted
+			tc.mutate(&p)
+			if err := receipt.Verify(expected.HeadSHA, p); err == nil {
+				t.Fatalf("replayed or mismatched attempt was accepted: %s", tc.name)
+			}
+		})
+	}
+	if err := receipt.Verify(expected.HeadSHA, trusted); err != nil {
+		t.Fatalf("exact pinned attempt should be valid: %v", err)
 	}
 }
