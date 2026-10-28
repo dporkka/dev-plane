@@ -229,14 +229,25 @@ func (c Config) RequiredGatesForPaths(changedPaths []string) []string {
 // Call ValidateHeadWithRemoteCI with server-pinned policies when remote gates
 // are required by a separate, privileged attestation workflow.
 func (e EvidenceBundle) ValidateHead(candidateHead string) error {
-	return e.validateHead(candidateHead, nil)
+	return e.validateHead(candidateHead, nil, nil)
 }
 
 func (e EvidenceBundle) ValidateHeadWithRemoteCI(candidateHead string, policies map[string]RemoteCIPolicy) error {
-	return e.validateHead(candidateHead, policies)
+	return e.validateHead(candidateHead, policies, nil)
 }
 
-func (e EvidenceBundle) validateHead(candidateHead string, policies map[string]RemoteCIPolicy) error {
+// ApprovalVerifier must be implemented by trusted application code, never
+// from a gate status, webhook, or agent-owned callback. It must verify the
+// approver's identity, reviewer independence, and the work item and head.
+type ApprovalVerifier interface {
+	VerifyApproval(workItemID, gateName, candidateHead string) error
+}
+
+func (e EvidenceBundle) ValidateHeadWithAuthorities(candidateHead string, policies map[string]RemoteCIPolicy, approvals ApprovalVerifier) error {
+	return e.validateHead(candidateHead, policies, approvals)
+}
+
+func (e EvidenceBundle) validateHead(candidateHead string, policies map[string]RemoteCIPolicy, approvals ApprovalVerifier) error {
 	candidateHead = strings.TrimSpace(candidateHead)
 	if candidateHead == "" {
 		return errors.New("candidate head is required")
@@ -285,6 +296,12 @@ func (e EvidenceBundle) validateHead(candidateHead string, policies map[string]R
 		// Human approvals are assessed by their own authorization path; they
 		// must not be fabricated as shell commands.
 		if gate.Name == GateIndependentReview || gate.Name == GateHumanApproval {
+			if approvals == nil || strings.TrimSpace(e.WorkItemID) == "" {
+				return fmt.Errorf("gate %q requires a trusted verifier and work item identity", gate.Name)
+			}
+			if err := approvals.VerifyApproval(e.WorkItemID, gate.Name, candidateHead); err != nil {
+				return fmt.Errorf("gate %q approval denied: %w", gate.Name, err)
+			}
 			continue
 		}
 		if gate.Execution == nil {
