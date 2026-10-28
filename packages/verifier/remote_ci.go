@@ -48,6 +48,14 @@ func (a RemoteCIAttestor) Attest(ctx context.Context, query RemoteCIQuery) (repo
 		query.JobID == "" || query.AttemptID == "" {
 		return repoprotocol.RemoteCIReceipt{}, errors.New("exact CI attempt query is required")
 	}
+	// Fail before querying or signing if the request differs from the trusted
+	// server-managed release target. A caller cannot authorize its own retry.
+	if a.Policy.PipelineID == "" || a.Policy.RunID == "" ||
+		a.Policy.JobID == "" || a.Policy.AttemptID == "" ||
+		query.PipelineID != a.Policy.PipelineID || query.RunID != a.Policy.RunID ||
+		query.JobID != a.Policy.JobID || query.AttemptID != a.Policy.AttemptID {
+		return repoprotocol.RemoteCIReceipt{}, errors.New("CI signing request does not match trusted exact attempt")
+	}
 	record, err := a.Source.FetchAttempt(ctx, query)
 	if err != nil {
 		return repoprotocol.RemoteCIReceipt{}, fmt.Errorf("fetch authoritative CI attempt: %w", err)

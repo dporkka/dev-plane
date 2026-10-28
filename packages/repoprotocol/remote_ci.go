@@ -75,6 +75,12 @@ type RemoteCIPolicy struct {
 	DefinitionSHA256 string
 	SignerKeyID      string
 	PublicKey        ed25519.PublicKey
+	// The server-managed *release target*, not fields read from the receipt.
+	// Without these pins, a valid old success for the same commit could replay.
+	PipelineID string
+	RunID      string
+	JobID      string
+	AttemptID  string
 }
 
 func validHexDigest(s string, size int) bool {
@@ -217,6 +223,20 @@ func SignRemoteCIReceipt(record RemoteCIRecord, keyID string, privateKey ed25519
 func (r RemoteCIReceipt) Verify(candidateHead string, policy RemoteCIPolicy) error {
 	if err := r.VerifyObservation(policy); err != nil {
 		return err
+	}
+	// A valid signature for a source commit is not enough. The server must
+	// pin the expected *current* exact execution attempt per release gate.
+	// Otherwise an old green run can be replayed after a later failing rerun.
+	for _, id := range []string{policy.PipelineID, policy.RunID, policy.JobID, policy.AttemptID} {
+		if !validateCIName(id) {
+			return errors.New("remote CI release policy must pin exact pipeline, run, job and attempt")
+		}
+	}
+	if r.Record.PipelineID != policy.PipelineID ||
+		r.Record.RunID != policy.RunID ||
+		r.Record.JobID != policy.JobID ||
+		r.Record.AttemptID != policy.AttemptID {
+		return errors.New("remote CI release attempt does not match trusted current execution")
 	}
 	return r.Record.ValidateReleaseSuccess(candidateHead)
 }
