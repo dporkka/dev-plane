@@ -38,7 +38,7 @@ A remote gate qualifies only if all of the following hold:
 4. A nonempty worker ID is tied to an assignment, start, and finish in
    nondecreasing time order. No synthetic timestamp substitutions are allowed.
 5. The job reached a terminal `passed` result with an actual exit code of 0.
-   Queued, assigned, running, cancelled, test-failed, and infrastructure-failed
+   Queued, assigned, running, canceled, test-failed, and infrastructure-failed
    observations cannot qualify.
 6. Every declared artifact includes a unique safe relative name, SHA-256 digest,
    and nonnegative size; no artifact is required unless separately demanded by
