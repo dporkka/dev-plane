@@ -36,7 +36,7 @@ func newWoodpeckerFixture(t *testing.T) *wpFixture {
 	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.requests = append(f.requests, r.Method+" "+r.URL.Path)
 		if r.Header.Get("Authorization") != "Bearer token-read-only" {
-			http.Error(w, "unauthorized", 401)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
 		if f.status != 0 {
