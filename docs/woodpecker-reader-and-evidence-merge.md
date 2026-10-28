@@ -5,19 +5,27 @@ It adds a **read-only provider adapter**, not an automatic release approval.
 
 ## Woodpecker inspection
 
-`verifier.WoodpeckerReader.ObserveAttempt` makes only three authenticated GETs
+`verifier.WoodpeckerReader.ObserveAttempt` makes four authenticated GETs
 to a configured Woodpecker server:
 
 - `/api/repos/{repo_id}` to confirm the repository ID and full name;
 - `/api/repos/{repo_id}/pipelines/{pipeline_number}` to confirm exact full
   source SHA, pipeline ID and number, rerun count, workflow/step and agent;
 - `/api/repos/{repo_id}/pipelines/{pipeline_number}/config` to obtain the
-  pipeline-scoped configuration bytes and calculate a deterministic digest.
+  pipeline-scoped configuration bytes and calculate a deterministic digest;
+- `/api/repos/{repo_id}/pipelines/{pipeline_number}` again to ensure the
+  attempt, worker, step and pipeline state did not change during inspection.
 
 The reader rejects malformed or mismatched identifiers, missing/duplicate
 configuration files, non-200 HTTP responses, unexpected redirects, absent
-credentials, non-local plain HTTP, and oversized responses. It does not modify
-the CI server or infer remote execution from forge statuses or webhook text.
+credentials, non-local plain HTTP, and oversized responses. An explicitly
+reported `rerun_count` is mandatory: missing retry metadata cannot be treated
+as attempt zero. A reported successful step must include worker identity,
+valid start/finish timestamps, and an observed zero exit code. Any change to
+the two pipeline snapshots invalidates the diagnostic observation. These checks
+reduce false positives but do not provide an immutable provider attestation.
+The reader does not modify the CI server or infer remote execution from forge
+statuses or webhook text.
 
 **Blocking gap:** The documented pipeline response exposes workflow
 `agent_id` and step `started`/`finished`, but does not prove the time

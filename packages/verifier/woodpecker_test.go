@@ -13,11 +13,12 @@ import (
 )
 
 type wpFixture struct {
-	server   *httptest.Server
-	requests []string
-	status   int
-	pipeline map[string]any
-	files    []map[string]any
+	server          *httptest.Server
+	requests        []string
+	status          int
+	pipeline        map[string]any
+	files           []map[string]any
+	onPipelineFetch func()
 }
 
 func newWoodpeckerFixture(t *testing.T) *wpFixture {
@@ -48,6 +49,9 @@ func newWoodpeckerFixture(t *testing.T) *wpFixture {
 		case "/api/repos/11":
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 11, "full_name": "dporkka/dev-plane"})
 		case "/api/repos/11/pipelines/23":
+			if f.onPipelineFetch != nil {
+				f.onPipelineFetch()
+			}
 			_ = json.NewEncoder(w).Encode(f.pipeline)
 		case "/api/repos/11/pipelines/23/config":
 			_ = json.NewEncoder(w).Encode(f.files)
@@ -75,7 +79,7 @@ func TestWoodpeckerReadOnlyObservationUsesExactAPIPipelineAndConfig(t *testing.T
 		obs.StepStatus != "success" || obs.PipelineStatus != "success" {
 		t.Fatalf("incomplete observed execution: %+v", obs)
 	}
-	want := []string{"GET /api/repos/11", "GET /api/repos/11/pipelines/23", "GET /api/repos/11/pipelines/23/config"}
+	want := []string{"GET /api/repos/11", "GET /api/repos/11/pipelines/23", "GET /api/repos/11/pipelines/23/config", "GET /api/repos/11/pipelines/23"}
 	if fmt.Sprint(f.requests) != fmt.Sprint(want) {
 		t.Fatalf("unexpected HTTP calls %v, want %v", f.requests, want)
 	}

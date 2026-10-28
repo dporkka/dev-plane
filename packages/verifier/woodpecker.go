@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ type WoodpeckerObservation struct {
 	JobName             string
 	PipelineStatus      string
 	StepStatus          string
+	ExitCode            *int // Observed provider exit code; never a signed release result.
 	ConfigurationSHA256 string
 	StartedAt           time.Time
 	FinishedAt          time.Time
@@ -58,18 +60,24 @@ type wpPipeline struct {
 	Number     int64        `json:"number"`
 	Commit     string       `json:"commit"`
 	Status     string       `json:"status"`
-	RerunCount int64        `json:"rerun_count"`
+	RerunCount *int64       `json:"rerun_count"`
+	Updated    int64        `json:"updated"`
 	Workflows  []wpWorkflow `json:"workflows"`
 }
 type wpWorkflow struct {
 	ID       int64    `json:"id"`
 	AgentID  int64    `json:"agent_id"`
+	State    string   `json:"state"`
+	Started  int64    `json:"started"`
+	Finished int64    `json:"finished"`
 	Children []wpStep `json:"children"`
 }
 type wpStep struct {
 	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	State    string `json:"state"`
+	Error    string `json:"error"`
+	ExitCode *int   `json:"exit_code"`
 	Started  int64  `json:"started"`
 	Finished int64  `json:"finished"`
 }
@@ -202,7 +210,7 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 	if err = w.get(ctx, c, base, pipelineRoot, &pipeline); err != nil {
 		return WoodpeckerObservation{}, err
 	}
-	if pipeline.ID != pid || pipeline.Number != run || pipeline.RerunCount != attempt ||
+	if pipeline.ID != pid || pipeline.Number != run || pipeline.RerunCount == nil || *pipeline.RerunCount != attempt ||
 		pipeline.Commit != q.HeadSHA || (len(pipeline.Commit) != 40 && len(pipeline.Commit) != 64) {
 		return WoodpeckerObservation{}, errors.New("woodpecker exact pipeline/head/attempt mismatch")
 	}
@@ -224,6 +232,10 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 	if observed == nil {
 		return WoodpeckerObservation{}, errors.New("requested Woodpecker job missing")
 	}
+	if observed.State == "success" && (observed.ExitCode == nil || *observed.ExitCode != 0 ||
+		observed.Started <= 0 || observed.Finished < observed.Started || worker <= 0) {
+		return WoodpeckerObservation{}, errors.New("woodpecker successful step lacks consistent observed execution facts")
+	}
 	var files []wpConfig
 	if err = w.get(ctx, c, base, pipelineRoot+"/config", &files); err != nil {
 		return WoodpeckerObservation{}, err
@@ -232,11 +244,20 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 	if err != nil {
 		return WoodpeckerObservation{}, err
 	}
+	// The pipeline may advance, be retried, or be re-assigned while its
+	// executed configuration is fetched. Reject that TOCTOU boundary.
+	var latest wpPipeline
+	if err = w.get(ctx, c, base, pipelineRoot, &latest); err != nil {
+		return WoodpeckerObservation{}, err
+	}
+	if !reflect.DeepEqual(pipeline, latest) {
+		return WoodpeckerObservation{}, errors.New("woodpecker pipeline changed during exact-attempt observation")
+	}
 	out := WoodpeckerObservation{
 		HeadSHA: pipeline.Commit, PipelineID: q.PipelineID, RunID: q.RunID,
 		JobID: q.JobID, AttemptID: q.AttemptID, JobName: observed.Name,
 		PipelineStatus: pipeline.Status, StepStatus: observed.State,
-		ConfigurationSHA256: digest,
+		ExitCode: observed.ExitCode, ConfigurationSHA256: digest,
 	}
 	if worker > 0 {
 		out.WorkerID = strconv.FormatInt(worker, 10)
