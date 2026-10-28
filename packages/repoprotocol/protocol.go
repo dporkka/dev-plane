@@ -44,7 +44,7 @@ const (
 	WorkReadyToLand  WorkState = "ready_to_land"
 	WorkLanded       WorkState = "landed"
 	WorkFailed       WorkState = "failed"
-	WorkCancelled    WorkState = "cancelled"
+	WorkCancelled    WorkState = "cancelled" //nolint:misspell // Stable serialized state; changing the spelling breaks persisted work items.
 )
 
 type GateStatus string
@@ -93,11 +93,33 @@ type RiskRule struct {
 	Requires []string  `json:"requires,omitempty" yaml:"requires,omitempty"`
 }
 
+// GateExecutionOutcome distinguishes an executed command (including test failure)
+// from an infrastructure failure that did not return a trustworthy exit result.
+type GateExecutionOutcome string
+
+const (
+	GateExecutionCompleted   GateExecutionOutcome = "completed"
+	GateExecutionRunnerError GateExecutionOutcome = "runner_error"
+)
+
+// GateExecution describes one actual runtime command attempt. SessionID is a
+// runtime workspace identifier, not an independently attested worker identity.
+type GateExecution struct {
+	SessionID      string               `json:"session_id"`
+	AttemptID      string               `json:"attempt_id"`
+	Outcome        GateExecutionOutcome `json:"outcome"`
+	StartedAt      time.Time            `json:"started_at"`
+	FinishedAt     time.Time            `json:"finished_at"`
+	ExitCode       *int                 `json:"exit_code,omitempty"`
+	DurationMillis int64                `json:"duration_ms"`
+}
+
 type GateEvidence struct {
-	Name    string     `json:"name"`
-	Status  GateStatus `json:"status"`
-	Command string     `json:"command,omitempty"`
-	Output  string     `json:"output,omitempty"`
+	Name      string         `json:"name"`
+	Status    GateStatus     `json:"status"`
+	Command   string         `json:"command,omitempty"`
+	Output    string         `json:"output,omitempty"`
+	Execution *GateExecution `json:"execution,omitempty"`
 }
 
 type EvidenceBundle struct {
@@ -225,6 +247,21 @@ func (e EvidenceBundle) ValidateHead(candidateHead string) error {
 		}
 		if gate.Status != GatePassed {
 			return fmt.Errorf("evidence gate %q is not passed: %s", gate.Name, gate.Status)
+		}
+		// Human approvals are assessed by their own authorization path; they
+		// must not be fabricated as shell commands.
+		if gate.Name == GateIndependentReview || gate.Name == GateHumanApproval {
+			continue
+		}
+		if gate.Execution == nil {
+			return fmt.Errorf("evidence gate %q requires execution evidence", gate.Name)
+		}
+		x := gate.Execution
+		if strings.TrimSpace(x.SessionID) == "" || strings.TrimSpace(x.AttemptID) == "" ||
+			x.Outcome != GateExecutionCompleted || x.ExitCode == nil || *x.ExitCode != 0 ||
+			x.StartedAt.IsZero() || x.FinishedAt.IsZero() || x.FinishedAt.Before(x.StartedAt) ||
+			x.DurationMillis < 0 {
+			return fmt.Errorf("evidence gate %q has invalid execution evidence", gate.Name)
 		}
 	}
 	return nil
