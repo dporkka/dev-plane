@@ -451,17 +451,18 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		return fmt.Errorf("run executor is not configured")
 	}
 
-	if h.admission == nil {
-		return fmt.Errorf("%w: run %s not admitted: scheduler admission not configured", ErrRunAdmissionDeferred, event.RunID)
-	}
 	h.logger.Info("executing triggered run", "run_id", event.RunID, "task_id", event.TaskID)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	{
-		decision, err := h.admission.AdmitRun(ctx, event.RunID, event.TaskID)
+	decision := RunAdmissionDecision{Allowed: false, Reason: "scheduler-admission-not-configured"}
+	if h.admission != nil {
+		var err error
+		decision, err = h.admission.AdmitRun(ctx, event.RunID, event.TaskID)
 		if err != nil {
 			return fmt.Errorf("admit run %s: %w", event.RunID, err)
 		}
+	}
+	{
 		if !decision.Allowed {
 			reason := strings.TrimSpace(decision.Reason)
 			if reason == "" {
