@@ -1,8 +1,5 @@
 "use client";
-import {
-  TASK_BOARD_COLUMNS,
-  type TaskDependencyView,
-} from "@/lib/task-view";
+import { TASK_BOARD_COLUMNS, type TaskDependencyView } from "@/lib/task-view";
 import type { Task } from "@/lib/types";
 import { TaskCard } from "./TaskCard";
 
