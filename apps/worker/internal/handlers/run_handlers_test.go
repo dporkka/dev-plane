@@ -247,7 +247,8 @@ func TestHandleRunFailedReturnsPublishError(t *testing.T) {
 
 func TestHandleRunTriggeredExecutesQueuedRun(t *testing.T) {
 	executor := &fakeRunExecutor{}
-	handler := NewRunHandler(nil, slog.Default(), nil).WithRunExecutor(executor)
+	handler := NewRunHandler(nil, slog.Default(), nil).WithRunExecutor(executor).
+		WithRunAdmission(&fakeRunAdmission{decision: RunAdmissionDecision{Allowed: true}})
 	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"queued"}`)}
 
 	if err := handler.HandleRunTriggered(msg); err != nil {
@@ -271,7 +272,8 @@ func TestHandleRunTriggeredRequiresExecutor(t *testing.T) {
 
 func TestHandleRunTriggeredReturnsExecutorError(t *testing.T) {
 	executor := &fakeRunExecutor{err: errors.New("model provider unavailable")}
-	handler := NewRunHandler(nil, slog.Default(), nil).WithRunExecutor(executor)
+	handler := NewRunHandler(nil, slog.Default(), nil).WithRunExecutor(executor).
+		WithRunAdmission(&fakeRunAdmission{decision: RunAdmissionDecision{Allowed: true}})
 	err := handler.HandleRunTriggered(&nats.Msg{Data: []byte(`{"run_id":"run-1"}`)})
 	if err == nil {
 		t.Fatal("expected error")

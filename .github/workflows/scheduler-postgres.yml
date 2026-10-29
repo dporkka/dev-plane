@@ -1,0 +1,91 @@
+name: Scheduler PostgreSQL Isolation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/worker/internal/handlers/**"
+      - "apps/worker/internal/integration/**"
+      - ".github/workflows/scheduler-postgres.yml"
+  workflow_dispatch:
+
+jobs:
+  postgres-admission:
+    name: PostgreSQL scheduler admission
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: devplane_test
+          POSTGRES_PASSWORD: devplane_test_only
+          POSTGRES_DB: devplane_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devplane_test -d devplane_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_TEST_DATABASE_URL: postgres://devplane_test:devplane_test_only@localhost:5432/devplane_test?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+      - name: Test real PostgreSQL scheduler tenant isolation
+        run: cd apps/worker && go test ./internal/handlers -run '^TestSchedulerAdmissionPostgresTenantScope$' -count=1 -v -timeout 5m
+
+  postgres-migrated-admission:
+    name: Migrated PostgreSQL scheduler isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: devplane_test
+          POSTGRES_PASSWORD: devplane_test_only
+          POSTGRES_DB: devplane_migration_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U devplane_test -d devplane_migration_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUN_MIGRATED_POSTGRES_TEST: "1"
+      POSTGRES_MIGRATED_TEST_DATABASE_URL: postgres://devplane_test:devplane_test_only@localhost:5432/devplane_migration_ci?sslmode=disable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+      - name: Test schema-backed PostgreSQL scheduler isolation
+        run: cd apps/worker && go test ./internal/handlers -run '^TestSchedulerAdmissionMigratedPostgresTenantScope$' -count=1 -v -timeout 7m
+
+  nats-admission-retry:
+    name: JetStream admission retry
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUN_NATS_ADMISSION_INTEGRATION: "1"
+      NATS_URL: nats://localhost:4222
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+      - name: Start disposable JetStream
+        run: docker compose up -d --wait nats
+      - name: Test denied admission, redelivery and ACK
+        run: cd apps/worker && go test ./internal/handlers -run '^TestRunTriggeredJetStreamRedeliveryAfterDeniedAdmission$' -count=1 -v -timeout 3m
