@@ -38,7 +38,7 @@ func TestSchedulingDiagnosticsRejectsUnauthenticated(t *testing.T) {
 func TestSchedulingDiagnosticsDoesNotExposeUnauthorizedTask(t *testing.T) {
     h, mock, cleanup := setupTest(t)
     defer cleanup()
-    expectAuthorizeTaskNotFound(mock, "secret-task")
+    mock.ExpectQuery("SELECT").WithArgs("secret-task").WillReturnError(sql.ErrNoRows)
     rec := requestSchedulingDiagnostics(h, "secret-task", true)
     if rec.Code != http.StatusNotFound {
         t.Fatalf("status %d, expected 404", rec.Code)
