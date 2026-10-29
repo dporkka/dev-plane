@@ -199,6 +199,26 @@ describe("scheduler dependency snapshots", () => {
     );
   });
 
+
+  it("reports a transitive dependency cycle as an invalid blocker", () => {
+    const tasks = [
+      task("one", "approved", "One", {
+        metadata: { scheduler: { depends_on: ["two"] } },
+      }),
+      task("two", "approved", "Two", {
+        metadata: { scheduler: { depends_on: ["three"] } },
+      }),
+      task("three", "approved", "Three", {
+        metadata: { scheduler: { depends_on: ["one"] } },
+      }),
+    ];
+    const index = buildTaskDependencyIndex(tasks);
+    assert.equal(index.get("one")?.dependencies[0]?.state, "invalid");
+    assert.equal(index.get("two")?.dependencies[0]?.state, "invalid");
+    assert.equal(index.get("three")?.dependencies[0]?.state, "invalid");
+    assert.equal(index.get("one")?.needsIntervention, true);
+  });
+
   it("handles a self-reference as invalid rather than falsely ready", () => {
     const tasks = [
       task("self", "approved", "Self", {
