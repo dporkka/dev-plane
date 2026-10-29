@@ -192,7 +192,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []Task
 	for rows.Next() {
