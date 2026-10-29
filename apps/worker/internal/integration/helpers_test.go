@@ -348,16 +348,6 @@ func (env *testEnv) waitForCondition(name string, timeout time.Duration, predica
 	env.t.Fatalf("timed out waiting for condition: %s", name)
 }
 
-// taskStatus returns the current task status.
-func (env *testEnv) taskStatus(taskID string) string {
-	var status string
-	err := env.db.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1`, taskID).Scan(&status)
-	if err != nil {
-		env.t.Fatalf("query task status: %v", err)
-	}
-	return status
-}
-
 // runStatus returns the current agent run status.
 func (env *testEnv) runStatus(runID string) string {
 	var status string
@@ -406,15 +396,15 @@ func (env *testEnv) stepCount(runID string) int {
 
 // maxStepNumber returns the highest step number for a run.
 func (env *testEnv) maxStepNumber(runID string) int {
-	var max sql.NullInt32
-	err := env.db.DB.QueryRow(`SELECT MAX(step_number) FROM agent_steps WHERE agent_run_id = $1`, runID).Scan(&max)
+	var highestStep sql.NullInt32
+	err := env.db.DB.QueryRow(`SELECT MAX(step_number) FROM agent_steps WHERE agent_run_id = $1`, runID).Scan(&highestStep)
 	if err != nil {
 		env.t.Fatalf("query max step number: %v", err)
 	}
-	if !max.Valid {
+	if !highestStep.Valid {
 		return 0
 	}
-	return int(max.Int32)
+	return int(highestStep.Int32)
 }
 
 // seedFakeLocalWorkspace creates a local workspace directory and inserts a
