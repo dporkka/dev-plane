@@ -773,7 +773,6 @@ func TestGetTask_CrossOrgDenied(t *testing.T) {
 	}
 }
 
-
 func TestUpdateTask_ConcurrentStatusChangeRejectsStaleWrite(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
