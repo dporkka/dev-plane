@@ -68,7 +68,6 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))
