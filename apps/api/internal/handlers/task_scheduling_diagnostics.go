@@ -99,11 +99,12 @@ func (h *Handler) diagnoseTaskScheduling(ctx context.Context, taskID string) (Sc
 	if configOK && config.Scheduler != nil && len(config.Scheduler.DependsOn) > maxDiagnosticDependencies {
 		configOK = false
 	}
-	if !configOK {
+	switch {
+	case !configOK:
 		result.Checks["dependencies"] = diagnosticCheck("unknown", "invalid-scheduler-metadata")
-	} else if config.Scheduler == nil || len(config.Scheduler.DependsOn) == 0 {
+	case config.Scheduler == nil || len(config.Scheduler.DependsOn) == 0:
 		result.Checks["dependencies"] = diagnosticCheck("clear", "no-dependencies-configured")
-	} else {
+	default:
 		check := diagnosticCheck("clear", "all-prerequisites-done")
 		for _, dep := range config.Scheduler.DependsOn {
 			if dep == "" || dep == taskID {
@@ -163,11 +164,12 @@ func (h *Handler) diagnoseTaskScheduling(ctx context.Context, taskID string) (Sc
 	}
 	result.ActiveClaims = len(claims)
 
-	if len(claims) > maxDiagnosticClaims {
+	switch {
+	case len(claims) > maxDiagnosticClaims:
 		result.Checks["ownership"] = diagnosticCheck("unknown", "claim-snapshot-truncated")
-	} else if !configOK {
+	case !configOK:
 		result.Checks["ownership"] = diagnosticCheck("unknown", "invalid-scheduler-metadata")
-	} else {
+	default:
 		var owns []string
 		if config.Scheduler != nil {
 			owns = config.Scheduler.Owns
