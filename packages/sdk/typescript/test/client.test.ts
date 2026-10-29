@@ -77,7 +77,7 @@ describe('DevPlaneClient', () => {
     await client.getTaskSchedulingDiagnostics('task-1');
 
     assert.equal(state.input, 'http://api.test/api/v1/tasks/task-1/scheduling-diagnostics');
-    assert.equal(state.init?.method, 'GET');
+    assert.equal(state.init?.method, undefined); // GET is the default fetch method
     assert.equal((state.init?.headers as Record<string, string>)?.Authorization, 'Bearer token-123');
   });
 
