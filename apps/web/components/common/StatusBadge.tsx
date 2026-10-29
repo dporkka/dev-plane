@@ -14,6 +14,7 @@ import {
   Plug,
   Shield,
   ShieldAlert,
+  Rocket,
   Unplug,
   XCircle,
 } from "lucide-react";
@@ -59,6 +60,11 @@ const statusConfig: Record<
     label: "PR Created",
     icon: GitPullRequest,
     classes: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
+  },
+  deploying: {
+    label: "Deploying",
+    icon: Rocket,
+    classes: "bg-blue-500/10 text-blue-400 border-blue-500/30",
   },
   done: {
     label: "Done",
