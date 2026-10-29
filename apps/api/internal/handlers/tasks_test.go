@@ -369,7 +369,7 @@ func TestUpdateTask(t *testing.T) {
 
 	// Update query
 	mock.ExpectExec("UPDATE tasks SET").
-		WithArgs(&newTitle, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), taskID).
+		WithArgs(&newTitle, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), taskID, "backlog").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// GetTask query after update re-runs authorization
