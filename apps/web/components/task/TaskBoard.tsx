@@ -1,26 +1,17 @@
 "use client";
-import type { Task, TaskStatus } from "@/lib/types";
+import { TASK_BOARD_COLUMNS, type TaskDependencyView } from "@/lib/task-view";
+import type { Task } from "@/lib/types";
 import { TaskCard } from "./TaskCard";
-
-const columns: { status: TaskStatus; title: string }[] = [
-  { status: "backlog", title: "Backlog" },
-  { status: "spec_review", title: "Spec Review" },
-  { status: "approved", title: "Approved" },
-  { status: "running", title: "Running" },
-  { status: "reviewing", title: "Reviewing" },
-  { status: "pr_created", title: "PR Created" },
-  { status: "done", title: "Done" },
-];
 
 interface TaskBoardProps {
   tasks: Task[];
-  onTaskMove?: (taskId: string, status: TaskStatus) => void;
+  dependencies?: ReadonlyMap<string, TaskDependencyView>;
 }
 
-export function TaskBoard({ tasks, onTaskMove }: TaskBoardProps) {
+export function TaskBoard({ tasks, dependencies }: TaskBoardProps) {
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 h-full">
-      {columns.map((col) => {
+      {TASK_BOARD_COLUMNS.map((col) => {
         const colTasks = tasks.filter((t) => t.status === col.status);
         return (
           <div key={col.status} className="flex-shrink-0 w-80 flex flex-col">
@@ -34,7 +25,11 @@ export function TaskBoard({ tasks, onTaskMove }: TaskBoardProps) {
             </div>
             <div className="space-y-2 flex-1 overflow-y-auto min-h-0">
               {colTasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  dependencies={dependencies?.get(task.id)}
+                />
               ))}
               {colTasks.length === 0 && (
                 <div className="text-center py-8 text-gray-600 text-sm border border-dashed border-[#30363d] rounded-lg">
