@@ -79,6 +79,11 @@ linters:
       - linters:
           - gocritic
         text: "singleCaseSwitch|sloppyReassign|unnamedResult|unnecessaryBlock|whyNoLint|appendAssign|offBy1"
+      # "cancelled" is a persistent public task state (not a prose typo).
+      - path: 'apps/api/internal/handlers/tasks(_test)?\\.go'
+        linters:
+          - misspell
+        text: "cancelled"
 
 formatters:
   enable:
