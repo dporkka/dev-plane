@@ -321,13 +321,13 @@ func (a *SchedulerAdmission) loadRunningClaims(ctx context.Context, candidate sc
 	for rows.Next() {
 		var claim rawClaim
 		if err := rows.Scan(&claim.id, &claim.metadata); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, false, fmt.Errorf("scan running scheduler claim: %w", err)
 		}
 		rawClaims = append(rawClaims, claim)
 	}
 	if err := rows.Err(); err != nil {
-		rows.Close()
+		_ = rows.Close()
 		return nil, false, fmt.Errorf("iterate running scheduler claims: %w", err)
 	}
 	if err := rows.Close(); err != nil {
@@ -431,14 +431,3 @@ func applySchedulerDefaults(config *schedulerConfig) {
 	}
 }
 
-func parseSchedulerCapacity(maxParallel int, cpu float64, memoryMB int) SchedulerCapacity {
-	return SchedulerCapacity{
-		MaxParallel: maxParallel,
-		CPU:         cpu,
-		MemoryMB:    memoryMB,
-	}
-}
-
-func schedulerReason(reason string) string {
-	return strings.TrimSpace(reason)
-}
