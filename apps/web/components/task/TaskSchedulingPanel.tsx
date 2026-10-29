@@ -65,7 +65,7 @@ export function TaskSchedulingPanel({
       ) : error || !snapshot ? (
         <p className="text-sm text-amber-300">
           Scheduling diagnostics are unavailable. This does not mean a run is
-            ready.
+          ready.
         </p>
       ) : (
         <div className="rounded-md border border-[#30363d] bg-[#161b22] p-4">
