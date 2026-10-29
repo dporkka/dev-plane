@@ -451,10 +451,13 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		return fmt.Errorf("run executor is not configured")
 	}
 
+	if h.admission == nil {
+		return fmt.Errorf("%w: run %s not admitted: scheduler admission not configured", ErrRunAdmissionDeferred, event.RunID)
+	}
 	h.logger.Info("executing triggered run", "run_id", event.RunID, "task_id", event.TaskID)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
-	if h.admission != nil {
+	{
 		decision, err := h.admission.AdmitRun(ctx, event.RunID, event.TaskID)
 		if err != nil {
 			return fmt.Errorf("admit run %s: %w", event.RunID, err)
@@ -479,13 +482,11 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		}
 	}
 	err := h.executor.ExecuteRun(ctx, event.RunID)
-	if h.admission != nil {
-		if releaseErr := h.admission.ReleaseRun(ctx, event.RunID); releaseErr != nil {
-			if err == nil {
-				return fmt.Errorf("release run admission %s: %w", event.RunID, releaseErr)
-			}
-			h.logger.Warn("failed to release run admission after execution error", "run_id", event.RunID, "error", releaseErr)
+	if releaseErr := h.admission.ReleaseRun(ctx, event.RunID); releaseErr != nil {
+		if err == nil {
+			return fmt.Errorf("release run admission %s: %w", event.RunID, releaseErr)
 		}
+		h.logger.Warn("failed to release run admission after execution error", "run_id", event.RunID, "error", releaseErr)
 	}
 	if err != nil {
 		if isRunSuspension(err) {
