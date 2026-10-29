@@ -99,6 +99,20 @@ export type SecretProvider = 'sops' | 'env' | 'vault' | 'encrypted_db';
 
 export type SecretScope = 'dev' | 'staging' | 'prod';
 
+export type SchedulingDiagnosticStatus = 'blocked' | 'clear' | 'unknown';
+
+export interface TaskSchedulingDiagnostics {
+  task_id: string;
+  observed_at: string;
+  status: 'blocked' | 'unknown';
+  admission_authoritative: false;
+  active_claims: number;
+  checks: Record<string, {
+    status: SchedulingDiagnosticStatus;
+    reason: string;
+  }>;
+}
+
 // ─── Core Models ─────────────────────────────────────────────────────
 
 export interface Organization {

@@ -68,7 +68,6 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))
@@ -168,6 +167,7 @@ func (s *Server) routes() {
 			// Task actions
 			r.Get("/tasks/{id}/spec", h.GetTaskSpec)
 			r.Get("/tasks/{id}/readiness", h.GetTaskReadiness)
+			r.Get("/tasks/{id}/scheduling-diagnostics", h.GetTaskSchedulingDiagnostics)
 			r.Post("/tasks/{id}/generate-spec", h.GenerateSpec)
 			r.Post("/tasks/{id}/start-run", h.StartRun)
 			r.Post("/runs/{id}/retry", h.RetryRun)

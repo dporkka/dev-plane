@@ -5,6 +5,7 @@ import { TimeAgo } from "@/components/common/TimeAgo";
 import { CostBadge } from "@/components/run/CostBadge";
 import { TaskActions } from "@/components/task/TaskActions";
 import { TaskDependencies } from "@/components/task/TaskDependencies";
+import { TaskSchedulingPanel } from "@/components/task/TaskSchedulingPanel";
 import { TaskSpecPreview } from "@/components/task/TaskSpecPreview";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -77,6 +78,19 @@ export default function TaskDetailPage() {
     queryKey: ["tasks", task?.project_id],
     queryFn: () => api.listTasks(task.project_id),
     enabled: !!task?.project_id,
+  });
+
+  const {
+    data: schedulingSnapshot,
+    isLoading: schedulingLoading,
+    isError: schedulingError,
+    isFetching: schedulingRefreshing,
+    refetch: refreshScheduling,
+  } = useQuery({
+    queryKey: ["scheduling-diagnostics", taskId],
+    queryFn: () => api.getSchedulingDiagnostics(taskId),
+    enabled: !!task?.id,
+    staleTime: 10000,
   });
 
   const { data: runs } = useQuery({
@@ -194,6 +208,16 @@ export default function TaskDetailPage() {
       ) : (
         dependencyView && <TaskDependencies view={dependencyView} />
       )}
+
+      <TaskSchedulingPanel
+        snapshot={schedulingSnapshot}
+        loading={schedulingLoading}
+        error={schedulingError}
+        refreshing={schedulingRefreshing}
+        onRefresh={() => {
+          void refreshScheduling();
+        }}
+      />
 
       {/* Metadata cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">

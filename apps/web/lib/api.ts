@@ -57,6 +57,9 @@ export const api = {
 
   getTask: (id: string): Promise<any> => getClient().getTask(id),
 
+  getSchedulingDiagnostics: (id: string) =>
+    getClient().getTaskSchedulingDiagnostics(id),
+
   createTask: (projectId: string, data: any): Promise<any> =>
     getClient().createTask(projectId, data),
 

@@ -47,6 +47,7 @@ import type {
   StopServiceRequest,
   StopServiceResponse,
   Task,
+  TaskSchedulingDiagnostics,
   TaskSpec,
   UpdateIntegrationPayload,
   UpdateTaskRequest,
@@ -310,6 +311,12 @@ export class DevPlaneClient {
 
   getTask(id: string) {
     return this.request<Task>(`/api/v1/tasks/${id}`);
+  }
+
+  getTaskSchedulingDiagnostics(taskId: string) {
+    return this.request<TaskSchedulingDiagnostics>(
+      `/api/v1/tasks/${taskId}/scheduling-diagnostics`,
+    );
   }
 
   getTaskSpec(taskId: string) {

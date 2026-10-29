@@ -11,10 +11,10 @@ import (
 
 func TestNew(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL:    "", // no NATS to avoid real connection
-		JWTSecret:  "test-secret-that-is-at-least-thirty-two-bytes",
-		Port:       "8080",
-		LogLevel:   "info",
+		NATSURL:        "", // no NATS to avoid real connection
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		Port:           "8080",
+		LogLevel:       "info",
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
 	logger := slog.Default()
@@ -30,10 +30,10 @@ func TestNew(t *testing.T) {
 
 func TestHandler(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL:   "",
-		JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
-		Port:      "8080",
-		LogLevel:  "info",
+		NATSURL:        "",
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		Port:           "8080",
+		LogLevel:       "info",
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
 	s := New(cfg, nil, slog.Default())
@@ -45,10 +45,10 @@ func TestHandler(t *testing.T) {
 
 func TestClose_NilDB(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL:   "",
-		JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
-		Port:      "8080",
-		LogLevel:  "info",
+		NATSURL:        "",
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		Port:           "8080",
+		LogLevel:       "info",
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
 	s := New(cfg, nil, slog.Default())
@@ -59,10 +59,10 @@ func TestClose_NilDB(t *testing.T) {
 
 func TestHealthEndpoint(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL:   "",
-		JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
-		Port:      "8080",
-		LogLevel:  "info",
+		NATSURL:        "",
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		Port:           "8080",
+		LogLevel:       "info",
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
 	s := New(cfg, nil, slog.Default())
@@ -83,10 +83,10 @@ func TestHealthEndpoint(t *testing.T) {
 
 func TestReadyEndpoint(t *testing.T) {
 	cfg := &config.Config{
-		NATSURL:   "",
-		JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
-		Port:      "8080",
-		LogLevel:  "info",
+		NATSURL:        "",
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		Port:           "8080",
+		LogLevel:       "info",
 		AllowedOrigins: []string{"http://localhost:3000"},
 	}
 	s := New(cfg, nil, slog.Default())
@@ -102,5 +102,28 @@ func TestReadyEndpoint(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+}
+
+func TestUntrustedForwardedIPDoesNotOverridePeer(t *testing.T) {
+	cfg := &config.Config{
+		JWTSecret:      "test-secret-that-is-at-least-thirty-two-bytes",
+		AllowedOrigins: []string{"http://localhost:3000"},
+	}
+	srv := New(cfg, nil, slog.Default())
+	srv.router.Get("/test-peer-ip", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(r.RemoteAddr))
+	})
+	request := httptest.NewRequest(http.MethodGet, "/test-peer-ip", nil)
+	request.RemoteAddr = "203.0.113.10:50123"
+	request.Header.Set("X-Forwarded-For", "198.51.100.123")
+	request.Header.Set("X-Real-IP", "198.51.100.124")
+	recorder := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+	if recorder.Body.String() != request.RemoteAddr {
+		t.Fatalf("peer IP was overwritten by untrusted forwarded headers: %q", recorder.Body.String())
 	}
 }

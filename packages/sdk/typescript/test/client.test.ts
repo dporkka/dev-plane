@@ -72,6 +72,15 @@ describe('DevPlaneClient', () => {
     });
   });
 
+  test('reads task scheduling diagnostics using existing bearer authentication', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test', token: 'token-123' });
+    await client.getTaskSchedulingDiagnostics('task-1');
+
+    assert.equal(state.input, 'http://api.test/api/v1/tasks/task-1/scheduling-diagnostics');
+    assert.equal(state.init?.method, undefined); // GET is the default fetch method
+    assert.equal((state.init?.headers as Record<string, string>)?.Authorization, 'Bearer token-123');
+  });
+
   test('returns artifact responses as Blobs', async () => {
     const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
     const blob = await client.getArtifact('art-1');
