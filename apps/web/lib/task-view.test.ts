@@ -199,7 +199,6 @@ describe("scheduler dependency snapshots", () => {
     );
   });
 
-
   it("reports a transitive dependency cycle as an invalid blocker", () => {
     const tasks = [
       task("one", "approved", "One", {
