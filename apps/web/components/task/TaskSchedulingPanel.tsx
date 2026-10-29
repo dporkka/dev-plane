@@ -19,9 +19,11 @@ const descriptions: Record<string, string> = {
   "no-observed-conflicts": "No conflicts among checked active claims",
   "ownership-conflict": "An active run owns an overlapping path",
   "ownership-not-configured": "No ownership specification is available",
-  "running-ownership-unavailable": "An active run's ownership cannot be checked",
+  "running-ownership-unavailable":
+    "An active run's ownership cannot be checked",
   "claim-snapshot-truncated": "Too many active claims to inspect safely",
-  "worker-capacity-not-exposed": "Worker capacity configuration is unavailable to the API",
+  "worker-capacity-not-exposed":
+    "Worker capacity configuration is unavailable to the API",
   "worker-budget-not-exposed": "Worker budget policy cannot be checked here",
   "not-evaluated": "Not evaluated",
 };
@@ -62,7 +64,8 @@ export function TaskSchedulingPanel({
         </output>
       ) : error || !snapshot ? (
         <p className="text-sm text-amber-300">
-          Scheduling diagnostics are unavailable. This does not mean a run is ready.
+          Scheduling diagnostics are unavailable. This does not mean a run is
+            ready.
         </p>
       ) : (
         <div className="rounded-md border border-[#30363d] bg-[#161b22] p-4">
@@ -75,14 +78,27 @@ export function TaskSchedulingPanel({
             {Object.entries(checkLabels).map(([key, label]) => {
               const check = snapshot.checks[key];
               return (
-                <div key={key} className="flex flex-wrap justify-between gap-2 text-sm">
+                <div
+                  key={key}
+                  className="flex flex-wrap justify-between gap-2 text-sm"
+                >
                   <dt className="text-gray-300">{label}</dt>
                   <dd className="text-right text-gray-400">
-                    <span className={check?.status === "blocked" ? "text-red-300" : check?.status === "clear" ? "text-green-300" : "text-amber-300"}>
+                    <span
+                      className={
+                        check?.status === "blocked"
+                          ? "text-red-300"
+                          : check?.status === "clear"
+                            ? "text-green-300"
+                            : "text-amber-300"
+                      }
+                    >
                       {check?.status ?? "unknown"}
                     </span>
                     {" · "}
-                    {check ? (descriptions[check.reason] ?? "Not verified") : "Not verified"}
+                    {check
+                      ? (descriptions[check.reason] ?? "Not verified")
+                      : "Not verified"}
                   </dd>
                 </div>
               );
@@ -96,8 +112,8 @@ export function TaskSchedulingPanel({
       )}
       <p className="text-xs text-gray-500">
         Read-only database snapshot, not a live admission decision. The worker
-        remains authoritative for capacity, budgets, approvals, and atomic
-        run claims. Unknown does not mean safe to execute.
+        remains authoritative for capacity, budgets, approvals, and atomic run
+        claims. Unknown does not mean safe to execute.
       </p>
     </section>
   );
