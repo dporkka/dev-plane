@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TASK_BOARD_COLUMNS, filterTasks, isNeedsAttention } from "./task-view";
+import {
+  TASK_BOARD_COLUMNS,
+  buildTaskDependencyIndex,
+  filterTasks,
+  isNeedsAttention,
+} from "./task-view";
 import type { Task } from "./types";
 
 function task(
@@ -96,5 +101,111 @@ describe("task views", () => {
       ["1", "2"],
     );
     assert.equal(tasks.length, 3);
+  });
+});
+
+describe("scheduler dependency snapshots", () => {
+  it("uses the canonical metadata scheduler depends_on and done status", () => {
+    const tasks = [
+      task("ready", "done", "Foundation"),
+      task("running", "running", "Build API"),
+      task("blocked", "approved", "Deploy", {
+        metadata: {
+          scheduler: { depends_on: ["ready", "running", "running"] },
+        },
+      }),
+    ];
+    const index = buildTaskDependencyIndex(tasks);
+    const view = index.get("blocked");
+    assert.ok(view);
+    assert.deepEqual(
+      view.dependencies.map(({ state, title }) => [state, title]),
+      [
+        ["complete", "Foundation"],
+        ["waiting", "Build API"],
+      ],
+    );
+    assert.equal(view.blocked, true);
+    assert.equal(view.needsIntervention, false);
+    assert.deepEqual(
+      index.get("running")?.dependents.map(({ id }) => id),
+      ["blocked"],
+    );
+  });
+
+  it("does not leak unknown or other-project dependency task details", () => {
+    const tasks = [
+      task("private", "failed", "Secret task", { project_id: "other-project" }),
+      task("consumer", "approved", "Public task", {
+        metadata: { scheduler: { depends_on: ["private", "missing"] } },
+      }),
+    ];
+    const view = buildTaskDependencyIndex(tasks).get("consumer");
+    assert.ok(view);
+    assert.deepEqual(
+      view.dependencies.map(({ state, title, id }) => [state, title, id]),
+      [
+        ["unavailable", "Not visible in this project", undefined],
+        ["unavailable", "Not visible in this project", undefined],
+      ],
+    );
+    assert.equal(view.needsIntervention, true);
+  });
+
+  it("flags failed prerequisites and malformed scheduler fields for triage", () => {
+    const tasks = [
+      task("failed-dep", "failed", "Failing check"),
+      task("consumer", "approved", "Consumer", {
+        metadata: { scheduler: { depends_on: ["failed-dep"] } },
+      }),
+      task("invalid", "backlog", "Invalid config", {
+        metadata: { scheduler: { depends_on: "failed-dep" } },
+      }),
+    ];
+    const index = buildTaskDependencyIndex(tasks);
+    assert.equal(index.get("consumer")?.dependencies[0]?.state, "failed");
+    assert.equal(index.get("consumer")?.needsIntervention, true);
+    assert.equal(index.get("invalid")?.dependencies[0]?.state, "invalid");
+    assert.equal(index.get("invalid")?.needsIntervention, true);
+    assert.equal(isNeedsAttention(tasks[1], index.get("consumer")), true);
+    assert.equal(isNeedsAttention(tasks[2], index.get("invalid")), true);
+  });
+
+  it("filters by dependency state from the full project snapshot", () => {
+    const tasks = [
+      task("a", "running", "Dependency"),
+      task("b", "approved", "Waiting", {
+        metadata: { scheduler: { depends_on: ["a"] } },
+      }),
+      task("c", "done", "Completed"),
+    ];
+    const index = buildTaskDependencyIndex(tasks);
+    assert.deepEqual(
+      filterTasks(
+        tasks,
+        { ...DEFAULT_TASK_FILTERS, dependency: "blocked" },
+        index,
+      ).map((item) => item.id),
+      ["b"],
+    );
+    assert.deepEqual(
+      filterTasks(
+        tasks,
+        { ...DEFAULT_TASK_FILTERS, dependency: "needs_intervention" },
+        index,
+      ).map((item) => item.id),
+      [],
+    );
+  });
+
+  it("handles a self-reference as invalid rather than falsely ready", () => {
+    const tasks = [
+      task("self", "approved", "Self", {
+        metadata: { scheduler: { depends_on: ["self"] } },
+      }),
+    ];
+    const view = buildTaskDependencyIndex(tasks).get("self");
+    assert.equal(view?.dependencies[0]?.state, "invalid");
+    assert.equal(view?.blocked, true);
   });
 });
