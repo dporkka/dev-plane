@@ -462,25 +462,23 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 			return fmt.Errorf("admit run %s: %w", event.RunID, err)
 		}
 	}
-	{
-		if !decision.Allowed {
-			reason := strings.TrimSpace(decision.Reason)
-			if reason == "" {
-				reason = "scheduler admission denied"
-			}
-			retryAfter := decision.RetryAfter
-			if retryAfter <= 0 {
-				retryAfter = 5 * time.Second
-			}
-			if msg != nil && msg.Reply != "" {
-				if nakErr := msg.NakWithDelay(retryAfter); nakErr != nil &&
-					!errors.Is(nakErr, nats.ErrMsgNotBound) &&
-					!errors.Is(nakErr, nats.ErrMsgNoReply) {
-					return fmt.Errorf("defer run admission: %w", nakErr)
-				}
-			}
-			return fmt.Errorf("%w: run %s not admitted: %s", ErrRunAdmissionDeferred, event.RunID, reason)
+	if !decision.Allowed {
+		reason := strings.TrimSpace(decision.Reason)
+		if reason == "" {
+			reason = "scheduler admission denied"
 		}
+		retryAfter := decision.RetryAfter
+		if retryAfter <= 0 {
+			retryAfter = 5 * time.Second
+		}
+		if msg != nil && msg.Reply != "" {
+			if nakErr := msg.NakWithDelay(retryAfter); nakErr != nil &&
+				!errors.Is(nakErr, nats.ErrMsgNotBound) &&
+				!errors.Is(nakErr, nats.ErrMsgNoReply) {
+				return fmt.Errorf("defer run admission: %w", nakErr)
+			}
+		}
+		return fmt.Errorf("%w: run %s not admitted: %s", ErrRunAdmissionDeferred, event.RunID, reason)
 	}
 	err := h.executor.ExecuteRun(ctx, event.RunID)
 	if releaseErr := h.admission.ReleaseRun(ctx, event.RunID); releaseErr != nil {
