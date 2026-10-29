@@ -1,13 +1,14 @@
 "use client";
-import { TASK_BOARD_COLUMNS } from "@/lib/task-view";
+import { TASK_BOARD_COLUMNS, type TaskDependencyView } from "@/lib/task-view";
 import type { Task } from "@/lib/types";
 import { TaskCard } from "./TaskCard";
 
 interface TaskBoardProps {
   tasks: Task[];
+  dependencies?: ReadonlyMap<string, TaskDependencyView>;
 }
 
-export function TaskBoard({ tasks }: TaskBoardProps) {
+export function TaskBoard({ tasks, dependencies }: TaskBoardProps) {
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 h-full">
       {TASK_BOARD_COLUMNS.map((col) => {
@@ -24,7 +25,11 @@ export function TaskBoard({ tasks }: TaskBoardProps) {
             </div>
             <div className="space-y-2 flex-1 overflow-y-auto min-h-0">
               {colTasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  dependencies={dependencies?.get(task.id)}
+                />
               ))}
               {colTasks.length === 0 && (
                 <div className="text-center py-8 text-gray-600 text-sm border border-dashed border-[#30363d] rounded-lg">

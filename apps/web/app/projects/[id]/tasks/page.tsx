@@ -9,6 +9,7 @@ import {
   DEFAULT_TASK_FILTERS,
   TASK_BOARD_COLUMNS,
   type TaskFilters,
+  buildTaskDependencyIndex,
   filterTasks,
   isNeedsAttention,
 } from "@/lib/task-view";
@@ -43,8 +44,11 @@ export default function ProjectTaskBoardPage() {
 
   const taskList: Task[] = tasks?.data || tasks || [];
   const repoList = repos?.data || repos || [];
-  const visibleTasks = filterTasks(taskList, filters);
-  const needsAttentionCount = taskList.filter(isNeedsAttention).length;
+  const dependencyIndex = buildTaskDependencyIndex(taskList);
+  const visibleTasks = filterTasks(taskList, filters, dependencyIndex);
+  const needsAttentionCount = taskList.filter((task) =>
+    isNeedsAttention(task, dependencyIndex.get(task.id)),
+  ).length;
 
   return (
     <div className="space-y-4 h-full flex flex-col">
@@ -199,8 +203,28 @@ export default function ProjectTaskBoardPage() {
             ))}
           </select>
         </div>
+        <select
+          aria-label="Dependency state"
+          value={filters.dependency ?? "all"}
+          onChange={(event) =>
+            setFilters((current) => ({
+              ...current,
+              dependency: event.target.value as TaskFilters["dependency"],
+            }))
+          }
+          className="w-fit rounded-md border border-[#30363d] bg-[#161b22] px-3 py-2 text-sm text-gray-200"
+        >
+          <option value="all">All dependencies</option>
+          <option value="blocked">Waiting on dependencies</option>
+          <option value="needs_intervention">
+            Dependency intervention needed
+          </option>
+        </select>
         <p className="text-xs text-gray-500">
-          Needs Attention includes failed tasks and specs awaiting review.
+          Needs Attention includes failed tasks, specs awaiting review, and
+          failed or unavailable dependencies. Dependency status is a project
+          snapshot; the scheduler separately enforces capacity, file ownership,
+          budgets, and approvals.
         </p>
       </div>
 
@@ -210,11 +234,15 @@ export default function ProjectTaskBoardPage() {
             No tasks match the current filters.
           </div>
         ) : view === "board" ? (
-          <TaskBoard tasks={visibleTasks} />
+          <TaskBoard tasks={visibleTasks} dependencies={dependencyIndex} />
         ) : (
           <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {visibleTasks.map((task) => (
-              <TaskCard key={task.id} task={task} />
+              <TaskCard
+                key={task.id}
+                task={task}
+                dependencies={dependencyIndex.get(task.id)}
+              />
             ))}
           </div>
         )}
