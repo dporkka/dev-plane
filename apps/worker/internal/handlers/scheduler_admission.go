@@ -73,7 +73,7 @@ func (a *SchedulerAdmission) WithStartBudget(budget RunStartBudget) *SchedulerAd
 
 func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string) (RunAdmissionDecision, error) {
 	if a == nil || a.db == nil {
-		return RunAdmissionDecision{Allowed: true}, nil
+		return RunAdmissionDecision{Allowed: false, Reason: "scheduler-unavailable"}, nil
 	}
 
 	candidate, err := a.loadCandidate(ctx, runID, taskID)
@@ -92,16 +92,23 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 	}
 	if config != nil {
 		for _, dependency := range config.DependsOn {
+			if dependency == "" || dependency == candidate.ID {
+				return RunAdmissionDecision{Allowed: false, Reason: "dependency-invalid"}, nil
+			}
 			var status string
+			// A completed task in another tenant or repository is never an
+			// admissible prerequisite. Unknown and out-of-scope IDs are
+			// deliberately indistinguishable and never echoed in reasons.
 			err := a.db.QueryRowContext(ctx, `
 				SELECT status FROM tasks
-				WHERE id = $1 AND deleted_at IS NULL
-			`, dependency).Scan(&status)
+				WHERE id = $1 AND project_id = $2 AND repository_id = $3
+				  AND deleted_at IS NULL
+			`, dependency, candidate.ProjectID, candidate.RepositoryID).Scan(&status)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
-					return RunAdmissionDecision{Allowed: false, Reason: "dependency-missing:" + dependency}, nil
+					return RunAdmissionDecision{Allowed: false, Reason: "dependency-unavailable"}, nil
 				}
-				return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency %s: %w", dependency, err)
+				return RunAdmissionDecision{}, fmt.Errorf("load scheduler dependency: %w", err)
 			}
 			if status != "done" {
 				return RunAdmissionDecision{Allowed: false, Reason: "dependency-pending:" + dependency}, nil
