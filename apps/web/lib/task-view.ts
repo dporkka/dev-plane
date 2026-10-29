@@ -55,7 +55,9 @@ export function isNeedsAttention(
 export function filterTasks(
   tasks: readonly Task[],
   filters: TaskFilters,
-  index: ReadonlyMap<string, TaskDependencyView> = buildTaskDependencyIndex(tasks),
+  index: ReadonlyMap<string, TaskDependencyView> = buildTaskDependencyIndex(
+    tasks,
+  ),
 ): Task[] {
   const query = filters.query.trim().toLowerCase();
   return tasks.filter((task) => {
@@ -189,9 +191,7 @@ export function buildTaskDependencyIndex(
       blocked: dependencies.some(({ state }) => state !== "complete"),
       needsIntervention: dependencies.some(
         ({ state }) =>
-          state === "failed" ||
-          state === "unavailable" ||
-          state === "invalid",
+          state === "failed" || state === "unavailable" || state === "invalid",
       ),
     });
   }
