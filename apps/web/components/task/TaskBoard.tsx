@@ -1,26 +1,16 @@
 "use client";
-import type { Task, TaskStatus } from "@/lib/types";
+import type { Task } from "@/lib/types";
+import { TASK_BOARD_COLUMNS } from "@/lib/task-view";
 import { TaskCard } from "./TaskCard";
-
-const columns: { status: TaskStatus; title: string }[] = [
-  { status: "backlog", title: "Backlog" },
-  { status: "spec_review", title: "Spec Review" },
-  { status: "approved", title: "Approved" },
-  { status: "running", title: "Running" },
-  { status: "reviewing", title: "Reviewing" },
-  { status: "pr_created", title: "PR Created" },
-  { status: "done", title: "Done" },
-];
 
 interface TaskBoardProps {
   tasks: Task[];
-  onTaskMove?: (taskId: string, status: TaskStatus) => void;
 }
 
-export function TaskBoard({ tasks, onTaskMove }: TaskBoardProps) {
+export function TaskBoard({ tasks }: TaskBoardProps) {
   return (
     <div className="flex gap-4 overflow-x-auto pb-4 h-full">
-      {columns.map((col) => {
+      {TASK_BOARD_COLUMNS.map((col) => {
         const colTasks = tasks.filter((t) => t.status === col.status);
         return (
           <div key={col.status} className="flex-shrink-0 w-80 flex flex-col">
