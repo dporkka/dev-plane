@@ -353,7 +353,10 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
-	_, err = h.db.ExecContext(ctx, `
+	// Compare-and-swap against the status we validated. An agent/worker may
+	// advance the task between the read and write; never overwrite that
+	// transition based on stale validation, including a same-status request.
+	result, err := h.db.ExecContext(ctx, `
 		UPDATE tasks SET
 			title = COALESCE($1, title),
 			description = COALESCE($2, description),
@@ -361,10 +364,19 @@ func (h *Handler) UpdateTask(w http.ResponseWriter, r *http.Request) {
 			risk_level = COALESCE($4, risk_level),
 			status = COALESCE($5, status),
 			updated_at = $6
-		WHERE id = $7 AND deleted_at IS NULL
-	`, req.Title, req.Description, req.Priority, req.RiskLevel, req.Status, now, id)
+		WHERE id = $7 AND deleted_at IS NULL AND status = $8
+	`, req.Title, req.Description, req.Priority, req.RiskLevel, req.Status, now, id, currentStatus)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+	if affected != 1 {
+		respond.Error(w, http.StatusConflict, errors.New("task changed while updating; reload and retry"))
 		return
 	}
 
