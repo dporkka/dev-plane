@@ -184,13 +184,13 @@ export default function TaskDetailPage() {
       </div>
 
       {dependenciesLoading ? (
-        <p className="text-sm text-gray-500" role="status">
+        <output className="block text-sm text-gray-500">
           Loading task dependencies...
-        </p>
+        </output>
       ) : dependenciesError ? (
-        <p className="text-sm text-amber-300" role="status">
+        <output className="block text-sm text-amber-300">
           Dependency information is unavailable for this project.
-        </p>
+        </output>
       ) : (
         dependencyView && <TaskDependencies view={dependencyView} />
       )}
