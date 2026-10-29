@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "biome check . --max-diagnostics=200",
+    "lint": "biome check .",
     "lint:fix": "biome check . --write",
     "format": "biome format . --write",
     "typecheck": "tsc --noEmit",
