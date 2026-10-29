@@ -196,6 +196,43 @@ export function buildTaskDependencyIndex(
     });
   }
 
+  // Detect cycles only among visible project tasks. This is a diagnostic
+  // warning, not a replacement for scheduler validation or admission.
+  const visited = new Set<string>();
+  const active = new Map<string, number>();
+  const path: string[] = [];
+  const cyclic = new Set<string>();
+  function visit(id: string): void {
+    const start = active.get(id);
+    if (start !== undefined) {
+      for (const member of path.slice(start)) {
+        cyclic.add(member);
+      }
+      return;
+    }
+    if (visited.has(id)) return;
+    active.set(id, path.length);
+    path.push(id);
+    for (const dependency of views.get(id)?.dependencies ?? []) {
+      if (dependency.id) visit(dependency.id);
+    }
+    path.pop();
+    active.delete(id);
+    visited.add(id);
+  }
+  for (const id of views.keys()) visit(id);
+  for (const id of cyclic) {
+    const view = views.get(id);
+    if (!view) continue;
+    view.dependencies = view.dependencies.map((dependency) =>
+      dependency.id && cyclic.has(dependency.id)
+        ? { ...dependency, state: "invalid" }
+        : dependency,
+    );
+    view.blocked = true;
+    view.needsIntervention = true;
+  }
+
   for (const task of tasks) {
     for (const dependency of views.get(task.id)?.dependencies ?? []) {
       if (!dependency.id) continue;
