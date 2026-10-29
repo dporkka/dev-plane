@@ -173,8 +173,16 @@ func (env *testEnv) setupHandlers() {
 		WithRuntimeProvider(env.runtimeName, env.runtime)
 
 	reviewService := reviewer.NewReviewer(env.db.DB, env.logger)
+	// Mirror the production worker: live runs must pass scheduler admission
+	// and run-start budget checks before any agent executor invocation.
+	admission := handlers.NewSchedulerAdmission(env.db.DB, handlers.SchedulerCapacity{
+		MaxParallel: 2,
+		CPU:         4,
+		MemoryMB:    8192,
+	}).WithStartBudget(executor)
 	env.runHandler = handlers.NewRunHandler(env.db.DB, env.logger, env.eventBus).
 		WithRunExecutor(executor).
+		WithRunAdmission(admission).
 		WithReviewer(reviewService)
 
 	env.approvalHandler = handlers.NewApprovalHandler(env.db.DB, env.logger, env.eventBus)
