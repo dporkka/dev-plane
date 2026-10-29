@@ -4,15 +4,15 @@ import { Loading } from "@/components/common/Loading";
 import { CreateTaskDialog } from "@/components/task/CreateTaskDialog";
 import { TaskBoard } from "@/components/task/TaskBoard";
 import { TaskCard } from "@/components/task/TaskCard";
-import type { Task } from "@/lib/types";
+import { api } from "@/lib/api";
 import {
   DEFAULT_TASK_FILTERS,
   TASK_BOARD_COLUMNS,
+  type TaskFilters,
   filterTasks,
   isNeedsAttention,
-  type TaskFilters,
 } from "@/lib/task-view";
-import { api } from "@/lib/api";
+import type { Task } from "@/lib/types";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, Plus } from "lucide-react";
 import Link from "next/link";
@@ -80,7 +80,10 @@ export default function ProjectTaskBoardPage() {
             type="search"
             value={filters.query}
             onChange={(event) =>
-              setFilters((current) => ({ ...current, query: event.target.value }))
+              setFilters((current) => ({
+                ...current,
+                query: event.target.value,
+              }))
             }
             className="min-w-48 flex-1 rounded-md border border-[#30363d] bg-[#161b22] px-3 py-2 text-sm text-gray-200"
           />
@@ -90,14 +93,20 @@ export default function ProjectTaskBoardPage() {
             onClick={() =>
               setFilters((current) => ({
                 ...current,
-                scope: current.scope === "needs_attention" ? "all" : "needs_attention",
+                scope:
+                  current.scope === "needs_attention"
+                    ? "all"
+                    : "needs_attention",
               }))
             }
             className={`rounded-md border px-3 py-2 text-sm ${filters.scope === "needs_attention" ? "border-red-400 text-red-300" : "border-[#30363d] text-gray-300"}`}
           >
             Needs Attention ({needsAttentionCount})
           </button>
-          <div className="inline-flex rounded-md border border-[#30363d]" aria-label="Task layout">
+          <div
+            className="inline-flex rounded-md border border-[#30363d]"
+            aria-label="Task layout"
+          >
             <button
               type="button"
               aria-pressed={view === "board"}
@@ -130,20 +139,27 @@ export default function ProjectTaskBoardPage() {
           >
             <option value="all">All statuses</option>
             {TASK_BOARD_COLUMNS.map((column) => (
-              <option key={column.status} value={column.status}>{column.title}</option>
+              <option key={column.status} value={column.status}>
+                {column.title}
+              </option>
             ))}
           </select>
           <select
             aria-label="Repository"
             value={filters.repositoryId}
             onChange={(event) =>
-              setFilters((current) => ({ ...current, repositoryId: event.target.value }))
+              setFilters((current) => ({
+                ...current,
+                repositoryId: event.target.value,
+              }))
             }
             className="rounded-md border border-[#30363d] bg-[#161b22] px-3 py-2 text-sm text-gray-200"
           >
             <option value="all">All repositories</option>
             {repoList.map((repo: { id: string; full_name: string }) => (
-              <option key={repo.id} value={repo.id}>{repo.full_name}</option>
+              <option key={repo.id} value={repo.id}>
+                {repo.full_name}
+              </option>
             ))}
           </select>
           <select
@@ -159,7 +175,9 @@ export default function ProjectTaskBoardPage() {
           >
             <option value="all">All priorities</option>
             {(["low", "medium", "high", "urgent"] as const).map((priority) => (
-              <option key={priority} value={priority}>{priority}</option>
+              <option key={priority} value={priority}>
+                {priority}
+              </option>
             ))}
           </select>
           <select
@@ -175,7 +193,9 @@ export default function ProjectTaskBoardPage() {
           >
             <option value="all">All risk levels</option>
             {(["low", "medium", "high", "critical"] as const).map((risk) => (
-              <option key={risk} value={risk}>{risk}</option>
+              <option key={risk} value={risk}>
+                {risk}
+              </option>
             ))}
           </select>
         </div>
