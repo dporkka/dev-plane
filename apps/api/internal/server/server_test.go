@@ -104,3 +104,27 @@ func TestReadyEndpoint(t *testing.T) {
 		t.Errorf("expected status 200, got %d", resp.StatusCode)
 	}
 }
+
+
+func TestUntrustedForwardedIPDoesNotOverridePeer(t *testing.T) {
+    cfg := &config.Config{
+        JWTSecret: "test-secret-that-is-at-least-thirty-two-bytes",
+        AllowedOrigins: []string{"http://localhost:3000"},
+    }
+    srv := New(cfg, nil, slog.Default())
+    srv.router.Get("/test-peer-ip", func(w http.ResponseWriter, r *http.Request) {
+        _, _ = w.Write([]byte(r.RemoteAddr))
+    })
+    request := httptest.NewRequest(http.MethodGet, "/test-peer-ip", nil)
+    request.RemoteAddr = "203.0.113.10:50123"
+    request.Header.Set("X-Forwarded-For", "198.51.100.123")
+    request.Header.Set("X-Real-IP", "198.51.100.124")
+    recorder := httptest.NewRecorder()
+    srv.Handler().ServeHTTP(recorder, request)
+    if recorder.Code != http.StatusOK {
+        t.Fatalf("status = %d, want 200", recorder.Code)
+    }
+    if recorder.Body.String() != request.RemoteAddr {
+        t.Fatalf("peer IP was overwritten by untrusted forwarded headers: %q", recorder.Body.String())
+    }
+}
