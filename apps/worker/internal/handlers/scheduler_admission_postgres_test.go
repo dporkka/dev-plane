@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"os"
-	"strings"
 	"testing"
 
 	_ "github.com/lib/pq"
@@ -98,8 +97,9 @@ VALUES ($1,$2,$3,$4)`, "run-candidate", "candidate", "queued", `{}`)
 				t.Fatalf("allowed=%v, reason=%q, want=%v", decision.Allowed, decision.Reason, tc.allow)
 			}
 			if !tc.allow {
-				if strings.Contains(decision.Reason, "dependency") && strings.Contains(decision.Reason, ":dependency") {
-					t.Fatalf("denial leaked prerequisite ID: %q", decision.Reason)
+				unavailable := !tc.exists || tc.deleted || tc.project != "project-a" || tc.repository != "repo-a"
+				if unavailable && decision.Reason != "dependency-unavailable" {
+					t.Fatalf("out-of-scope prerequisite was not masked: %q", decision.Reason)
 				}
 				var status string
 				if err := db.QueryRow("SELECT status FROM agent_runs WHERE id=$1", "run-candidate").Scan(&status); err != nil {
