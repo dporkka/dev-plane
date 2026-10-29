@@ -1,6 +1,6 @@
 "use client";
-import type { Task } from "@/lib/types";
 import { TASK_BOARD_COLUMNS } from "@/lib/task-view";
+import type { Task } from "@/lib/types";
 import { TaskCard } from "./TaskCard";
 
 interface TaskBoardProps {
