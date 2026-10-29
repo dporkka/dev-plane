@@ -88,6 +88,15 @@ export function TaskActions({
         View PR
       </Link>
     ),
+    deploying: (
+      <Link
+        href={`/tasks/${taskId}/runs`}
+        className="btn-primary flex items-center gap-2"
+      >
+        <Activity className="w-4 h-4" />
+        View Runs
+      </Link>
+    ),
     done: (
       <Link
         href={`/tasks/${taskId}`}
