@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { TASK_BOARD_COLUMNS, filterTasks, isNeedsAttention } from "./task-view";
 import type { Task } from "./types";
-import {
-  TASK_BOARD_COLUMNS,
-  filterTasks,
-  isNeedsAttention,
-} from "./task-view";
 
 function task(
   id: string,
@@ -95,7 +91,10 @@ describe("task views", () => {
       status: "all",
       scope: "needs_attention",
     });
-    assert.deepEqual(filtered.map((item) => item.id), ["1", "2"]);
+    assert.deepEqual(
+      filtered.map((item) => item.id),
+      ["1", "2"],
+    );
     assert.equal(tasks.length, 3);
   });
 });
