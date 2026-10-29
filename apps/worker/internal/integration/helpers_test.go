@@ -30,32 +30,32 @@ import (
 )
 
 const (
-	envRunLiveE2E        = "RUN_LIVE_E2E"
-	envModelProvider     = "LIVE_E2E_MODEL_PROVIDER"
-	envGitHubToken       = "GITHUB_TOKEN"
-	envGitHubTestOwner   = "GITHUB_TEST_OWNER"
-	envGitHubTestRepo    = "GITHUB_TEST_REPO"
-	envNATSURL           = "NATS_URL"
-	envWorkspaceRuntime  = "WORKSPACE_RUNTIME"
-	envWorkspaceBaseDir  = "WORKSPACE_BASE_DIR"
+	envRunLiveE2E       = "RUN_LIVE_E2E"
+	envModelProvider    = "LIVE_E2E_MODEL_PROVIDER"
+	envGitHubToken      = "GITHUB_TOKEN"
+	envGitHubTestOwner  = "GITHUB_TEST_OWNER"
+	envGitHubTestRepo   = "GITHUB_TEST_REPO"
+	envNATSURL          = "NATS_URL"
+	envWorkspaceRuntime = "WORKSPACE_RUNTIME"
+	envWorkspaceBaseDir = "WORKSPACE_BASE_DIR"
 )
 
 // testEnv holds shared test infrastructure.
 type testEnv struct {
-	t            *testing.T
-	db           *db.DB
-	dbPath       string
-	eventBus     *events.Bus
-	logger       *slog.Logger
-	runtime      runtimes.Provider
-	runtimeName  string
-	taskHandler  *handlers.TaskHandler
-	runHandler   *handlers.RunHandler
+	t               *testing.T
+	db              *db.DB
+	dbPath          string
+	eventBus        *events.Bus
+	logger          *slog.Logger
+	runtime         runtimes.Provider
+	runtimeName     string
+	taskHandler     *handlers.TaskHandler
+	runHandler      *handlers.RunHandler
 	approvalHandler *handlers.ApprovalHandler
-	orgID        string
-	projectID    string
-	repoID       string
-	userID       string
+	orgID           string
+	projectID       string
+	repoID          string
+	userID          string
 }
 
 // findMigrationsDir locates packages/db/migrations relative to this test file.
@@ -128,15 +128,15 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 
 	env := &testEnv{
-		t:        t,
-		db:       database,
-		dbPath:   dbPath,
-		eventBus: eventBus,
-		logger:   logger,
-		orgID:    uuid.New().String(),
+		t:         t,
+		db:        database,
+		dbPath:    dbPath,
+		eventBus:  eventBus,
+		logger:    logger,
+		orgID:     uuid.New().String(),
 		projectID: uuid.New().String(),
-		repoID:   uuid.New().String(),
-		userID:   "live-e2e-user",
+		repoID:    uuid.New().String(),
+		userID:    "live-e2e-user",
 	}
 
 	env.seedOrgProjectRepo()
@@ -191,11 +191,11 @@ func (env *testEnv) setupHandlers() {
 // startSubscriptions wires the worker handlers to NATS subjects.
 func (env *testEnv) startSubscriptions() {
 	subjects := map[string]func(*nats.Msg) error{
-		events.TaskApproved:        env.taskHandler.HandleTaskApproved,
-		events.AgentRunCompleted:   env.runHandler.HandleRunCompleted,
-		events.ReviewCompleted:     env.runHandler.HandleReviewCompleted,
-		events.RunTriggered:        env.runHandler.HandleRunTriggered,
-		events.ApprovalApproved:    env.approvalHandler.HandleApprovalApproved,
+		events.TaskApproved:      env.taskHandler.HandleTaskApproved,
+		events.AgentRunCompleted: env.runHandler.HandleRunCompleted,
+		events.ReviewCompleted:   env.runHandler.HandleReviewCompleted,
+		events.RunTriggered:      env.runHandler.HandleRunTriggered,
+		events.ApprovalApproved:  env.approvalHandler.HandleApprovalApproved,
 	}
 
 	for subject, handler := range subjects {
