@@ -30,32 +30,32 @@ import (
 )
 
 const (
-	envRunLiveE2E        = "RUN_LIVE_E2E"
-	envModelProvider     = "LIVE_E2E_MODEL_PROVIDER"
-	envGitHubToken       = "GITHUB_TOKEN"
-	envGitHubTestOwner   = "GITHUB_TEST_OWNER"
-	envGitHubTestRepo    = "GITHUB_TEST_REPO"
-	envNATSURL           = "NATS_URL"
-	envWorkspaceRuntime  = "WORKSPACE_RUNTIME"
-	envWorkspaceBaseDir  = "WORKSPACE_BASE_DIR"
+	envRunLiveE2E       = "RUN_LIVE_E2E"
+	envModelProvider    = "LIVE_E2E_MODEL_PROVIDER"
+	envGitHubToken      = "GITHUB_TOKEN"
+	envGitHubTestOwner  = "GITHUB_TEST_OWNER"
+	envGitHubTestRepo   = "GITHUB_TEST_REPO"
+	envNATSURL          = "NATS_URL"
+	envWorkspaceRuntime = "WORKSPACE_RUNTIME"
+	envWorkspaceBaseDir = "WORKSPACE_BASE_DIR"
 )
 
 // testEnv holds shared test infrastructure.
 type testEnv struct {
-	t            *testing.T
-	db           *db.DB
-	dbPath       string
-	eventBus     *events.Bus
-	logger       *slog.Logger
-	runtime      runtimes.Provider
-	runtimeName  string
-	taskHandler  *handlers.TaskHandler
-	runHandler   *handlers.RunHandler
+	t               *testing.T
+	db              *db.DB
+	dbPath          string
+	eventBus        *events.Bus
+	logger          *slog.Logger
+	runtime         runtimes.Provider
+	runtimeName     string
+	taskHandler     *handlers.TaskHandler
+	runHandler      *handlers.RunHandler
 	approvalHandler *handlers.ApprovalHandler
-	orgID        string
-	projectID    string
-	repoID       string
-	userID       string
+	orgID           string
+	projectID       string
+	repoID          string
+	userID          string
 }
 
 // findMigrationsDir locates packages/db/migrations relative to this test file.
@@ -128,15 +128,15 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 
 	env := &testEnv{
-		t:        t,
-		db:       database,
-		dbPath:   dbPath,
-		eventBus: eventBus,
-		logger:   logger,
-		orgID:    uuid.New().String(),
+		t:         t,
+		db:        database,
+		dbPath:    dbPath,
+		eventBus:  eventBus,
+		logger:    logger,
+		orgID:     uuid.New().String(),
 		projectID: uuid.New().String(),
-		repoID:   uuid.New().String(),
-		userID:   "live-e2e-user",
+		repoID:    uuid.New().String(),
+		userID:    "live-e2e-user",
 	}
 
 	env.seedOrgProjectRepo()
@@ -173,8 +173,16 @@ func (env *testEnv) setupHandlers() {
 		WithRuntimeProvider(env.runtimeName, env.runtime)
 
 	reviewService := reviewer.NewReviewer(env.db.DB, env.logger)
+	// Mirror the production worker: live runs must pass scheduler admission
+	// and run-start budget checks before any agent executor invocation.
+	admission := handlers.NewSchedulerAdmission(env.db.DB, handlers.SchedulerCapacity{
+		MaxParallel: 2,
+		CPU:         4,
+		MemoryMB:    8192,
+	}).WithStartBudget(executor)
 	env.runHandler = handlers.NewRunHandler(env.db.DB, env.logger, env.eventBus).
 		WithRunExecutor(executor).
+		WithRunAdmission(admission).
 		WithReviewer(reviewService)
 
 	env.approvalHandler = handlers.NewApprovalHandler(env.db.DB, env.logger, env.eventBus)
@@ -183,11 +191,11 @@ func (env *testEnv) setupHandlers() {
 // startSubscriptions wires the worker handlers to NATS subjects.
 func (env *testEnv) startSubscriptions() {
 	subjects := map[string]func(*nats.Msg) error{
-		events.TaskApproved:        env.taskHandler.HandleTaskApproved,
-		events.AgentRunCompleted:   env.runHandler.HandleRunCompleted,
-		events.ReviewCompleted:     env.runHandler.HandleReviewCompleted,
-		events.RunTriggered:        env.runHandler.HandleRunTriggered,
-		events.ApprovalApproved:    env.approvalHandler.HandleApprovalApproved,
+		events.TaskApproved:      env.taskHandler.HandleTaskApproved,
+		events.AgentRunCompleted: env.runHandler.HandleRunCompleted,
+		events.ReviewCompleted:   env.runHandler.HandleReviewCompleted,
+		events.RunTriggered:      env.runHandler.HandleRunTriggered,
+		events.ApprovalApproved:  env.approvalHandler.HandleApprovalApproved,
 	}
 
 	for subject, handler := range subjects {
@@ -340,16 +348,6 @@ func (env *testEnv) waitForCondition(name string, timeout time.Duration, predica
 	env.t.Fatalf("timed out waiting for condition: %s", name)
 }
 
-// taskStatus returns the current task status.
-func (env *testEnv) taskStatus(taskID string) string {
-	var status string
-	err := env.db.DB.QueryRow(`SELECT status FROM tasks WHERE id = $1`, taskID).Scan(&status)
-	if err != nil {
-		env.t.Fatalf("query task status: %v", err)
-	}
-	return status
-}
-
 // runStatus returns the current agent run status.
 func (env *testEnv) runStatus(runID string) string {
 	var status string
@@ -398,15 +396,15 @@ func (env *testEnv) stepCount(runID string) int {
 
 // maxStepNumber returns the highest step number for a run.
 func (env *testEnv) maxStepNumber(runID string) int {
-	var max sql.NullInt32
-	err := env.db.DB.QueryRow(`SELECT MAX(step_number) FROM agent_steps WHERE agent_run_id = $1`, runID).Scan(&max)
+	var highestStep sql.NullInt32
+	err := env.db.DB.QueryRow(`SELECT MAX(step_number) FROM agent_steps WHERE agent_run_id = $1`, runID).Scan(&highestStep)
 	if err != nil {
 		env.t.Fatalf("query max step number: %v", err)
 	}
-	if !max.Valid {
+	if !highestStep.Valid {
 		return 0
 	}
-	return int(max.Int32)
+	return int(highestStep.Int32)
 }
 
 // seedFakeLocalWorkspace creates a local workspace directory and inserts a
