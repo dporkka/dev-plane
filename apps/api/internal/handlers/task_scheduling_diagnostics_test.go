@@ -134,12 +134,12 @@ func TestSchedulingDiagnosticsDoesNotClaimReadinessForLegacyTask(t *testing.T) {
 		WithArgs("task-1").
 		WillReturnRows(sqlmock.NewRows([]string{"project_id", "repository_id", "status", "metadata"}).
 			AddRow("project-1", "repo-1", "approved", "{}"))
-	mock.ExpectQuery("SELECT COALESCE\\(files_to_change").
-		WithArgs("task-1").
-		WillReturnError(sql.ErrNoRows)
 	mock.ExpectQuery("SELECT t.id, COALESCE\\(t.metadata").
 		WithArgs("project-1", "repo-1", "task-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "metadata"}))
+	mock.ExpectQuery("SELECT COALESCE\\(files_to_change").
+		WithArgs("task-1").
+		WillReturnError(sql.ErrNoRows)
 
 	rec := requestSchedulingDiagnostics(h, "task-1", true)
 	if rec.Code != http.StatusOK {
