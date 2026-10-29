@@ -216,7 +216,9 @@ export default function ProjectTaskBoardPage() {
         >
           <option value="all">All dependencies</option>
           <option value="blocked">Waiting on dependencies</option>
-          <option value="needs_intervention">Dependency intervention needed</option>
+          <option value="needs_intervention">
+            Dependency intervention needed
+          </option>
         </select>
         <p className="text-xs text-gray-500">
           Needs Attention includes failed tasks, specs awaiting review, and
