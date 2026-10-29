@@ -430,4 +430,3 @@ func applySchedulerDefaults(config *schedulerConfig) {
 		config.MemoryMB = 1024
 	}
 }
-
