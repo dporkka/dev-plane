@@ -55,7 +55,7 @@ CREATE TEMP TABLE task_specs (
 	}
 	cases := []struct {
 		name, project, repository, prerequisiteStatus string
-		deleted, exists, allow                    bool
+		deleted, exists, allow                        bool
 	}{
 		{name: "local completed prerequisite", project: "project-a", repository: "repo-a", prerequisiteStatus: "done", exists: true, allow: true},
 		{name: "local pending prerequisite", project: "project-a", repository: "repo-a", prerequisiteStatus: "running", exists: true},
