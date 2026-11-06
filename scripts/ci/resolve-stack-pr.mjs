@@ -53,6 +53,19 @@ export async function resolveStackPullRequest({ repo, prNumber, token, fetchImpl
   return validateStackPullRequest(await response.json(), { repo, prNumber });
 }
 
+/** Reconfirm after testing. A previously passing SHA must never silently become current. */
+export function assertUnchangedStackPullRequest(current, expected) {
+  if (!current || !expected
+      || typeof expected.headSha !== 'string' || !SHA.test(expected.headSha)
+      || typeof expected.baseSha !== 'string' || !SHA.test(expected.baseSha)) {
+    throw new Error('Expected exact PR head and base SHA must be specified');
+  }
+  if (current.headSha !== expected.headSha || current.baseSha !== expected.baseSha) {
+    throw new Error('PR head/base changed after qualification; tested evidence is stale');
+  }
+  return current;
+}
+
 async function main() {
   if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || process.env.GITHUB_REF !== 'refs/heads/main') {
     throw new Error('Manual qualification must execute from trusted refs/heads/main');
@@ -62,6 +75,18 @@ async function main() {
     prNumber: process.env.PR_NUMBER,
     token: process.env.GH_TOKEN,
   });
+  const args = process.argv.slice(2);
+  if (args.length > 1 || (args.length === 1 && args[0] !== '--reconfirm')) {
+    throw new Error('Expected no arguments or --reconfirm');
+  }
+  if (args[0] === '--reconfirm') {
+    assertUnchangedStackPullRequest(pr, {
+      headSha: process.env.EXPECTED_HEAD_SHA,
+      baseSha: process.env.EXPECTED_BASE_SHA,
+    });
+    process.stdout.write('Advisory qualification identity unchanged: #' + pr.number + ' head ' + pr.headSha + ' base ' + pr.baseSha + '\n');
+    return;
+  }
   if (!process.env.GITHUB_OUTPUT) throw new Error('GITHUB_OUTPUT must be set by GitHub Actions');
   appendFileSync(process.env.GITHUB_OUTPUT, 'head_sha=' + pr.headSha + '\nbase_sha=' + pr.baseSha + '\n');
   process.stdout.write('Read-only PR identity resolved: #' + pr.number + ' head ' + pr.headSha + ' base ' + pr.baseSha + '\n');

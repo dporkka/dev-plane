@@ -120,3 +120,32 @@ jobs:
         run: cd apps/web && npm test
       - name: Build repository
         run: make build
+
+  finalize:
+    name: Reconfirm same PR head and base after tests (advisory)
+    needs: [resolve, qualify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject non-main workflow dispatch
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: test "$DISPATCH_REF" = "refs/heads/main"
+      - name: Checkout trusted resolver at dispatch revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reconfirm live PR head and base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+        run: |
+          node scripts/ci/resolve-stack-pr.mjs --reconfirm
+          echo "PR head and base still match the tested snapshot. This is advisory, not merge authorization." >> "$GITHUB_STEP_SUMMARY"

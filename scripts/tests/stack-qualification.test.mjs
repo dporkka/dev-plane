@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { validateStackPullRequest, resolveStackPullRequest } from '../ci/resolve-stack-pr.mjs';
+import { validateStackPullRequest, resolveStackPullRequest, assertUnchangedStackPullRequest } from '../ci/resolve-stack-pr.mjs';
 
 const head = 'a'.repeat(40);
 const base = 'b'.repeat(40);
@@ -73,4 +73,25 @@ test('manual stack workflow is a read-only dispatch from trusted main with guard
   assert.match(workflow, /make lint-go/);
   assert.match(workflow, /make build/);
   assert.doesNotMatch(workflow, /pull_request_target:|permissions:\s*write-all|persist-credentials: true/);
+});
+
+test('rejects an advisory success when head or base moves during verification', () => {
+  const current = { number: 202, headSha: head, baseSha: base };
+  assert.deepEqual(assertUnchangedStackPullRequest(current, { headSha: head, baseSha: base }), current);
+  assert.throws(() => assertUnchangedStackPullRequest(
+    { ...current, headSha: 'c'.repeat(40) }, { headSha: head, baseSha: base }
+  ), /changed|stale/i);
+  assert.throws(() => assertUnchangedStackPullRequest(
+    { ...current, baseSha: 'd'.repeat(40) }, { headSha: head, baseSha: base }
+  ), /changed|stale/i);
+  assert.throws(() => assertUnchangedStackPullRequest(current, { headSha: '', baseSha: base }), /expected|sha/i);
+});
+
+test('a separate trusted read-only final job checks for PR movement after tests', () => {
+  const workflow = readFileSync(new URL('../../.github/workflows/stack-qualification.yml', import.meta.url), 'utf8');
+  assert.match(workflow, /finalize:\s*\n\s*name:.*\n\s*needs:\s*\[resolve, qualify\]/);
+  assert.match(workflow, /EXPECTED_HEAD_SHA:\s*\$\{\{ needs\.resolve\.outputs\.head_sha \}\}/);
+  assert.match(workflow, /EXPECTED_BASE_SHA:\s*\$\{\{ needs\.resolve\.outputs\.base_sha \}\}/);
+  assert.match(workflow, /node scripts\/ci\/resolve-stack-pr\.mjs --reconfirm/);
+  assert.match(workflow, /ref: \$\{\{ github\.sha \}\}/);
 });
