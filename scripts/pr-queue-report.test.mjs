@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classifyChecks,
+  diagnoseChecks,
   collectPortfolio,
   formatMarkdown,
   listRecentPulls,
@@ -113,4 +114,56 @@ test('more than one page of check runs cannot be misrepresented as passing', asy
   };
   const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
   assert.equal(data.reports[0].priority[0].ci, 'incomplete');
+});
+
+
+test('diagnosis differentiates provider startup failure from failed application tests', () => {
+  const d = diagnoseChecks([{ name: 'Build', status: 'completed', conclusion: 'startup_failure' }], []);
+  assert.equal(d.status, 'failed');
+  assert.equal(d.category, 'provider-startup');
+  assert.equal(d.confidence, 'observed');
+  assert.match(d.nextAction, /runner|provider|admission/i);
+  assert.doesNotMatch(d.summary, /application bug/i);
+});
+
+test('diagnosis reports canceled, pending, and execution failures without guessing root causes', () => {
+  assert.equal(diagnoseChecks([{ status: 'completed', conclusion: 'cancelled' }], []).category, 'canceled');
+  assert.equal(diagnoseChecks([], [{ state: 'pending' }]).category, 'pending');
+  const failure = diagnoseChecks([{ status: 'completed', conclusion: 'failure' }], []);
+  assert.equal(failure.category, 'execution-failure');
+  assert.match(failure.nextAction, /first failing.*log/i);
+  assert.equal(failure.confidence, 'cause-unverified');
+});
+
+test('diagnosis never interprets skipped checks, missing evidence, or success as merge authorization', () => {
+  assert.equal(diagnoseChecks([{ status: 'completed', conclusion: 'skipped' }], []).category, 'nonexecuted-check');
+  assert.equal(diagnoseChecks([], []).category, 'missing-evidence');
+  const success = diagnoseChecks([{ status: 'completed', conclusion: 'success' }], [{ state: 'success' }]);
+  assert.equal(success.status, 'passing-observed-only');
+  assert.match(success.nextAction, /required contexts/i);
+});
+
+test('portfolio JSON and Markdown expose fail-closed CI diagnosis for truncated check evidence', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    if (path.includes('/check-runs')) return { total_count: 101, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+    return { statuses: [] };
+  };
+  const report = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
+  const pr = report.reports[0].priority[0];
+  assert.equal(pr.ci, 'incomplete');
+  assert.equal(pr.ciDiagnosis.category, 'incomplete-evidence');
+  assert.match(pr.ciDiagnosis.nextAction, /pagination|remaining/i);
+  assert.match(formatMarkdown(report), /incomplete-evidence/);
+});
+
+test('uninspected PRs remain explicitly unknown and do not claim CI coverage', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    throw new Error(`CI must not be called: ${path}`);
+  };
+  const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 0 });
+  const pr = data.reports[0].priority[0];
+  assert.equal(pr.ci, 'not-inspected');
+  assert.equal(pr.ciDiagnosis.category, 'not-inspected');
 });
