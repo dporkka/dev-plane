@@ -64,6 +64,47 @@ export function classifyChecks(checkRuns, statuses) {
   return 'passing-observed-only'; // Not sufficient for branch protection / review / deployment.
 }
 
+/** A read-only recommendation, not an authorization to merge or classify root cause. */
+export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notInspected = false } = {}) {
+  if (!Array.isArray(checkRuns) || !Array.isArray(statuses)) throw new Error('CI evidence must be arrays');
+  if (notInspected) return {
+    status: 'not-inspected', category: 'not-inspected', confidence: 'not-observed',
+    summary: 'CI evidence was not requested for this PR.',
+    nextAction: 'Inspect exact-head checks before making a merge decision.',
+  };
+  if (incomplete) return {
+    status: 'incomplete', category: 'incomplete-evidence', confidence: 'observed',
+    summary: 'Additional check-run pages exist; the observed subset is insufficient.',
+    nextAction: 'Retrieve remaining check-run pagination before evaluating status.',
+  };
+
+  const status = classifyChecks(checkRuns, statuses);
+  const has = (...conclusions) => checkRuns.some(run => conclusions.includes(run.conclusion))
+    || statuses.some(item => conclusions.includes(item.state));
+  const diagnosis = (category, confidence, summary, nextAction) => ({ status, category, confidence, summary, nextAction });
+  if (has('startup_failure')) return diagnosis('provider-startup', 'observed',
+    'Provider reported a job startup failure; executable tests are not proven.',
+    'Inspect CI provider, runner admission, and job startup diagnostics before rerunning.');
+  if (has('cancelled', 'canceled')) return diagnosis('canceled', 'cause-unverified',
+    'A check was canceled; no successful test result can be inferred.',
+    'Inspect cancellation and supersession policy, queue state, and exact attempt identity.');
+  if (status === 'failed') return diagnosis('execution-failure', 'cause-unverified',
+    'A check failed or errored; its underlying cause is not established by status alone.',
+    'Inspect the first failing executed step and logs; distinguish application, infrastructure, and timeout failures.');
+  if (status === 'pending') return diagnosis('pending', 'cause-unverified',
+    'At least one check is not terminal; execution progress is unconfirmed.',
+    'Inspect queue age, worker labels, dependencies, and actual runner assignment.');
+  if (status === 'no-evidence') return diagnosis('missing-evidence', 'observed',
+    'No check runs or commit statuses were returned for this exact head.',
+    'Check webhook delivery and required-check configuration; do not infer a pass.');
+  if (status === 'incomplete') return diagnosis('nonexecuted-check', 'cause-unverified',
+    'Checks contain skipped, neutral, or otherwise non-success conclusions.',
+    'Inspect which required gates executed and why others did not run.');
+  return diagnosis('observed-success', 'observed-only',
+    'All observed check outcomes are successful, without proof of required gate coverage.',
+    'Verify required contexts, executable steps, review, and branch protection independently.');
+}
+
 function stale(pr, now, staleDays) {
   const updated = Date.parse(pr.updated_at);
   if (!Number.isFinite(updated)) throw new Error(`Invalid updated_at for PR #${pr.number}`);
@@ -90,6 +131,7 @@ export function reportForRepository(repo, recent, { now = new Date(), staleDays 
     || a.number - b.number).map(pr => ({
     number: pr.number, draft: Boolean(pr.draft), url: pr.html_url,
     head: pr.head.sha, updatedAt: pr.updated_at, ci: 'not-inspected',
+    ciDiagnosis: diagnoseChecks([], [], { notInspected: true }),
   }));
   return { repo, counts, inventory, priority };
 }
@@ -102,9 +144,9 @@ async function getEvidence(repo, pr, getJson) {
     throw new Error(`Incomplete check/status evidence for ${repo} #${pr.number}`);
   }
   if (checkRuns.total_count > 100) {
-    return 'incomplete'; // Extra check-run pages may hide failures: do not report green.
+    return diagnoseChecks(checkRuns.check_runs, statuses.statuses, { incomplete: true });
   }
-  return classifyChecks(checkRuns.check_runs, statuses.statuses);
+  return diagnoseChecks(checkRuns.check_runs, statuses.statuses);
 }
 
 export async function collectPortfolio(repos, getJson, { now = new Date(), days = 7, staleDays = 3, maxPages = 20, inspect = 5 } = {}) {
@@ -116,7 +158,9 @@ export async function collectPortfolio(repos, getJson, { now = new Date(), days 
     const allOpen = await listOpenPulls(repo, getJson, { maxPages });
     const report = reportForRepository(repo, recent, { allOpen, now, staleDays });
     for (const pr of report.priority.slice(0, inspect)) {
-      pr.ci = await getEvidence(repo, pr, getJson);
+      const diagnosis = await getEvidence(repo, pr, getJson);
+      pr.ci = diagnosis.status;
+      pr.ciDiagnosis = diagnosis;
     }
     reports.push(report);
   }
@@ -141,7 +185,7 @@ export function formatMarkdown(data, { show = 10 } = {}) {
   for (const r of data.reports) {
     lines.push(`## ${r.repo}`, 'Priority queue (non-draft first, then oldest updates). No merge authorization implied.', '');
     for (const p of r.priority.slice(0, show)) {
-      lines.push(`- [#${p.number}](${p.url}) ${p.draft ? 'draft' : 'review'} | updated ${p.updatedAt} | head \`${p.head.slice(0,12)}\` | CI: ${p.ci}`);
+      lines.push(`- [#${p.number}](${p.url}) ${p.draft ? 'draft' : 'review'} | updated ${p.updatedAt} | head \`${p.head.slice(0,12)}\` | CI: ${p.ci} | Diagnosis: ${p.ciDiagnosis.category} | Next: ${p.ciDiagnosis.nextAction}`);
     }
     if (!r.priority.length) lines.push('No open PRs.');
     lines.push('');

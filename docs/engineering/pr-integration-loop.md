@@ -21,6 +21,14 @@ A token must have **read-only** Pull requests/Contents/Checks access to the sele
 
 **Terminology:** cohort totals count PRs *created in the lookback*, classified by their current state; they are not a throughput metric for PRs merged during the lookback. `All open` includes older PRs from all creation dates. `Stale` means no `updated_at` activity in the selected interval; it does not imply safe closure. Checks are inspected only on the exact current PR head of the top `--inspect` items. `passing-observed-only` does not establish branch protection, mandatory contexts, Woodpecker, CodeQL, test correctness, human approval, staging smoke tests, or production deployment. `no-evidence`, `pending`, `failed`, and `incomplete` are never passing states. `not-inspected` means no CI calls were made for that PR. Results can change immediately after snapshot collection.
 
+## Advisory CI diagnosis in portfolio reports
+
+The read-only report now includes `ciDiagnosis` beside the existing `ci` value for each open PR. The JSON shape contains `status`, `category`, `confidence`, `summary`, and `nextAction`, and Markdown displays the diagnostic category and suggested next inspection. Uninspected PRs are explicitly `not-inspected`; check-run pagination beyond the inspected first page is `incomplete-evidence`, never green.
+
+Categories identify **observed states**, not proven causes: `provider-startup` reflects a reported `startup_failure`, `canceled` reflects cancellation, `execution-failure` requires reading the first failing step to distinguish application from infrastructure, and `pending` does not establish a scheduler or agent fault. `observed-success` is still only an advisory snapshot and cannot certify required workflows, executing steps, reviews, branch protection, or deployment. No diagnosis authorizes retry, cancellation, branch updates, merge, or deployment.
+
+This slice deliberately reads only the GitHub Checks and Status APIs. Woodpecker queue/task evidence, worker assignment, authentic attempted steps, and signed remote CI receipts must be integrated through the separately reviewed Dev Plane verifier/adapter stack; never infer those facts from the GitHub conclusion alone.
+
 ## Stacked verification branches
 
 When a CI repair and a feature are verified on a disposable combined candidate, **do not merge the disposable verification PR**. First merge the separately reviewed repair through the normal gates, then put the feature's unchanged source blobs onto the newly accepted `main` commit, verify the source file hashes, and run checks against the feature PR's **new exact head**. A successful run on the disposable combined tree is useful compatibility evidence but is not a substitute for this final run. Close the verification-only PR after its evidence has been recorded and the real feature PR has been accepted; never let it become product history.
