@@ -53,6 +53,80 @@ export async function resolveStackPullRequest({ repo, prNumber, token, fetchImpl
   return validateStackPullRequest(await response.json(), { repo, prNumber });
 }
 
+// Advisory test execution uses repository-controlled Make/npm commands. If the PR changes
+// their definitions, do not report a green result from this unattended test profile.
+const VERIFICATION_FILES = new Set([
+  'Makefile', '.golangci.yml', '.golangci.yaml', 'go.work', 'go.work.sum',
+  'devplane.yaml', 'package.json', 'package-lock.json',
+  'apps/web/package.json', 'apps/web/package-lock.json',
+  'packages/sdk/typescript/package.json', 'packages/sdk/typescript/package-lock.json',
+  'docker-compose.yml', 'docker-compose.yaml', 'compose.yml', 'compose.yaml',
+]);
+function isVerificationPath(path) {
+  return VERIFICATION_FILES.has(path)
+    || path.startsWith('.github/workflows/')
+    || path.startsWith('.github/actions/')
+    || path.startsWith('scripts/');
+}
+
+export function assertNoVerificationPlanChanges(files) {
+  if (!Array.isArray(files) || files.length === 0) {
+    throw new Error('PR changed-file inventory is missing or invalid');
+  }
+  for (const file of files) {
+    for (const path of [file?.filename, file?.previous_filename].filter(x => x !== undefined && x !== null)) {
+      if (typeof path !== 'string' || !path || path.startsWith('/')
+          || /[\x00-\x1f]/.test(path) || path.split('/').some(p => p === '.' || p === '..')) {
+        throw new Error('Invalid file path in PR changed-file inventory');
+      }
+      if (isVerificationPath(path)) {
+        throw new Error('PR changes protected verification plan path: ' + path);
+      }
+    }
+    if (typeof file?.filename !== 'string') throw new Error('Invalid PR changed file');
+  }
+}
+
+export async function listStackPullFiles({ repo, prNumber, token, fetchImpl = fetch, maxPages = 30 }) {
+  assertSelection(repo, prNumber);
+  if (typeof token !== 'string' || !token.trim()) throw new Error('Read-only GitHub token required');
+  if (!Number.isSafeInteger(maxPages) || maxPages < 1 || maxPages > 30) {
+    throw new Error('Invalid changed-file pagination limit');
+  }
+  const allFiles = [];
+  for (let page = 1; page <= maxPages; page++) {
+    const url = 'https://api.github.com/repos/' + repo + '/pulls/' + prNumber
+      + '/files?per_page=100&page=' + page;
+    const response = await fetchImpl(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: 'Bearer ' + token,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'dev-plane-stack-qualification',
+      },
+      redirect: 'error',
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) throw new Error('GitHub API HTTP ' + response.status + ' reading PR files');
+    const batch = await response.json();
+    if (!Array.isArray(batch) || batch.length > 100) {
+      throw new Error('Invalid PR changed-file API response');
+    }
+    allFiles.push(...batch);
+    if (batch.length < 100) return allFiles;
+  }
+  throw new Error('PR changed-file pagination incomplete; cannot trust verification plan');
+}
+
+export async function resolveSafeQualification({ repo, prNumber, token, fetchImpl = fetch }) {
+  const before = await resolveStackPullRequest({ repo, prNumber, token, fetchImpl });
+  const files = await listStackPullFiles({ repo, prNumber, token, fetchImpl });
+  assertNoVerificationPlanChanges(files);
+  const after = await resolveStackPullRequest({ repo, prNumber, token, fetchImpl });
+  return assertUnchangedStackPullRequest(after, before);
+}
+
 /** Reconfirm after testing. A previously passing SHA must never silently become current. */
 export function assertUnchangedStackPullRequest(current, expected) {
   if (!current || !expected
@@ -70,15 +144,18 @@ async function main() {
   if (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || process.env.GITHUB_REF !== 'refs/heads/main') {
     throw new Error('Manual qualification must execute from trusted refs/heads/main');
   }
-  const pr = await resolveStackPullRequest({
-    repo: process.env.GITHUB_REPOSITORY,
-    prNumber: process.env.PR_NUMBER,
-    token: process.env.GH_TOKEN,
-  });
   const args = process.argv.slice(2);
   if (args.length > 1 || (args.length === 1 && args[0] !== '--reconfirm')) {
     throw new Error('Expected no arguments or --reconfirm');
   }
+  // The initial dispatch must verify the complete PR file inventory before exporting
+  // any SHA. Finalization only rechecks identity: an unchanged SHA pins the same tree.
+  const resolver = args[0] === '--reconfirm' ? resolveStackPullRequest : resolveSafeQualification;
+  const pr = await resolver({
+    repo: process.env.GITHUB_REPOSITORY,
+    prNumber: process.env.PR_NUMBER,
+    token: process.env.GH_TOKEN,
+  });
   if (args[0] === '--reconfirm') {
     assertUnchangedStackPullRequest(pr, {
       headSha: process.env.EXPECTED_HEAD_SHA,
