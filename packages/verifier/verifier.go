@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -105,7 +107,13 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 			Timeout:     profileTimeout(profile.TimeoutSeconds),
 			UnsafeShell: true,
 		}
+		attemptID, err := newAttemptID()
+		if err != nil {
+			return Result{}, fmt.Errorf("create gate execution attempt: %w", err)
+		}
+		startedAt := time.Now().UTC()
 		commandResult, runErr := v.runtime.ExecuteCommand(ctx, req.SessionID, command)
+		finishedAt := time.Now().UTC()
 
 		if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, true); err != nil {
 			return Result{}, err
@@ -114,11 +122,26 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 			return Result{}, err
 		}
 
+		execution := &repoprotocol.GateExecution{
+			SessionID:      req.SessionID,
+			AttemptID:      attemptID,
+			Outcome:        repoprotocol.GateExecutionRunnerError,
+			StartedAt:      startedAt,
+			FinishedAt:     finishedAt,
+			DurationMillis: finishedAt.Sub(startedAt).Milliseconds(),
+		}
+		if runErr == nil && commandResult != nil {
+			code := commandResult.ExitCode
+			execution.ExitCode = &code
+			execution.Outcome = repoprotocol.GateExecutionCompleted
+			if commandResult.Duration > 0 {
+				execution.DurationMillis = commandResult.Duration.Milliseconds()
+			}
+		}
 		evidence := repoprotocol.GateEvidence{
-			Name:    gateName,
-			Status:  repoprotocol.GatePassed,
-			Command: profile.Command,
-			Output:  evidenceOutput(commandResult, runErr),
+			Name: gateName, Status: repoprotocol.GatePassed,
+			Command: profile.Command, Output: evidenceOutput(commandResult, runErr),
+			Execution: execution,
 		}
 		failed := runErr != nil || commandResult == nil || commandResult.ExitCode != 0
 		if failed {
@@ -135,6 +158,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 	}
 
 	if len(result.Evidence.Gates) > 0 {
+		if err := result.Evidence.ValidateHead(req.CandidateHead); err != nil {
+			return Result{}, fmt.Errorf("validate executable verification evidence: %w", err)
+		}
 		if err := v.store.PutEvidenceBundle(ctx, result.Evidence); err != nil {
 			return Result{}, fmt.Errorf("persist verification evidence: %w", err)
 		}
@@ -262,4 +288,12 @@ func evidenceOutput(result *runtimes.CommandResult, err error) string {
 		return output[:maxEvidenceOutput] + "\n... [output truncated]"
 	}
 	return output
+}
+
+func newAttemptID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value[:]), nil
 }
