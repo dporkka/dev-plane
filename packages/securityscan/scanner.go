@@ -53,27 +53,28 @@ type ScanResult struct {
 	Summary     ScanSummary   `json:"summary"`
 	Duration    time.Duration `json:"duration_ms"`
 	RawOutput   string        `json:"raw_output,omitempty"`
+	Error       string        `json:"error,omitempty"` // Non-empty means this scan did not complete successfully.
 }
 
 // Finding represents a single security finding from a scan.
 type Finding struct {
-	Severity   string `json:"severity"`   // critical, high, medium, low, info
-	Rule       string `json:"rule"`       // Rule or check that triggered
-	File       string `json:"file"`       // File path where finding occurred
+	Severity   string `json:"severity"`       // critical, high, medium, low, info
+	Rule       string `json:"rule"`           // Rule or check that triggered
+	File       string `json:"file"`           // File path where finding occurred
 	Line       int    `json:"line,omitempty"` // Line number (0 if unknown)
-	Message    string `json:"message"`    // Human-readable description
-	Confidence string `json:"confidence"` // high, medium, low
-	Fix        string `json:"fix,omitempty"` // Suggested fix if available
+	Message    string `json:"message"`        // Human-readable description
+	Confidence string `json:"confidence"`     // high, medium, low
+	Fix        string `json:"fix,omitempty"`  // Suggested fix if available
 }
 
 // ScanSummary provides aggregated statistics for a scan.
 type ScanSummary struct {
-	Total      int `json:"total"`
-	Critical   int `json:"critical"`
-	High       int `json:"high"`
-	Medium     int `json:"medium"`
-	Low        int `json:"low"`
-	Info       int `json:"info"`
+	Total        int `json:"total"`
+	Critical     int `json:"critical"`
+	High         int `json:"high"`
+	Medium       int `json:"medium"`
+	Low          int `json:"low"`
+	Info         int `json:"info"`
 	FilesScanned int `json:"files_scanned"`
 }
 
@@ -128,6 +129,7 @@ func (r *Registry) ScanAll(ctx context.Context, req ScanRequest) ([]*ScanResult,
 				Summary:     ScanSummary{},
 				Duration:    0,
 				RawOutput:   fmt.Sprintf("scan error: %v", err),
+				Error:       err.Error(),
 			}
 		}
 		results = append(results, result)

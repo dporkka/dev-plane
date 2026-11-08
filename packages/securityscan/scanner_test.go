@@ -1,6 +1,11 @@
 package securityscan
 
-import "testing"
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+)
 
 func assertEqual(t *testing.T, got, want interface{}) {
 	t.Helper()
@@ -34,10 +39,12 @@ func TestRegistry_All(t *testing.T) {
 
 func TestRegistry_Available(t *testing.T) {
 	reg := NewRegistry()
-	available := reg.Available()
-	// Availability depends on whether the scanner binaries are in PATH.
-	// In CI or containers they may not be installed.
-	assertTrue(t, len(available) >= 0, "available count should be non-negative")
+	// Availability depends on PATH; every returned scanner must be executable.
+	for _, scanner := range reg.Available() {
+		if !scanner.IsAvailable() {
+			t.Errorf("scanner %s reported available but is unavailable", scanner.Name())
+		}
+	}
 }
 
 func TestFinding_SeverityLevels(t *testing.T) {
@@ -85,6 +92,7 @@ func TestScanResult_IsClean(t *testing.T) {
 			Summary: ScanSummary{Total: 1, High: 1},
 		}
 		assertEqual(t, len(result.Findings) > 0, true)
+		assertEqual(t, result.Summary.Total, 1)
 	})
 }
 
@@ -145,5 +153,27 @@ func TestScanResult_HasCritical(t *testing.T) {
 			}
 		}
 		assertEqual(t, hasCritical, false)
+		assertEqual(t, result.Summary.Critical, 0)
 	})
+}
+
+type failingTestScanner struct{}
+
+func (f failingTestScanner) Name() string      { return "failing" }
+func (f failingTestScanner) IsAvailable() bool { return true }
+func (f failingTestScanner) Scan(_ context.Context, _ ScanRequest) (*ScanResult, error) {
+	return nil, errors.New("scan command failed")
+}
+func TestRegistryScanAllPreservesFailureAsTypedStatus(t *testing.T) {
+	reg := &Registry{scanners: []Scanner{failingTestScanner{}}}
+	results, err := reg.ScanAll(context.Background(), ScanRequest{})
+	if err != nil {
+		t.Fatalf("want per-scanner result: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results=%d, want 1", len(results))
+	}
+	if !strings.Contains(results[0].Error, "scan command failed") {
+		t.Fatalf("scanner error not explicitly recorded: %+v", results[0])
+	}
 }
