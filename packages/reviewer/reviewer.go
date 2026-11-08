@@ -133,26 +133,24 @@ func (r *Reviewer) Review(ctx context.Context, runID string) (*ReviewReport, err
 	// 2. Get workspace path and git diff
 	worktreePath, err := r.getWorkspacePath(ctx, *run.WorkspaceID)
 	if err != nil {
-		r.logger.Warn("failed to get workspace path, proceeding without diff or security scan", "error", err)
-		worktreePath = ""
+		return nil, fmt.Errorf("review workspace unavailable: %w", err)
 	}
 
-	diff := ""
-	if worktreePath != "" {
-		diff, err = r.getGitDiff(ctx, worktreePath)
-	} else {
-		err = nil
-	}
+	diff, err := r.getGitDiff(ctx, worktreePath)
 	if err != nil {
-		r.logger.Warn("failed to get git diff, proceeding with empty diff", "error", err)
-		diff = ""
+		return nil, fmt.Errorf("review git diff unavailable: %w", err)
+	}
+	if strings.TrimSpace(diff) == "" {
+		return nil, errors.New("review diff is empty; cannot approve changes without a reviewable diff")
 	}
 
-	// 3. Get agent run steps
+	// The recorded agent history is mandatory review evidence.
 	steps, err := r.getAgentSteps(ctx, runID)
 	if err != nil {
-		r.logger.Warn("failed to get agent steps, proceeding without", "error", err)
-		steps = nil
+		return nil, fmt.Errorf("review agent steps unavailable: %w", err)
+	}
+	if len(steps) == 0 {
+		return nil, errors.New("review agent steps unavailable: no recorded steps")
 	}
 
 	report := r.generateReview(diff, nil, steps)
@@ -429,10 +427,19 @@ func (r *Reviewer) applySecurityScan(ctx context.Context, report *ReviewReport, 
 			Suggestion: "Run review in a workspace with a readable local worktree or add runtime-backed scanner support.",
 		})
 		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan skipped: no local worktree path.")
+		report.Approvable = false
 		return
 	}
 	if r.securityScanner == nil {
+		r.addSecurityFinding(report, Finding{
+			Severity:   "medium",
+			File:       "*",
+			Message:    "Automated security scan skipped because no scanner is configured",
+			Category:   "security",
+			Suggestion: "Configure a security scanner before approving the review.",
+		})
 		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan skipped: scanner is not configured.")
+		report.Approvable = false
 		return
 	}
 
@@ -449,6 +456,7 @@ func (r *Reviewer) applySecurityScan(ctx context.Context, report *ReviewReport, 
 			Suggestion: err.Error(),
 		})
 		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan unavailable: "+err.Error())
+		report.Approvable = false
 		return
 	}
 
@@ -456,16 +464,45 @@ func (r *Reviewer) applySecurityScan(ctx context.Context, report *ReviewReport, 
 	scanners := make([]string, 0, len(results))
 	for _, result := range results {
 		if result == nil {
+			r.addSecurityFinding(report, Finding{
+				Severity:   "medium",
+				File:       "*",
+				Message:    "Automated security scan returned a missing scanner result",
+				Category:   "security",
+				Suggestion: "Investigate the incomplete scanner execution before approval.",
+			})
+			report.Approvable = false
 			continue
 		}
-		scanners = append(scanners, fmt.Sprintf("%s=%d", result.ScannerName, result.Summary.Total))
+		name := firstNonEmpty(result.ScannerName, "unknown")
+		if result.Error != "" || strings.HasPrefix(strings.TrimSpace(result.RawOutput), "scan error:") || result.ScannerName == "" {
+			r.addSecurityFinding(report, Finding{
+				Severity:   "medium",
+				File:       "*",
+				Message:    fmt.Sprintf("Automated security scanner %s did not complete", name),
+				Category:   "security",
+				Suggestion: "Resolve the scanner failure before approval.",
+			})
+			report.SecurityNotes = appendSecurityNote(report.SecurityNotes, fmt.Sprintf("Automated security scanner %s failed.", name))
+			report.Approvable = false
+			continue
+		}
+		scanners = append(scanners, fmt.Sprintf("%s=%d", name, result.Summary.Total))
 		totalFindings += result.Summary.Total
 		for _, finding := range result.Findings {
-			r.addSecurityFinding(report, reviewerFindingFromScan(result.ScannerName, finding))
+			r.addSecurityFinding(report, reviewerFindingFromScan(name, finding))
 		}
 	}
 	if len(scanners) == 0 {
+		r.addSecurityFinding(report, Finding{
+			Severity:   "medium",
+			File:       "*",
+			Message:    "Automated security scan returned no usable results",
+			Category:   "security",
+			Suggestion: "Run configured security scanners and inspect their results before approval.",
+		})
 		report.SecurityNotes = appendSecurityNote(report.SecurityNotes, "Automated security scan ran but no scanner results were returned.")
+		report.Approvable = false
 		return
 	}
 	report.SecurityNotes = appendSecurityNote(report.SecurityNotes,
