@@ -20,18 +20,21 @@ import (
 // A minimal SQL driver exercises the real Reviewer.Review entrypoint without
 // adding a test-only database dependency or mocking review orchestration.
 type reviewEvidenceFixture struct {
-	workspacePath string
-	missingPath   bool
-	missingSteps  bool
-	stepsError    bool
+	workspacePath        string
+	missingPath          bool
+	missingSteps         bool
+	stepsError           bool
+	stepsCloseError      bool
+	malformedReviewField string
 }
 
 type reviewFixtureConnector struct{ fixture reviewEvidenceFixture }
 type reviewFixtureDriver struct{}
 type reviewFixtureConn struct{ fixture reviewEvidenceFixture }
 type reviewFixtureRows struct {
-	columns []string
-	values  [][]driver.Value
+	columns    []string
+	values     [][]driver.Value
+	closeError bool
 }
 
 func (c reviewFixtureConnector) Connect(context.Context) (driver.Conn, error) {
@@ -73,13 +76,32 @@ func (c *reviewFixtureConn) QueryContext(_ context.Context, query string, _ []dr
 		if !c.fixture.missingSteps {
 			rows = [][]driver.Value{{"step-1", "run-1", int64(1), "file_patch", "completed", nil, nil, nil, nil, nil, nil, nil, nil, nil, float64(0), int64(0), now}}
 		}
-		return &reviewFixtureRows{columns: []string{"id", "agent_run_id", "step_number", "step_type", "status", "content", "tool_name", "tool_input", "tool_output", "command", "command_output", "exit_code", "file_path", "diff", "cost", "latency_ms", "created_at"}, values: rows}, nil
+		return &reviewFixtureRows{columns: []string{"id", "agent_run_id", "step_number", "step_type", "status", "content", "tool_name", "tool_input", "tool_output", "command", "command_output", "exit_code", "file_path", "diff", "cost", "latency_ms", "created_at"}, values: rows, closeError: c.fixture.stepsCloseError}, nil
+	case strings.Contains(query, "FROM review_reports"):
+		fields := []driver.Value{"review-id", "run-1", "summary", "[]", "low", true, "[]", "test", "security", "{}", now}
+		switch c.fixture.malformedReviewField {
+		case "findings":
+			fields[3] = "["
+		case "suggestions":
+			fields[6] = "["
+		case "diff_summary":
+			fields[9] = "{"
+		}
+		return &reviewFixtureRows{
+			columns: []string{"id", "run_id", "summary", "findings", "risk_level", "approvable", "suggestions", "test_coverage", "security_notes", "diff_summary", "created_at"},
+			values:  [][]driver.Value{fields},
+		}, nil
 	default:
 		return nil, fmt.Errorf("unexpected query: %s", query)
 	}
 }
 func (r *reviewFixtureRows) Columns() []string { return r.columns }
-func (r *reviewFixtureRows) Close() error      { return nil }
+func (r *reviewFixtureRows) Close() error {
+	if r.closeError {
+		return errors.New("close failure")
+	}
+	return nil
+}
 func (r *reviewFixtureRows) Next(dest []driver.Value) error {
 	if len(r.values) == 0 {
 		return io.EOF
@@ -161,5 +183,38 @@ func TestReviewAllowsCompleteInputs(t *testing.T) {
 	}
 	if report == nil || !report.Approvable {
 		t.Fatalf("expected approvable complete report, got %+v", report)
+	}
+}
+
+func TestReviewRejectsAgentStepCursorCloseFailure(t *testing.T) {
+	db := sql.OpenDB(reviewFixtureConnector{fixture: reviewEvidenceFixture{
+		workspacePath: reviewFixtureRepo(t, true), stepsCloseError: true,
+	}})
+	defer db.Close()
+	reviewer := NewReviewer(db, nil).WithSecurityScanner(&fakeSecurityScanner{
+		results: []*securityscan.ScanResult{{ScannerName: "gitleaks"}},
+	})
+	report, err := reviewer.Review(context.Background(), "run-1")
+	if err == nil || !strings.Contains(err.Error(), "close agent steps") {
+		t.Fatalf("expected fail-closed cursor error; report=%+v err=%v", report, err)
+	}
+	if report != nil {
+		t.Fatalf("unexpected approvable report: %+v", report)
+	}
+}
+
+func TestGetRejectsCorruptReviewEvidence(t *testing.T) {
+	for _, field := range []string{"findings", "suggestions", "diff_summary"} {
+		t.Run(field, func(t *testing.T) {
+			db := sql.OpenDB(reviewFixtureConnector{fixture: reviewEvidenceFixture{malformedReviewField: field}})
+			defer db.Close()
+			got, err := NewReviewer(db, nil).Get(context.Background(), "run-1")
+			if err == nil || !strings.Contains(err.Error(), field) {
+				t.Fatalf("corrupt %s returned report=%+v err=%v", field, got, err)
+			}
+			if got != nil {
+				t.Fatalf("corrupt review was returned: %+v", got)
+			}
+		})
 	}
 }

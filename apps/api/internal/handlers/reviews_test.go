@@ -55,7 +55,7 @@ func TestGetReview_Success(t *testing.T) {
 		WithArgs(runID).
 		WillReturnRows(sqlmock.NewRows(reviewCols).
 			AddRow("rev-1", runID, "Good work", "[]", "low", true,
-				"[]", "85%", "None", "[]", now))
+				"[]", "85%", "None", "{}", now))
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("runId", runID)

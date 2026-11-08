@@ -198,7 +198,7 @@ func (r *Reviewer) getGitDiff(ctx context.Context, worktreePath string) (string,
 }
 
 // getAgentSteps retrieves the steps for an agent run.
-func (r *Reviewer) getAgentSteps(ctx context.Context, runID string) ([]models.AgentStep, error) {
+func (r *Reviewer) getAgentSteps(ctx context.Context, runID string) (steps []models.AgentStep, err error) {
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, agent_run_id, step_number, step_type, status, content,
 		       tool_name, tool_input, tool_output, command, command_output,
@@ -208,9 +208,12 @@ func (r *Reviewer) getAgentSteps(ctx context.Context, runID string) ([]models.Ag
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var steps []models.AgentStep
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			steps = nil
+			err = errors.Join(err, fmt.Errorf("close agent steps cursor: %w", closeErr))
+		}
+	}()
 	for rows.Next() {
 		var s models.AgentStep
 		var content, toolName, toolInput, toolOutput, command, commandOutput, filePath, diff sql.NullString
@@ -253,7 +256,10 @@ func (r *Reviewer) getAgentSteps(ctx context.Context, runID string) ([]models.Ag
 		}
 		steps = append(steps, s)
 	}
-	return steps, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read or close agent steps: %w", err)
+	}
+	return steps, nil
 }
 
 // generateReview creates a deterministic review from diff stats and test results.
@@ -332,12 +338,13 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 	}
 
 	// Test coverage assessment
-	if testResults != nil {
+	switch {
+	case testResults != nil:
 		report.TestCoverage = fmt.Sprintf("%.1f%% coverage", testResults.CoveragePercent)
-	} else if hasTests {
+	case hasTests:
 		report.TestCoverage = "Tests included"
-	} else {
-		riskScore += 1
+	default:
+		riskScore++
 		report.TestCoverage = "No tests detected"
 		report.Findings = append(report.Findings, Finding{
 			Severity:   "medium",
@@ -364,7 +371,7 @@ func (r *Reviewer) generateReview(diff string, testResults *TestResults, steps [
 			})
 		}
 		if !testResults.LintPassed {
-			riskScore += 1
+			riskScore++
 			report.Findings = append(report.Findings, Finding{
 				Severity:   "low",
 				File:       "*",
@@ -798,13 +805,19 @@ func (r *Reviewer) Get(ctx context.Context, runID string) (*ReviewReport, error)
 	}
 
 	if findingsJSON.Valid {
-		json.Unmarshal([]byte(findingsJSON.String), &report.Findings)
+		if err := json.Unmarshal([]byte(findingsJSON.String), &report.Findings); err != nil {
+			return nil, fmt.Errorf("decode review findings: %w", err)
+		}
 	}
 	if suggestionsJSON.Valid {
-		json.Unmarshal([]byte(suggestionsJSON.String), &report.Suggestions)
+		if err := json.Unmarshal([]byte(suggestionsJSON.String), &report.Suggestions); err != nil {
+			return nil, fmt.Errorf("decode review suggestions: %w", err)
+		}
 	}
 	if diffSummaryJSON.Valid {
-		json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary)
+		if err := json.Unmarshal([]byte(diffSummaryJSON.String), &report.DiffSummary); err != nil {
+			return nil, fmt.Errorf("decode review diff_summary: %w", err)
+		}
 	}
 
 	return &report, nil

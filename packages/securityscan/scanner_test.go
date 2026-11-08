@@ -39,10 +39,12 @@ func TestRegistry_All(t *testing.T) {
 
 func TestRegistry_Available(t *testing.T) {
 	reg := NewRegistry()
-	available := reg.Available()
-	// Availability depends on whether the scanner binaries are in PATH.
-	// In CI or containers they may not be installed.
-	assertTrue(t, len(available) >= 0, "available count should be non-negative")
+	// Availability depends on PATH; every returned scanner must be executable.
+	for _, scanner := range reg.Available() {
+		if !scanner.IsAvailable() {
+			t.Errorf("scanner %s reported available but is unavailable", scanner.Name())
+		}
+	}
 }
 
 func TestFinding_SeverityLevels(t *testing.T) {
@@ -90,6 +92,7 @@ func TestScanResult_IsClean(t *testing.T) {
 			Summary: ScanSummary{Total: 1, High: 1},
 		}
 		assertEqual(t, len(result.Findings) > 0, true)
+		assertEqual(t, result.Summary.Total, 1)
 	})
 }
 
@@ -150,6 +153,7 @@ func TestScanResult_HasCritical(t *testing.T) {
 			}
 		}
 		assertEqual(t, hasCritical, false)
+		assertEqual(t, result.Summary.Critical, 0)
 	})
 }
 
