@@ -21,6 +21,20 @@ A token must have **read-only** Pull requests/Contents/Checks access to the sele
 
 **Terminology:** cohort totals count PRs *created in the lookback*, classified by their current state; they are not a throughput metric for PRs merged during the lookback. `All open` includes older PRs from all creation dates. `Stale` means no `updated_at` activity in the selected interval; it does not imply safe closure. Checks are inspected only on the exact current PR head of the top `--inspect` items. `passing-observed-only` does not establish branch protection, mandatory contexts, Woodpecker, CodeQL, test correctness, human approval, staging smoke tests, or production deployment. `no-evidence`, `pending`, `failed`, and `incomplete` are never passing states. `not-inspected` means no CI calls were made for that PR. Results can change immediately after snapshot collection.
 
+## Manual stacked-PR CI qualification (opt-in, advisory)
+
+After `.github/workflows/stack-qualification.yml` has been reviewed and merged to `main`, an operator may deliberately run the **manual-only** workflow against one open, same-repository stacked PR:
+
+```bash
+gh workflow run stack-qualification.yml --ref main -f pr_number=202
+```
+
+The dispatcher runs from trusted `main`, reads the PR's actual head/base commit SHAs from the GitHub API, rejects forks/closed PRs/mismatched identities, and checks out the immutable head SHA rather than a moving branch name. It fails if Git reports that the PR's base SHA is not an ancestor of that head. The selected PR's code is tested with the same repository `make` test, build, lint and typecheck commands, but no deployment credentials or write permissions are provided to the job. A separate final job checks out the trusted resolver at the dispatch SHA and **reconfirms** the current PR head/base via the read-only GitHub API. If either changed during testing, the overall workflow fails rather than reporting stale success. This is a point-in-time check, not a permanent guarantee after the run. There is **no** `pull_request` trigger and no automatic queue fanout.
+
+**Protected verification-plan preflight:** Before exporting any candidate SHA to the test runner, trusted `main` code paginates the GitHub PR changed-file API (up to its documented 3,000-file bound), fails on incomplete inventories, rejects modifications/renames involving Makefiles, workflow/actions definitions, repository scripts, runtime/test manifests and other verification control files, and re-reads the PR head/base to reject changes during the preflight. PRs modifying those files need separate, independently reviewed CI qualification; the manual advisory run deliberately offers no override. This conservative policy also excludes legitimate tooling/dependency changes. It does **not** prove the remaining candidate code cannot affect tests or provide trusted third-party execution attestation.
+
+**Do not treat this workflow as a canonical PR status or release approval.** A manual workflow event is associated with the dispatch ref (`main`) in GitHub; the checkout and step summary, not a green PR status badge, document which head was actually tested. Real PR review, mandatory contexts, independent authorization, exact-head executable evidence, staged merge-tree testing and any production qualification remain separate. Do not change PR bases, fabricate status checks, or merge solely to obtain a green manual run. If the head or base moves, require fresh qualification.
+
 ## Stacked verification branches
 
 When a CI repair and a feature are verified on a disposable combined candidate, **do not merge the disposable verification PR**. First merge the separately reviewed repair through the normal gates, then put the feature's unchanged source blobs onto the newly accepted `main` commit, verify the source file hashes, and run checks against the feature PR's **new exact head**. A successful run on the disposable combined tree is useful compatibility evidence but is not a substitute for this final run. Close the verification-only PR after its evidence has been recorded and the real feature PR has been accepted; never let it become product history.
