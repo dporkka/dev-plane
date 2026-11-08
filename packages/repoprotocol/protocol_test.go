@@ -3,6 +3,7 @@ package repoprotocol
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func validConfig() Config {
@@ -95,17 +96,23 @@ func TestRequiredGatesForPathsAppliesNestedRiskRulesAndDeduplicates(t *testing.T
 }
 
 func TestEvidenceBundleValidateHeadBindsEvidenceToExactCandidate(t *testing.T) {
+	zero := 0
+	started := time.Unix(1000, 0).UTC()
 	bundle := EvidenceBundle{
-		BaseSHA: "base123",
-		HeadSHA: "head456",
+		WorkItemID: "work-1",
+		BaseSHA:    "base123",
+		HeadSHA:    "head456",
 		Gates: []GateEvidence{
-			{Name: "changed", Status: GatePassed},
+			{Name: "changed", Status: GatePassed, Execution: &GateExecution{
+				SessionID: "session-1", AttemptID: "attempt-1", Outcome: GateExecutionCompleted,
+				ExitCode: &zero, StartedAt: started, FinishedAt: started.Add(time.Second), DurationMillis: 1000,
+			}},
 			{Name: GateIndependentReview, Status: GatePassed},
 		},
 	}
 
-	if err := bundle.ValidateHead("head456"); err != nil {
-		t.Fatalf("ValidateHead() error = %v", err)
+	if err := bundle.ValidateHeadWithAuthorities("head456", nil, testApprovalVerifier(func(_, _, _ string) error { return nil })); err != nil {
+		t.Fatalf("ValidateHeadWithAuthorities() error = %v", err)
 	}
 	if err := bundle.ValidateHead("new-head"); err == nil || !strings.Contains(err.Error(), "head mismatch") {
 		t.Fatalf("ValidateHead() error = %v, want head mismatch", err)
