@@ -369,7 +369,7 @@ func TestUpdateTask(t *testing.T) {
 
 	// Update query
 	mock.ExpectExec("UPDATE tasks SET").
-		WithArgs(&newTitle, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), taskID).
+		WithArgs(&newTitle, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), taskID, "backlog").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// GetTask query after update re-runs authorization
@@ -770,5 +770,37 @@ func TestGetTask_CrossOrgDenied(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestUpdateTask_ConcurrentStatusChangeRejectsStaleWrite(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+
+	taskID := "task-1"
+	nextStatus := "spec_review"
+	expectAuthorizeTask(mock, taskID)
+	mock.ExpectQuery("SELECT status FROM tasks").
+		WithArgs(taskID).
+		WillReturnRows(sqlmock.NewRows([]string{"status"}).AddRow("backlog"))
+	// Another request changes the task between the read and the conditional write.
+	// Zero affected rows must return a conflict, not report a successful transition.
+	mock.ExpectExec("UPDATE tasks SET").
+		WithArgs(nil, nil, nil, nil, &nextStatus, sqlmock.AnyArg(), taskID, "backlog").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	body, _ := json.Marshal(UpdateTaskRequest{Status: &nextStatus})
+	req := httptest.NewRequest(http.MethodPut, "/tasks/"+taskID, bytes.NewReader(body))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", taskID)
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, rctx)))
+	rec := httptest.NewRecorder()
+
+	h.UpdateTask(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("stale transition status = %d, want %d: %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
 	}
 }

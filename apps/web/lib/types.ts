@@ -6,6 +6,7 @@ export type TaskStatus =
   | "running"
   | "reviewing"
   | "pr_created"
+  | "deploying"
   | "done"
   | "failed"
   | "cancelled";

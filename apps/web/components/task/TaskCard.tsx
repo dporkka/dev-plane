@@ -1,6 +1,7 @@
 "use client";
 import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
+import type { TaskDependencyView } from "@/lib/task-view";
 import type { Task } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
@@ -8,9 +9,10 @@ import Link from "next/link";
 
 interface TaskCardProps {
   task: Task;
+  dependencies?: TaskDependencyView;
 }
 
-export function TaskCard({ task }: TaskCardProps) {
+export function TaskCard({ task, dependencies }: TaskCardProps) {
   const priorityColors = {
     low: "border-l-gray-600",
     medium: "border-l-yellow-600",
@@ -44,6 +46,28 @@ export function TaskCard({ task }: TaskCardProps) {
             <TimeAgo date={task.created_at} className="text-xs text-gray-600" />
           </div>
         </div>
+        {dependencies?.blocked && (
+          <p
+            className={`mt-2 text-xs ${dependencies.needsIntervention ? "text-red-300" : "text-amber-300"}`}
+            aria-label="Dependency status"
+          >
+            {dependencies.needsIntervention
+              ? "Dependency intervention needed"
+              : "Waiting on prerequisites"}
+            {" · "}
+            {
+              dependencies.dependencies.filter(
+                (dependency) => dependency.state !== "complete",
+              ).length
+            }{" "}
+            unmet
+          </p>
+        )}
+        {(dependencies?.dependents.length ?? 0) > 0 && (
+          <p className="mt-1 text-xs text-gray-400">
+            Blocks {dependencies?.dependents.length} downstream task(s)
+          </p>
+        )}
         {task.max_cost && (
           <div className="mt-2 text-xs text-gray-600">
             Max: ${task.max_cost}
