@@ -159,12 +159,38 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
 
 	now := time.Now().UTC()
-	_, err := h.db.Exec(`
+	// JetStream can redeliver a failure after a follow-on run has been queued,
+	// reviewed, or completed. Only the latest persisted failed run may fail an
+	// active task; an event's task_id alone is not authority to change state.
+	// Retain 'failed' in the admissible states so a redelivery can republish
+	// tasks.failed after a transient publish error (at-least-once delivery).
+	result, err := h.db.Exec(`
 		UPDATE tasks SET status = 'failed', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
-	`, now, event.TaskID)
+		  AND status IN ('running', 'failed')
+		  AND EXISTS (
+		    SELECT 1 FROM agent_runs AS failed_run
+		    WHERE failed_run.id = $3
+		      AND failed_run.task_id = tasks.id
+		      AND failed_run.status = 'failed'
+		      AND failed_run.id = (
+		        SELECT recent.id FROM agent_runs AS recent
+		        WHERE recent.task_id = tasks.id
+		        ORDER BY recent.created_at DESC, recent.id DESC
+		        LIMIT 1
+		      )
+		  )
+	`, now, event.TaskID, event.RunID)
 	if err != nil {
 		return fmt.Errorf("update task status to failed: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check failed task transition: %w", err)
+	}
+	if updated == 0 {
+		h.logger.Info("ignoring stale or inapplicable run failure", "run_id", event.RunID, "task_id", event.TaskID)
+		return ackMessage(msg)
 	}
 
 	if h.eventBus != nil {
