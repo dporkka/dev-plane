@@ -120,6 +120,28 @@ func (r RemoteCIRecord) Validate() error {
 		if r.WorkerID != "" || !r.AssignedAt.IsZero() || !r.StartedAt.IsZero() || !r.FinishedAt.IsZero() {
 			return errors.New("queued job cannot claim assignment or execution")
 		}
+	} else if r.State == CIStateTerminal &&
+		(r.Outcome == CIOutcomeInfrastructureFailure || r.Outcome == CIOutcomeCanceled) {
+		// A scheduler can cancel a queued job (or fail before dispatch)
+		// without ever assigning a worker or starting the command. Preserve
+		// truthful, partial lifecycle evidence for diagnostics, never approval.
+		if r.FinishedAt.IsZero() || r.FinishedAt.Before(r.QueuedAt) {
+			return errors.New("terminal CI failure requires a finish after queueing")
+		}
+		if r.AssignedAt.IsZero() {
+			if r.WorkerID != "" || !r.StartedAt.IsZero() {
+				return errors.New("terminal CI failure cannot claim execution without assignment")
+			}
+		} else {
+			if !validateCIName(r.WorkerID) || r.AssignedAt.Before(r.QueuedAt) ||
+				r.AssignedAt.After(r.FinishedAt) {
+				return errors.New("terminal CI failure has inconsistent assignment")
+			}
+			if !r.StartedAt.IsZero() &&
+				(r.StartedAt.Before(r.AssignedAt) || r.StartedAt.After(r.FinishedAt)) {
+				return errors.New("terminal CI failure has inconsistent execution start")
+			}
+		}
 	} else {
 		if !validateCIName(r.WorkerID) || r.AssignedAt.IsZero() || r.AssignedAt.Before(r.QueuedAt) {
 			return errors.New("remote CI assignment evidence missing or inconsistent")
