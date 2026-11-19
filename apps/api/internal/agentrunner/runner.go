@@ -45,10 +45,16 @@ func NewRunner(db *sql.DB, workspaceTools *tools.WorkspaceTools, polEng *policie
 		logger = slog.Default()
 	}
 	kernel := capability.NewKernel(polEng, budgetEng, nil, logger)
+	providers, err := modelrouter.ProvidersForMode(os.Getenv("DEV_PLANE_LLM_ROUTING_MODE"))
+	if err != nil {
+		// A misconfigured exclusive gateway mode must never silently switch
+		// to direct inference. The empty provider set fails closed at execution.
+		logger.Error("invalid model routing mode; inference disabled", "error", err)
+	}
 	return &Runner{
 		db:       db,
 		tools:    workspaceTools,
-		router:   modelrouter.NewRouter(nil, modelrouter.AllProviders()...),
+		router:   modelrouter.NewRouter(nil, providers...),
 		policies: polEng,
 		budget:   budgetEng,
 		kernel:   kernel,

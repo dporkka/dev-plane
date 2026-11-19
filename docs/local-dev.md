@@ -242,3 +242,18 @@ Ensure your filesystem supports inotify. On WSL2 or Docker volumes, you may need
 echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf
 sudo sysctl -p
 ```
+
+## Optional Bifrost-only inference
+
+Set `DEV_PLANE_LLM_ROUTING_MODE=bifrost-only` and configure `BIFROST_URL`
+and `BIFROST_API_KEY` for an exclusive Bifrost API egress path. Dev Plane
+will **not** use direct OpenAI, Anthropic, Groq, Fireworks, or Gemini credentials
+as fallbacks, even when Bifrost is unavailable. Unrecognized routing modes
+disable inference rather than enabling direct providers.
+
+The default (unset / `legacy`) preserves existing behavior for gradual
+migration. Do not enable `bifrost-only` for production coding-agent tool
+calls until your Nulang Cloud Bifrost endpoint passes requested-model,
+tool-calling, usage accounting, and streaming conformance checks. Native
+Codex subscription execution is a separate agent-runtime path, not an API
+provider routed through this setting.

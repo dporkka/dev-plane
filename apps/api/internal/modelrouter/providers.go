@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/ai-dev-control-plane/api/internal/config"
@@ -209,8 +210,8 @@ func (p *AnthropicProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Anthropic provider is configured.
 func (p *AnthropicProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -284,8 +285,8 @@ func (p *GeminiProvider) Call(ctx context.Context, req CallRequest) (*CallResult
 
 // IsAvailable returns true if the Gemini provider is configured.
 func (p *GeminiProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -372,8 +373,8 @@ func (p *GroqProvider) Call(ctx context.Context, req CallRequest) (*CallResult, 
 
 // IsAvailable returns true if the Groq provider is configured.
 func (p *GroqProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -460,8 +461,8 @@ func (p *FireworksProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Fireworks provider is configured.
 func (p *FireworksProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -547,8 +548,8 @@ func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResul
 
 // IsAvailable returns true if the Bifrost provider is configured.
 func (p *BifrostProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // AllProviders returns a list of all available provider instances.
@@ -563,3 +564,16 @@ func AllProviders() []Provider {
 	}
 }
 
+// ProvidersForMode selects the API inference egress boundary. In exclusive
+// mode there is no direct-provider fallback, including when Bifrost is down
+// or credentials are missing. Unknown modes fail closed.
+func ProvidersForMode(mode string) ([]Provider, error) {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "legacy":
+		return AllProviders(), nil
+	case "bifrost-only":
+		return []Provider{NewBifrostProvider()}, nil
+	default:
+		return nil, fmt.Errorf("unsupported DEV_PLANE_LLM_ROUTING_MODE %q", mode)
+	}
+}
