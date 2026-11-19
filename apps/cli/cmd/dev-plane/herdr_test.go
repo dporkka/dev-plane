@@ -75,3 +75,31 @@ func TestAgentsLocalCLIRejectsUnsupportedArguments(t *testing.T) {
 		t.Fatal("unsupported remote control must be rejected")
 	}
 }
+func TestHerdrSnapshotCaptureStopsAtFourMiB(t *testing.T) {
+	cancels := 0
+	writer := &herdrSnapshotCapture{cancel: func() { cancels++ }}
+	initial := []byte(strings.Repeat("x", herdrMaxSnapshotBytes))
+	n, err := writer.Write(initial)
+	if err != nil || n != len(initial) || writer.overLimit || cancels != 0 {
+		t.Fatalf("exact limit should succeed: n=%d err=%v exceeded=%t cancels=%d", n, err, writer.overLimit, cancels)
+	}
+	n, err = writer.Write([]byte("y"))
+	if err != nil || n != 1 || !writer.overLimit || cancels != 1 || writer.buf.Len() != herdrMaxSnapshotBytes+1 {
+		t.Fatalf("one byte over limit must cancel: n=%d err=%v len=%d cancels=%d", n, err, writer.buf.Len(), cancels)
+	}
+	n, err = writer.Write([]byte(strings.Repeat("z", 10000)))
+	if err != nil || n != 10000 || cancels != 1 || writer.buf.Len() != herdrMaxSnapshotBytes+1 {
+		t.Fatal("subsequent writes must remain bounded and cancel once")
+	}
+}
+
+func TestHerdrSnapshotCaptureLargeSingleWriteIsBounded(t *testing.T) {
+	cancels := 0
+	writer := &herdrSnapshotCapture{cancel: func() { cancels++ }}
+	oversized := []byte(strings.Repeat("x", herdrMaxSnapshotBytes+5000))
+	n, err := writer.Write(oversized)
+	if err != nil || n != len(oversized) || !writer.overLimit || cancels != 1 ||
+		writer.buf.Len() != herdrMaxSnapshotBytes+1 {
+		t.Fatalf("oversized write: n=%d err=%v retained=%d", n, err, writer.buf.Len())
+	}
+}
