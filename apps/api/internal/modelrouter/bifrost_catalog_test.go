@@ -191,3 +191,42 @@ func TestRouterInitialSelectionFailsClosedWhenAllModelsExceedExplicitCap(t *test
 		t.Fatal("hard-cap violation manufactured an ineligible fallback model")
 	}
 }
+
+func TestBifrostCatalogRequiresBothPriceFieldsToBePresent(t *testing.T) {
+	cases := []struct {
+		name    string
+		catalog string
+	}{
+		{"missing_input", strings.Replace(verifiedBifrostModel, "\"input_usd_per_1k\":0,", "", 1)},
+		{"missing_output", strings.Replace(verifiedBifrostModel, "\"output_usd_per_1k\":0,", "", 1)},
+		{"null_input", strings.Replace(verifiedBifrostModel, "\"input_usd_per_1k\":0", "\"input_usd_per_1k\":null", 1)},
+		{"null_output", strings.Replace(verifiedBifrostModel, "\"output_usd_per_1k\":0", "\"output_usd_per_1k\":null", 1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BIFROST_API_KEY", "test-only")
+			t.Setenv("BIFROST_MODEL_CATALOG_JSON", tc.catalog)
+			p := NewBifrostProvider()
+			if got := p.Models(); len(got) != 0 {
+				t.Fatalf("incomplete price verified as free; models=%+v", got)
+			}
+			if p.IsAvailable() {
+				t.Fatal("incomplete price must disable provider")
+			}
+		})
+	}
+}
+
+func TestRouterConfiguredCostCapRejectsFallbackForUnpricedDefault(t *testing.T) {
+	expensive := codingModel("expensive-model", "expensive-provider", 8)
+	expensive.CostPer1KInput = 0.50
+	expensive.CostPer1KOutput = 0.001
+	router := NewRouter(&Config{
+		DefaultModel:    "expensive-model",
+		DefaultProvider: "expensive-provider",
+		MaxCostPer1K:    0.01,
+	}, &mockProvider{name: "expensive-provider", available: true, models: []ModelInfo{expensive}})
+	if got, err := router.SelectModel(context.Background(), TaskTypeCode, DifficultyMedium, LatencyNormal, 0, 0); err == nil {
+		t.Fatalf("configured cost cap bypassed: fallback returned %+v", got)
+	}
+}

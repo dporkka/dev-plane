@@ -485,17 +485,17 @@ type BifrostProvider struct {
 // Bifrost model metadata is operator-confirmed. It must also be allowed in
 // Nulang Cloud's BIFROST_ALLOWED_MODELS; Dev Plane never guesses prices.
 type bifrostModelDescriptor struct {
-	ID                       string  `json:"id"`
-	MaxContext               int     `json:"max_context"`
-	CodingStrength           int     `json:"coding_strength"`
-	ReasoningStrength        int     `json:"reasoning_strength"`
-	LatencyMs                int     `json:"latency_ms"`
-	CostPer1KInput           float64 `json:"input_usd_per_1k"`
-	CostPer1KOutput          float64 `json:"output_usd_per_1k"`
-	PricingVerified          bool    `json:"pricing_verified"`
-	SupportsStructuredOutput bool    `json:"supports_structured_output"`
-	SupportsVision           bool    `json:"supports_vision"`
-	SupportsFunctionCalling  bool    `json:"supports_function_calling"`
+	ID                       string   `json:"id"`
+	MaxContext               int      `json:"max_context"`
+	CodingStrength           int      `json:"coding_strength"`
+	ReasoningStrength        int      `json:"reasoning_strength"`
+	LatencyMs                int      `json:"latency_ms"`
+	CostPer1KInput           *float64 `json:"input_usd_per_1k"`
+	CostPer1KOutput          *float64 `json:"output_usd_per_1k"`
+	PricingVerified          bool     `json:"pricing_verified"`
+	SupportsStructuredOutput bool     `json:"supports_structured_output"`
+	SupportsVision           bool     `json:"supports_vision"`
+	SupportsFunctionCalling  bool     `json:"supports_function_calling"`
 }
 
 // NewBifrostProvider creates a provider for the Nulang Cloud OpenAI-compatible
@@ -544,13 +544,13 @@ func (p *BifrostProvider) Models() []ModelInfo {
 			}
 			if !qualified || upstreamID == "" || len(spec.ID) > 256 ||
 				strings.ContainsAny(spec.ID, " \r\n\t") ||
-				!spec.PricingVerified || spec.MaxContext <= 0 ||
+				!spec.PricingVerified || spec.CostPer1KInput == nil || spec.CostPer1KOutput == nil || spec.MaxContext <= 0 ||
 				spec.CodingStrength < 1 || spec.CodingStrength > 10 ||
 				spec.ReasoningStrength < 1 || spec.ReasoningStrength > 10 ||
 				spec.LatencyMs <= 0 ||
-				spec.CostPer1KInput < 0 || spec.CostPer1KOutput < 0 ||
-				math.IsNaN(spec.CostPer1KInput) || math.IsNaN(spec.CostPer1KOutput) ||
-				math.IsInf(spec.CostPer1KInput, 0) || math.IsInf(spec.CostPer1KOutput, 0) {
+				*spec.CostPer1KInput < 0 || *spec.CostPer1KOutput < 0 ||
+				math.IsNaN(*spec.CostPer1KInput) || math.IsNaN(*spec.CostPer1KOutput) ||
+				math.IsInf(*spec.CostPer1KInput, 0) || math.IsInf(*spec.CostPer1KOutput, 0) {
 				p.catalogErr = fmt.Errorf("unverified or invalid Bifrost model metadata for %q", spec.ID)
 				return
 			}
@@ -562,8 +562,8 @@ func (p *BifrostProvider) Models() []ModelInfo {
 			models = append(models, ModelInfo{
 				Name: spec.ID, Provider: "bifrost", MaxContext: spec.MaxContext,
 				CodingStrength: spec.CodingStrength, ReasoningStrength: spec.ReasoningStrength,
-				LatencyMs: spec.LatencyMs, CostPer1KInput: spec.CostPer1KInput,
-				CostPer1KOutput:          spec.CostPer1KOutput,
+				LatencyMs: spec.LatencyMs, CostPer1KInput: *spec.CostPer1KInput,
+				CostPer1KOutput:          *spec.CostPer1KOutput,
 				SupportsStructuredOutput: spec.SupportsStructuredOutput,
 				SupportsVision:           spec.SupportsVision,
 				SupportsFunctionCalling:  spec.SupportsFunctionCalling,

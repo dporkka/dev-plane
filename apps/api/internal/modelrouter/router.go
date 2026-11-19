@@ -151,6 +151,12 @@ func (r *Router) selectModel(ctx context.Context, taskType, difficulty, latencyR
 	if costCap < 0 {
 		return nil, fmt.Errorf("invalid negative model cost cap")
 	}
+	// Effective cap is an admission constraint even when inherited
+	// from configuration. Never fall back to an unchecked default model.
+	effectiveCostCap := costCap
+	if effectiveCostCap == 0 {
+		effectiveCostCap = r.config.MaxCostPer1K
+	}
 	// Filter and score all available models
 	var scores []Score
 
@@ -165,10 +171,6 @@ func (r *Router) selectModel(ctx context.Context, taskType, difficulty, latencyR
 			}
 			if structuredReq && !model.SupportsStructuredOutput {
 				continue
-			}
-			effectiveCostCap := costCap
-			if effectiveCostCap == 0 {
-				effectiveCostCap = r.config.MaxCostPer1K
 			}
 			if effectiveCostCap > 0 && (model.CostPer1KInput > effectiveCostCap || model.CostPer1KOutput > effectiveCostCap) {
 				continue // Never treat a cheap output price as an overall cost cap.
@@ -185,7 +187,7 @@ func (r *Router) selectModel(ctx context.Context, taskType, difficulty, latencyR
 	}
 
 	if len(scores) == 0 {
-		if costCap > 0 || contextSize > 0 || structuredReq {
+		if effectiveCostCap > 0 || contextSize > 0 || structuredReq {
 			return nil, fmt.Errorf("no eligible model satisfies explicit routing constraints")
 		}
 		// Preserve the legacy default only for unconstrained callers.
