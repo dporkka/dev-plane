@@ -374,6 +374,26 @@ func TestHandleRunFailedSQLiteProductionConstructor(t *testing.T) {
 	}
 }
 
+// UUID parser accepts URN representation, but PostgreSQL UUID input expects
+// canonical identifiers. Database operations must use canonical values.
+func TestHandleRunFailedCanonicalizesAcceptedUUIDForms(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertFailedRunFixture(t, db)
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"urn:uuid:22222222-2222-4222-8222-222222222222","task_id":"urn:uuid:11111111-1111-4111-8111-111111111111","status":"failed"}`)}
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("valid URN UUIDs failed: %v", err)
+	}
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("expected canonical run to transition and notify, got %q", publisher.subject)
+	}
+	if !contains(string(publisher.data), "11111111-1111-4111-8111-111111111111") {
+		t.Fatalf("canonical task ID not present: %s", publisher.data)
+	}
+}
+
 func TestHandleRunFailedRejectsNonUUIDIdentifiers(t *testing.T) {
 	handler := NewRunHandler(nil, slog.Default(), nil)
 	for _, payload := range []string{

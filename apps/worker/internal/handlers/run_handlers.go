@@ -168,12 +168,16 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		return fmt.Errorf("unmarshal agent run event: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
-	if _, err := uuid.Parse(event.TaskID); err != nil {
+	taskUUID, err := uuid.Parse(event.TaskID)
+	if err != nil {
 		return fmt.Errorf("invalid task_id: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
-	if _, err := uuid.Parse(event.RunID); err != nil {
+	runUUID, err := uuid.Parse(event.RunID)
+	if err != nil {
 		return fmt.Errorf("invalid run_id: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
+	// PostgreSQL's UUID parameters require canonical database-safe values.
+	event.TaskID, event.RunID = taskUUID.String(), runUUID.String()
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
 
