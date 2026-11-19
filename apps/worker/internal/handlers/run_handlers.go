@@ -151,12 +151,15 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 	return ackMessage(msg)
 }
 
+// ErrMalformedRunFailedEvent identifies a permanent poison event that must not be retried.
+var ErrMalformedRunFailedEvent = errors.New("malformed agents.run.failed event")
+
 // HandleRunFailed processes agents.run.failed events.
 // It transitions the associated task to failed and publishes a tasks.failed event.
 func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	var event events.AgentRunEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
-		return fmt.Errorf("unmarshal agent run event: %w", err)
+		return fmt.Errorf("unmarshal agent run event: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
@@ -170,7 +173,7 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	if err != nil {
 		return fmt.Errorf("begin run failure transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	lockQuery := h.failureLockQuery
 	if lockQuery == "" {
@@ -270,7 +273,7 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if err != nil {
 		return false, "", "", fmt.Errorf("begin follow-on run transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	handoff, err := h.nextUnconsumedHandoff(ctx, tx, run)
 	if err != nil {

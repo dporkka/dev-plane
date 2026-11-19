@@ -314,6 +314,9 @@ func TestHandleRunFailedReturnsUnmarshalError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
+	if !errors.Is(err, ErrMalformedRunFailedEvent) {
+		t.Fatalf("expected permanent decode classification, got %v", err)
+	}
 	if !contains(err.Error(), "unmarshal") {
 		t.Fatalf("error = %v", err)
 	}

@@ -18,6 +18,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/worker/internal/handlers"
 )
 
 func TestInitRuntimeProvider_RejectsLocalInProduction(t *testing.T) {
@@ -109,8 +110,11 @@ func TestStartHealthServer_Shutdown(t *testing.T) {
 	// After shutdown the server should not be reachable.
 	client := &http.Client{Timeout: 1 * time.Second}
 	url := fmt.Sprintf("http://%s/health", addr)
-	_, err := client.Get(url)
+	resp, err := client.Get(url)
 	if err == nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Logf("close unexpected response: %v", closeErr)
+		}
 		t.Fatal("expected error after shutdown")
 	}
 }
@@ -194,4 +198,14 @@ func (p *failOnceRunProcessor) HandleRunFailed(msg *nats.Msg) error {
 		return errors.New("simulated transient downstream publication failure")
 	}
 	return msg.Ack()
+}
+
+func TestClassifyRunFailure(t *testing.T) {
+	permanent := fmt.Errorf("nested decode error: %w", handlers.ErrMalformedRunFailedEvent)
+	if classifyRunFailure(permanent) != runFailureTerminate {
+		t.Fatal("permanent malformed event must be terminated, not retried")
+	}
+	if classifyRunFailure(errors.New("database unavailable")) != runFailureRetry {
+		t.Fatal("transient processing error must be retried")
+	}
 }

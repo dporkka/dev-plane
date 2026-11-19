@@ -43,6 +43,11 @@ import (
 )
 
 func main() {
+	os.Exit(runWorker())
+}
+
+// runWorker returns an exit code so all resource cleanup defers execute.
+func runWorker() int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -98,13 +103,17 @@ func main() {
 	database, err := db.New(*dbURL)
 	if err != nil {
 		logger.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			logger.Error("database cleanup failed", "error", err)
+		}
+	}()
 
 	if err := database.Ping(ctx); err != nil {
 		logger.Error("database ping failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("database connected")
 
@@ -112,20 +121,24 @@ func main() {
 	eventBus, err := events.New(*natsURL)
 	if err != nil {
 		logger.Error("failed to connect to NATS", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	defer eventBus.Close()
+	defer func() {
+		if err := eventBus.Close(); err != nil {
+			logger.Error("event bus cleanup failed", "error", err)
+		}
+	}()
 
 	if err := eventBus.CreateStreams(); err != nil {
 		logger.Error("failed to create NATS streams", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("NATS event bus connected and streams created")
 
 	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
 	if err != nil {
 		logger.Error("failed to initialize workspace runtime", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("workspace runtime initialized", "runtime", runtimeProviderName, "base_dir", *runtimeBaseDir)
 
@@ -134,7 +147,7 @@ func main() {
 		keyring, err = crypto.ParseKeyring(keysRaw)
 		if err != nil {
 			logger.Error("invalid SECRET_ENCRYPTION_KEYS", "error", err)
-			os.Exit(1)
+			return 1
 		}
 		logger.Info("integration token keyring configured")
 	} else {
@@ -177,7 +190,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.*", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTasks)
 	logger.Info("subscribed to tasks.*")
@@ -191,7 +204,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to agents.run.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunCompleted)
 	logger.Info("subscribed to agents.run.completed")
@@ -203,7 +216,7 @@ func main() {
 	}, nats.ManualAck())
 	if err != nil {
 		logger.Error("failed to subscribe to agents.run.failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunFailed)
 	logger.Info("subscribed to agents.run.failed")
@@ -217,7 +230,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to review.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subReviewCompleted)
 	logger.Info("subscribed to review.completed")
@@ -231,7 +244,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.approved", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalApproved)
 	logger.Info("subscribed to approval.approved")
@@ -245,7 +258,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.rejected", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalRejected)
 	logger.Info("subscribed to approval.rejected")
@@ -259,7 +272,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.requested", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalRequested)
 	logger.Info("subscribed to approval.requested")
@@ -273,7 +286,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTaskCompleted)
 	logger.Info("subscribed to tasks.completed")
@@ -286,7 +299,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTaskFailed)
 	logger.Info("subscribed to tasks.failed")
@@ -300,7 +313,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to runs.triggered", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunTriggered)
 	logger.Info("subscribed to runs.triggered")
@@ -314,7 +327,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to webhooks.*", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subWebhooks)
 	logger.Info("subscribed to webhooks.*")
@@ -324,7 +337,7 @@ func main() {
 	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger)
 	if healthAddr == "" {
 		logger.Error("failed to start worker health server", "port", healthPort)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("worker health server started", "addr", healthAddr)
 
@@ -337,6 +350,7 @@ func main() {
 	shutdownCtx.shutdown()
 	stopHealth()
 	logger.Info("worker service stopped gracefully")
+	return 0
 }
 
 // runFailedProcessor captures the handler boundary so the same callback can
@@ -345,13 +359,36 @@ type runFailedProcessor interface {
 	HandleRunFailed(*nats.Msg) error
 }
 
-// handleRunFailedDelivery never acknowledges a failed processing attempt.
-// With the manual-ack subscription, NAK requests redelivery after a transient
-// database or downstream publication failure. Successful handling is ACKed by
-// RunHandler.HandleRunFailed itself.
+// A malformed payload is permanently unprocessable; transient errors retry.
+type runFailureDisposition uint8
+
+const (
+	runFailureRetry runFailureDisposition = iota
+	runFailureTerminate
+)
+
+func classifyRunFailure(err error) runFailureDisposition {
+	if errors.Is(err, handlers.ErrMalformedRunFailedEvent) {
+		return runFailureTerminate
+	}
+	return runFailureRetry
+}
+
+// handleRunFailedDelivery terminates permanently malformed events rather than
+// creating an endless redelivery loop. Transient DB/publication failures use
+// delayed NAK, and successful processing is ACKed by RunHandler.HandleRunFailed.
 func handleRunFailedDelivery(msg *nats.Msg, processor runFailedProcessor, logger *slog.Logger) {
 	if err := processor.HandleRunFailed(msg); err != nil {
 		logger.Error("failed to handle run failed", "error", err)
+		if classifyRunFailure(err) == runFailureTerminate {
+			logger.Error("terminating permanently malformed run failure event", "error", err)
+			if msg != nil && msg.Reply != "" {
+				if termErr := msg.Term(); termErr != nil {
+					logger.Error("failed to terminate malformed run failure event", "error", termErr)
+				}
+			}
+			return
+		}
 		if msg != nil && msg.Reply != "" {
 			if nakErr := msg.NakWithDelay(time.Second); nakErr != nil {
 				logger.Error("failed to request run failure redelivery", "error", nakErr)
@@ -439,7 +476,7 @@ func envFloatOrDefault(key string, defaultValue float64) float64 {
 
 // startHealthServer starts a minimal HTTP server for container health checks.
 // It listens on the configured port and responds to GET /health with a JSON
-// status payload. The server is shut down when the provided context is cancelled.
+// status payload. The server is shut down when the provided context is canceled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
 func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
