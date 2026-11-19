@@ -14,8 +14,8 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/config"
 )
 
-// ProviderNotConnectedError is returned when a provider is not configured.
-var ProviderNotConnectedError = errors.New("provider not connected: API key not configured")
+// ErrProviderNotConnected is returned when a provider is not configured.
+var ErrProviderNotConnected = errors.New("provider not connected: API key not configured")
 
 // envKeyProvider is a base type for providers that load API keys from environment variables.
 type envKeyProvider struct {
@@ -119,7 +119,7 @@ func (p *OpenAIProvider) Models() []ModelInfo {
 // Call executes a model call via the OpenAI API.
 func (p *OpenAIProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("openai: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("openai: %w", ErrProviderNotConnected)
 	}
 	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
 }
@@ -205,7 +205,7 @@ func (p *AnthropicProvider) Models() []ModelInfo {
 // Call executes a model call via the Anthropic API.
 func (p *AnthropicProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("anthropic: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("anthropic: %w", ErrProviderNotConnected)
 	}
 	return callAnthropic(ctx, p.client, p.baseURL, p.apiKey, req, p.Models())
 }
@@ -280,7 +280,7 @@ func (p *GeminiProvider) Models() []ModelInfo {
 // Call executes a model call via the Gemini API.
 func (p *GeminiProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("gemini: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("gemini: %w", ErrProviderNotConnected)
 	}
 	return callGemini(ctx, p.client, p.baseURL, p.apiKey, req, p.Models())
 }
@@ -368,7 +368,7 @@ func (p *GroqProvider) Models() []ModelInfo {
 // Call executes a model call via the Groq API.
 func (p *GroqProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("groq: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("groq: %w", ErrProviderNotConnected)
 	}
 	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
 }
@@ -456,7 +456,7 @@ func (p *FireworksProvider) Models() []ModelInfo {
 // Call executes a model call via the Fireworks API.
 func (p *FireworksProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("fireworks: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("fireworks: %w", ErrProviderNotConnected)
 	}
 	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
 }
@@ -530,7 +530,7 @@ func (p *BifrostProvider) Models() []ModelInfo {
 			return
 		}
 		if len(specs) == 0 {
-			p.catalogErr = errors.New("Bifrost model catalog is empty")
+			p.catalogErr = errors.New("bifrost model catalog is empty")
 			return
 		}
 		models := make([]ModelInfo, 0, len(specs))
@@ -582,7 +582,7 @@ func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResul
 		return nil, fmt.Errorf("bifrost: %w", p.catalogErr)
 	}
 	if !p.IsAvailable() {
-		return nil, fmt.Errorf("bifrost: %w", ProviderNotConnectedError)
+		return nil, fmt.Errorf("bifrost: %w", ErrProviderNotConnected)
 	}
 	for _, model := range models {
 		if model.Name == req.PreferredModel {
