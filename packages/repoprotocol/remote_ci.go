@@ -166,6 +166,7 @@ func (r RemoteCIRecord) Validate() error {
 	seen := make(map[string]bool, len(r.Artifacts))
 	for _, artifact := range r.Artifacts {
 		if !validateCIName(artifact.Name) || path.IsAbs(artifact.Name) ||
+			artifact.Name == "." || strings.ContainsAny(artifact.Name, "\\:") ||
 			path.Clean(artifact.Name) != artifact.Name || artifact.Name == ".." ||
 			strings.HasPrefix(artifact.Name, "../") || seen[artifact.Name] ||
 			artifact.SizeBytes < 0 || !validHexDigest(artifact.SHA256, 64) {

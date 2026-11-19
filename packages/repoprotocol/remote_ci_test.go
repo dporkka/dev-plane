@@ -231,3 +231,19 @@ func TestRemoteCIReleasePolicyMustPinActualAttempt(t *testing.T) {
 		t.Fatalf("exact pinned attempt should be valid: %v", err)
 	}
 }
+
+// Artifact names must be safe across both Linux and Windows consumers. Signed
+// receipts can be exported to customer-hosted runners on either platform.
+func TestRemoteCIRecordRejectsCrossPlatformArtifactTraversal(t *testing.T) {
+	receipt, _ := testRemoteCI(t)
+	for _, name := range []string{".", "..\\private", "logs\\..\\secrets", "C:\\private", "C:private", "relative\\nested"} {
+		t.Run(name, func(t *testing.T) {
+			record := receipt.Record
+			record.Artifacts = append([]CIArtifact(nil), receipt.Record.Artifacts...)
+			record.Artifacts[0].Name = name
+			if err := record.Validate(); err == nil {
+				t.Fatalf("unsafe artifact path %q accepted", name)
+			}
+		})
+	}
+}

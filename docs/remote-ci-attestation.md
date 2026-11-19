@@ -52,8 +52,12 @@ A remote gate qualifies only if all of the following hold:
    Queued, assigned, running, canceled, test-failed, and infrastructure-failed
    observations cannot qualify.
 6. Every declared artifact includes a unique safe relative name, SHA-256 digest,
-   and nonnegative size; no artifact is required unless separately demanded by
-   the gate's approved policy.
+   and nonnegative size. Artifact names are portable across POSIX and Windows:
+   `.`, backslashes, drive-relative prefixes and colons are rejected in
+   addition to absolute paths and parent traversal. Validation does not itself
+   extract or download artifacts; consumers must still verify content digests
+   and apply platform-specific safe extraction rules. No artifact is required
+   unless separately demanded by the gate's approved policy.
 7. The complete receipt verifies against a trusted Ed25519 public key.
    Any change to signed job IDs, worker data, exit status, times, or artifact
    hashes breaks verification.
