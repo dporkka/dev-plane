@@ -114,8 +114,10 @@ func (s *Server) routes() {
 		WithSlackSigningSecret(s.config.SlackSigningSecret).
 		WithDiscordWebhookSecret(s.config.DiscordWebhookSecret).
 		WithHandler(h)
+	giteaWebhook := handlers.NewGiteaWebhookHandler().WithWebhookSecret(s.config.GiteaWebhookSecret)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
+		giteaWebhook = giteaWebhook.WithEventPublisher(s.eventBus)
 	}
 
 	// Health checks (public)
@@ -128,8 +130,9 @@ func (s *Server) routes() {
 		r.Get("/auth/github", ghAuth.GitHubAuthRedirect)
 		r.Get("/auth/github/callback", ghAuth.GitHubAuthCallback)
 
-		// GitHub webhooks (public but signed)
+		// Forge and integration webhooks (public but signed)
 		r.Post("/webhooks/github", wh.GitHubWebhook)
+		r.Post("/webhooks/gitea", giteaWebhook.GiteaWebhook)
 		r.Post("/webhooks/linear", wh.LinearWebhook)
 		r.Post("/webhooks/slack", wh.SlackWebhook)
 		r.Post("/webhooks/discord", wh.DiscordWebhook)
