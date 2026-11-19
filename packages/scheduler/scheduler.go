@@ -171,40 +171,35 @@ func Next(manifest Manifest, state State) (Decision, error) {
 		}
 	}
 
-	// Propagate a failed prerequisite through the entire pending dependency
-	// chain in this decision. Otherwise a grandchild appears merely blocked
-	// and an integration wave can report a false deadlock.
-	for changed := true; changed; {
-		changed = false
-		for _, task := range manifest.Tasks {
-			if statusOf(state, task.ID) != StatusPending {
+	// Traverse reverse dependency edges once instead of re-scanning the entire
+	// manifest for each link in a reverse-ordered failure chain.
+	reverse := make(map[string][]string, len(tasks))
+	failedQueue := make([]string, 0)
+	for _, task := range manifest.Tasks {
+		for _, dependency := range task.DependsOn {
+			reverse[dependency] = append(reverse[dependency], task.ID)
+		}
+		switch statusOf(state, task.ID) {
+		case StatusFailed, StatusSkipped:
+			failedQueue = append(failedQueue, task.ID)
+		}
+	}
+	for i := 0; i < len(failedQueue); i++ {
+		for _, dependentID := range reverse[failedQueue[i]] {
+			if statusOf(state, dependentID) != StatusPending {
 				continue
 			}
-			if _, skipped := decision.Skipped[task.ID]; skipped {
+			if _, skipped := decision.Skipped[dependentID]; skipped {
 				continue
 			}
-			failed := dependencyFailed(task, state)
-			for _, dependency := range task.DependsOn {
-				if _, skipped := decision.Skipped[dependency]; skipped {
-					failed = true
-				}
-			}
-			if failed {
-				decision.Skipped[task.ID] = "dependency-failed"
-				changed = true
-			}
+			decision.Skipped[dependentID] = "dependency-failed"
+			failedQueue = append(failedQueue, dependentID)
 		}
 	}
 
 	selected := append([]Task(nil), running...)
 	pending := append([]Task(nil), manifest.Tasks...)
 	if manifest.PrioritizeUnblocking {
-		reverse := make(map[string][]string, len(tasks))
-		for _, task := range manifest.Tasks {
-			for _, dependency := range task.DependsOn {
-				reverse[dependency] = append(reverse[dependency], task.ID)
-			}
-		}
 		scores := make(map[string]int, len(tasks))
 		for _, task := range pending {
 			// Only currently runnable candidates compete for a slot. Scoring
