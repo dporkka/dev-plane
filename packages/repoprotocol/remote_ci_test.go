@@ -247,3 +247,97 @@ func TestRemoteCIRecordRejectsCrossPlatformArtifactTraversal(t *testing.T) {
 		})
 	}
 }
+
+func TestRemoteCIAllowsTerminalFailuresBeforeAssignment(t *testing.T) {
+	base, _ := testRemoteCI(t)
+	for _, outcome := range []CIOutcome{CIOutcomeCanceled, CIOutcomeInfrastructureFailure} {
+		t.Run(string(outcome), func(t *testing.T) {
+			record := base.Record
+			record.Outcome = outcome
+			record.ExitCode = nil
+			record.WorkerID = ""
+			record.AssignedAt = time.Time{}
+			record.StartedAt = time.Time{}
+			record.Artifacts = nil
+			record.FinishedAt = record.QueuedAt.Add(time.Minute)
+			if err := record.Validate(); err != nil {
+				t.Fatalf("terminal pre-assignment observation should be valid: %v", err)
+			}
+			if err := record.ValidateReleaseSuccess(record.HeadSHA); err == nil {
+				t.Fatal("non-executable terminal observation was release-eligible")
+			}
+			key, priv, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := SignRemoteCIReceipt(record, "attestor-test", priv)
+			if err != nil {
+				t.Fatalf("sign diagnostic observation: %v", err)
+			}
+			policy := RemoteCIPolicy{Provider: record.Provider, Repository: record.Repository,
+				DefinitionSHA256: record.DefinitionSHA256, SignerKeyID: "attestor-test", PublicKey: key,
+				PipelineID: record.PipelineID, RunID: record.RunID, JobID: record.JobID, AttemptID: record.AttemptID}
+			if err := receipt.VerifyObservation(policy); err != nil {
+				t.Fatalf("verified diagnostic observation rejected: %v", err)
+			}
+			if err := receipt.Verify(record.HeadSHA, policy); err == nil {
+				t.Fatal("failure diagnostic was accepted as release success")
+			}
+		})
+	}
+}
+
+func TestRemoteCIAllowsTerminalFailuresAfterAssignmentWithoutStart(t *testing.T) {
+	base, _ := testRemoteCI(t)
+	record := base.Record
+	record.Outcome = CIOutcomeCanceled
+	record.ExitCode = nil
+	record.StartedAt = time.Time{}
+	record.Artifacts = nil
+	if err := record.Validate(); err != nil {
+		t.Fatalf("cancel after assignment before execution should be valid: %v", err)
+	}
+	if err := record.ValidateReleaseSuccess(record.HeadSHA); err == nil {
+		t.Fatal("canceled assigned job was release-eligible")
+	}
+}
+
+func TestRemoteCIRejectsInconsistentPartialTerminalFailures(t *testing.T) {
+	base, _ := testRemoteCI(t)
+	for _, tc := range []struct {
+		name string
+		mutate func(*RemoteCIRecord)
+	}{
+		{"worker without assignment", func(r *RemoteCIRecord) {
+			r.AssignedAt = time.Time{}
+			r.StartedAt = time.Time{}
+		}},
+		{"start without assignment", func(r *RemoteCIRecord) {
+			r.WorkerID = ""
+			r.AssignedAt = time.Time{}
+		}},
+		{"assignment without worker", func(r *RemoteCIRecord) {
+			r.WorkerID = ""
+		}},
+		{"finish before queued", func(r *RemoteCIRecord) {
+			r.FinishedAt = r.QueuedAt.Add(-time.Second)
+		}},
+		{"finish before assignment", func(r *RemoteCIRecord) {
+			r.FinishedAt = r.AssignedAt.Add(-time.Nanosecond)
+		}},
+		{"finish before start", func(r *RemoteCIRecord) {
+			r.FinishedAt = r.StartedAt.Add(-time.Nanosecond)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := base.Record
+			record.Outcome = CIOutcomeInfrastructureFailure
+			record.ExitCode = nil
+			record.Artifacts = nil
+			tc.mutate(&record)
+			if err := record.Validate(); err == nil {
+				t.Fatal("accepted inconsistent terminal failure lifecycle")
+			}
+		})
+	}
+}
