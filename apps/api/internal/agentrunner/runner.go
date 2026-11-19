@@ -344,7 +344,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	if err := r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state); err != nil {
+	if err := r.completeRunWithRecovery(ctx, runID, summary, state); err != nil {
 		return fmt.Errorf("persist completed run: %w", err)
 	}
 
