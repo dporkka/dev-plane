@@ -445,6 +445,81 @@ func TestRouter_RouteCall_FallbackChain(t *testing.T) {
 	}
 }
 
+// A failed primary must not silently switch a free/cheap task to an expensive model.
+func TestRouter_RouteCall_FallbackRespectsCostCap(t *testing.T) {
+	primaryModel := codingModel("primary", "primary", 10)
+	primaryModel.CostPer1KOutput = 0.005
+	expensiveModel := codingModel("expensive", "expensive", 2)
+	expensiveModel.CostPer1KOutput = 0.50
+	safeModel := codingModel("safe", "safe", 1)
+	safeModel.CostPer1KOutput = 0.005
+	primary := &mockProvider{name: "primary", available: true, models: []ModelInfo{primaryModel}, callErr: errors.New("rate limited")}
+	expensive := &mockProvider{name: "expensive", available: true, models: []ModelInfo{expensiveModel}}
+	safe := &mockProvider{name: "safe", available: true, models: []ModelInfo{safeModel}}
+	router := NewRouter(&Config{DefaultModel: "primary", DefaultProvider: "primary", MaxCostPer1K: 1.0}, primary, expensive, safe)
+
+	result, err := router.RouteCall(context.Background(), CallRequest{
+		TaskType: TaskTypeCode, Difficulty: DifficultyMedium, LatencyReq: LatencyNormal, CostCap: 0.02,
+	})
+	if err != nil {
+		t.Fatalf("expected eligible backup: %v", err)
+	}
+	if result.Provider != "safe" {
+		t.Fatalf("fallback crossed cost cap: %s", result.Provider)
+	}
+	if expensive.lastReq.PreferredModel != "" {
+		t.Fatalf("expensive model was called: %q", expensive.lastReq.PreferredModel)
+	}
+}
+
+func TestRouter_RouteCall_FallbackRespectsContextAndStructuredOutput(t *testing.T) {
+	primaryModel := codingModel("primary", "primary", 10)
+	tooSmall := codingModel("too-small", "small", 3)
+	tooSmall.MaxContext = 1000
+	unstructured := codingModel("unstructured", "plain", 2)
+	unstructured.SupportsStructuredOutput = false
+	eligible := codingModel("eligible", "eligible", 1)
+	primary := &mockProvider{name: "primary", available: true, models: []ModelInfo{primaryModel}, callErr: errors.New("upstream failed")}
+	small := &mockProvider{name: "small", available: true, models: []ModelInfo{tooSmall}}
+	plain := &mockProvider{name: "plain", available: true, models: []ModelInfo{unstructured}}
+	good := &mockProvider{name: "eligible", available: true, models: []ModelInfo{eligible}}
+	router := NewRouter(&Config{DefaultModel: "primary", DefaultProvider: "primary", MaxCostPer1K: 1.0}, primary, small, plain, good)
+
+	result, err := router.RouteCall(context.Background(), CallRequest{
+		TaskType: TaskTypeCode, Difficulty: DifficultyMedium, LatencyReq: LatencyNormal,
+		ContextSize: 100000, StructuredReq: true,
+	})
+	if err != nil {
+		t.Fatalf("expected compatible backup: %v", err)
+	}
+	if result.Provider != "eligible" {
+		t.Fatalf("fallback violated context/structured requirements: %s", result.Provider)
+	}
+	if small.lastReq.PreferredModel != "" || plain.lastReq.PreferredModel != "" {
+		t.Fatalf("an incompatible provider was called")
+	}
+}
+
+func TestRouter_RouteCall_FallbackFailsClosedWithoutEligibleProvider(t *testing.T) {
+	primaryModel := codingModel("primary", "primary", 10)
+	primaryModel.CostPer1KOutput = 0.005
+	expensiveModel := codingModel("expensive", "expensive", 1)
+	expensiveModel.CostPer1KOutput = 0.5
+	primary := &mockProvider{name: "primary", available: true, models: []ModelInfo{primaryModel}, callErr: errors.New("upstream failed")}
+	expensive := &mockProvider{name: "expensive", available: true, models: []ModelInfo{expensiveModel}}
+	router := NewRouter(&Config{DefaultModel: "primary", DefaultProvider: "primary", MaxCostPer1K: 1.0}, primary, expensive)
+
+	_, err := router.RouteCall(context.Background(), CallRequest{
+		TaskType: TaskTypeCode, Difficulty: DifficultyMedium, LatencyReq: LatencyNormal, CostCap: 0.01,
+	})
+	if err == nil {
+		t.Fatal("expected fail-closed error when no fallback satisfies the cap")
+	}
+	if expensive.lastReq.PreferredModel != "" {
+		t.Fatal("expensive fallback was invoked")
+	}
+}
+
 // TestRouter_RouteCall_NoProviderForModel returns error.
 func TestRouter_RouteCall_NoProviderForModel(t *testing.T) {
 	config := &Config{
