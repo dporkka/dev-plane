@@ -54,7 +54,7 @@ func parseHerdrSnapshot(data []byte) (herdrAgentInventory, error) {
 		} `json:"result"`
 	}
 	if len(data) > 4<<20 {
-		return herdrAgentInventory{}, errors.New("Herdr snapshot exceeds safety limit")
+		return herdrAgentInventory{}, errors.New("herdr snapshot exceeds safety limit")
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return herdrAgentInventory{}, errors.New("invalid Herdr snapshot JSON")
@@ -120,9 +120,13 @@ func runAgentsLocal(args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PANE\tAGENT\tSTATUS\tFOCUSED\tWORKSPACE")
+	if _, err := fmt.Fprintln(w, "PANE\tAGENT\tSTATUS\tFOCUSED\tWORKSPACE"); err != nil {
+		return fmt.Errorf("write agent table header: %w", err)
+	}
 	for _, a := range inventory.Agents {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%s\n", a.PaneID, a.Agent, a.Status, a.Focused, a.WorkspaceID)
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%t\t%s\n", a.PaneID, a.Agent, a.Status, a.Focused, a.WorkspaceID); err != nil {
+			return fmt.Errorf("write agent table row: %w", err)
+		}
 	}
 	return w.Flush()
 }
