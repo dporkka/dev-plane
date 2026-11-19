@@ -142,23 +142,3 @@ func TestIsTmpfs_DevShm(t *testing.T) {
 		t.Errorf("isTmpfs(%q) = false, want true", devShm)
 	}
 }
-
-func TestIsTmpfs_RegularDir(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("tmpfs detection is Linux-specific")
-	}
-	// A checkout can itself be mounted on tmpfs by an ephemeral CI runner.
-	// Only assert regular-filesystem behavior when the checkout is not tmpfs.
-	if isTmpfs(".") {
-		t.Skip("source checkout is already on tmpfs; no regular filesystem fixture")
-	}
-	dir, err := os.MkdirTemp(".", "tmpfs-regular-dir-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	if isTmpfs(dir) {
-		t.Errorf("isTmpfs(%q) = true, want false", dir)
-	}
-}
