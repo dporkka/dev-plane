@@ -305,7 +305,7 @@ func TestRemoteCIAllowsTerminalFailuresAfterAssignmentWithoutStart(t *testing.T)
 func TestRemoteCIRejectsInconsistentPartialTerminalFailures(t *testing.T) {
 	base, _ := testRemoteCI(t)
 	for _, tc := range []struct {
-		name string
+		name   string
 		mutate func(*RemoteCIRecord)
 	}{
 		{"worker without assignment", func(r *RemoteCIRecord) {

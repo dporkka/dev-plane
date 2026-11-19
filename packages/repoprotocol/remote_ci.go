@@ -116,12 +116,13 @@ func (r RemoteCIRecord) Validate() error {
 	if r.State != CIStateQueued && r.State != CIStateAssigned && r.State != CIStateRunning && r.State != CIStateTerminal {
 		return fmt.Errorf("invalid CI job state %q", r.State)
 	}
-	if r.State == CIStateQueued {
+	switch {
+	case r.State == CIStateQueued:
 		if r.WorkerID != "" || !r.AssignedAt.IsZero() || !r.StartedAt.IsZero() || !r.FinishedAt.IsZero() {
 			return errors.New("queued job cannot claim assignment or execution")
 		}
-	} else if r.State == CIStateTerminal &&
-		(r.Outcome == CIOutcomeInfrastructureFailure || r.Outcome == CIOutcomeCanceled) {
+	case r.State == CIStateTerminal &&
+		(r.Outcome == CIOutcomeInfrastructureFailure || r.Outcome == CIOutcomeCanceled):
 		// A scheduler can cancel a queued job (or fail before dispatch)
 		// without ever assigning a worker or starting the command. Preserve
 		// truthful, partial lifecycle evidence for diagnostics, never approval.
@@ -142,7 +143,7 @@ func (r RemoteCIRecord) Validate() error {
 				return errors.New("terminal CI failure has inconsistent execution start")
 			}
 		}
-	} else {
+	default:
 		if !validateCIName(r.WorkerID) || r.AssignedAt.IsZero() || r.AssignedAt.Before(r.QueuedAt) {
 			return errors.New("remote CI assignment evidence missing or inconsistent")
 		}
