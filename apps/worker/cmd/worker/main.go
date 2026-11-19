@@ -197,12 +197,10 @@ func main() {
 	logger.Info("subscribed to agents.run.completed")
 
 	// agents.run.failed -> fail task and notify integrations
-	subRunFailed, err := eventBus.Subscribe("agents.run.failed", func(msg *nats.Msg) {
+	subRunFailed, err := eventBus.SubscribeWithOptions("agents.run.failed", func(msg *nats.Msg) {
 		logger.Debug("received agents.run.failed event")
-		if err := runHandler.HandleRunFailed(msg); err != nil {
-			logger.Error("failed to handle run failed", "error", err)
-		}
-	})
+		handleRunFailedDelivery(msg, runHandler, logger)
+	}, nats.ManualAck())
 	if err != nil {
 		logger.Error("failed to subscribe to agents.run.failed", "error", err)
 		os.Exit(1)
@@ -339,6 +337,27 @@ func main() {
 	shutdownCtx.shutdown()
 	stopHealth()
 	logger.Info("worker service stopped gracefully")
+}
+
+// runFailedProcessor captures the handler boundary so the same callback can
+// be tested against a real disposable JetStream server.
+type runFailedProcessor interface {
+	HandleRunFailed(*nats.Msg) error
+}
+
+// handleRunFailedDelivery never acknowledges a failed processing attempt.
+// With the manual-ack subscription, NAK requests redelivery after a transient
+// database or downstream publication failure. Successful handling is ACKed by
+// RunHandler.HandleRunFailed itself.
+func handleRunFailedDelivery(msg *nats.Msg, processor runFailedProcessor, logger *slog.Logger) {
+	if err := processor.HandleRunFailed(msg); err != nil {
+		logger.Error("failed to handle run failed", "error", err)
+		if msg != nil && msg.Reply != "" {
+			if nakErr := msg.NakWithDelay(time.Second); nakErr != nil {
+				logger.Error("failed to request run failure redelivery", "error", nakErr)
+			}
+		}
+	}
 }
 
 // shutdownContext tracks subscriptions for graceful shutdown.
