@@ -101,6 +101,12 @@ Pending -> Queued -> Running -> Completed
 | `failed` | One or more steps failed |
 | `cancelled` | Run was cancelled by user |
 
+### Legacy agent run terminal-state persistence
+
+The legacy runner claims a `pending`/`queued`/`paused` run with a conditional status transition, preventing late delivery from restarting completed, failed, or cancelled runs. On successful execution it conditionally writes completion with bounded retries and verifies the stored summary/cost if an earlier write may already have succeeded. If completion cannot be stored, the runner attempts a conditional failed-state transition and only emits a failure event after that transition is confirmed. The regular failure path also checks its database write before emitting a terminal event.
+
+**Known limitation (issue #222):** A database outage lasting through completion retries and fallback may leave the run `running`. There is not yet a leased reconciler or transactional terminal-event outbox. No success or failure event may be inferred from an unsuccessful persistence attempt. Recovery requires explicit operator verification rather than blind retry of a run that may already have executed non-idempotent actions. A committed terminal state and its NATS event remain separate operations, so delivery is best-effort.
+
 ### Retry Policy
 
 > **Not implemented yet.** The worker does not apply an application-level retry policy; only NATS-level redelivery of unacknowledged messages is used.
