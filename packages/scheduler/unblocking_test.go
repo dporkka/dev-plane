@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -119,5 +120,32 @@ func TestUnblockingPriorityDoesNotRewardIrrecoverablyBlockedChildren(t *testing.
 	}
 	if !reflect.DeepEqual(result.Ready, []string{"unrelated"}) {
 		t.Fatalf("selection = %v, want unrelated because child's other prerequisite cannot succeed", result.Ready)
+	}
+}
+
+func BenchmarkNextDeepDependencyChain(b *testing.B) {
+	tasks := make([]Task, 1000)
+	for i := range tasks {
+		tasks[i] = Task{
+			ID:        fmt.Sprintf("task-%04d", i),
+			Owns:      []string{fmt.Sprintf("path-%04d", i)},
+			Resources: Resources{CPU: 1, MemoryMB: 1},
+		}
+		if i > 0 {
+			tasks[i].DependsOn = []string{tasks[i-1].ID}
+		}
+	}
+	manifest := Manifest{
+		MaxParallel:          1,
+		Capacity:             Capacity{CPU: 1, MemoryMB: 1},
+		Tasks:                tasks,
+		PrioritizeUnblocking: true,
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		decision, err := Next(manifest, State{})
+		if err != nil || len(decision.Ready) != 1 || decision.Ready[0] != tasks[0].ID {
+			b.Fatalf("unexpected decision %v error %v", decision, err)
+		}
 	}
 }

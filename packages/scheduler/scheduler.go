@@ -207,6 +207,15 @@ func Next(manifest Manifest, state State) (Decision, error) {
 		}
 		scores := make(map[string]int, len(tasks))
 		for _, task := range pending {
+			// Only currently runnable candidates compete for a slot. Scoring
+			// blocked or terminal tasks does quadratic wasted graph walks on
+			// long dependency chains while leaving the decision unchanged.
+			if statusOf(state, task.ID) != StatusPending || !dependenciesSucceeded(task, state) {
+				continue
+			}
+			if _, skipped := decision.Skipped[task.ID]; skipped {
+				continue
+			}
 			scores[task.ID] = pendingDependents(task.ID, reverse, tasks, state, decision.Skipped)
 		}
 		sort.SliceStable(pending, func(i, j int) bool {
