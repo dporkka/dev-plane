@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
@@ -32,8 +33,8 @@ type RunHandler struct {
 	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
-	// Empty in production: SELECT FOR UPDATE. Unit tests using SQLite replace
-	// this with a plain SELECT because SQLite does not support FOR UPDATE.
+	// PostgreSQL uses a row lock; SQLite (single-connection development) does not
+	// support SELECT FOR UPDATE. Both retain the conditional update predicate.
 	failureLockQuery string
 }
 
@@ -62,7 +63,13 @@ type ReviewService interface {
 
 // NewRunHandler creates a new run handler.
 func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublisher) *RunHandler {
-	return &RunHandler{db: db, logger: logger, eventBus: eventBus}
+	lockQuery := `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`
+	if db != nil {
+		if _, sqlite := db.Driver().(*sqlite3.SQLiteDriver); sqlite {
+			lockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL`
+		}
+	}
+	return &RunHandler{db: db, logger: logger, eventBus: eventBus, failureLockQuery: lockQuery}
 }
 
 // WithRunExecutor enables runs.triggered execution dispatch.
@@ -160,6 +167,12 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	var event events.AgentRunEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		return fmt.Errorf("unmarshal agent run event: %w: %w", ErrMalformedRunFailedEvent, err)
+	}
+	if _, err := uuid.Parse(event.TaskID); err != nil {
+		return fmt.Errorf("invalid task_id: %w: %w", ErrMalformedRunFailedEvent, err)
+	}
+	if _, err := uuid.Parse(event.RunID); err != nil {
+		return fmt.Errorf("invalid run_id: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)

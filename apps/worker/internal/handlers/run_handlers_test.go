@@ -191,15 +191,15 @@ func TestHandleRunFailedTransitionsTaskAndPublishesFailedEvent(t *testing.T) {
 	insertFailedRunFixture(t, db)
 
 	publisher := &fakeWorkerEventPublisher{}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
 
-	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","agent_role":"implementer","status":"failed","data":{"error":"model provider unavailable"}}`)}
+	msg := &nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","agent_role":"implementer","status":"failed","data":{"error":"model provider unavailable"}}`)}
 	if err := handler.HandleRunFailed(msg); err != nil {
 		t.Fatalf("HandleRunFailed() error: %v", err)
 	}
 
 	var status string
-	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&status); err != nil {
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil {
 		t.Fatalf("query task status: %v", err)
 	}
 	if status != "failed" {
@@ -209,7 +209,7 @@ func TestHandleRunFailedTransitionsTaskAndPublishesFailedEvent(t *testing.T) {
 	if publisher.subject != events.TaskFailed {
 		t.Fatalf("published subject = %q, want %q", publisher.subject, events.TaskFailed)
 	}
-	if !contains(string(publisher.data), "task-1") || !contains(string(publisher.data), "failed") {
+	if !contains(string(publisher.data), "11111111-1111-4111-8111-111111111111") || !contains(string(publisher.data), "failed") {
 		t.Fatalf("published data = %q, want task failed event", string(publisher.data))
 	}
 }
@@ -220,17 +220,17 @@ func TestHandleRunFailedDoesNotFailTaskOwnedByNewerRun(t *testing.T) {
 	insertFailedRunFixture(t, db)
 	if _, err := db.Exec(`
   INSERT INTO agent_runs (id, task_id, agent_role, status, created_at)
-  VALUES ('run-2', 'task-1', 'reviewer', 'queued', '2026-11-19T11:00:00Z')
+  VALUES ('33333333-3333-4333-8333-333333333333', '11111111-1111-4111-8111-111111111111', 'reviewer', 'queued', '2026-11-19T11:00:00Z')
  `); err != nil {
 		t.Fatalf("insert follow-on run: %v", err)
 	}
 	publisher := &fakeWorkerEventPublisher{}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
-	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}); err != nil {
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}); err != nil {
 		t.Fatalf("HandleRunFailed() = %v", err)
 	}
 	var status string
-	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&status); err != nil {
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" {
@@ -245,16 +245,16 @@ func TestHandleRunFailedDoesNotRegressCompletedTask(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 	insertFailedRunFixture(t, db)
-	if _, err := db.Exec(`UPDATE tasks SET status = 'completed' WHERE id = 'task-1'`); err != nil {
+	if _, err := db.Exec(`UPDATE tasks SET status = 'completed' WHERE id = '11111111-1111-4111-8111-111111111111'`); err != nil {
 		t.Fatal(err)
 	}
 	publisher := &fakeWorkerEventPublisher{}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
-	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}); err != nil {
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	var status string
-	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&status); err != nil {
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "completed" {
@@ -270,12 +270,12 @@ func TestHandleRunFailedDoesNotAcceptWrongRunTask(t *testing.T) {
 	defer db.Close()
 	insertFailedRunFixture(t, db)
 	publisher := &fakeWorkerEventPublisher{}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
-	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"other-run","task_id":"task-1","status":"failed"}`)}); err != nil {
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"44444444-4444-4444-8444-444444444444","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	var status string
-	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = 'task-1'`).Scan(&status); err != nil {
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil {
 		t.Fatal(err)
 	}
 	if status != "running" {
@@ -291,8 +291,8 @@ func TestHandleRunFailedCanRepublishAfterTransportFailure(t *testing.T) {
 	defer db.Close()
 	insertFailedRunFixture(t, db)
 	publisher := &fakeWorkerEventPublisher{err: errors.New("temporary transport failure")}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
-	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}
 	if err := handler.HandleRunFailed(msg); err == nil {
 		t.Fatal("expected publish error")
 	}
@@ -305,11 +305,48 @@ func TestHandleRunFailedCanRepublishAfterTransportFailure(t *testing.T) {
 	}
 }
 
+// A superseded run must never emit a stale task-level failure notification,
+// even if its earlier failed delivery was already committed. The persisted
+// agent_runs row retains historical failure; this is not an outbox guarantee.
+func TestHandleRunFailedSuppressesSupersededNotificationAfterPublishError(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertFailedRunFixture(t, db)
+	publisher := &fakeWorkerEventPublisher{err: errors.New("transport unavailable")}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}
+	if err := handler.HandleRunFailed(msg); err == nil {
+		t.Fatal("expected publish failure on first delivery")
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil || status != "failed" {
+		t.Fatalf("failed state not persisted: status=%q err=%v", status, err)
+	}
+	if _, err := db.Exec(`
+        INSERT INTO agent_runs (id, task_id, agent_role, status, created_at)
+        VALUES ('33333333-3333-4333-8333-333333333333', '11111111-1111-4111-8111-111111111111', 'reviewer', 'queued', '2026-11-19T11:00:00Z');
+        UPDATE tasks SET status='running' WHERE id='11111111-1111-4111-8111-111111111111';
+    `); err != nil {
+		t.Fatal(err)
+	}
+	publisher.err = nil
+	publisher.subject = ""
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("redelivery: %v", err)
+	}
+	if publisher.subject != "" {
+		t.Fatalf("stale failure emitted %s", publisher.subject)
+	}
+	if err := db.QueryRow(`SELECT status FROM tasks WHERE id = '11111111-1111-4111-8111-111111111111'`).Scan(&status); err != nil || status != "running" {
+		t.Fatalf("follow-on run status changed: status=%q err=%v", status, err)
+	}
+}
+
 func TestHandleRunFailedReturnsUnmarshalError(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 
-	handler := newSQLiteFailureRunHandler(db)
+	handler := NewRunHandler(db, slog.Default(), nil)
 	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`not json`)})
 	if err == nil {
 		t.Fatal("expected error")
@@ -322,15 +359,45 @@ func TestHandleRunFailedReturnsUnmarshalError(t *testing.T) {
 	}
 }
 
+func TestHandleRunFailedSQLiteProductionConstructor(t *testing.T) {
+	db := setupRunHandlerDB(t)
+	defer db.Close()
+	insertFailedRunFixture(t, db)
+	publisher := &fakeWorkerEventPublisher{}
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	msg := &nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111","status":"failed"}`)}
+	if err := handler.HandleRunFailed(msg); err != nil {
+		t.Fatalf("SQLite default constructor failed: %v", err)
+	}
+	if publisher.subject != events.TaskFailed {
+		t.Fatalf("expected tasks.failed, got %q", publisher.subject)
+	}
+}
+
+func TestHandleRunFailedRejectsNonUUIDIdentifiers(t *testing.T) {
+	handler := NewRunHandler(nil, slog.Default(), nil)
+	for _, payload := range []string{
+		`{"run_id":"not-a-uuid","task_id":"11111111-1111-4111-8111-111111111111"}`,
+		`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"not-a-uuid"}`,
+		`{"run_id":"","task_id":"11111111-1111-4111-8111-111111111111"}`,
+		`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":""}`,
+	} {
+		err := handler.HandleRunFailed(&nats.Msg{Data: []byte(payload)})
+		if !errors.Is(err, ErrMalformedRunFailedEvent) {
+			t.Errorf("payload %q: wanted permanent malformed-event error, got %v", payload, err)
+		}
+	}
+}
+
 func TestHandleRunFailedReturnsPublishError(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 	insertFailedRunFixture(t, db)
 
 	publisher := &fakeWorkerEventPublisher{err: errors.New("nats disconnected")}
-	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
+	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
 
-	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
+	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"22222222-2222-4222-8222-222222222222","task_id":"11111111-1111-4111-8111-111111111111"}`)})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -964,16 +1031,15 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 	}
 }
 
-func newSQLiteFailureRunHandler(db *sql.DB) *RunHandler {
-	handler := NewRunHandler(db, slog.Default(), nil)
-	handler.failureLockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL`
-	return handler
-}
-
 func insertFailedRunFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	insertCompletedRunFixture(t, db, models.AgentRoleImplementer)
-	if _, err := db.Exec(`UPDATE agent_runs SET status = 'failed', created_at = '2026-11-19T10:00:00Z' WHERE id = 'run-1'`); err != nil {
+	if _, err := db.Exec(`
+        UPDATE tasks SET id = '11111111-1111-4111-8111-111111111111' WHERE id = 'task-1';
+        UPDATE agent_runs SET id = '22222222-2222-4222-8222-222222222222',
+            task_id = '11111111-1111-4111-8111-111111111111', status = 'failed',
+            created_at = '2026-11-19T10:00:00Z' WHERE id = 'run-1';
+    `); err != nil {
 		t.Fatalf("mark run failed: %v", err)
 	}
 }
