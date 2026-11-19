@@ -37,7 +37,7 @@ func TestCompleteRunWithRecoveryDoesNotOverwriteCancellation(t *testing.T) {
 	}
 	defer db.Close()
 	mock.ExpectExec("UPDATE agent_runs").WithArgs("completed", "done", 0.0, sqlmock.AnyArg(), "run-1").WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectQuery("SELECT status, summary, total_cost FROM agent_runs").WithArgs("run-1").WillReturnRows(sqlmock.NewRows([]string{"status", "summary", "total_cost"}).AddRow("cancelled", "", 0.0))
+	mock.ExpectQuery("SELECT status, summary, total_cost FROM agent_runs").WithArgs("run-1").WillReturnRows(sqlmock.NewRows([]string{"status", "summary", "total_cost"}).AddRow(models.AgentRunStatusCancelled, "", 0.0))
 	runner := &Runner{db: db, logger: slog.Default()}
 	err = runner.completeRunWithRecovery(context.Background(), "run-1", "done", &RunState{})
 	if !errors.Is(err, ErrRunTerminalStateChanged) {
@@ -180,7 +180,7 @@ func TestRunStartDoesNotResurrectAlreadyCancelledOrRunningRun(t *testing.T) {
 	runner := &Runner{db: db, logger: slog.Default()}
 	err = runner.updateRunStatus(context.Background(), "run-1", "running", nil)
 	if !errors.Is(err, ErrRunTerminalStateChanged) {
-		t.Fatalf("duplicate or cancelled run start must fail closed: %v", err)
+		t.Fatalf("duplicate or canceled run start must fail closed: %v", err)
 	}
 	if e := mock.ExpectationsWereMet(); e != nil {
 		t.Fatal(e)
