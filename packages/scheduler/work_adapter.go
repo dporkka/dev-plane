@@ -9,8 +9,9 @@ import (
 )
 
 type WorkScheduleOptions struct {
-	MaxParallelCost int
-	Now             time.Time
+	MaxParallelCost      int
+	Now                  time.Time
+	PrioritizeUnblocking bool
 }
 
 // NextWork adapts durable repository-protocol work items to the existing
@@ -32,7 +33,8 @@ func NextWork(items []repoprotocol.WorkItem, options WorkScheduleOptions) (Decis
 	}
 
 	manifest := Manifest{
-		MaxParallel: len(items),
+		MaxParallel:          len(items),
+		PrioritizeUnblocking: options.PrioritizeUnblocking,
 		Capacity: Capacity{
 			CPU:      float64(options.MaxParallelCost),
 			MemoryMB: len(items),
