@@ -19,6 +19,11 @@ func run(args []string) error {
 	}
 
 	switch args[0] {
+	case "agents":
+		if len(args) < 2 || args[1] != "local" {
+			return fmt.Errorf("usage: dev-plane agents local [--json]")
+		}
+		return runAgentsLocal(args[2:])
 	case "inspect":
 		return runInspect(args[1:])
 	case "login":
@@ -75,6 +80,7 @@ func printUsage() {
 	fmt.Println(`dev-plane CLI
 
 Usage:
+  dev-plane agents local [--json]  (read-only local Herdr snapshot)
   dev-plane inspect [--path=<repo>] [--json]
   dev-plane login --base-url=<url>
   dev-plane tasks list --project-id=<id>
