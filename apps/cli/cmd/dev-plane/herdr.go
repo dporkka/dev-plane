@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -93,6 +94,39 @@ func parseHerdrSnapshot(data []byte) (herdrAgentInventory, error) {
 	return out, nil
 }
 
+const herdrMaxSnapshotBytes = 4 << 20
+
+// herdrSnapshotCapture never retains more than the limit plus one sentinel
+// byte. On overflow it cancels the child instead of buffering untrusted output.
+type herdrSnapshotCapture struct {
+	buf       bytes.Buffer
+	cancel    context.CancelFunc
+	overLimit bool
+}
+
+func (c *herdrSnapshotCapture) Write(p []byte) (int, error) {
+	if c.overLimit {
+		return len(p), nil
+	}
+	remaining := herdrMaxSnapshotBytes + 1 - c.buf.Len()
+	if remaining < 0 {
+		remaining = 0
+	}
+	if len(p) < remaining {
+		remaining = len(p)
+	}
+	if _, err := c.buf.Write(p[:remaining]); err != nil {
+		return 0, err
+	}
+	if c.buf.Len() > herdrMaxSnapshotBytes {
+		c.overLimit = true
+		if c.cancel != nil {
+			c.cancel()
+		}
+	}
+	return len(p), nil
+}
+
 func runAgentsLocal(args []string) error {
 	fs := flag.NewFlagSet("agents local", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -107,11 +141,18 @@ func runAgentsLocal(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Command arguments are fixed. Never forward caller-controlled shell input.
-	raw, err := exec.CommandContext(ctx, "herdr", "api", "snapshot").Output()
+	capture := &herdrSnapshotCapture{cancel: cancel}
+	cmd := exec.CommandContext(ctx, "herdr", "api", "snapshot")
+	cmd.WaitDelay = time.Second
+	cmd.Stdout = capture
+	err := cmd.Run()
+	if capture.overLimit {
+		return errors.New("herdr snapshot exceeds safety limit")
+	}
 	if err != nil {
 		return errors.New("unable to read local Herdr snapshot (check that Herdr is installed and running)")
 	}
-	inventory, err := parseHerdrSnapshot(raw)
+	inventory, err := parseHerdrSnapshot(capture.buf.Bytes())
 	if err != nil {
 		return err
 	}
