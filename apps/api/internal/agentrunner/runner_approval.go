@@ -32,7 +32,7 @@ func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summ
     `
 	if status == models.AgentRunStatusRunning {
 		// Exactly one worker may claim a run. An old delivery cannot resurrect
-		// an already running, cancelled, completed or failed run.
+		// an already running, canceled, completed or failed run.
 		query += ` AND status IN ('pending', 'queued', 'paused')`
 	}
 	result, err := r.db.ExecContext(ctx, query, status, startedAt, now, runID)
@@ -238,7 +238,7 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 var ErrRunTerminalStateChanged = errors.New("run is no longer running")
 
 // completeRunWithRecovery attempts bounded persistence using a fresh, short
-// cleanup context even if the calling request has already been cancelled.
+// cleanup context even if the calling request has already been canceled.
 // A completion is never announced until its state has actually been stored.
 // If saving completion proves impossible, a conditional failed transition makes
 // the run eligible for manual recovery, but only if that transition succeeds.
