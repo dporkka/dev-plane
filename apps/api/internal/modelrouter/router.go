@@ -142,6 +142,15 @@ func (r *Router) RegisterProvider(p Provider) {
 
 // SelectModel chooses the best model for a task based on routing criteria.
 func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyReq string, contextSize int, costCap float64) (*ModelInfo, error) {
+	return r.selectModel(ctx, taskType, difficulty, latencyReq, contextSize, costCap, false)
+}
+
+// selectModel enforces request constraints before scoring, including whether
+// structured output is actually required by the caller.
+func (r *Router) selectModel(ctx context.Context, taskType, difficulty, latencyReq string, contextSize int, costCap float64, structuredReq bool) (*ModelInfo, error) {
+	if costCap < 0 {
+		return nil, fmt.Errorf("invalid negative model cost cap")
+	}
 	// Filter and score all available models
 	var scores []Score
 
@@ -151,15 +160,18 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 		}
 		for _, model := range provider.Models() {
 			// Hard filters
-			if contextSize > 0 && model.MaxContext > 0 && contextSize > model.MaxContext {
-				continue // Model can't fit the context
+			if contextSize > 0 && (model.MaxContext <= 0 || contextSize > model.MaxContext) {
+				continue // Unknown or insufficient context cannot satisfy a hard requirement.
+			}
+			if structuredReq && !model.SupportsStructuredOutput {
+				continue
 			}
 			effectiveCostCap := costCap
 			if effectiveCostCap == 0 {
 				effectiveCostCap = r.config.MaxCostPer1K
 			}
-			if effectiveCostCap > 0 && model.CostPer1KOutput > effectiveCostCap {
-				continue // Model exceeds cost cap
+			if effectiveCostCap > 0 && (model.CostPer1KInput > effectiveCostCap || model.CostPer1KOutput > effectiveCostCap) {
+				continue // Never treat a cheap output price as an overall cost cap.
 			}
 
 			// Score the model
@@ -173,7 +185,10 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 	}
 
 	if len(scores) == 0 {
-		// Return default model as fallback
+		if costCap > 0 || contextSize > 0 || structuredReq {
+			return nil, fmt.Errorf("no eligible model satisfies explicit routing constraints")
+		}
+		// Preserve the legacy default only for unconstrained callers.
 		return r.fallbackModel(), nil
 	}
 
@@ -192,7 +207,7 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 
 // RouteCall selects the best model and executes the call.
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
-	modelInfo, err := r.SelectModel(ctx, req.TaskType, req.Difficulty, req.LatencyReq, req.ContextSize, req.CostCap)
+	modelInfo, err := r.selectModel(ctx, req.TaskType, req.Difficulty, req.LatencyReq, req.ContextSize, req.CostCap, req.StructuredReq)
 	if err != nil {
 		return nil, fmt.Errorf("select model: %w", err)
 	}

@@ -677,6 +677,7 @@ func TestDefaultConfig(t *testing.T) {
 
 // TestProvider_Models verifies each real provider returns expected models.
 func TestProvider_Models(t *testing.T) {
+	t.Setenv("BIFROST_MODEL_CATALOG_JSON", verifiedBifrostModel)
 	tests := []struct {
 		name       string
 		provider   Provider
@@ -716,8 +717,8 @@ func TestProvider_Models(t *testing.T) {
 		{
 			name:       "Bifrost",
 			provider:   NewBifrostProvider(),
-			minModels:  2,
-			modelNames: []string{"bifrost/gpt-4o", "bifrost/claude-sonnet", "bifrost/gemini-flash"},
+			minModels:  1,
+			modelNames: []string{"groq/openai/gpt-oss-120b"},
 		},
 	}
 
@@ -833,6 +834,7 @@ func TestProvider_IsAvailable(t *testing.T) {
 
 	t.Run("Bifrost with env var", func(t *testing.T) {
 		t.Setenv("BIFROST_API_KEY", "test-key-bifrost")
+		t.Setenv("BIFROST_MODEL_CATALOG_JSON", verifiedBifrostModel)
 		p := NewBifrostProvider()
 		if !p.IsAvailable() {
 			t.Error("expected Bifrost provider to be available with API key")

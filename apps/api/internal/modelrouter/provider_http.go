@@ -34,6 +34,7 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 	}
 
 	var out struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -51,6 +52,12 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%s chat completion: response contained no choices", providerName)
+	}
+	if providerName == "bifrost" {
+		_, upstream, ok := strings.Cut(model, "/")
+		if !ok || out.Model == "" || (out.Model != model && out.Model != upstream) {
+			return nil, fmt.Errorf("bifrost model mismatch: requested %q, received %q", model, out.Model)
+		}
 	}
 	prompt, completion, total := normalizeUsage(out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Usage.TotalTokens)
 	return &CallResult{
