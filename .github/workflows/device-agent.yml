@@ -1,0 +1,36 @@
+name: Device MCP Agent (local)
+
+on:
+  push:
+    paths:
+      - 'apps/device-agent/**'
+      - '.github/workflows/device-agent.yml'
+  pull_request:
+    paths:
+      - 'apps/device-agent/**'
+      - '.github/workflows/device-agent.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/device-agent
+    env:
+      GOWORK: 'off'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: apps/device-agent/go.mod
+          cache: false
+      - name: Unit and race tests
+        run: go test -race ./...
+      - name: Static analysis and build
+        run: |
+          go vet ./...
+          go build ./cmd/devplane
