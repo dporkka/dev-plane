@@ -103,7 +103,7 @@ Pending -> Queued -> Running -> Completed
 
 ### Failure-event ownership
 
-`agents.run.failed` is an at-least-once event, not an unconditional instruction to fail a task. The worker checks that the referenced run belongs to the task, has persisted `failed` status, and is the most recently created run for that task before moving an active task to `failed`. A late failure from an earlier run cannot overwrite a newer queued run or an already completed task. Failure notifications can be emitted again on redelivery after an earlier publish error; consumers of `tasks.failed` must be idempotent.
+`agents.run.failed` is an at-least-once event, not an unconditional instruction to fail a task. The worker locks the task row in a transaction before checking that the referenced run belongs to the task, has persisted `failed` status, and is the most recently created run for that task before moving an active task to `failed`. A late failure from an earlier run cannot overwrite a newer queued run or an already completed task. Failure notifications can be emitted again on redelivery after an earlier publish error; consumers of `tasks.failed` must be idempotent.
 
 This guard prevents stale state regressions. It is **not** automatic retry scheduling for failed agent runs. The latter remains a separate policy concern.
 

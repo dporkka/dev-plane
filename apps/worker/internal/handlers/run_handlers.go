@@ -32,6 +32,9 @@ type RunHandler struct {
 	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
+	// Empty in production: SELECT FOR UPDATE. Unit tests using SQLite replace
+	// this with a plain SELECT because SQLite does not support FOR UPDATE.
+	failureLockQuery string
 }
 
 // RunExecutor executes queued agent runs.
@@ -158,13 +161,37 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
 
+	// Lock the task row before evaluating the latest run. PostgreSQL READ
+	// COMMITTED takes a fresh statement snapshot after this lock is granted;
+	// a single conditional UPDATE could otherwise read a stale subquery snapshot
+	// while waiting behind a scheduler's task-row update.
+	ctx := context.Background()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run failure transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	lockQuery := h.failureLockQuery
+	if lockQuery == "" {
+		lockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`
+	}
+	var lockedTaskID string
+	err = tx.QueryRowContext(ctx, lockQuery, event.TaskID).Scan(&lockedTaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ackMessage(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("lock task for run failure: %w", err)
+	}
+
 	now := time.Now().UTC()
 	// JetStream can redeliver a failure after a follow-on run has been queued,
 	// reviewed, or completed. Only the latest persisted failed run may fail an
 	// active task; an event's task_id alone is not authority to change state.
 	// Retain 'failed' in the admissible states so a redelivery can republish
 	// tasks.failed after a transient publish error (at-least-once delivery).
-	result, err := h.db.Exec(`
+	result, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'failed', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
 		  AND status IN ('running', 'failed')
@@ -191,6 +218,9 @@ func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	if updated == 0 {
 		h.logger.Info("ignoring stale or inapplicable run failure", "run_id", event.RunID, "task_id", event.TaskID)
 		return ackMessage(msg)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed task transition: %w", err)
 	}
 
 	if h.eventBus != nil {

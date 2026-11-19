@@ -191,7 +191,7 @@ func TestHandleRunFailedTransitionsTaskAndPublishesFailedEvent(t *testing.T) {
 	insertFailedRunFixture(t, db)
 
 	publisher := &fakeWorkerEventPublisher{}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 
 	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","agent_role":"implementer","status":"failed","data":{"error":"model provider unavailable"}}`)}
 	if err := handler.HandleRunFailed(msg); err != nil {
@@ -225,7 +225,7 @@ func TestHandleRunFailedDoesNotFailTaskOwnedByNewerRun(t *testing.T) {
 		t.Fatalf("insert follow-on run: %v", err)
 	}
 	publisher := &fakeWorkerEventPublisher{}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}); err != nil {
 		t.Fatalf("HandleRunFailed() = %v", err)
 	}
@@ -249,7 +249,7 @@ func TestHandleRunFailedDoesNotRegressCompletedTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	publisher := &fakeWorkerEventPublisher{}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func TestHandleRunFailedDoesNotAcceptWrongRunTask(t *testing.T) {
 	defer db.Close()
 	insertFailedRunFixture(t, db)
 	publisher := &fakeWorkerEventPublisher{}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 	if err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"other-run","task_id":"task-1","status":"failed"}`)}); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestHandleRunFailedCanRepublishAfterTransportFailure(t *testing.T) {
 	defer db.Close()
 	insertFailedRunFixture(t, db)
 	publisher := &fakeWorkerEventPublisher{err: errors.New("temporary transport failure")}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 	msg := &nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)}
 	if err := handler.HandleRunFailed(msg); err == nil {
 		t.Fatal("expected publish error")
@@ -309,7 +309,7 @@ func TestHandleRunFailedReturnsUnmarshalError(t *testing.T) {
 	db := setupRunHandlerDB(t)
 	defer db.Close()
 
-	handler := NewRunHandler(db, slog.Default(), nil)
+	handler := newSQLiteFailureRunHandler(db)
 	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`not json`)})
 	if err == nil {
 		t.Fatal("expected error")
@@ -325,7 +325,7 @@ func TestHandleRunFailedReturnsPublishError(t *testing.T) {
 	insertFailedRunFixture(t, db)
 
 	publisher := &fakeWorkerEventPublisher{err: errors.New("nats disconnected")}
-	handler := NewRunHandler(db, slog.Default(), nil).WithEventPublisher(publisher)
+	handler := newSQLiteFailureRunHandler(db).WithEventPublisher(publisher)
 
 	err := handler.HandleRunFailed(&nats.Msg{Data: []byte(`{"run_id":"run-1","task_id":"task-1"}`)})
 	if err == nil {
@@ -959,6 +959,12 @@ func insertCompletedRunFixture(t *testing.T, db *sql.DB, role string) {
 	if err != nil {
 		t.Fatalf("insert completed run fixture: %v", err)
 	}
+}
+
+func newSQLiteFailureRunHandler(db *sql.DB) *RunHandler {
+	handler := NewRunHandler(db, slog.Default(), nil)
+	handler.failureLockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL`
+	return handler
 }
 
 func insertFailedRunFixture(t *testing.T, db *sql.DB) {
