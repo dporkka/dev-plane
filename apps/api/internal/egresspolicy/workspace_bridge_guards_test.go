@@ -85,18 +85,18 @@ func TestWorkspaceBridgeRejectsPolicyRevisionChangedWhileFetching(t *testing.T) 
 }
 
 func TestWorkspaceBridgeRejectsNilPolicyStoreWithoutReservingReceipt(t *testing.T) {
-    writer := &fakeWorkspaceWriter{}
-    db := receiptTestDB(t)
-    bridge := NewWorkspaceBridge(&Broker{}, fixedSessionResolver{sessionID: "sess", allow: true}, writer, NewSQLReceiptStore(db))
-    err := bridge.FetchToWorkspace(context.Background(), "sess", "receipt-1", "https://api.example.test")
-    if !errors.Is(err, ErrDenied) {
-        t.Fatalf("unconfigured broker should fail closed: %v", err)
-    }
-    var reserved int
-    if err := db.QueryRow("SELECT COUNT(*) FROM agent_egress_receipts").Scan(&reserved); err != nil {
-        t.Fatal(err)
-    }
-    if reserved != 0 || writer.calls != 0 {
-        t.Fatalf("unconfigured broker reserved or wrote receipt: %d %d", reserved, writer.calls)
-    }
+	writer := &fakeWorkspaceWriter{}
+	db := receiptTestDB(t)
+	bridge := NewWorkspaceBridge(&Broker{}, fixedSessionResolver{sessionID: "sess", allow: true}, writer, NewSQLReceiptStore(db))
+	err := bridge.FetchToWorkspace(context.Background(), "sess", "receipt-1", "https://api.example.test")
+	if !errors.Is(err, ErrDenied) {
+		t.Fatalf("unconfigured broker should fail closed: %v", err)
+	}
+	var reserved int
+	if err := db.QueryRow("SELECT COUNT(*) FROM agent_egress_receipts").Scan(&reserved); err != nil {
+		t.Fatal(err)
+	}
+	if reserved != 0 || writer.calls != 0 {
+		t.Fatalf("unconfigured broker reserved or wrote receipt: %d %d", reserved, writer.calls)
+	}
 }
