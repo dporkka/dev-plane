@@ -332,7 +332,13 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
 
 	// 7. Get git diff for summary
-	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
+	diffOutput, diffErr := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
+	if diffErr != nil {
+		// A missing diff is tolerable; a rejected ownership check is not.
+		if ownershipErr := execution.CheckEffectGuard(ctx); ownershipErr != nil {
+			return fmt.Errorf("run ownership lost before completion: %w", ownershipErr)
+		}
+	}
 
 	// Build summary
 	summary := r.buildSummary(state, testResults, diffOutput)

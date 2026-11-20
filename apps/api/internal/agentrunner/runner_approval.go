@@ -14,6 +14,12 @@ import (
 )
 
 func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summary *string) error {
+	// A stale worker may no longer mutate run status or emit terminal events.
+	// This is a preflight; provider-enforced atomic fencing remains issue #222.
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return fmt.Errorf("verify run execution ownership: %w", err)
+	}
+
 	if r.db == nil {
 		return nil
 	}
@@ -33,6 +39,12 @@ func (r *Runner) updateRunStatus(ctx context.Context, runID, status string, summ
 }
 
 func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) error {
+	// A stale worker may no longer mutate run status or emit terminal events.
+	// This is a preflight; provider-enforced atomic fencing remains issue #222.
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return fmt.Errorf("verify run execution ownership: %w", err)
+	}
+
 	r.logger.Error("agent run failed", "run_id", runID, "error", errorMsg)
 
 	if r.db != nil {
@@ -62,6 +74,12 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 }
 
 func (r *Runner) pauseRun(ctx context.Context, runID string, reason string) error {
+	// A stale worker may no longer mutate run status or emit terminal events.
+	// This is a preflight; provider-enforced atomic fencing remains issue #222.
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return fmt.Errorf("verify run execution ownership: %w", err)
+	}
+
 	r.logger.Info("agent run paused", "run_id", runID, "reason", reason)
 
 	if r.db != nil {
@@ -206,6 +224,12 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 }
 
 func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState) error {
+	// A stale worker may no longer mutate run status or emit terminal events.
+	// This is a preflight; provider-enforced atomic fencing remains issue #222.
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return fmt.Errorf("verify run execution ownership: %w", err)
+	}
+
 	if r.db == nil {
 		return nil
 	}
