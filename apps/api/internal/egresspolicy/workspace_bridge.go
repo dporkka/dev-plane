@@ -66,7 +66,7 @@ func validReceiptID(value string) bool {
 }
 
 func (b *WorkspaceBridge) FetchToWorkspace(ctx context.Context, runtimeSessionID, receiptID, destination string) error {
-	if ctx == nil || ctx.Err() != nil || b == nil || b.broker == nil || b.resolver == nil || b.writer == nil || b.receipts == nil ||
+	if ctx == nil || ctx.Err() != nil || b == nil || b.broker == nil || b.broker.policies == nil || b.resolver == nil || b.writer == nil || b.receipts == nil ||
 		!validReceiptID(receiptID) || strings.TrimSpace(runtimeSessionID) != runtimeSessionID || runtimeSessionID == "" {
 		return ErrDenied
 	}
