@@ -1,9 +1,9 @@
 # Agent egress policy foundation (not yet active)
 
 The Go API contains `internal/egresspolicy`: a small, dependency-free,
-fail-closed policy model for a future network enforcement gateway. It borrows
+fail-closed policy model and a bounded host-side HTTPS request broker. It borrows
 the **control-plane/data-plane split** from Envoy and the **scoped consumers**
-concept from APISIX. No proxy is installed by this change.
+concept from APISIX. The broker is not exposed as a public proxy or wired into an agent execution path.
 
 ## Existing behavior versus proposed enforcement
 
@@ -19,22 +19,39 @@ concept from APISIX. No proxy is installed by this change.
 - These rules **cannot be selected by a user-controlled HTTP header**.
   The agent identity must be derived from the authenticated scheduler context.
 
-## Mandatory requirements before enforcement
+## Bounded host-side request broker (implemented, not activated)
+
+`NewBroker(store).Fetch(ctx, trustedTenantID, trustedAgentID, url)`
+performs a bounded HTTPS GET from the trusted host process. It:
+- Resolves each destination and rejects an entire DNS answer set if any IP is
+  private, reserved, metadata, NAT64, or an IPv4-tunneling address.
+- Pins the approved DNS addresses into the actual TCP dialer; TLS verification
+  continues to use the original hostname and system trust roots.
+- Disables environment proxy inheritance, compression, connection reuse, and
+  caller-supplied credential forwarding.
+- Revalidates identity, URL, policy, and DNS before **each redirect**, with at
+  most three redirects.
+- Enforces per-fetch timeouts and a default 1 MiB response-size cap.
+- Does not allow raw CONNECT, arbitrary methods, or user-provided headers.
+
+Focused TLS, redirect, DNS-rebinding, and size-cap tests pass under the
+Go race detector. The broker intentionally has **no HTTP listener**; callers
+must integrate it into an authenticated scheduler API.
+
+## Mandatory requirements before production enforcement
 
 This is a **policy foundation, not a live egress firewall or SSRF solution**.
 Real agent isolation requires a separate enforced network boundary (isolated
 namespaces, explicit proxying, or host firewall) so agents cannot connect
 directly around the gateway.
 
-1. Resolve requested names in the gateway and pin approved IPs in the actual
-   dialer while retaining the requested hostname for TLS verification.
-   Merely checking DNS before ordinary dialing is DNS-rebinding vulnerable.
-2. Re-run the policy and IP checks on **every redirect**. Never forward provider
-   credentials to a redirected host.
-3. Deny other protocols, raw sockets, CONNECT tunnels, and arbitrary ports
-   at the sandbox/network boundary. Reject outbound traffic when the gateway
-   or control plane is unavailable, subject to a documented last-known-good
-   policy TTL.
+1. Connect the broker to an authenticated host-side worker or gateway API
+   and explicitly authorize which workload can invoke each tenant/agent scope.
+2. Continue enforcing Docker `--network none` until a separate, audited
+   network namespace / proxy-only path is proven to prevent direct egress,
+   raw sockets, CONNECT tunnels, and arbitrary-port bypass.
+3. Require broker availability; document a bounded fail-closed policy TTL and
+   verify policy-revision revocation behavior.
 4. Derive identity from signed workload credentials, not `x-tenant-id`,
    `x-agent-id`, or other caller-supplied strings.
 5. Add budget/concurrency enforcement **separately** from host allowlists:
