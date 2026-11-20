@@ -36,9 +36,10 @@ type Task struct {
 }
 
 type Manifest struct {
-	MaxParallel int      `json:"max_parallel"`
-	Capacity    Capacity `json:"capacity"`
-	Tasks       []Task   `json:"tasks"`
+	MaxParallel          int      `json:"max_parallel"`
+	Capacity             Capacity `json:"capacity"`
+	Tasks                []Task   `json:"tasks"`
+	PrioritizeUnblocking bool     `json:"prioritize_unblocking,omitempty"`
 }
 
 type State map[string]Status
@@ -170,17 +171,53 @@ func Next(manifest Manifest, state State) (Decision, error) {
 		}
 	}
 
+	// Traverse reverse dependency edges once instead of re-scanning the entire
+	// manifest for each link in a reverse-ordered failure chain.
+	reverse := make(map[string][]string, len(tasks))
+	failedQueue := make([]string, 0)
 	for _, task := range manifest.Tasks {
-		if statusOf(state, task.ID) != StatusPending {
-			continue
+		for _, dependency := range task.DependsOn {
+			reverse[dependency] = append(reverse[dependency], task.ID)
 		}
-		if dependencyFailed(task, state) {
-			decision.Skipped[task.ID] = "dependency-failed"
+		switch statusOf(state, task.ID) {
+		case StatusFailed, StatusSkipped:
+			failedQueue = append(failedQueue, task.ID)
+		}
+	}
+	for i := 0; i < len(failedQueue); i++ {
+		for _, dependentID := range reverse[failedQueue[i]] {
+			if statusOf(state, dependentID) != StatusPending {
+				continue
+			}
+			if _, skipped := decision.Skipped[dependentID]; skipped {
+				continue
+			}
+			decision.Skipped[dependentID] = "dependency-failed"
+			failedQueue = append(failedQueue, dependentID)
 		}
 	}
 
 	selected := append([]Task(nil), running...)
-	for _, task := range manifest.Tasks {
+	pending := append([]Task(nil), manifest.Tasks...)
+	if manifest.PrioritizeUnblocking {
+		scores := make(map[string]int, len(tasks))
+		for _, task := range pending {
+			// Only currently runnable candidates compete for a slot. Scoring
+			// blocked or terminal tasks does quadratic wasted graph walks on
+			// long dependency chains while leaving the decision unchanged.
+			if statusOf(state, task.ID) != StatusPending || !dependenciesSucceeded(task, state) {
+				continue
+			}
+			if _, skipped := decision.Skipped[task.ID]; skipped {
+				continue
+			}
+			scores[task.ID] = pendingDependents(task.ID, reverse, tasks, state, decision.Skipped)
+		}
+		sort.SliceStable(pending, func(i, j int) bool {
+			return scores[pending[i].ID] > scores[pending[j].ID]
+		})
+	}
+	for _, task := range pending {
 		if statusOf(state, task.ID) != StatusPending {
 			continue
 		}
@@ -246,6 +283,36 @@ func PlanWaves(manifest Manifest) ([][]string, error) {
 		}
 	}
 	return waves, nil
+}
+
+// pendingDependents counts distinct unfinished tasks reachable through the
+// dependency graph. Terminal and irrecoverably blocked nodes never create
+// artificial urgency. This is an opt-in ordering hint, not permission to
+// bypass resource, dependency, or ownership checks.
+func pendingDependents(id string, reverse map[string][]string, tasks map[string]Task, state State, skipped map[string]string) int {
+	seen := map[string]bool{id: true}
+	queue := []string{id}
+	count := 0
+	for len(queue) > 0 {
+		parent := queue[0]
+		queue = queue[1:]
+		for _, childID := range reverse[parent] {
+			if seen[childID] {
+				continue
+			}
+			seen[childID] = true
+			if _, failed := skipped[childID]; failed {
+				continue
+			}
+			child := tasks[childID]
+			if statusOf(state, childID) != StatusPending || dependencyFailed(child, state) {
+				continue
+			}
+			count++
+			queue = append(queue, childID)
+		}
+	}
+	return count
 }
 
 func normalizeOwnership(value string) (string, error) {
