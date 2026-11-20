@@ -117,5 +117,19 @@ func (p *DockerProvider) WriteEgressReceipt(ctx context.Context, sessionID, rece
 		_ = os.Remove(finalPath)
 		return fmt.Errorf("make completed receipt readable: %w", err)
 	}
+	// The image's default UID may not match the host writer's UID, especially
+	// with rootful Docker and --cap-drop ALL. Do not report success until the
+	// actual sandbox identity can read the completed artifact. Never cat or
+	// log response bytes during this check.
+	artifact := egressReceiptMount + "/" + receiptID + ".json"
+	_, err = p.runner.Run(ctx, "docker", []string{
+		"exec", sess.container, "sh", "-c", "test -r \"$1\"", "sh", artifact,
+	}, commandOptions{})
+	if err != nil {
+		if removeErr := os.Remove(finalPath); removeErr != nil {
+			return fmt.Errorf("container cannot read receipt and cleanup failed: %w", removeErr)
+		}
+		return fmt.Errorf("container cannot read host receipt: %w", err)
+	}
 	return nil
 }
