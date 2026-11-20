@@ -86,12 +86,16 @@ test('portfolio report inspects exact-head CI only for selected work and labels 
     if (path.includes('state=all')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('state=open')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('/check-runs')) return { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+    if (path.endsWith('/pulls/1')) return PR(1, 'open', false, '2026-10-17T12:00:00Z');
     if (path.endsWith('/status')) return { statuses: [] };
     throw new Error('unexpected path ' + path);
   };
   const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
   assert.equal(data.reports[0].priority[0].ci, 'passing-observed-only');
+  assert.equal(data.reports[0].priority[0].ciTriage, 'verify-required-gates');
+  assert.deepEqual(data.reports[0].priority[0].failedChecks, []);
   assert(visited.some(p => p.includes('/commits/sha-1/check-runs')));
+  assert(visited.some(p => p.endsWith('/pulls/1')));
   const md = formatMarkdown(data);
   assert.match(md, /Passing observed checks do not certify required contexts/i);
   assert.match(md, /passing-observed-only/);
@@ -109,8 +113,47 @@ test('more than one page of check runs cannot be misrepresented as passing', asy
   const getJson = async path => {
     if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('/check-runs')) return { total_count: 101, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+    if (path.endsWith('/pulls/1')) return PR(1, 'open', false, '2026-10-17T12:00:00Z');
     return { statuses: [] };
   };
   const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
   assert.equal(data.reports[0].priority[0].ci, 'incomplete');
+});
+
+test('a push during CI inspection invalidates the entire PR snapshot', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    if (path.includes('/check-runs')) return { total_count: 1, check_runs: [{ name: 'Test', status: 'completed', conclusion: 'success', head_sha: 'sha-1' }] };
+    if (path.endsWith('/status')) return { statuses: [] };
+    if (path.endsWith('/pulls/1')) return PR(1, 'open', false, '2026-10-17T12:00:00Z', { head: { sha: 'new-head' } });
+    throw new Error('unexpected path ' + path);
+  };
+  await assert.rejects(collectPortfolio(['acme/a'], getJson, { now, inspect: 1 }), /head changed/);
+});
+
+test('a PR closed during inspection is not presented as a current open candidate', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    if (path.includes('/check-runs')) return { total_count: 0, check_runs: [] };
+    if (path.endsWith('/status')) return { statuses: [] };
+    if (path.endsWith('/pulls/1')) return PR(1, 'closed', false, '2026-10-17T12:00:00Z');
+    throw new Error('unexpected path ' + path);
+  };
+  await assert.rejects(collectPortfolio(['acme/a'], getJson, { now, inspect: 1 }), /no longer open/);
+});
+
+test('CI triage exposes evidence without claiming a verified root cause', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    if (path.includes('/check-runs')) return { total_count: 1, check_runs: [{ name: 'Format and audit', status: 'completed', conclusion: 'startup_failure', head_sha: 'sha-1' }] };
+    if (path.endsWith('/status')) return { statuses: [] };
+    if (path.endsWith('/pulls/1')) return PR(1, 'open', false, '2026-10-17T12:00:00Z');
+    throw new Error('unexpected path ' + path);
+  };
+  const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
+  const candidate = data.reports[0].priority[0];
+  assert.equal(candidate.ci, 'failed');
+  assert.equal(candidate.ciTriage, 'investigate-runner-admission');
+  assert.deepEqual(candidate.failedChecks, [{name:'Format and audit',conclusion:'startup_failure',source:'check-run'}]);
+  assert.match(formatMarkdown(data), /failing contexts \(not root causes\): Format and audit/);
 });

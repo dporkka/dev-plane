@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 // Read-only, fail-closed portfolio PR inventory. No repository mutations.
+import { analyzeCheckEvidence, assertCurrentPRHead } from './pr-ci-evidence.mjs';
+export { classifyChecks } from './pr-ci-evidence.mjs';
 const DEFAULT_REPOS = 'dporkka/adacavo,nulang-org/nulang,dporkka/nulang-cloud,dporkka/dev-plane';
 const PAGE_SIZE = 100;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,16 +56,6 @@ export function listOpenPulls(repo, getJson, { maxPages = 20 } = {}) {
   return listPulls(repo, getJson, { maxPages, state: 'open' });
 }
 
-export function classifyChecks(checkRuns, statuses) {
-  if (!Array.isArray(checkRuns) || !Array.isArray(statuses)) throw new Error('CI evidence must be arrays');
-  if (checkRuns.length + statuses.length === 0) return 'no-evidence';
-  const failure = new Set(['failure', 'cancelled', 'timed_out', 'action_required', 'startup_failure', 'error']);
-  if (checkRuns.some(x => failure.has(x.conclusion)) || statuses.some(x => failure.has(x.state))) return 'failed';
-  if (checkRuns.some(x => x.status !== 'completed') || statuses.some(x => x.state === 'pending')) return 'pending';
-  if (checkRuns.some(x => x.conclusion !== 'success') || statuses.some(x => x.state !== 'success')) return 'incomplete';
-  return 'passing-observed-only'; // Not sufficient for branch protection / review / deployment.
-}
-
 function stale(pr, now, staleDays) {
   const updated = Date.parse(pr.updated_at);
   if (!Number.isFinite(updated)) throw new Error(`Invalid updated_at for PR #${pr.number}`);
@@ -101,10 +93,14 @@ async function getEvidence(repo, pr, getJson) {
   if (!Array.isArray(checkRuns?.check_runs) || !Array.isArray(statuses?.statuses)) {
     throw new Error(`Incomplete check/status evidence for ${repo} #${pr.number}`);
   }
-  if (checkRuns.total_count > 100) {
-    return 'incomplete'; // Extra check-run pages may hide failures: do not report green.
-  }
-  return classifyChecks(checkRuns.check_runs, statuses.statuses);
+  const evidence = analyzeCheckEvidence(checkRuns.check_runs, statuses.statuses, {
+    expectedHead: pr.head, totalCount: checkRuns.total_count,
+  });
+  // A PR can receive a new push after its inventory listing. Reject this
+  // snapshot rather than associating old-commit checks with the new head.
+  const current = await getJson(`/repos/${repo}/pulls/${pr.number}`);
+  assertCurrentPRHead(current, pr.head);
+  return evidence;
 }
 
 export async function collectPortfolio(repos, getJson, { now = new Date(), days = 7, staleDays = 3, maxPages = 20, inspect = 5 } = {}) {
@@ -116,7 +112,10 @@ export async function collectPortfolio(repos, getJson, { now = new Date(), days 
     const allOpen = await listOpenPulls(repo, getJson, { maxPages });
     const report = reportForRepository(repo, recent, { allOpen, now, staleDays });
     for (const pr of report.priority.slice(0, inspect)) {
-      pr.ci = await getEvidence(repo, pr, getJson);
+      const evidence = await getEvidence(repo, pr, getJson);
+      pr.ci = evidence.status;
+      pr.ciTriage = evidence.triage;
+      pr.failedChecks = evidence.failures;
     }
     reports.push(report);
   }
@@ -141,7 +140,9 @@ export function formatMarkdown(data, { show = 10 } = {}) {
   for (const r of data.reports) {
     lines.push(`## ${r.repo}`, 'Priority queue (non-draft first, then oldest updates). No merge authorization implied.', '');
     for (const p of r.priority.slice(0, show)) {
-      lines.push(`- [#${p.number}](${p.url}) ${p.draft ? 'draft' : 'review'} | updated ${p.updatedAt} | head \`${p.head.slice(0,12)}\` | CI: ${p.ci}`);
+      const failing = (p.failedChecks ?? []).slice(0, 3).map(x =>
+        x.name.replace(/[^A-Za-z0-9 _./:-]/g, '_').slice(0, 80)).join(', ');
+      lines.push(`- [#${p.number}](${p.url}) ${p.draft ? 'draft' : 'review'} | updated ${p.updatedAt} | head \`${p.head.slice(0,12)}\` | CI: ${p.ci}${p.ciTriage ? ` | triage: ${p.ciTriage}` : ''}${failing ? ` | failing contexts (not root causes): ${failing}` : ''}`);
     }
     if (!r.priority.length) lines.push('No open PRs.');
     lines.push('');
