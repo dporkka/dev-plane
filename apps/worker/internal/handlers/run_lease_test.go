@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/models"
 	"github.com/nats-io/nats.go"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -30,7 +31,7 @@ func newRunLeaseTestDB(t *testing.T) *sql.DB {
         );
         INSERT INTO agent_runs (id,status) VALUES
             ('queued', 'queued'), ('live','running'),
-            ('completed','completed'), ('cancelled','cancelled');
+            ('completed','completed'), ('canceled','cancelled');
     `)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestRunLeaseSweepMarksOnlyExpiredLiveRunsWithoutReplaying(t *testing.T) {
 	}{
 		{"live", "running", "expired", now.Add(-time.Second)},
 		{"completed", "completed", "old", now.Add(-time.Second)},
-		{"cancelled", "cancelled", "old", now.Add(-time.Second)},
+		{"canceled", models.AgentRunStatusCancelled, "old", now.Add(-time.Second)},
 		{"queued", "queued", "active", now.Add(time.Minute)},
 	} {
 		if _, err := db.Exec("UPDATE agent_runs SET execution_lease_token=?,execution_lease_expires_at=? WHERE id=?", row.token, row.expire, row.id); err != nil {

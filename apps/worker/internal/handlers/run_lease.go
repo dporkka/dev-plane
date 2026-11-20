@@ -160,7 +160,7 @@ func (m *RunLeaseManager) FlagExpired(ctx context.Context, now time.Time, limit 
 }
 
 // Execute holds ownership while the supplied worker runs. The same context is
-// cancelled if any renewal fails. No retry or reassignment is initiated.
+// canceled if any renewal fails. No retry or reassignment is initiated.
 func (m *RunLeaseManager) Execute(ctx context.Context, runID string, execute func(context.Context) error) error {
 	if execute == nil {
 		return errors.New("run executor not configured")
