@@ -402,7 +402,14 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch, owner, 
 	if err := verifyGitPushRemote(ctx, workspacePath, branch, owner, repo, env); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "push", "--", "origin", branch)
+	// Workspace-local Git config may contain URL-specific proxy/TLS overrides,
+	// which take precedence over a generic -c http.proxy/http.sslVerify.
+	// Pin both supported GitHub URL forms for this exact repository.
+	args, err := trustedGitPushCommandArgs(workspacePath, branch, owner, repo)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Env = env
 	cleanup, err := configureGitAskPass(cmd, token)
 	if err != nil {
