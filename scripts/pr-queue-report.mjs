@@ -64,6 +64,64 @@ export function classifyChecks(checkRuns, statuses) {
   return 'passing-observed-only'; // Not sufficient for branch protection / review / deployment.
 }
 
+const ATTENTION_LIMIT = 5;
+
+function safeEvidenceUrl(value) {
+  if (typeof value !== 'string' || value.length > 2048 || /[\s<>\x00-\x1f]/.test(value)) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+function attentionOutcome(item, source) {
+  if (source === 'commit-status') return typeof item.state === 'string' ? item.state : 'unknown';
+  if (typeof item.conclusion === 'string' && item.conclusion.length) return item.conclusion;
+  return item.status === 'completed' ? 'unknown' : (item.status || 'unknown');
+}
+
+function attentionPriority(outcome) {
+  if (outcome === 'startup_failure') return 0;
+  if (['failure', 'error', 'timed_out', 'action_required'].includes(outcome)) return 1;
+  if (['cancelled', 'canceled'].includes(outcome)) return 2;
+  if (['in_progress', 'queued', 'pending', 'requested', 'waiting'].includes(outcome)) return 3;
+  return 4;
+}
+
+// Bounded provider-reported check status, not verified step-level execution or release evidence.
+function attentionEvidence(checkRuns, statuses) {
+  const items = [
+    ...checkRuns.map(run => ({
+      source: 'check-run',
+      name: run.name,
+      outcome: attentionOutcome(run, 'check-run'),
+      url: safeEvidenceUrl(run.details_url || run.html_url),
+    })),
+    ...statuses.map(status => ({
+      source: 'commit-status',
+      name: status.context,
+      outcome: attentionOutcome(status, 'commit-status'),
+      url: safeEvidenceUrl(status.target_url),
+    })),
+  ].filter(item => item.outcome !== 'success')
+    .map(item => ({
+      ...item,
+      name: typeof item.name === 'string' && item.name.trim()
+        ? item.name.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 120)
+        : '(unnamed check)',
+    }));
+  items.sort((a, b) => attentionPriority(a.outcome) - attentionPriority(b.outcome)
+    || a.source.localeCompare(b.source) || a.name.localeCompare(b.name));
+  return { attentionChecks: items.slice(0, ATTENTION_LIMIT), attentionTotal: items.length, evidenceComplete: true };
+}
+
+function escapeEvidenceLabel(value) {
+  return value.replace(/[\r\n\t]/g, ' ').replace(/[\\[\]|<>]/g, '\\$&');
+}
+
 /** A read-only recommendation, not an authorization to merge or classify root cause. */
 export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notInspected = false } = {}) {
   if (!Array.isArray(checkRuns) || !Array.isArray(statuses)) throw new Error('CI evidence must be arrays');
@@ -71,17 +129,22 @@ export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notIns
     status: 'not-inspected', category: 'not-inspected', confidence: 'not-observed',
     summary: 'CI evidence was not requested for this PR.',
     nextAction: 'Inspect exact-head checks before making a merge decision.',
+    attentionChecks: [], attentionTotal: null, evidenceComplete: false,
   };
   if (incomplete) return {
     status: 'incomplete', category: 'incomplete-evidence', confidence: 'observed',
     summary: 'Additional check-run pages exist; the observed subset is insufficient.',
     nextAction: 'Retrieve remaining check-run pagination before evaluating status.',
+    attentionChecks: [], attentionTotal: null, evidenceComplete: false,
   };
 
   const status = classifyChecks(checkRuns, statuses);
   const has = (...conclusions) => checkRuns.some(run => conclusions.includes(run.conclusion))
     || statuses.some(item => conclusions.includes(item.state));
-  const diagnosis = (category, confidence, summary, nextAction) => ({ status, category, confidence, summary, nextAction });
+  const evidence = attentionEvidence(checkRuns, statuses);
+  const diagnosis = (category, confidence, summary, nextAction) => ({
+    status, category, confidence, summary, nextAction, ...evidence,
+  });
   if (has('startup_failure')) return diagnosis('provider-startup', 'observed',
     'Provider reported a job startup failure; executable tests are not proven.',
     'Inspect CI provider, runner admission, and job startup diagnostics before rerunning.');
@@ -139,11 +202,17 @@ export function reportForRepository(repo, recent, { now = new Date(), staleDays 
 async function getEvidence(repo, pr, getJson) {
   const base = `/repos/${repo}/commits/${encodeURIComponent(pr.head)}`;
   const checkRuns = await getJson(`${base}/check-runs?per_page=100`);
-  const statuses = await getJson(`${base}/status`);
+  const statuses = await getJson(`${base}/status?per_page=100`);
   if (!Array.isArray(checkRuns?.check_runs) || !Array.isArray(statuses?.statuses)) {
     throw new Error(`Incomplete check/status evidence for ${repo} #${pr.number}`);
   }
-  if (checkRuns.total_count > 100) {
+  const incomplete = !Number.isSafeInteger(checkRuns.total_count)
+    || !Number.isSafeInteger(statuses.total_count)
+    || checkRuns.total_count < checkRuns.check_runs.length
+    || statuses.total_count < statuses.statuses.length
+    || checkRuns.total_count > checkRuns.check_runs.length
+    || statuses.total_count > statuses.statuses.length;
+  if (incomplete) {
     return diagnoseChecks(checkRuns.check_runs, statuses.statuses, { incomplete: true });
   }
   return diagnoseChecks(checkRuns.check_runs, statuses.statuses);
@@ -186,6 +255,16 @@ export function formatMarkdown(data, { show = 10 } = {}) {
     lines.push(`## ${r.repo}`, 'Priority queue (non-draft first, then oldest updates). No merge authorization implied.', '');
     for (const p of r.priority.slice(0, show)) {
       lines.push(`- [#${p.number}](${p.url}) ${p.draft ? 'draft' : 'review'} | updated ${p.updatedAt} | head \`${p.head.slice(0,12)}\` | CI: ${p.ci} | Diagnosis: ${p.ciDiagnosis.category} | Next: ${p.ciDiagnosis.nextAction}`);
+      if (p.ciDiagnosis.attentionChecks?.length) {
+        const checks = p.ciDiagnosis.attentionChecks.map(check => {
+          const label = escapeEvidenceLabel(check.name);
+          const outcome = escapeEvidenceLabel(check.outcome);
+          const checkLabel = `${label} (${outcome})`;
+          return check.url ? `[${checkLabel}](<${check.url}>)` : checkLabel;
+        });
+        const extra = p.ciDiagnosis.attentionTotal - p.ciDiagnosis.attentionChecks.length;
+        lines.push(`  Attention checks: ${checks.join('; ')}${extra > 0 ? `; ${extra} more` : ''} (observed check statuses only; no root cause proven)`);
+      }
     }
     if (!r.priority.length) lines.push('No open PRs.');
     lines.push('');

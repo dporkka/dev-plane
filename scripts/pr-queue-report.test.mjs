@@ -87,7 +87,7 @@ test('portfolio report inspects exact-head CI only for selected work and labels 
     if (path.includes('state=all')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('state=open')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('/check-runs')) return { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
-    if (path.endsWith('/status')) return { statuses: [] };
+    if (path.includes('/status?per_page=100')) return { total_count: 0, statuses: [] };
     throw new Error('unexpected path ' + path);
   };
   const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
@@ -110,7 +110,7 @@ test('more than one page of check runs cannot be misrepresented as passing', asy
   const getJson = async path => {
     if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('/check-runs')) return { total_count: 101, check_runs: [{ status: 'completed', conclusion: 'success' }] };
-    return { statuses: [] };
+    return { total_count: 0, statuses: [] };
   };
   const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
   assert.equal(data.reports[0].priority[0].ci, 'incomplete');
@@ -147,7 +147,7 @@ test('portfolio JSON and Markdown expose fail-closed CI diagnosis for truncated 
   const getJson = async path => {
     if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
     if (path.includes('/check-runs')) return { total_count: 101, check_runs: [{ status: 'completed', conclusion: 'success' }] };
-    return { statuses: [] };
+    return { total_count: 0, statuses: [] };
   };
   const report = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
   const pr = report.reports[0].priority[0];
@@ -166,4 +166,70 @@ test('uninspected PRs remain explicitly unknown and do not claim CI coverage', a
   const pr = data.reports[0].priority[0];
   assert.equal(pr.ci, 'not-inspected');
   assert.equal(pr.ciDiagnosis.category, 'not-inspected');
+});
+
+test('CI diagnosis includes bounded, evidence-linked attention checks rather than inferred root causes', () => {
+  const d = diagnoseChecks([
+    { name: 'unit', status: 'completed', conclusion: 'success', details_url: 'https://github.com/acme/a/runs/1' },
+    { name: 'compile', status: 'completed', conclusion: 'failure', details_url: 'https://github.com/acme/a/runs/2' },
+    { name: 'build / runner', status: 'completed', conclusion: 'startup_failure', details_url: 'https://github.com/acme/a/runs/3' },
+  ], [
+    { context: 'woodpecker', state: 'failure', target_url: 'https://ci.example.test/pipelines/4' },
+  ]);
+  assert.equal(d.category, 'provider-startup');
+  assert.deepEqual(d.attentionChecks, [
+    { source: 'check-run', name: 'build / runner', outcome: 'startup_failure', url: 'https://github.com/acme/a/runs/3' },
+    { source: 'check-run', name: 'compile', outcome: 'failure', url: 'https://github.com/acme/a/runs/2' },
+    { source: 'commit-status', name: 'woodpecker', outcome: 'failure', url: 'https://ci.example.test/pipelines/4' },
+  ]);
+  assert.equal(d.attentionTotal, 3);
+  assert.equal(d.evidenceComplete, true);
+});
+
+test('CI attention links discard unsafe URLs, bound the list, and preserve incomplete evidence', () => {
+  const runs = Array.from({ length: 8 }, (_, i) => ({
+    name: i === 0 ? 'bad ] link | name' : 'failed check ' + i,
+    status: 'completed',
+    conclusion: 'failure',
+    details_url: i === 0 ? 'javascript:alert(1)' : 'https://github.com/acme/a/runs/' + i,
+  }));
+  const complete = diagnoseChecks(runs, []);
+  assert.equal(complete.attentionTotal, 8);
+  assert.equal(complete.attentionChecks.length, 5);
+  assert.equal(complete.attentionChecks[0].url, null);
+  assert.equal(complete.attentionChecks[0].name, 'bad ] link | name');
+  const incomplete = diagnoseChecks(runs, [], { incomplete: true });
+  assert.deepEqual(incomplete.attentionChecks, []);
+  assert.equal(incomplete.attentionTotal, null);
+  assert.equal(incomplete.evidenceComplete, false);
+  assert.equal(diagnoseChecks([], [], { notInspected: true }).evidenceComplete, false);
+  const markdown = formatMarkdown({
+    generatedAt: now.toISOString(), since: now.toISOString(), caveat: 'Advisory only',
+    reports: [{
+      repo: 'acme/a', counts: { created: 1, merged: 0, open: 1, closedUnmerged: 0 },
+      inventory: { open: 1, draft: 0, stale: 0 },
+      priority: [{
+        number: 1, url: 'https://github.com/acme/a/pull/1', draft: false,
+        updatedAt: now.toISOString(), head: 'sha-1', ci: 'failed',
+        ciDiagnosis: complete,
+      }],
+    }],
+  });
+  assert.match(markdown, /Attention checks:/);
+  assert.doesNotMatch(markdown, /javascript:alert/);
+  assert.match(markdown, /bad \\] link \\| name/);
+  assert.match(markdown, /3 more/);
+});
+
+
+test('commit-status pagination or missing total_count cannot produce observed green', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    if (path.includes('/check-runs')) return { total_count: 1, check_runs: [{ status: 'completed', conclusion: 'success' }] };
+    if (path.includes('/status')) return { total_count: 2, statuses: [{ context: 'passing', state: 'success' }] };
+    throw Error('unexpected path ' + path);
+  };
+  const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
+  assert.equal(data.reports[0].priority[0].ci, 'incomplete');
+  assert.equal(data.reports[0].priority[0].ciDiagnosis.evidenceComplete, false);
 });
