@@ -3,6 +3,7 @@ package prfactory
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -10,14 +11,18 @@ import (
 func gitRepoForPushTest(t *testing.T) string {
 	t.Helper()
 	path := t.TempDir()
-	if out, err := exec.Command("git", "init", path).CombinedOutput(); err != nil {
+	cmd := exec.Command("git", "init", path)
+	cmd.Env = sanitizedGitEnvironment()
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %s: %v", out, err)
 	}
 	return path
 }
 func addPushRemote(t *testing.T, path, remote string) {
 	t.Helper()
-	if out, err := exec.Command("git", "-C", path, "remote", "add", "origin", remote).CombinedOutput(); err != nil {
+	cmd := exec.Command("git", "-C", path, "remote", "add", "origin", remote)
+	cmd.Env = sanitizedGitEnvironment()
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git remote: %s: %v", out, err)
 	}
 }
@@ -33,7 +38,9 @@ func TestPushBranchRejectsOtherOrganizationBeforeGitAuthentication(t *testing.T)
 func TestPushBranchRejectsMaliciousGitURLRewrite(t *testing.T) {
 	path := gitRepoForPushTest(t)
 	addPushRemote(t, path, "https://github.com/my-tenant/repo.git")
-	if out, err := exec.Command("git", "-C", path, "config", "url.https://attacker.invalid/x/.insteadOf", "https://github.com/").CombinedOutput(); err != nil {
+	cmd := exec.Command("git", "-C", path, "config", "url.https://attacker.invalid/x/.insteadOf", "https://github.com/")
+	cmd.Env = sanitizedGitEnvironment()
+	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("config: %s: %v", out, err)
 	}
 	f := NewFactory(nil, nil)
@@ -64,5 +71,20 @@ func TestValidatePushRemoteExactRepository(t *testing.T) {
 				t.Errorf("validGitHubPushURL()=%v want %v", got, tt.ok)
 			}
 		})
+	}
+}
+
+func TestPushTestSetupIgnoresInheritedGitRepository(t *testing.T) {
+	attacker := gitRepoForPushTest(t)
+	t.Setenv("GIT_DIR", filepath.Join(attacker, ".git"))
+	t.Setenv("GIT_WORK_TREE", attacker)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(attacker, ".git", "index"))
+	path := gitRepoForPushTest(t)
+	addPushRemote(t, path, "https://github.com/trusted/repo.git")
+	cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+	cmd.Env = sanitizedGitEnvironment()
+	out, err := cmd.CombinedOutput()
+	if err != nil || strings.TrimSpace(string(out)) != "https://github.com/trusted/repo.git" {
+		t.Fatalf("test repository was contaminated by inherited Git environment: %q err=%v", out, err)
 	}
 }
