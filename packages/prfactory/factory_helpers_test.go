@@ -159,6 +159,10 @@ func TestConfigureGitAskPass_NoToken(t *testing.T) {
 }
 
 func TestNewFactoryNeverUsesGlobalPAT(t *testing.T) {
+	// Do not inherit an unrelated host's GitHub App credentials.
+	t.Setenv("GITHUB_APP_ID", "")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", "")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY_FILE", "")
 	t.Setenv("GITHUB_TOKEN", " env-token ")
 	t.Setenv("GITHUB_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_CLIENT_SECRET", "client-secret")
@@ -173,6 +177,10 @@ func TestNewFactoryNeverUsesGlobalPAT(t *testing.T) {
 }
 
 func TestNewFactory_NoToken(t *testing.T) {
+	// Do not inherit an unrelated host's GitHub App credentials.
+	t.Setenv("GITHUB_APP_ID", "")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY", "")
+	t.Setenv("GITHUB_APP_PRIVATE_KEY_FILE", "")
 	t.Setenv("GITHUB_TOKEN", "")
 	factory := NewFactory(nil, nil)
 	if factory.githubToken != "" {
