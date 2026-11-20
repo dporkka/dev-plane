@@ -29,8 +29,9 @@ func TestDockerCreateWorkspaceMountsHostOwnedReadonlyReceipts(t *testing.T) {
 
 type receiptInspectRunner struct {
 	fakeRunner
-	source   string
-	writable bool
+	source          string
+	writable        bool
+	denyReceiptRead bool
 }
 
 func (r *receiptInspectRunner) Run(ctx context.Context, name string, args []string, opts commandOptions) (commandOutput, error) {
@@ -43,6 +44,10 @@ func (r *receiptInspectRunner) Run(ctx context.Context, name string, args []stri
 			readWrite = "true"
 		}
 		return commandOutput{Stdout: r.source + "|" + readWrite + "\n"}, nil
+	}
+	if r.denyReceiptRead && name == "docker" && len(args) >= 4 &&
+		args[0] == "exec" && containsArg(args, "test -r \"$1\"") {
+		return commandOutput{ExitCode: 1}, errors.New("sandbox UID cannot read receipt")
 	}
 	return r.fakeRunner.Run(ctx, name, args, opts)
 }
@@ -164,5 +169,28 @@ func TestDockerReceiptWriterRejectsSymlinkedHostDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(outside, "receipt-1.json")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("wrote outside artifact directory: %v", err)
+	}
+}
+
+func TestDockerReceiptWriterFailsClosedWhenSandboxCannotRead(t *testing.T) {
+	base := t.TempDir()
+	session := "test-session"
+	dir := filepath.Join(base, session, "egress-receipts")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &receiptInspectRunner{source: dir, denyReceiptRead: true}
+	provider := &DockerProvider{baseDir: base, runner: runner, sessions: map[string]*dockerSession{
+		session: {id: session, container: "dev-plane-" + session, status: "ready"},
+	}}
+	err := provider.WriteEgressReceipt(context.Background(), session, "receipt-1", []byte("secret"))
+	if err == nil {
+		t.Fatal("returned successful delivery despite unreadable container UID")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "receipt-1.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreadable receipt left behind: %v", err)
+	}
+	if pending, _ := filepath.Glob(filepath.Join(dir, ".pending-*")); len(pending) != 0 {
+		t.Fatalf("staging artifact leaked: %v", pending)
 	}
 }
