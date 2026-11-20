@@ -77,9 +77,13 @@ in this change.
 - Refuses a missing resolver, missing session binding, invalid receipt IDs,
   unapproved hosts, and failed upstream responses before writing any data.
 - Calls the bounded `Broker.Fetch` only with the trusted resolved identity.
-- Uses the existing runtime provider's `WriteFile` to place a JSON receipt in
-  `.dev-plane/egress/<receipt-id>.json`, where bytes are base64-encoded.
-  No caller-supplied destination path or HTTP headers are accepted.
+- Requires a dedicated `WriteEgressReceipt` writer. Generic workspace
+  `WriteFile` is incompatible with the bridge and cannot be used as a
+  fallback.
+- Publishes JSON receipts under `/run/dev-plane/egress/<receipt-id>.json`
+  inside a read-only bind mount of a private per-session host-owned directory;
+  receipt payload bytes remain base64-encoded.
+- Does not accept a caller-supplied output path or request headers.
 
 The bridge has **not** been attached to any public API endpoint, automatic
 tool call, or production scheduler; a concrete session resolver backed by the
@@ -89,7 +93,9 @@ A separate opt-in integration test uses the real Docker runtime provider with
 a locally pre-pulled Docker-compatible image, a local Git fixture, and a local
 TLS server. It asserts `--network none`, fails a direct outbound connection,
 allows a host-side broker request with pinned DNS and TLS validation, reads the
-result from the isolated workspace, and rejects an unallowlisted destination.
+result from the readonly-mounted artifact directory, verifies that hostile
+workspace symlinks cannot redirect it, checks that the sandbox cannot overwrite
+or create files on the mount, and rejects an unallowlisted destination.
 
 Run with a pre-pulled image that contains `sh`, `git`, and `curl`:
 
@@ -104,13 +110,11 @@ The test is skipped by default and fails (rather than silently skipping) when
 explicitly enabled but Docker, Git, or the test image is missing. The test does
 not require any real external network connection.
 
-**Remaining production gates:** a concrete authenticated scheduler/session
-resolver; filesystem-level prevention of writable-symlink redirection within
-agent-controlled paths; per-run request IDs and replay protection; usage budgets;
-durable audit attribution; concurrency and revocation-in-flight behavior; and
-exact-head CI against an isolated worker. The bridge is not a replacement for
-the container's `--network none` isolation.
-
+**Remaining production gates:** worker-service authentication and verified
+scheduler authorization, per-run request/byte budgets, audited and expiring
+storage, final authorization/revocation race handling, remote runner support,
+and exact-head CI against supported isolation backends. The bridge is not a
+replacement for the container's `--network none` isolation.
 
 ## Database-backed session authorization (draft, not activated)
 
@@ -157,14 +161,38 @@ delivering a previously fetched response. It cannot undo upstream I/O that
 occurred before revocation, nor provide a fully atomic revocation/delivery
 boundary when a policy changes between the final check and file write.
 
-**Critical remaining blocker:** The bridge writes receipts through Docker
-`WriteFile`, which can follow workspace-controlled symlinks. Do not activate
-it until delivery uses a host-controlled read-only-mounted artifact volume
-or an equivalent atomic no-follow, create-exclusive destination. The
-SQL receipt ledger prevents ID replay but does not address symlink attacks,
-in-flight policy races at the file-write boundary, request budgets,
-billing or production audit integration.
+**Readonly artifact delivery remediation (stacked draft PR):** The
+bridge now requires an `EgressReceiptWriter`, implemented locally by
+`DockerProvider.WriteEgressReceipt`, and never invokes the general
+workspace write method. The Docker runtime creates a host-owned 0700
+per-session directory and binds it read-only into the sandbox using `:ro,Z`
+to support SELinux-confined Podman as well as Docker. Every receipt write
+checks Docker inspect for the exact expected read-only mount and fails
+closed if the container lacks it (including older running containers).
 
+The writer validates the session and receipt IDs, caps payload size, and
+creates a random 0000-permission staging inode inside the SELinux-labeled
+host directory. It writes and synchronizes all data, then uses a
+create-exclusive hardlink into the final name and promotes the complete
+file to mode 0600. The agent's mount remains read-only, so it cannot
+modify the temporary file, hardlink, final receipt, or mount directory.
+Existing receipt names, including symlinks, cannot be overwritten.
+Destroyed sessions remove the host-owned staging and artifact data.
+
+A real Fedora rootless Podman integration test with a local TLS fixture
+verifies direct egress denial, approved broker delivery, read-only mount
+enforcement, prevention of writable-workspace symlink redirection, and
+absence of denied receipts. The runtime's unit tests cover absent/writable
+mounts, host symlinks, malicious preexisting receipt symlinks, duplicate
+IDs and invalid paths.
+
+**Remaining release blockers:** This works only when the broker and the
+Docker runtime share the same trusted host; no secure remote-runner receipt
+transport is implemented. A policy change after the final authorization
+check but before publication remains a race. Per-run artifact limits,
+periodic retention, durable audit events, workload identity and
+staging/production exact-head CI qualification remain outstanding.
+No public endpoint or automatic agent tool is enabled.
 Verification:
 - `go test -race ./internal/egresspolicy ./internal/modelrouter -count=1`
 - `go vet ./internal/egresspolicy`

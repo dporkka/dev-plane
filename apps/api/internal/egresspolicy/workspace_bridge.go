@@ -24,10 +24,11 @@ type SessionResolver interface {
 	ResolveAuthorizedSession(ctx context.Context, runtimeSessionID string) (SessionIdentity, error)
 }
 
-// WorkspaceWriter is the trusted host-side runtime file API. It must constrain
-// destinations to the specific container workspace and validate file paths.
-type WorkspaceWriter interface {
-	WriteFile(ctx context.Context, runtimeSessionID, path string, data []byte) error
+// EgressReceiptWriter is a dedicated privileged host-side artifact writer.
+// It MUST publish to a host-owned directory mounted read-only in the sandbox;
+// the general workspace WriteFile API is deliberately incompatible.
+type EgressReceiptWriter interface {
+	WriteEgressReceipt(ctx context.Context, runtimeSessionID, receiptID string, data []byte) error
 }
 
 // WorkspaceFetchReceipt is a bounded output envelope; it intentionally omits
@@ -44,11 +45,11 @@ type WorkspaceFetchReceipt struct {
 type WorkspaceBridge struct {
 	broker   *Broker
 	resolver SessionResolver
-	writer   WorkspaceWriter
+	writer   EgressReceiptWriter
 	receipts ReceiptStore
 }
 
-func NewWorkspaceBridge(broker *Broker, resolver SessionResolver, writer WorkspaceWriter, receipts ReceiptStore) *WorkspaceBridge {
+func NewWorkspaceBridge(broker *Broker, resolver SessionResolver, writer EgressReceiptWriter, receipts ReceiptStore) *WorkspaceBridge {
 	return &WorkspaceBridge{broker: broker, resolver: resolver, writer: writer, receipts: receipts}
 }
 
@@ -111,5 +112,5 @@ func (b *WorkspaceBridge) FetchToWorkspace(ctx context.Context, runtimeSessionID
 	if err != nil {
 		return errors.New("egress response encoding failed")
 	}
-	return b.writer.WriteFile(ctx, runtimeSessionID, ".dev-plane/egress/"+receiptID+".json", data)
+	return b.writer.WriteEgressReceipt(ctx, runtimeSessionID, receiptID, data)
 }

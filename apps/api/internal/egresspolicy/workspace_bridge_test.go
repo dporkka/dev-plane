@@ -33,9 +33,9 @@ type fakeWorkspaceWriter struct {
 	calls int
 }
 
-func (w *fakeWorkspaceWriter) WriteFile(_ context.Context, _ string, path string, data []byte) error {
+func (w *fakeWorkspaceWriter) WriteEgressReceipt(_ context.Context, _ string, receiptID string, data []byte) error {
 	w.calls++
-	w.path = path
+	w.path = receiptID
 	w.data = append([]byte(nil), data...)
 	return nil
 }
@@ -56,7 +56,7 @@ func TestWorkspaceBridgeBindsTrustedSessionBeforeFetching(t *testing.T) {
 	if err := bridge.FetchToWorkspace(context.Background(), "session-1", "req-1", "https://api.example.test/resource"); err != nil {
 		t.Fatal(err)
 	}
-	if writer.path != ".dev-plane/egress/req-1.json" {
+	if writer.path != "req-1" {
 		t.Fatalf("unexpected destination: %q", writer.path)
 	}
 	var result WorkspaceFetchReceipt
@@ -171,6 +171,15 @@ func TestDockerEgressBrokerIsolationIntegration(t *testing.T) {
 		t.Fatal("isolated container unexpectedly reached network directly")
 	}
 
+	// A malicious workspace can create symlinks inside /workspace.
+	poison, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "ln -s /tmp /workspace/.dev-plane && mkdir -p /tmp/egress",
+	})
+	if err != nil || poison.ExitCode != 0 {
+		t.Fatalf("poisoned workspace fixture failed: result=%+v err=%v", poison, err)
+	}
+
 	b, _ := newBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("approved-host-response"))
 	})
@@ -178,9 +187,34 @@ func TestDockerEgressBrokerIsolationIntegration(t *testing.T) {
 	if err := bridge.FetchToWorkspace(ctx, session.ID, "approved-1", "https://api.example.test/fixture"); err != nil {
 		t.Fatalf("brokered authorized transfer failed: %v", err)
 	}
-	delivered, err := provider.ReadFile(ctx, session.ID, ".dev-plane/egress/approved-1.json")
-	if err != nil {
-		t.Fatal(err)
+	delivery, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "cat /run/dev-plane/egress/approved-1.json",
+	})
+	if err != nil || delivery.ExitCode != 0 {
+		t.Fatalf("read-only artifact not readable: result=%+v err=%v", delivery, err)
+	}
+	delivered := []byte(delivery.Stdout)
+	tamper, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "echo malicious > /run/dev-plane/egress/approved-1.json",
+	})
+	if err != nil || tamper.ExitCode == 0 {
+		t.Fatalf("sandbox overwrote host-owned artifact: result=%+v err=%v", tamper, err)
+	}
+	newFile, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "echo forged > /run/dev-plane/egress/forged.json",
+	})
+	if err != nil || newFile.ExitCode == 0 {
+		t.Fatalf("sandbox created a receipt on readonly mount: result=%+v err=%v", newFile, err)
+	}
+	misdirected, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "test ! -e /tmp/egress/approved-1.json",
+	})
+	if err != nil || misdirected.ExitCode != 0 {
+		t.Fatal("workspace symlink diverted privileged receipt into /tmp")
 	}
 	var receipt WorkspaceFetchReceipt
 	if err := json.Unmarshal(delivered, &receipt); err != nil {
@@ -193,8 +227,11 @@ func TestDockerEgressBrokerIsolationIntegration(t *testing.T) {
 	if err := bridge.FetchToWorkspace(ctx, session.ID, "blocked-2", "https://not-allowed.example.test/fixture"); !errors.Is(err, ErrDenied) {
 		t.Fatalf("forbidden hostname accepted: %v", err)
 	}
-	_, err = provider.ReadFile(ctx, session.ID, ".dev-plane/egress/blocked-2.json")
-	if err == nil {
+	blocked, err := provider.ExecuteCommand(ctx, session.ID, runtimes.Command{
+		UnsafeShell: true,
+		Command:     "test ! -e /run/dev-plane/egress/blocked-2.json",
+	})
+	if err != nil || blocked.ExitCode != 0 {
 		t.Fatal("denied request materialized sandbox data")
 	}
 }

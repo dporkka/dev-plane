@@ -223,6 +223,15 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
 	}
+	// The agent never receives a writable bind mount of this host-owned path.
+	// It is mounted read-only at a path outside /workspace.
+	receiptDir, err := p.hostReceiptDirectory(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Mkdir(receiptDir, 0700); err != nil {
+		return nil, fmt.Errorf("create host receipt directory: %w", err)
+	}
 	cleanupOnError := true
 	defer func() {
 		if cleanupOnError {
@@ -251,6 +260,7 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 		"--read-only",
 		"--tmpfs", "/tmp:rw,nosuid,nodev,size=64m",
 		"--mount", "type=volume,source=" + volume + ",target=" + workspaceDir,
+		"--volume", receiptDir + ":" + egressReceiptMount + ":ro,Z",
 		"--memory", valueOrDefault(p.memoryLimit, defaultDockerMemory),
 		"--cpus", valueOrDefault(p.cpuLimit, defaultDockerCPUs),
 		"--pids-limit", valueOrDefault(p.pidsLimit, defaultDockerPIDs),
