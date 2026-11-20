@@ -43,7 +43,7 @@ func (w *fakeWorkspaceWriter) WriteFile(_ context.Context, _ string, path string
 func TestWorkspaceBridgeBindsTrustedSessionBeforeFetching(t *testing.T) {
 	b, _ := newBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("approved")) })
 	writer := &fakeWorkspaceWriter{}
-	bridge := NewWorkspaceBridge(b, fixedSessionResolver{sessionID: "session-1", allow: true}, writer)
+	bridge := NewWorkspaceBridge(b, fixedSessionResolver{sessionID: "session-1", allow: true}, writer, NewSQLReceiptStore(receiptTestDB(t)))
 	if err := bridge.FetchToWorkspace(context.Background(), "other-session", "req-1", "https://api.example.test"); !errors.Is(err, ErrDenied) {
 		t.Fatalf("unbound session should be denied: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestWorkspaceBridgeBindsTrustedSessionBeforeFetching(t *testing.T) {
 func TestWorkspaceBridgeFailsClosedWithoutTrustedResolver(t *testing.T) {
 	b, _ := newBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) { t.Fatal("unexpected network") })
 	writer := &fakeWorkspaceWriter{}
-	bridge := NewWorkspaceBridge(b, nil, writer)
+	bridge := NewWorkspaceBridge(b, nil, writer, NewSQLReceiptStore(receiptTestDB(t)))
 	if err := bridge.FetchToWorkspace(context.Background(), "session-1", "req-1", "https://api.example.test"); !errors.Is(err, ErrDenied) {
 		t.Fatalf("missing identity resolver allowed request: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestDockerEgressBrokerIsolationIntegration(t *testing.T) {
 	b, _ := newBrokerFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("approved-host-response"))
 	})
-	bridge := NewWorkspaceBridge(b, fixedSessionResolver{sessionID: session.ID, allow: true}, provider)
+	bridge := NewWorkspaceBridge(b, fixedSessionResolver{sessionID: session.ID, allow: true}, provider, NewSQLReceiptStore(receiptTestDB(t)))
 	if err := bridge.FetchToWorkspace(ctx, session.ID, "approved-1", "https://api.example.test/fixture"); err != nil {
 		t.Fatalf("brokered authorized transfer failed: %v", err)
 	}
