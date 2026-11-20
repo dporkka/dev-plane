@@ -22,9 +22,13 @@ type evidenceSQL interface {
 // Existing gate names are immutable: retries with identical payloads are
 // idempotent, while conflicting attempts fail closed for explicit adjudication.
 func (db *DB) MergeEvidenceGates(ctx context.Context, incoming repoprotocol.EvidenceBundle) error {
-	if strings.TrimSpace(incoming.WorkItemID) == "" || strings.TrimSpace(incoming.HeadSHA) == "" ||
-		strings.TrimSpace(incoming.BaseSHA) == "" || len(incoming.Gates) == 0 {
-		return errors.New("evidence merge requires work item, head, base and gates")
+	if len(incoming.Gates) == 0 {
+		return errors.New("evidence merge requires at least one gate")
+	}
+	for _, value := range []string{incoming.WorkItemID, incoming.HeadSHA, incoming.BaseSHA} {
+		if value == "" || strings.TrimSpace(value) != value {
+			return errors.New("evidence merge identities must be non-empty without surrounding whitespace")
+		}
 	}
 	seen := make(map[string]bool, len(incoming.Gates))
 	for _, g := range incoming.Gates {
@@ -83,6 +87,15 @@ func mergeEvidenceLocked(ctx context.Context, conn evidenceSQL, driver string, i
 	if err != nil {
 		return err
 	}
+	// Canonicalize through the same JSON representation used by the store.
+	// time.Time loses its monotonic clock on decode, and omitempty removes
+	// empty slices; comparing raw input with decoded rows rejects true retries
+	// (including the just-inserted record) and rolls back valid first writes.
+	var normalized repoprotocol.EvidenceBundle
+	if err := json.Unmarshal(payload, &normalized); err != nil {
+		return fmt.Errorf("normalize incoming evidence for persistence: %w", err)
+	}
+	incoming = normalized
 	insert := `INSERT INTO evidence_bundles (work_item_id, head_sha, base_sha, payload, updated_at)
  VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP) ON CONFLICT(work_item_id,head_sha) DO NOTHING`
 	if driver == "postgres" {

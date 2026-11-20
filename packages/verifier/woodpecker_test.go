@@ -144,3 +144,37 @@ func TestWoodpeckerReaderRejectsProviderError(t *testing.T) {
 		t.Fatal("provider outage marked success")
 	}
 }
+
+func TestWoodpeckerRejectsMissingNullOrMalformedAttemptAndSHAs(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*wpFixture, *RemoteCIQuery)
+	}{
+		{"missing rerun", func(f *wpFixture, _ *RemoteCIQuery) { delete(f.pipeline, "rerun_count") }},
+		{"null rerun", func(f *wpFixture, _ *RemoteCIQuery) { f.pipeline["rerun_count"] = nil }},
+		{"bad hex SHA", func(f *wpFixture, q *RemoteCIQuery) {
+			f.pipeline["commit"] = strings.Repeat("z", 40)
+			q.HeadSHA = strings.Repeat("z", 40)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWoodpeckerFixture(t)
+			q := wpQuery()
+			tc.mutate(f, &q)
+			if _, err := wpReader(f).ObserveAttempt(context.Background(), q); err == nil {
+				t.Fatalf("accepted invalid exact CI attempt/source in %s", tc.name)
+			}
+		})
+	}
+}
+
+func TestWoodpeckerAcceptsExplicitAttemptZeroAndValidFullSHA256(t *testing.T) {
+	f := newWoodpeckerFixture(t)
+	q := wpQuery()
+	sha := strings.Repeat("b", 64)
+	q.HeadSHA = sha
+	f.pipeline["commit"] = sha
+	if _, err := wpReader(f).ObserveAttempt(context.Background(), q); err != nil {
+		t.Fatalf("valid SHA-256 full Git ID / explicit rerun 0 rejected: %v", err)
+	}
+}

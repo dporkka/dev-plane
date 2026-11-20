@@ -58,7 +58,7 @@ type wpPipeline struct {
 	Number     int64        `json:"number"`
 	Commit     string       `json:"commit"`
 	Status     string       `json:"status"`
-	RerunCount int64        `json:"rerun_count"`
+	RerunCount *int64       `json:"rerun_count"`
 	Workflows  []wpWorkflow `json:"workflows"`
 }
 type wpWorkflow struct {
@@ -162,6 +162,14 @@ func configDigest(files []wpConfig) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+func validWoodpeckerSourceSHA(value string) bool {
+	if (len(value) != 40 && len(value) != 64) || value != strings.ToLower(value) {
+		return false
+	}
+	_, err := hex.DecodeString(value)
+	return err == nil
+}
+
 // ObserveAttempt fetches authoritative read-only pipeline, repository and
 // pipeline-scoped configuration data. The result is diagnostic, not release
 // eligibility evidence. No webhook claims are accepted.
@@ -186,8 +194,8 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 	if err != nil || attempt < 0 {
 		return WoodpeckerObservation{}, errors.New("numeric Woodpecker rerun attempt required")
 	}
-	if q.HeadSHA == "" {
-		return WoodpeckerObservation{}, errors.New("exact Woodpecker source SHA required")
+	if !validWoodpeckerSourceSHA(q.HeadSHA) {
+		return WoodpeckerObservation{}, errors.New("exact lowercase hexadecimal Woodpecker source SHA required")
 	}
 	repoRoot := fmt.Sprintf("/repos/%d", w.RepositoryID)
 	var repo wpRepository
@@ -202,8 +210,8 @@ func (w WoodpeckerReader) ObserveAttempt(ctx context.Context, q RemoteCIQuery) (
 	if err = w.get(ctx, c, base, pipelineRoot, &pipeline); err != nil {
 		return WoodpeckerObservation{}, err
 	}
-	if pipeline.ID != pid || pipeline.Number != run || pipeline.RerunCount != attempt ||
-		pipeline.Commit != q.HeadSHA || (len(pipeline.Commit) != 40 && len(pipeline.Commit) != 64) {
+	if pipeline.ID != pid || pipeline.Number != run || pipeline.RerunCount == nil || *pipeline.RerunCount != attempt ||
+		pipeline.Commit != q.HeadSHA {
 		return WoodpeckerObservation{}, errors.New("woodpecker exact pipeline/head/attempt mismatch")
 	}
 	var observed *wpStep

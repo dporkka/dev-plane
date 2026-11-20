@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	repoprotocol "github.com/ai-dev-control-plane/repoprotocol"
 )
@@ -165,5 +166,82 @@ func TestMergeEvidenceGatesIndependentSQLiteConnections(t *testing.T) {
 	}
 	if len(got.Gates) != 2 {
 		t.Fatalf("lost cross-connection evidence: %+v", got)
+	}
+}
+
+func TestMergeEvidenceGatesSerializesExecutionTimestampsBeforeComparing(t *testing.T) {
+	store := testEvidenceStore(t)
+	ctx := context.Background()
+	now := time.Now()
+	success := 0
+	original := evidence("execution-1", "head-1", "base-1", repoprotocol.GateEvidence{
+		Name: "verification", Status: repoprotocol.GatePassed, Command: "go test ./...",
+		Execution: &repoprotocol.GateExecution{
+			SessionID: "session-1", AttemptID: "attempt-1",
+			Outcome:   repoprotocol.GateExecutionCompleted,
+			StartedAt: now, FinishedAt: now.Add(time.Second),
+			ExitCode: &success, DurationMillis: 1000,
+		},
+	})
+	if err := store.MergeEvidenceGates(ctx, original); err != nil {
+		t.Fatalf("initial insert with monotonic timestamps failed: %v", err)
+	}
+	if err := store.MergeEvidenceGates(ctx, original); err != nil {
+		t.Fatalf("idempotent retry of same execution failed: %v", err)
+	}
+	got, err := store.GetEvidenceBundle(ctx, "execution-1", "head-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Gates) != 1 || got.Gates[0].Execution == nil ||
+		!got.Gates[0].Execution.StartedAt.Equal(now) ||
+		!got.Gates[0].Execution.FinishedAt.Equal(now.Add(time.Second)) {
+		t.Fatalf("timestamps lost or altered: %#v", got.Gates)
+	}
+	changed := original
+	changed.Gates = append([]repoprotocol.GateEvidence(nil), original.Gates...)
+	changedExecution := *original.Gates[0].Execution
+	changedExecution.DurationMillis++
+	changed.Gates[0].Execution = &changedExecution
+	if err := store.MergeEvidenceGates(ctx, changed); err == nil {
+		t.Fatal("changed execution evidence should conflict")
+	}
+}
+
+func TestMergeEvidenceGatesNormalizesEmptyRemoteArtifactList(t *testing.T) {
+	store := testEvidenceStore(t)
+	ctx := context.Background()
+	remote := &repoprotocol.RemoteCIReceipt{
+		Record:      repoprotocol.RemoteCIRecord{Artifacts: make([]repoprotocol.CIArtifact, 0)},
+		SignerKeyID: "test-signer", Signature: "test-signature",
+	}
+	input := evidence("remote-1", "head-1", "base-1", repoprotocol.GateEvidence{
+		Name: "remote", Status: repoprotocol.GatePending, RemoteCI: remote,
+	})
+	if err := store.MergeEvidenceGates(ctx, input); err != nil {
+		t.Fatalf("insert with omitempty artifact list failed: %v", err)
+	}
+	if err := store.MergeEvidenceGates(ctx, input); err != nil {
+		t.Fatalf("replayed signed observation incorrectly conflicted: %v", err)
+	}
+}
+
+func TestMergeEvidenceGatesRejectsWhitespaceIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*repoprotocol.EvidenceBundle)
+	}{
+		{"work item", func(b *repoprotocol.EvidenceBundle) { b.WorkItemID = " task-1 " }},
+		{"head SHA", func(b *repoprotocol.EvidenceBundle) { b.HeadSHA = " head-1 " }},
+		{"base SHA", func(b *repoprotocol.EvidenceBundle) { b.BaseSHA = " base-1 " }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testEvidenceStore(t)
+			incoming := evidence("task-1", "head-1", "base-1", gate("unit"))
+			tc.mutate(&incoming)
+			if err := store.MergeEvidenceGates(context.Background(), incoming); err == nil {
+				t.Fatalf("accepted identifier with whitespace: %+v", incoming)
+			}
+		})
 	}
 }
