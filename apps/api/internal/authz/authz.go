@@ -91,6 +91,32 @@ func AuthorizeRepository(ctx context.Context, db *sql.DB, user *auth.Claims, rep
 	return nil
 }
 
+// AuthorizeRepositoryForProject verifies repository ownership and exact project
+// association. A repository from another project, even in the same tenant,
+// cannot be referenced by a new task in this project.
+func AuthorizeRepositoryForProject(ctx context.Context, db *sql.DB, user *auth.Claims, repoID, projectID string) error {
+	if user == nil || user.OrgID == "" || repoID == "" || projectID == "" {
+		return ErrNotFound
+	}
+	var actualProjectID string
+	err := db.QueryRowContext(ctx, `
+        SELECT r.project_id FROM repositories r
+        JOIN projects p ON p.id = r.project_id
+        WHERE r.id = $1 AND p.organization_id = $2
+          AND r.deleted_at IS NULL AND p.deleted_at IS NULL
+    `, repoID, user.OrgID).Scan(&actualProjectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("authorize repository for project: %w", err)
+	}
+	if actualProjectID != projectID {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // AuthorizeTask verifies that the user's organization owns the task.
 func AuthorizeTask(ctx context.Context, db *sql.DB, user *auth.Claims, taskID string) error {
 	var orgID string

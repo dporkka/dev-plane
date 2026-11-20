@@ -142,58 +142,60 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Find or create organization
-	var orgID string
-	err = h.db.QueryRowContext(ctx, `SELECT id FROM organizations WHERE slug = $1`, ghUser.Login).Scan(&orgID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Create organization
-			orgID = uuid.New().String()
-			now := time.Now().UTC()
-			_, err = h.db.ExecContext(ctx, `
-				INSERT INTO organizations (id, name, slug, plan, settings, created_at, updated_at)
-				VALUES ($1, $2, $3, 'free', '{}', $4, $4)
-			`, orgID, ghUser.Name, ghUser.Login, now)
-			if err != nil {
-				respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to create organization: %w", err))
-				return
-			}
-		} else {
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	// Find or create user
-	var userID string
+	// Existing GitHub identities retain their persisted organization and role;
+	// GitHub usernames can change independently of Dev-plane tenancy.
+	var userID, orgID, role string
 	err = h.db.QueryRowContext(ctx,
-		`SELECT id FROM users WHERE github_id = $1`, fmt.Sprintf("%d", ghUser.ID)).Scan(&userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Create user
-			userID = uuid.New().String()
-			now := time.Now().UTC()
-			name := ghUser.Name
-			if name == "" {
-				name = ghUser.Login
-			}
-			_, err = h.db.ExecContext(ctx, `
-				INSERT INTO users (id, organization_id, email, name, avatar_url, role, github_id, github_username, settings, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, 'owner', $6, $7, '{}', $8, $8)
-			`, userID, orgID, ghUser.Email, name, ghUser.AvatarURL,
-				fmt.Sprintf("%d", ghUser.ID), ghUser.Login, now)
-			if err != nil {
-				respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to create user: %w", err))
-				return
-			}
-		} else {
-			respond.Error(w, http.StatusInternalServerError, err)
+		`SELECT id, organization_id, role FROM users WHERE github_id = $1 AND deleted_at IS NULL`,
+		fmt.Sprintf("%d", ghUser.ID),
+	).Scan(&userID, &orgID, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		// A GitHub username is not proof of membership in an existing
+		// Dev-plane organization with the same slug. Never adopt that org.
+		slug := ghUser.Login
+		var existingOrgID string
+		lookupErr := h.db.QueryRowContext(ctx,
+			`SELECT id FROM organizations WHERE slug = $1`, ghUser.Login,
+		).Scan(&existingOrgID)
+		if lookupErr == nil {
+			// Preserve readable slugs when available, but avoid collisions.
+			slug = fmt.Sprintf("%s-gh-%d", ghUser.Login, ghUser.ID)
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("lookup organization: %w", lookupErr))
 			return
 		}
+		orgID = uuid.New().String()
+		now := time.Now().UTC()
+		_, err = h.db.ExecContext(ctx, `
+            INSERT INTO organizations (id,name,slug,plan,settings,created_at,updated_at)
+            VALUES ($1,$2,$3,'free','{}',$4,$4)
+        `, orgID, ghUser.Name, slug, now)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create personal organization: %w", err))
+			return
+		}
+		userID = uuid.New().String()
+		role = "owner"
+		now = time.Now().UTC()
+		name := ghUser.Name
+		if name == "" {
+			name = ghUser.Login
+		}
+		_, err = h.db.ExecContext(ctx, `
+            INSERT INTO users (id, organization_id, email, name, avatar_url, role, github_id, github_username, settings, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, 'owner', $6, $7, '{}', $8, $8)
+        `, userID, orgID, ghUser.Email, name, ghUser.AvatarURL, fmt.Sprintf("%d", ghUser.ID), ghUser.Login, now)
+		if err != nil {
+			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create GitHub user: %w", err))
+			return
+		}
+	} else if err != nil {
+		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("lookup GitHub user: %w", err))
+		return
 	}
 
 	// Generate JWT token
-	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, "owner", h.config.JWTSecret, 60*time.Minute)
+	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, role, h.config.JWTSecret, 60*time.Minute)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to generate token: %w", err))
 		return

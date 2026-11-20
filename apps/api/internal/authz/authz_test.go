@@ -191,3 +191,21 @@ func TestAuthorizeRepository(t *testing.T) {
 		}
 	})
 }
+
+// Test repository binding to an exact project, not merely the same tenant.
+func TestAuthorizeRepositoryForProjectRejectsDifferentProject(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user := &auth.Claims{UserID: "user-A", OrgID: "org-A"}
+	mock.ExpectQuery("SELECT r.project_id").WithArgs("repo-A", "org-A").
+		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-B"))
+	if err := AuthorizeRepositoryForProject(context.Background(), db, user, "repo-A", "project-A"); err == nil {
+		t.Fatal("repository belonging to another project should be rejected")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

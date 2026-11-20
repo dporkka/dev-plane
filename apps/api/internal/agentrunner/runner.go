@@ -565,6 +565,10 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 	}
 
 	resource := toolResource(toolName, input)
+	organization := r.loadTaskOrganization(ctx, task)
+	if err := validateAgentExecutionScope(run, task, workspace, organization); err != nil {
+		return fmt.Errorf("invalid agent execution scope: %w", err)
+	}
 	revision := ""
 	if toolRequiresWorkspaceRevision(toolName) {
 		var err error
@@ -572,10 +576,6 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 		if err != nil {
 			return fmt.Errorf("capture workspace subject revision for %s: %w", toolName, err)
 		}
-	}
-	organization := r.loadTaskOrganization(ctx, task)
-	if err := validateAgentExecutionScope(run, task, workspace, organization); err != nil {
-		return fmt.Errorf("invalid agent execution scope: %w", err)
 	}
 	req := capability.Request{
 		ActorType:    "agent",

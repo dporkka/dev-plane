@@ -243,6 +243,10 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusBadRequest, errors.New("title is required"))
 		return
 	}
+	if err := authz.AuthorizeRepositoryForProject(ctx, h.db, user, req.RepositoryID, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
 
 	task, err := h.insertTask(ctx, createTaskOptions{
 		ProjectID:    projectID,

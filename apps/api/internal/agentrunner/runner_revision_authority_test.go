@@ -143,7 +143,7 @@ func TestAuthorizeToolFailsClosedWhenMutationRevisionCannotBeCaptured(t *testing
 	err := runner.authorizeTool(
 		context.Background(),
 		run,
-		nil,
+		&models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1"},
 		workspace,
 		"",
 		"write_file",

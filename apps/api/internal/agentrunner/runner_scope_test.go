@@ -1,9 +1,15 @@
 package agentrunner
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/ai-dev-control-plane/api/internal/capability"
 	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/policies"
+	"github.com/ai-dev-control-plane/runtimes"
 )
 
 func TestValidateAgentExecutionScope(t *testing.T) {
@@ -61,5 +67,27 @@ func TestValidateAgentExecutionScope(t *testing.T) {
 				t.Fatalf("err=%v reject=%v", err, tt.reject)
 			}
 		})
+	}
+}
+
+// An invalid scope must be rejected before any revision-capture command,
+// including git add -A and configured Git filters, is executed.
+func TestAuthorizeToolRejectsMismatchedScopeBeforeRevisionCapture(t *testing.T) {
+	db := openAuthorityConsumptionDB(t)
+	provider := &fakeRuntimeProvider{commandResult: &runtimes.CommandResult{Stdout: "tree-hash", ExitCode: 0}}
+	r := &Runner{db: db, kernel: capability.NewKernel(policies.DefaultEngine(), nil, nil, nil),
+		runtimes: map[string]runtimes.Provider{"docker": provider}}
+	session := "sandbox"
+	workspace := &models.Workspace{ID: "workspace-A", RepositoryID: "repo-A",
+		RuntimeProvider: "docker", RuntimeSessionID: &session}
+	run := &models.AgentRun{ID: "run-A", TaskID: "another-task", AgentRole: "implementer"}
+	task := &models.Task{ID: "task-A", ProjectID: "project-1", RepositoryID: "repo-A"}
+	err := r.authorizeTool(context.Background(), run, task, workspace, "", "write_file",
+		json.RawMessage(`{"path":"a.go","content":"hi"}`))
+	if err == nil || !strings.Contains(err.Error(), "invalid agent execution scope") {
+		t.Fatalf("missing scope validation: %v", err)
+	}
+	if len(provider.commands) != 0 {
+		t.Fatalf("revision capture executed before scope check: %d", len(provider.commands))
 	}
 }

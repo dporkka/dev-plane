@@ -157,6 +157,8 @@ func TestCreateTask(t *testing.T) {
 	userID := "user-1"
 
 	expectAuthorizeProject(mock, projectID)
+	mock.ExpectQuery("SELECT r.project_id").WithArgs("repo-1", testOrgID).
+		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow(projectID))
 	mock.ExpectExec("INSERT INTO tasks").
 		WithArgs(sqlmock.AnyArg(), projectID, "repo-1", userID, "web", nil, "Build Feature", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -770,5 +772,27 @@ func TestGetTask_CrossOrgDenied(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+// A cross-project repository reference must fail before inserting a task.
+func TestCreateTaskRejectsRepositoryFromAnotherProject(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	expectAuthorizeProject(mock, "project-A")
+	mock.ExpectQuery("SELECT r.project_id").WithArgs("repo-B", testOrgID).
+		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).AddRow("project-B"))
+	body := bytes.NewBufferString(`{"repository_id":"repo-B","title":"not allowed"}`)
+	req := httptest.NewRequest(http.MethodPost, "/projects/project-A/tasks", body)
+	route := chi.NewRouteContext()
+	route.URLParams.Add("projectID", "project-A")
+	req = req.WithContext(withTestUser(context.WithValue(req.Context(), chi.RouteCtxKey, route)))
+	rec := httptest.NewRecorder()
+	h.CreateTask(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status=%d want 404; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }
