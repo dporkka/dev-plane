@@ -141,10 +141,10 @@ func TestAuthorizeToolUsesExactApprovedGrantInsteadOfRequestingApprovalAgain(t *
 		},
 	}
 
-	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
-	task := &models.Task{ID: "task-1"}
+	run := &models.AgentRun{ID: "run-1", TaskID: "task-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1"}
 	sessionID := "runtime-1"
-	workspace := &models.Workspace{ID: "workspace-1", RuntimeProvider: "docker", RuntimeSessionID: &sessionID}
+	workspace := &models.Workspace{ID: "workspace-1", RepositoryID: "repo-1", RuntimeProvider: "docker", RuntimeSessionID: &sessionID}
 	input := json.RawMessage(`{"path":"src/main.go","content":"package main"}`)
 
 	grant := execution.Grant{
@@ -188,6 +188,10 @@ func openAuthorityConsumptionDB(t *testing.T) *sql.DB {
 	`)
 	if err != nil {
 		t.Fatalf("create approvals table: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL);
+		INSERT INTO projects (id, organization_id) VALUES ('project-1','org-1');`); err != nil {
+		t.Fatalf("create project ownership fixture: %v", err)
 	}
 	return db
 }

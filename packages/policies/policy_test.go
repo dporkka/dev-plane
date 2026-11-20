@@ -8,7 +8,7 @@ import (
 )
 
 // TestEffect_MoreRestrictiveThan tests all effect combinations for the restriction ordering.
-// Order: allow < ask < deny < admin_only
+// Order: allow < ask < admin_only < deny
 func TestEffect_MoreRestrictiveThan(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -32,15 +32,15 @@ func TestEffect_MoreRestrictiveThan(t *testing.T) {
 		{"deny vs ask", EffectDeny, EffectAsk, true},
 		{"admin_only vs ask", EffectAdminOnly, EffectAsk, true},
 
-		// deny is third
+		// deny is most restrictive
 		{"allow vs deny", EffectAllow, EffectDeny, false},
 		{"ask vs deny", EffectAsk, EffectDeny, false},
-		{"admin_only vs deny", EffectAdminOnly, EffectDeny, true},
+		{"admin_only vs deny", EffectAdminOnly, EffectDeny, false},
 
-		// admin_only is most restrictive
+		// admin_only is third
 		{"allow vs admin_only", EffectAllow, EffectAdminOnly, false},
 		{"ask vs admin_only", EffectAsk, EffectAdminOnly, false},
-		{"deny vs admin_only", EffectDeny, EffectAdminOnly, false},
+		{"deny vs admin_only", EffectDeny, EffectAdminOnly, true},
 	}
 
 	for _, tt := range tests {
@@ -283,11 +283,11 @@ func TestEngine_Evaluate_WithWorkspaceConditions(t *testing.T) {
 		expected  Effect
 	}{
 		{
-			name:      "secret read with production workspace provider",
+			name:      "runtime provider is not a secret scope",
 			workspace: &models.Workspace{RuntimeProvider: "production"},
 			resource:  "secret",
 			action:    "read",
-			expected:  EffectDeny,
+			expected:  EffectAllow,
 		},
 		{
 			name:      "secret read with staging workspace provider -> allow (no matching deny policy)",
@@ -311,12 +311,12 @@ func TestEngine_Evaluate_WithWorkspaceConditions(t *testing.T) {
 			expected:  EffectAsk,
 		},
 		{
-			name:      "deploy with production environment condition",
+			name:      "task risk level is not deployment environment",
 			task:      &models.Task{RiskLevel: models.RiskLevel("production")},
 			workspace: nil,
 			resource:  "deploy",
 			action:    "execute",
-			expected:  EffectAdminOnly,
+			expected:  EffectAllow,
 		},
 	}
 
@@ -344,8 +344,8 @@ func TestDefaultEngine(t *testing.T) {
 	engine := DefaultEngine()
 	policies := engine.Policies()
 
-	if len(policies) != 22 {
-		t.Errorf("DefaultEngine() loaded %d policies, want 22", len(policies))
+	if len(policies) != 21 {
+		t.Errorf("DefaultEngine() loaded %d policies, want 21", len(policies))
 	}
 
 	// Verify we have the expected policy names
@@ -371,7 +371,6 @@ func TestDefaultEngine(t *testing.T) {
 		"deny_destructive_db":     false,
 		"deny_large_delete":       false,
 		"deny_push_main":          false,
-		"deny_production_deploy":  false,
 
 		// Admin-only policies
 		"admin_deploy_prod":     false,
@@ -490,5 +489,89 @@ func TestEngine_EvaluateWithDetails(t *testing.T) {
 				t.Errorf("matched %d policies, expected at least %d", len(matched), tt.minMatched)
 			}
 		})
+	}
+}
+
+// TestExplicitDenyOverridesAdministrativeApproval ensures no administrative
+// approval can turn a hard deny into an executable grant.
+func TestExplicitDenyOverridesAdministrativeApproval(t *testing.T) {
+	engine := NewEngine([]Policy{
+		{Name: "admin_gate", ResourceType: "deploy", Action: "execute", Effect: EffectAdminOnly, Priority: 900},
+		{Name: "hard_deny", ResourceType: "deploy", Action: "execute", Effect: EffectDeny, Priority: 1},
+	})
+	req := EvaluationRequest{ResourceType: "deploy", Action: "execute"}
+	for _, eval := range []struct {
+		name string
+		run  func() (Effect, error)
+	}{
+		{"Evaluate", func() (Effect, error) { return engine.Evaluate(context.Background(), req, EffectAsk) }},
+		{"EvaluateMany", func() (Effect, error) {
+			return engine.EvaluateMany(context.Background(), req, []ActionPair{{ResourceType: "deploy", Action: "execute"}})
+		}},
+	} {
+		t.Run(eval.name, func(t *testing.T) {
+			got, err := eval.run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != EffectDeny {
+				t.Fatalf("got %s; explicit deny must win", got)
+			}
+		})
+	}
+}
+
+func TestEnvironmentDoesNotComeFromTaskRiskLevel(t *testing.T) {
+	engine := NewEngine([]Policy{{
+		Name: "production_admin_only", ResourceType: "deploy", Action: "execute",
+		Effect: EffectAdminOnly, Conditions: map[string]any{"environment": "production"},
+	}})
+	req := EvaluationRequest{
+		ResourceType: "deploy", Action: "execute",
+		Task: &models.Task{RiskLevel: models.RiskLevel("production")},
+	}
+	got, err := engine.Evaluate(context.Background(), req, EffectAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != EffectAllow {
+		t.Fatalf("risk level must not set deployment environment; got %s", got)
+	}
+	req.Details = map[string]any{"environment": "production"}
+	got, err = engine.Evaluate(context.Background(), req, EffectAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != EffectAdminOnly {
+		t.Fatalf("explicit production environment must match; got %s", got)
+	}
+}
+
+func TestWorkspaceBranchCannotBeOverriddenByRequestDetails(t *testing.T) {
+	engine := DefaultEngine()
+	got, err := engine.Evaluate(context.Background(), EvaluationRequest{
+		ResourceType: "git", Action: "push",
+		Workspace: &models.Workspace{Branch: "main"},
+		Details:   map[string]any{"branch": "feature/pretend-safe"},
+	}, EffectAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != EffectDeny {
+		t.Fatalf("push to main must be denied despite forged branch detail; got %s", got)
+	}
+}
+
+func TestSecretScopeDoesNotComeFromRuntimeProvider(t *testing.T) {
+	engine := DefaultEngine()
+	got, err := engine.Evaluate(context.Background(), EvaluationRequest{
+		ResourceType: "secret", Action: "read",
+		Workspace: &models.Workspace{RuntimeProvider: "production"},
+	}, EffectAllow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != EffectAllow {
+		t.Fatalf("runtime provider is not a secret scope; got %s", got)
 	}
 }

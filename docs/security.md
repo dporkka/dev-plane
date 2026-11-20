@@ -121,7 +121,6 @@ deny_production_secrets  secret  read          -> deny   (scope == "production")
 deny_destructive_db      command destructive_db -> deny
 deny_large_delete        file    delete        -> deny   (min_size_mb >= 10)
 deny_push_main           git     push          -> deny   (branch == "main")
-deny_production_deploy   deploy  *             -> deny   (environment == "production")
 
 # Admin-only: sensitive operations
 admin_deploy_prod        deploy  *             -> admin_only  (environment == "production")
@@ -133,7 +132,7 @@ admin_modify_policies    policy  *             -> admin_only
 
 ### Policy Evaluation Order
 
-Policies are evaluated by finding all matching rules and returning the most restrictive effect (`admin_only` > `deny` > `ask` > `allow`). If no rule matches, the kernel's default (`ask`) is used. RBAC is checked first; `ask` and `admin_only` require approval or elevated privileges.
+Policies are evaluated by finding all matching rules and returning the most restrictive effect (`deny` > `admin_only` > `ask` > `allow`). If no rule matches, the kernel's default (`ask`) is used. RBAC is checked first; `ask` and `admin_only` require approval or elevated privileges.
 
 ## Role-Based Access Control (RBAC)
 

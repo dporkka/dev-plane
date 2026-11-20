@@ -574,6 +574,9 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 		}
 	}
 	organization := r.loadTaskOrganization(ctx, task)
+	if err := validateAgentExecutionScope(run, task, workspace, organization); err != nil {
+		return fmt.Errorf("invalid agent execution scope: %w", err)
+	}
 	req := capability.Request{
 		ActorType:    "agent",
 		AgentRole:    run.AgentRole,

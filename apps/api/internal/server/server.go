@@ -137,7 +137,7 @@ func (s *Server) routes() {
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
-			r.Use(appmiddleware.Auth(s.config.JWTSecret, s.logger))
+			r.Use(appmiddleware.AuthWithMembership(s.config.JWTSecret, s.logger, s.db))
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)
