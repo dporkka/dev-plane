@@ -136,16 +136,37 @@ workload authentication contract rather than fabricating user claims.
 Auditable user/agent identity must be resolved again before delivery to
 prevent writing a response for a revoked or completed run.
 
-`session_resolver_test.go` includes coverage for successful binding,
-missing claims, missing run context, wrong tenant/run, no active run,
-and database failures. The tests have been formatted but **have not
-completed** in the current Fedora environment: Go's telemetry counter
-mmap repeatedly crashes with SIGBUS, accompanied by temp-filesystem
-quota exhaustion. This is a verification blocker; no merge or production
-activation is authorized from the unverified tests.
+`session_resolver_test.go` covers successful binding, missing claims,
+missing run scope, tenant/run mismatch, absent active runs and database
+failures. Focused tests passed after using a worktree-local Go telemetry
+configuration with mode `off`; the first runs hit a Go telemetry mmap
+SIGBUS under exhausted temporary-space quotas.
 
-The older `WorkspaceBridge` writes receipts through the generic Docker
-`WriteFile` API and is still vulnerable to workspace-controlled symlink
-redirection and duplicate receipt IDs. Do not activate it until delivery
-is moved to a host-controlled read-only-mounted artifact volume or another
-atomic no-follow, create-exclusive destination and a durable replay ledger.
+The `WorkspaceBridge` now **requires** a `ReceiptStore` and refuses all
+requests if it is missing. The provided `SQLReceiptStore` uses migration
+`packages/db/migrations/025_create_agent_egress_receipts.sql` and a
+database unique constraint on `(agent_run_id, receipt_id)` to reserve
+a receipt **before** external I/O. Duplicate deliveries are rejected
+across processes; failed requests retain their reservations, and retries
+must use new IDs. A table migration is required **before** enabling the
+bridge; a missing table causes fail-closed denial.
+
+After fetching, the bridge again checks authenticated session ownership
+and the active policy revision. A revoked run or changed snapshot prevents
+delivering a previously fetched response. It cannot undo upstream I/O that
+occurred before revocation, nor provide a fully atomic revocation/delivery
+boundary when a policy changes between the final check and file write.
+
+**Critical remaining blocker:** The bridge writes receipts through Docker
+`WriteFile`, which can follow workspace-controlled symlinks. Do not activate
+it until delivery uses a host-controlled read-only-mounted artifact volume
+or an equivalent atomic no-follow, create-exclusive destination. The
+SQL receipt ledger prevents ID replay but does not address symlink attacks,
+in-flight policy races at the file-write boundary, request budgets,
+billing or production audit integration.
+
+Verification:
+- `go test -race ./internal/egresspolicy ./internal/modelrouter -count=1`
+- `go vet ./internal/egresspolicy`
+- Opt-in live test: `RUN_DOCKER_EGRESS_INTEGRATION=1` with a pre-pulled
+  `EGRESS_DOCKER_TEST_IMAGE` as documented above.
