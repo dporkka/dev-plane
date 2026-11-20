@@ -75,7 +75,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repoIDs []string
 	for rows.Next() {
@@ -113,7 +113,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer prRows.Close()
+	defer func() { _ = prRows.Close() }()
 
 	var prs []PullRequestResponse
 	for prRows.Next() {

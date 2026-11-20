@@ -45,6 +45,24 @@ configure a trusted ingress that validates and normalizes those headers, and
 add a trust-aware proxy policy before consuming them. Do not use untrusted
 forwarded headers for authentication, abuse detection, or authorization.
 
+## Agent completion replay protection
+
+Agent final responses now carry an explicit persisted marker in
+`agent_steps.tool_name` while retaining the existing `message` step type.
+If a completion update fails, the runner retries the database write a bounded
+number of times. On worker redelivery it verifies persisted step history and
+completes finalization without asking the model to run tools again. Missing or
+unreadable history blocks execution rather than assuming an empty history.
+
+**Operational limitations:** This protects runs whose terminal step was saved
+by the updated runner. Drain or independently reconcile pre-upgrade in-flight
+runs before rollout; previous unmarked final-response messages cannot be
+safely distinguished from ordinary messages. Database unavailability can leave
+runs nonterminal until redelivery, and completed-event publication is not yet
+backed by a transactional outbox. Also, this change does not introduce an
+exclusive distributed execution lease; concurrent deliveries before a final
+response is stored still require a separate concurrency safeguard.
+
 ## Agent Safety
 
 The following constraints define the production security target. Agent-run tool calls and dangerous HTTP workspace actions are evaluated by the capability kernel, and Docker-backed runtime-provider operations route through the same authorization paths before execution.

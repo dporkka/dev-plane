@@ -12,9 +12,10 @@ import (
 
 	"github.com/ai-dev-control-plane/models"
 )
-func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.AgentStep {
+
+func (r *Runner) loadRunHistory(ctx context.Context, runID string) ([]models.AgentStep, error) {
 	if r.db == nil || strings.TrimSpace(runID) == "" {
-		return nil
+		return nil, fmt.Errorf("run history identity or database unavailable")
 	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, agent_run_id, step_number, step_type, status, content,
@@ -25,10 +26,9 @@ func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.Agen
 		ORDER BY step_number ASC, created_at ASC
 	`, runID)
 	if err != nil {
-		r.logger.Warn("failed to load run history", "run_id", runID, "error", err)
-		return nil
+		return nil, fmt.Errorf("query run history: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var history []models.AgentStep
 	for rows.Next() {
@@ -40,8 +40,7 @@ func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.Agen
 			&content, &toolName, &toolInput, &toolOutput, &command, &commandOutput,
 			&exitCode, &filePath, &diff, &step.Cost, &step.LatencyMs, &step.CreatedAt,
 		); err != nil {
-			r.logger.Warn("failed to scan run history step", "run_id", runID, "error", err)
-			return history
+			return nil, fmt.Errorf("scan run history step: %w", err)
 		}
 		if content.Valid {
 			step.Content = &content.String
@@ -74,9 +73,9 @@ func (r *Runner) loadRunHistory(ctx context.Context, runID string) []models.Agen
 		history = append(history, step)
 	}
 	if err := rows.Err(); err != nil {
-		r.logger.Warn("failed while loading run history", "run_id", runID, "error", err)
+		return nil, fmt.Errorf("iterate run history: %w", err)
 	}
-	return history
+	return history, nil
 }
 
 func (r *Runner) persistStep(ctx context.Context, step *models.AgentStep) error {
@@ -339,7 +338,7 @@ func (r *Runner) loadMailboxMessages(ctx context.Context, taskID, agentRole stri
 		r.logger.Warn("failed to load mailbox messages", "task_id", taskID, "agent_role", agentRole, "error", err)
 		return nil
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var messages []models.AgentMessage
 	for rows.Next() {

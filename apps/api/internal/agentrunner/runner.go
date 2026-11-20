@@ -113,6 +113,12 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		return fmt.Errorf("load agent run %s: %w", runID, err)
 	}
 
+	// Worker redelivery is at-least-once. A terminal run must not re-run
+	// the model or tools, even if a duplicate execution message arrives.
+	if run.Status == models.AgentRunStatusCompleted {
+		return nil
+	}
+
 	// 2. Load task and workspace
 	task, err := r.loadTask(ctx, run.TaskID)
 	if err != nil {
@@ -166,14 +172,20 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 5. Agent loop
 	maxSteps := 50
-	history := r.loadRunHistory(ctx, run.ID)
+	history, err := r.loadRunHistory(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("load run history: %w", err)
+	}
 	state := seedRunState(run, history)
 	startTime := time.Now()
 	mailboxMessages := r.loadMailboxMessages(ctx, task.ID, run.AgentRole, 20)
 
 	nextStepNum := nextStepNumber(history)
 	maxStepNum := nextStepNum + maxSteps - 1
-	for stepNum := nextStepNum; stepNum <= maxStepNum; stepNum++ {
+	// A final response was already written by a previous delivery. Resume
+	// finalization only: never ask the model for another action or tool.
+	resumeFinalization := hasDurableFinalResponse(history)
+	for stepNum := nextStepNum; stepNum <= maxStepNum && !resumeFinalization; stepNum++ {
 		// Check for context cancellation
 		if ctx.Err() != nil {
 			return r.failRun(ctx, runID, fmt.Sprintf("context canceled: %v", ctx.Err()))
@@ -250,6 +262,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 			if content == "" {
 				content = "Agent reported completion."
 			}
+			terminalMarker := "final_response"
 			step := &models.AgentStep{
 				ID:         uuid.New().String(),
 				AgentRunID: runID,
@@ -257,9 +270,10 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 				StepType:   models.AgentStepTypeMessage,
 				Status:     models.AgentStepStatusCompleted,
 				Content:    &content,
+				ToolName:   &terminalMarker,
 			}
 			if err := r.persistStep(ctx, step); err != nil {
-				r.logger.Error("failed to persist final response step", "error", err, "step", stepNum)
+				return fmt.Errorf("persist final response: %w", err)
 			}
 			_ = r.streamStep(ctx, step, "completed")
 			history = append(history, *step)
@@ -338,8 +352,8 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	if err := r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state); err != nil {
-		return fmt.Errorf("persist agent run completion: %w", err)
+	if err := r.persistRunCompletion(ctx, runID, summary, state); err != nil {
+		return err
 	}
 
 	// Publish run.completed event
@@ -741,6 +755,20 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
+}
+
+// hasDurableFinalResponse accepts only a successfully persisted terminal
+// message, never an ordinary agent message or handoff. The marker is stored in
+// the existing agent_steps.tool_name column without a database migration.
+func hasDurableFinalResponse(history []models.AgentStep) bool {
+	for _, step := range history {
+		if step.StepType == models.AgentStepTypeMessage &&
+			step.Status == models.AgentStepStatusCompleted &&
+			step.ToolName != nil && *step.ToolName == "final_response" {
+			return true
+		}
+	}
+	return false
 }
 
 func nextStepNumber(history []models.AgentStep) int {

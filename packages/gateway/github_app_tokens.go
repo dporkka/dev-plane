@@ -117,7 +117,7 @@ func (p *GitHubAppTokenSource) request(ctx context.Context, method, path, appJWT
 	if err != nil {
 		return fmt.Errorf("GitHub App request failed: %w", err)
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// Never echo remote bodies: GitHub/other proxies can include credentials.
 		return fmt.Errorf("GitHub App request rejected (HTTP %d)", response.StatusCode)

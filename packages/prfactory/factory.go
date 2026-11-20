@@ -250,7 +250,7 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 
 	// Task section
 	b.WriteString("## Task\n\n")
-	b.WriteString(fmt.Sprintf("**%s**\n\n", task.Title))
+	_, _ = fmt.Fprintf(&b, "**%s**\n\n", task.Title)
 	if task.Description != nil && *task.Description != "" {
 		b.WriteString(*task.Description)
 		b.WriteString("\n\n")
@@ -267,17 +267,17 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 
 	// Changes
 	b.WriteString("## Changes\n\n")
-	b.WriteString(fmt.Sprintf("- **Files changed:** %d\n", report.DiffSummary.FilesChanged))
-	b.WriteString(fmt.Sprintf("- **Insertions:** %d\n", report.DiffSummary.Insertions))
-	b.WriteString(fmt.Sprintf("- **Deletions:** %d\n\n", report.DiffSummary.Deletions))
+	_, _ = fmt.Fprintf(&b, "- **Files changed:** %d\n", report.DiffSummary.FilesChanged)
+	_, _ = fmt.Fprintf(&b, "- **Insertions:** %d\n", report.DiffSummary.Insertions)
+	_, _ = fmt.Fprintf(&b, "- **Deletions:** %d\n\n", report.DiffSummary.Deletions)
 
 	if len(report.DiffSummary.Files) > 0 {
 		b.WriteString("### Files\n\n")
 		b.WriteString("| File | Status | +/- |\n")
 		b.WriteString("|------|--------|-----|\n")
 		for _, f := range report.DiffSummary.Files {
-			b.WriteString(fmt.Sprintf("| `%s` | %s | +%d/-%d |\n",
-				f.Path, f.Status, f.Insertions, f.Deletions))
+			_, _ = fmt.Fprintf(&b, "| `%s` | %s | +%d/-%d |\n",
+				f.Path, f.Status, f.Insertions, f.Deletions)
 		}
 		b.WriteString("\n")
 	}
@@ -306,18 +306,18 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 			default:
 				icon = "\U0001F518" // info
 			}
-			b.WriteString(fmt.Sprintf("%s **%s** (%s) - %s\n\n", icon, finding.Severity, finding.Category, finding.Message))
+			_, _ = fmt.Fprintf(&b, "%s **%s** (%s) - %s\n\n", icon, finding.Severity, finding.Category, finding.Message)
 			if finding.Suggestion != "" {
-				b.WriteString(fmt.Sprintf("   > %s\n\n", finding.Suggestion))
+				_, _ = fmt.Fprintf(&b, "   > %s\n\n", finding.Suggestion)
 			}
 		}
 	}
 
 	// Test Results
 	b.WriteString("## Test Results\n\n")
-	b.WriteString(fmt.Sprintf("- **Test Coverage:** %s\n", report.TestCoverage))
-	b.WriteString(fmt.Sprintf("- **Risk Level:** %s\n", report.RiskLevel))
-	b.WriteString(fmt.Sprintf("- **Approvable:** %v\n\n", report.Approvable))
+	_, _ = fmt.Fprintf(&b, "- **Test Coverage:** %s\n", report.TestCoverage)
+	_, _ = fmt.Fprintf(&b, "- **Risk Level:** %s\n", report.RiskLevel)
+	_, _ = fmt.Fprintf(&b, "- **Approvable:** %v\n\n", report.Approvable)
 
 	// Security Review
 	b.WriteString("## Security Review\n\n")
@@ -329,10 +329,10 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 	if report.RiskLevel == "low" {
 		b.WriteString("No significant risks identified.\n\n")
 	} else {
-		b.WriteString(fmt.Sprintf("**Risk Level: %s**\n\n", strings.ToUpper(report.RiskLevel)))
+		_, _ = fmt.Fprintf(&b, "**Risk Level: %s**\n\n", strings.ToUpper(report.RiskLevel))
 		for _, finding := range report.Findings {
 			if finding.Severity == "critical" || finding.Severity == "high" {
-				b.WriteString(fmt.Sprintf("- %s\n", finding.Message))
+				_, _ = fmt.Fprintf(&b, "- %s\n", finding.Message)
 			}
 		}
 		b.WriteString("\n")
@@ -348,15 +348,15 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 	if run.Provider != nil {
 		provider = *run.Provider
 	}
-	b.WriteString(fmt.Sprintf("- **Model:** %s\n", model))
-	b.WriteString(fmt.Sprintf("- **Provider:** %s\n", provider))
-	b.WriteString(fmt.Sprintf("- **Cost:** $%.4f\n", run.TotalCost))
-	b.WriteString(fmt.Sprintf("- **Tokens:** %d prompt + %d completion = %d total\n\n",
-		run.PromptTokens, run.CompletionTokens, run.PromptTokens+run.CompletionTokens))
+	_, _ = fmt.Fprintf(&b, "- **Model:** %s\n", model)
+	_, _ = fmt.Fprintf(&b, "- **Provider:** %s\n", provider)
+	_, _ = fmt.Fprintf(&b, "- **Cost:** $%.4f\n", run.TotalCost)
+	_, _ = fmt.Fprintf(&b, "- **Tokens:** %d prompt + %d completion = %d total\n\n",
+		run.PromptTokens, run.CompletionTokens, run.PromptTokens+run.CompletionTokens)
 
 	// Rollback
 	b.WriteString("## Rollback\n\n")
-	b.WriteString(fmt.Sprintf("To revert this change:\n```bash\ngit revert %s-branch\n```\n\n", shortID(task.ID, 8)))
+	_, _ = fmt.Fprintf(&b, "To revert this change:\n```bash\ngit revert %s-branch\n```\n\n", shortID(task.ID, 8))
 
 	// Approval Record
 	b.WriteString("## Approval Record\n\n")
@@ -364,7 +364,7 @@ func (f *Factory) BuildPRBody(task *models.Task, spec *models.TaskSpec, report *
 
 	// Run Timeline
 	b.WriteString("## Run Timeline\n\n")
-	b.WriteString(fmt.Sprintf("[View full run timeline](/runs/%s)\n", run.ID))
+	_, _ = fmt.Fprintf(&b, "[View full run timeline](/runs/%s)\n", run.ID)
 
 	return b.String()
 }
