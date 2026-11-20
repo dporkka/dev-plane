@@ -3,7 +3,6 @@ package egresspolicy
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"strings"
 
 	"github.com/ai-dev-control-plane/api/internal/auth"
