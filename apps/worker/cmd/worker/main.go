@@ -57,6 +57,7 @@ func main() {
 		schedulerMaxParallel = flag.Int("scheduler-max-parallel", envIntOrDefault("SCHEDULER_MAX_PARALLEL", 2), "Maximum concurrently admitted scheduler-enabled runs per worker")
 		schedulerCPU         = flag.Float64("scheduler-cpu", envFloatOrDefault("SCHEDULER_CPU", 4), "Scheduler CPU capacity units")
 		schedulerMemoryMB    = flag.Int("scheduler-memory-mb", envIntOrDefault("SCHEDULER_MEMORY_MB", 8192), "Scheduler memory capacity in MiB")
+		runLeaseEnabled      = flag.Bool("run-lease-enabled", os.Getenv("DEV_PLANE_RUN_LEASE_ENABLED") == "1", "Enable opt-in run execution lease liveness (requires migration 025)")
 	)
 	flag.Parse()
 
@@ -154,6 +155,16 @@ func main() {
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
 		WithReviewer(reviewService)
+	if *runLeaseEnabled {
+		lease := handlers.NewRunLeaseManager(database.DB, logger)
+		if err := lease.CheckSchema(ctx); err != nil {
+			logger.Error("run lease enabled before schema migration", "error", err)
+			os.Exit(1)
+		}
+		runHandler.WithRunLease(lease)
+		go lease.RunReviewSweep(ctx, time.Minute)
+		logger.Info("run liveness leases enabled (expired runs flagged for manual review; no replay)")
+	}
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)

@@ -101,6 +101,24 @@ Pending -> Queued -> Running -> Completed
 | `failed` | One or more steps failed |
 | `cancelled` | Run was cancelled by user |
 
+### Opt-in execution liveness (migration 025)
+
+For the worker, set `DEV_PLANE_RUN_LEASE_ENABLED=1` **only after applying migration 025**. The default is disabled, preserving current behavior until migration, operational rollout and review are complete. A startup schema check fails closed if this is enabled prematurely.
+
+When enabled, every accepted `runs.triggered` execution gets a unique worker execution token and a 90-second lease; the executing worker renews it every 20 seconds. A token cannot be stolen, even after expiry, because an external tool may still be performing irreversible side effects. Losing the token or failing to renew cancels the execution context. Cancellation is cooperative: nonresponsive external tools may continue, so lease expiry is **never proof that the process is dead**.
+
+Each worker runs a one-minute advisory sweep that atomically sets `agent_runs.recovery_review_required_at` on `running` or `admitting` runs with an expired lease. The sweep never changes status, requeues a run, publishes an artificial failure event, or replays a tool call. It is bounded and idempotent, and its only automatic effect is a database marker plus a warning in worker logs. Investigate with:
+
+```sql
+SELECT id, task_id, status, execution_lease_expires_at,
+       execution_heartbeat_at, recovery_review_required_at
+FROM agent_runs
+WHERE recovery_review_required_at IS NOT NULL
+ORDER BY recovery_review_required_at DESC;
+```
+
+**Caution:** Before resuming or retrying a flagged run, inspect the actual worker process, durable steps, workspace and external side effects. There is not yet a cross-worker fencing token enforced at every tool boundary or a durable event outbox. Clock skew between workers and database may affect expiry; use time synchronization. This is liveness instrumentation and **manual reconciliation**, not automatic failover, exactly-once execution or guaranteed terminal-state recovery. Issue #222 remains open until that end-to-end protocol exists.
+
 ### Retry Policy
 
 > **Not implemented yet.** The worker does not apply an application-level retry policy; only NATS-level redelivery of unacknowledged messages is used.

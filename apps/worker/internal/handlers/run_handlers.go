@@ -32,6 +32,7 @@ type RunHandler struct {
 	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
+	lease     *RunLeaseManager
 }
 
 // RunExecutor executes queued agent runs.
@@ -70,6 +71,13 @@ func (h *RunHandler) WithRunExecutor(executor RunExecutor) *RunHandler {
 
 func (h *RunHandler) WithRunAdmission(admission RunAdmission) *RunHandler {
 	h.admission = admission
+	return h
+}
+
+// WithRunLease enables opt-in, liveness-only execution leases. An expired
+// lease is marked for review and is never reassigned automatically.
+func (h *RunHandler) WithRunLease(lease *RunLeaseManager) *RunHandler {
+	h.lease = lease
 	return h
 }
 
@@ -478,7 +486,19 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 			return fmt.Errorf("%w: run %s not admitted: %s", ErrRunAdmissionDeferred, event.RunID, reason)
 		}
 	}
-	err := h.executor.ExecuteRun(ctx, event.RunID)
+	var err error
+	if h.lease != nil {
+		err = h.lease.Execute(ctx, event.RunID, func(execCtx context.Context) error {
+			return h.executor.ExecuteRun(execCtx, event.RunID)
+		})
+	} else {
+		err = h.executor.ExecuteRun(ctx, event.RunID)
+	}
+	// An execution lease owned by another worker cannot be released by this
+	// subscriber, even when scheduler admission was otherwise allowed.
+	if errors.Is(err, ErrRunLeaseUnavailable) {
+		return err
+	}
 	if h.admission != nil {
 		if releaseErr := h.admission.ReleaseRun(ctx, event.RunID); releaseErr != nil {
 			if err == nil {
