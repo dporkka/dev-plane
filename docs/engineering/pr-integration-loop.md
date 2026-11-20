@@ -21,7 +21,28 @@ A token must have **read-only** Pull requests/Contents/Checks access to the sele
 
 **Terminology:** cohort totals count PRs *created in the lookback*, classified by their current state; they are not a throughput metric for PRs merged during the lookback. `All open` includes older PRs from all creation dates. `Stale` means no `updated_at` activity in the selected interval; it does not imply safe closure. Checks are inspected at the recorded PR head SHA of the top `--inspect` items; because the report does not re-fetch the PR after inspection, a moving PR head can make a snapshot stale. `passing-observed-only` does not establish branch protection, mandatory contexts, Woodpecker, CodeQL, test correctness, human approval, staging smoke tests, or production deployment. `no-evidence`, `pending`, `failed`, and `incomplete` are never passing states. `not-inspected` means no CI calls were made for that PR. Results can change immediately after snapshot collection.
 
-**Read-only CI drilldowns (draft PR #209):** Inspected items include up to five non-success GitHub check runs and commit statuses, sorted by observed outcome priority, with provider detail links when they are well-formed HTTPS URLs. The JSON includes `attentionChecks`, `attentionTotal`, and `evidenceComplete`. These are status observations, not a verified first failed executable step or a root-cause determination. Incomplete/missing pagination counts, including truncated combined commit statuses, fail closed to `incomplete-evidence`; the drilldown is then withheld. The combined-status request explicitly fetches up to 100 statuses. No action is taken on a provider or repository.
+**Read-only CI drilldowns (merged PR #209):** Inspected items include up to five non-success GitHub check runs and commit statuses, sorted by observed outcome priority, with provider detail links when they are well-formed HTTPS URLs. The JSON includes `attentionChecks`, `attentionTotal`, and `evidenceComplete`. These are status observations, not a verified first failed executable step or a root-cause determination. Incomplete/missing pagination counts, including truncated combined commit statuses, fail closed to `incomplete-evidence`; the drilldown is then withheld. The combined-status request explicitly fetches up to 100 statuses. No action is taken on a provider or repository.
+
+## Advisory cross-repository check co-occurrences
+
+The portfolio report includes a sharedFailureSignals object (signals and total)
+in JSON and a human-readable cross-repository section in Markdown. A signal
+requires the same **provider status source, exact check name and failed
+conclusion** in at least two distinct repositories among the PRs inspected by
+this bounded report. Multiple PRs in one repository do not manufacture an
+additional affected repository. Only observed failure/error/timeout/startup/
+action-required outcomes participate. Canceled, pending, missing, uninspected,
+and incomplete evidence do not yield positive correlation signals.
+
+The displayed groups are limited to ten, sorted by affected repository count.
+Each PR contributes only its existing five highest-priority attention checks;
+this is **sampled coverage**, not exhaustive failure discovery. Counts include
+only observed PRs within that bounded subset. Even a shared startup_failure
+check name does not prove a common runner, cause, infrastructure incident, or
+dependency. Review actual provider execution logs and runner assignments
+before acting. Re-fetch candidate PR heads if a release decision is involved.
+This report remains read-only, does not create incidents, and grants no merge
+or deployment authority.
 
 ## Advisory CI diagnosis in portfolio reports
 
