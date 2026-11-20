@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -50,9 +49,11 @@ func TestGitHubCallbackExistingUserKeepsStoredOrganization(t *testing.T) {
 		}
 	}))
 	defer svc.Close()
-	mock.ExpectQuery("SELECT id, organization_id, role FROM users").
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM users u").
 		WithArgs("1234").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "role"}).AddRow("user-1", "org-from-db", "member"))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "role", "deleted_at", "org_deleted_at"}).AddRow("user-1", "org-from-db", "member", nil, nil))
+	mock.ExpectCommit()
 	cfg := &config.Config{GitHubClientID: "test-client", GitHubSecret: "test-secret", JWTSecret: "01234567890123456789012345678901"}
 	h := NewGitHubAuthHandler(db, cfg)
 	h.oauth.Endpoint.TokenURL = svc.URL + "/token"
@@ -103,16 +104,17 @@ func TestGitHubCallbackNewIdentityCannotClaimExistingSlug(t *testing.T) {
 		}
 	}))
 	defer svc.Close()
-	mock.ExpectQuery("SELECT id, organization_id, role FROM users").
-		WithArgs("1234").WillReturnError(sql.ErrNoRows)
-	mock.ExpectQuery("SELECT id FROM organizations WHERE slug").
-		WithArgs("new-github-login").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("existing-foreign-org"))
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM users u").
+		WithArgs("1234").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "role", "deleted_at", "org_deleted_at"}))
 	mock.ExpectExec("INSERT INTO organizations").
-		WithArgs(sqlmock.AnyArg(), "Example", "new-github-login-gh-1234", sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "Example", "github-user-1234", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO users").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "user@example.com", "Example", "", "1234", "new-github-login", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
 	cfg := &config.Config{GitHubClientID: "test-client", GitHubSecret: "test-secret", JWTSecret: "01234567890123456789012345678901"}
 	h := NewGitHubAuthHandler(db, cfg)
 	h.oauth.Endpoint.TokenURL = svc.URL + "/token"

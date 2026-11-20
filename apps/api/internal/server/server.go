@@ -69,7 +69,8 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
+	// Never trust caller-supplied forwarded-IP headers at the application edge.
+	// A trusted ingress may enforce its own peer-address normalization.
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))

@@ -209,3 +209,23 @@ func TestAuthorizeRepositoryForProjectRejectsDifferentProject(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAuthorizeRepositoryForProjectAcceptsCanonicalUUIDCasing(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	user := &auth.Claims{UserID: "user-A", OrgID: "org-A"}
+	mock.ExpectQuery("SELECT r.project_id").WithArgs("repo-A", "org-A").
+		WillReturnRows(sqlmock.NewRows([]string{"project_id"}).
+			AddRow("2ea7a10a-29e4-4bbd-9c28-d0d1f72edc3a"))
+	if err := AuthorizeRepositoryForProject(
+		context.Background(), db, user, "repo-A", "2EA7A10A-29E4-4BBD-9C28-D0D1F72EDC3A",
+	); err != nil {
+		t.Fatalf("equivalent UUIDs must authorize: %v", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

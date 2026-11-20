@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/ai-dev-control-plane/api/internal/auth"
 )
 
@@ -111,10 +113,21 @@ func AuthorizeRepositoryForProject(ctx context.Context, db *sql.DB, user *auth.C
 	if err != nil {
 		return fmt.Errorf("authorize repository for project: %w", err)
 	}
-	if actualProjectID != projectID {
+	if !sameProjectIdentifier(actualProjectID, projectID) {
 		return ErrNotFound
 	}
 	return nil
+}
+
+// sameProjectIdentifier preserves exact matches while comparing valid UUID
+// spellings by value. Invalid, non-matching IDs must not be conflated.
+func sameProjectIdentifier(actual, requested string) bool {
+	if actual == requested {
+		return true
+	}
+	actualUUID, actualErr := uuid.Parse(actual)
+	requestedUUID, requestedErr := uuid.Parse(requested)
+	return actualErr == nil && requestedErr == nil && actualUUID == requestedUUID
 }
 
 // AuthorizeTask verifies that the user's organization owns the task.

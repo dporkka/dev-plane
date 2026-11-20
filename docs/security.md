@@ -35,6 +35,16 @@ pushes refuse untrusted or rewritten origins, and Git pre-push hooks and
 credential helpers are disabled for the push subprocess. GitHub App signing
 keys should be mounted from secret storage, not stored in repositories.
 
+## HTTP Client Address Trust
+
+The API does not trust `X-Forwarded-For`, `X-Real-IP`, or
+`True-Client-IP` from arbitrary clients. In particular, it does not use
+Chi's deprecated unconditional `RealIP` middleware; the request peer address
+remains `RemoteAddr`. If a deployment needs original-client attribution,
+configure a trusted ingress that validates and normalizes those headers, and
+add a trust-aware proxy policy before consuming them. Do not use untrusted
+forwarded headers for authentication, abuse detection, or authorization.
+
 ## Agent Safety
 
 The following constraints define the production security target. Agent-run tool calls and dangerous HTTP workspace actions are evaluated by the capability kernel, and Docker-backed runtime-provider operations route through the same authorization paths before execution.

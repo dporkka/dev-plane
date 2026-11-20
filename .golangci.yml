@@ -67,6 +67,11 @@ linters:
     # v1 excluded files with a lax generated-file detector.
     generated: lax
     rules:
+      # "cancelled" is the persisted and public API task status. Renaming it
+      # would silently break existing clients and database transitions.
+      - linters:
+          - misspell
+        text: 'cancelled.*canceled'
       - path: '_test\.go'
         linters:
           - errcheck
