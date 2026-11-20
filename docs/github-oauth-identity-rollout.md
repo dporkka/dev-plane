@@ -26,10 +26,12 @@ The OAuth handler introduced by `fix/security-oauth-membership-binding-20261120`
 - Temporarily stop **OAuth callback admission** at the entrypoint; leave unrelated application traffic available if safe. Deploy the migration and update **all** login-serving replicas, verify their version and live route ownership, then reopen the callback.
 - If the unique index fails because of historical duplicate subjects, leave login admission disabled until the records can be independently reconciled. Do not weaken uniqueness or allow a fallback to username binding.
 - A newly provisioned account receives an organization slug of `github-user-<numeric GitHub ID>`. Do not change this back to a user-controlled login name for compatibility.
+- User-created organizations cannot reserve the `github-user-` slug prefix. Before enabling signup, audit existing organization slugs for collisions with this reserved namespace and reconcile any legacy collisions without granting ownership to the colliding identity.
+
 
 ## Rollback and limitations
 
 - **A binary rollback to the previous OAuth callback is unsafe once new accounts exist.** That handler can mint an organization claim based on the current username rather than the persisted membership. Disable the affected login callback and forward-fix, or perform a reviewed identity-data reconciliation before any rollback.
-- This change only corrects **new JWT issuance**; a previously issued JWT can still contain stale role/organization claims until expiration. Token revocation and live request authorization need a separate security change before strong revocation guarantees can be claimed.
+- Authenticated API routes use `AuthWithMembership` to reload the user's current organization membership and role on each request. Existing tokens do **not** preserve a removed membership or an earlier owner/admin role on those routes. JWTs remain cryptographically valid until expiry, and token-level revocation (including enforcement outside those middleware-protected routes) remains a separate limitation.
 - This patch accepts an address from GitHub's public `/user` response when present; only the fallback `/user/emails` path verifies the primary email. Do not use the email as an authorization key. Further email-verification hardening is separate.
 - Never use a production database or live customer identity data for local tests. Record the migration version, staged evidence, deployed artifact digest, and rollback decision.

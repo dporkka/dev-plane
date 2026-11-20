@@ -287,3 +287,31 @@ func TestGetOrganization_NotFound(t *testing.T) {
 		t.Errorf("unfulfilled expectations: %v", err)
 	}
 }
+
+func TestCreateOrganizationRejectsReservedGitHubIdentitySlugs(t *testing.T) {
+	for _, slug := range []string{
+		"github-user-42",
+		"github-user-123456",
+		"GITHUB-USER-42",
+		" github-user-42 ",
+	} {
+		t.Run(slug, func(t *testing.T) {
+			h, mock, cleanup := setupTest(t)
+			defer cleanup()
+			body, err := json.Marshal(CreateOrganizationRequest{Name: "Untrusted org", Slug: slug})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewReader(body))
+			req = req.WithContext(withTestUser(req.Context()))
+			rec := httptest.NewRecorder()
+			h.CreateOrganization(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("reserved slug %q accepted (status=%d): %s", slug, rec.Code, rec.Body.String())
+			}
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

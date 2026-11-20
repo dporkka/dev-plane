@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -50,7 +51,7 @@ func (h *Handler) ListOrganizations(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var orgs []Organization
 	for rows.Next() {
@@ -88,6 +89,12 @@ func (h *Handler) CreateOrganization(w http.ResponseWriter, r *http.Request) {
 
 	if req.Name == "" || req.Slug == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("name and slug are required"))
+		return
+	}
+	// The GitHub OAuth provisioner assigns this namespace using immutable
+	// provider IDs. Letting a client reserve one would block first sign-in.
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(req.Slug)), "github-user-") {
+		respond.Error(w, http.StatusBadRequest, errors.New("organization slug is reserved for GitHub identities"))
 		return
 	}
 
