@@ -21,6 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
 	"github.com/ai-dev-control-plane/api/internal/tools"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
@@ -515,6 +516,9 @@ func (r *Runner) runToolStep(ctx context.Context, stepNum int, run *models.Agent
 
 // executeTool authorizes and dispatches a tool call to WorkspaceTools.
 func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath, toolName string, input json.RawMessage) (json.RawMessage, error) {
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.authorizeTool(ctx, run, task, workspace, workspacePath, toolName, input); err != nil {
 		return nil, err
 	}
@@ -528,6 +532,9 @@ func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *mo
 
 // executeToolUnchecked dispatches a tool call after capability authorization.
 func (r *Runner) executeToolUnchecked(ctx context.Context, toolName, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return nil, err
+	}
 	switch toolName {
 	case "read_file":
 		return r.tools.ReadFile(ctx, workspacePath, input)

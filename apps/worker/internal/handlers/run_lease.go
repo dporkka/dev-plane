@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/google/uuid"
 )
 
@@ -179,6 +180,31 @@ func (m *RunLeaseManager) FlagExpired(ctx context.Context, now time.Time, limit 
 	return ids, nil
 }
 
+// CheckEffectOwner verifies an unexpired, live lease immediately before an
+// agent tool dispatch. An expired or foreign token fails closed. It is *not*
+// an external-system fencing transaction: in-flight side effects still need
+// downstream idempotency and provider enforcement.
+func (m *RunLeaseManager) CheckEffectOwner(ctx context.Context, runID, token string, now time.Time) error {
+	if m == nil || m.db == nil || runID == "" || token == "" {
+		return errors.New("run effect lease verifier unavailable")
+	}
+	var exists int
+	err := m.db.QueryRowContext(ctx, `
+        SELECT 1 FROM agent_runs
+        WHERE id=$1 AND execution_lease_token=$2
+          AND status IN ('admitting','running')
+          AND execution_lease_expires_at > $3
+          AND recovery_review_required_at IS NULL
+    `, runID, token, now).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: stale effect owner for run %s", ErrRunLeaseUnavailable, runID)
+	}
+	if err != nil {
+		return fmt.Errorf("verify run effect lease: %w", err)
+	}
+	return nil
+}
+
 // Execute holds ownership while the supplied worker runs. The same context is
 // canceled if any renewal fails. No retry or reassignment is initiated.
 func (m *RunLeaseManager) Execute(ctx context.Context, runID string, execute func(context.Context) error) error {
@@ -190,6 +216,9 @@ func (m *RunLeaseManager) Execute(ctx context.Context, runID string, execute fun
 		return err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	runCtx = execution.WithEffectGuard(runCtx, func(verifyCtx context.Context) error {
+		return m.CheckEffectOwner(verifyCtx, runID, token, time.Now().UTC())
+	})
 	done := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(m.heartbeatInterval)

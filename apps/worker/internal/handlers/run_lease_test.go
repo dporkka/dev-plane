@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/nats-io/nats.go"
 
@@ -365,5 +366,49 @@ func TestRunLeaseExecuteStillCancelsExternallyCanceledRun(t *testing.T) {
 	})
 	if !errors.Is(err, ErrRunLeaseUnavailable) {
 		t.Fatalf("user cancellation not respected: %v", err)
+	}
+}
+
+func TestRunLeaseExecuteGatesEffectsAfterTokenLoss(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		if _, err := db.Exec("UPDATE agent_runs SET status='running' WHERE id='queued'"); err != nil {
+			return err
+		}
+		if err := execution.CheckEffectGuard(ctx); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE agent_runs SET execution_lease_token='foreign' WHERE id='queued'"); err != nil {
+			return err
+		}
+		return execution.CheckEffectGuard(ctx)
+	})
+	if !errors.Is(err, ErrRunLeaseUnavailable) {
+		t.Fatalf("stale token must deny next effect: %v", err)
+	}
+}
+
+func TestRunLeaseEffectPreflightRejectsExpiredAndUnverifiableOwnership(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	now := time.Date(2026, 11, 19, 20, 0, 0, 0, time.UTC)
+	if err := lease.Acquire(context.Background(), "queued", "owner-a", now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE agent_runs SET status='running' WHERE id='queued'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(30*time.Second)); err != nil {
+		t.Fatalf("live owner denied: %v", err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(61*time.Second)); !errors.Is(err, ErrRunLeaseUnavailable) {
+		t.Fatalf("expired owner authorized: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(30*time.Second)); err == nil {
+		t.Fatal("unavailable database must deny preflight")
 	}
 }
