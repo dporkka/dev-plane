@@ -105,13 +105,7 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var ghUser struct {
-		ID        int64  `json:"id"`
-		Login     string `json:"login"`
-		Email     string `json:"email"`
-		Name      string `json:"name"`
-		AvatarURL string `json:"avatar_url"`
-	}
+	var ghUser githubOAuthProfile
 	if err := json.NewDecoder(resp.Body).Decode(&ghUser); err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to decode user profile: %w", err))
 		return
@@ -142,58 +136,16 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Find or create organization
-	var orgID string
-	err = h.db.QueryRowContext(ctx, `SELECT id FROM organizations WHERE slug = $1`, ghUser.Login).Scan(&orgID)
+	// Resolve the immutable GitHub subject to its verified persisted tenant
+	// and role. Never choose a tenant from the mutable GitHub username.
+	principal, err := resolveGitHubOAuthPrincipal(ctx, h.db, ghUser)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Create organization
-			orgID = uuid.New().String()
-			now := time.Now().UTC()
-			_, err = h.db.ExecContext(ctx, `
-				INSERT INTO organizations (id, name, slug, plan, settings, created_at, updated_at)
-				VALUES ($1, $2, $3, 'free', '{}', $4, $4)
-			`, orgID, ghUser.Name, ghUser.Login, now)
-			if err != nil {
-				respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to create organization: %w", err))
-				return
-			}
-		} else {
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
+		respond.Error(w, http.StatusForbidden, errors.New("GitHub identity has no active, unambiguous membership"))
+		return
 	}
 
-	// Find or create user
-	var userID string
-	err = h.db.QueryRowContext(ctx,
-		`SELECT id FROM users WHERE github_id = $1`, fmt.Sprintf("%d", ghUser.ID)).Scan(&userID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			// Create user
-			userID = uuid.New().String()
-			now := time.Now().UTC()
-			name := ghUser.Name
-			if name == "" {
-				name = ghUser.Login
-			}
-			_, err = h.db.ExecContext(ctx, `
-				INSERT INTO users (id, organization_id, email, name, avatar_url, role, github_id, github_username, settings, created_at, updated_at)
-				VALUES ($1, $2, $3, $4, $5, 'owner', $6, $7, '{}', $8, $8)
-			`, userID, orgID, ghUser.Email, name, ghUser.AvatarURL,
-				fmt.Sprintf("%d", ghUser.ID), ghUser.Login, now)
-			if err != nil {
-				respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to create user: %w", err))
-				return
-			}
-		} else {
-			respond.Error(w, http.StatusInternalServerError, err)
-			return
-		}
-	}
-
-	// Generate JWT token
-	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, "owner", h.config.JWTSecret, 60*time.Minute)
+	// JWT claims must reflect the persisted membership, never a hard-coded owner.
+	jwtToken, err := auth.GenerateToken(principal.UserID, principal.OrgID, ghUser.Email, principal.Role, h.config.JWTSecret, 60*time.Minute)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to generate token: %w", err))
 		return
