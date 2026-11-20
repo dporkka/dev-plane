@@ -233,3 +233,39 @@ test('commit-status pagination or missing total_count cannot produce observed gr
   assert.equal(data.reports[0].priority[0].ci, 'incomplete');
   assert.equal(data.reports[0].priority[0].ciDiagnosis.evidenceComplete, false);
 });
+
+test('incomplete evidence guidance identifies commit-status pagination, check-run pagination and invalid counts', async () => {
+  const fetchDiagnosis = async (checkTotal, statusTotal) => {
+    const getJson = async path => {
+      if (path.includes('/pulls?')) return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+      if (path.includes('/check-runs')) return {
+        total_count: checkTotal,
+        check_runs: [{ status: 'completed', conclusion: 'success' }],
+      };
+      if (path.includes('/status')) return {
+        total_count: statusTotal,
+        statuses: [{ context: 'passing', state: 'success' }],
+      };
+      throw Error('unexpected path ' + path);
+    };
+    const data = await collectPortfolio(['acme/a'], getJson, { now, inspect: 1 });
+    return data.reports[0].priority[0].ciDiagnosis;
+  };
+  const statusTruncated = await fetchDiagnosis(1, 3);
+  assert.equal(statusTruncated.category, 'incomplete-evidence');
+  assert.match(statusTruncated.nextAction, /commit.status/i);
+  assert.doesNotMatch(statusTruncated.nextAction, /check.run pages/i);
+
+  const checkTruncated = await fetchDiagnosis(2, 1);
+  assert.match(checkTruncated.nextAction, /check.run/i);
+  assert.doesNotMatch(checkTruncated.nextAction, /commit.status pages/i);
+
+  const invalidCount = await fetchDiagnosis(1, -1);
+  assert.equal(invalidCount.evidenceComplete, false);
+  assert.match(invalidCount.summary, /invalid/i);
+  assert.doesNotMatch(invalidCount.summary, /additional .*pages exist/i);
+
+  const bothTruncated = await fetchDiagnosis(2, 3);
+  assert.match(bothTruncated.nextAction, /check.run/i);
+  assert.match(bothTruncated.nextAction, /commit.status/i);
+});
