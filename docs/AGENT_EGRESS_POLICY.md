@@ -67,3 +67,46 @@ Initial rollout should remain opt-in behind an isolated staging agent,
 with forbidden metadata, private network, DNS rebinding, redirect, and
 concurrent-policy-replacement tests. There is no production traffic cutover
 in this change.
+
+
+## Isolated runtime bridge and live Docker/Podman test (draft)
+
+`WorkspaceBridge` is a narrow host-only adapter that:
+- Calls a **trusted `SessionResolver`** to authorize the requesting principal
+  (from its context) and bind a runtime session to a tenant and agent.
+- Refuses a missing resolver, missing session binding, invalid receipt IDs,
+  unapproved hosts, and failed upstream responses before writing any data.
+- Calls the bounded `Broker.Fetch` only with the trusted resolved identity.
+- Uses the existing runtime provider's `WriteFile` to place a JSON receipt in
+  `.dev-plane/egress/<receipt-id>.json`, where bytes are base64-encoded.
+  No caller-supplied destination path or HTTP headers are accepted.
+
+The bridge has **not** been attached to any public API endpoint, automatic
+tool call, or production scheduler; a concrete session resolver backed by the
+workspace/run authorization database is still required.
+
+A separate opt-in integration test uses the real Docker runtime provider with
+a locally pre-pulled Docker-compatible image, a local Git fixture, and a local
+TLS server. It asserts `--network none`, fails a direct outbound connection,
+allows a host-side broker request with pinned DNS and TLS validation, reads the
+result from the isolated workspace, and rejects an unallowlisted destination.
+
+Run with a pre-pulled image that contains `sh`, `git`, and `curl`:
+
+```bash
+cd apps/api
+EGRESS_DOCKER_TEST_IMAGE=docker.io/library/node:24-bookworm \
+RUN_DOCKER_EGRESS_INTEGRATION=1 \
+go test ./internal/egresspolicy -run '^TestDockerEgressBrokerIsolationIntegration$' -count=1 -v
+```
+
+The test is skipped by default and fails (rather than silently skipping) when
+explicitly enabled but Docker, Git, or the test image is missing. The test does
+not require any real external network connection.
+
+**Remaining production gates:** a concrete authenticated scheduler/session
+resolver; filesystem-level prevention of writable-symlink redirection within
+agent-controlled paths; per-run request IDs and replay protection; usage budgets;
+durable audit attribution; concurrency and revocation-in-flight behavior; and
+exact-head CI against an isolated worker. The bridge is not a replacement for
+the container's `--network none` isolation.
