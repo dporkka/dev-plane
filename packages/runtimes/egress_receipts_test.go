@@ -87,7 +87,7 @@ func TestDockerReceiptWriteIsAtomicExclusiveAndRejectsPoisonedWorkspace(t *testi
 			t.Errorf("allowed invalid receipt ID %q", id)
 		}
 	}
-	if matches, _ := filepath.Glob(filepath.Join(base, session, ".pending-*")); len(matches) != 0 {
+	if matches, _ := filepath.Glob(filepath.Join(dir, ".pending-*")); len(matches) != 0 {
 		t.Fatalf("unfinished staging files: %v", matches)
 	}
 }
