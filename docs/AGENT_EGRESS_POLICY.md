@@ -110,3 +110,42 @@ agent-controlled paths; per-run request IDs and replay protection; usage budgets
 durable audit attribution; concurrency and revocation-in-flight behavior; and
 exact-head CI against an isolated worker. The bridge is not a replacement for
 the container's `--network none` isolation.
+
+
+## Database-backed session authorization (draft, not activated)
+
+A concrete `NewDatabaseSessionResolver(db)` now implements the bridge's
+`SessionResolver` for a **user-authenticated, trusted-run-scoped** request.
+The caller must supply a validated user identity via the existing JWT
+middleware and select a run in trusted server code using
+`WithAuthorizedRun(ctx, runID)`. The run ID is **not** an authorization
+credential on its own.
+
+The resolver performs a fresh database join of `workspaces`, `agent_runs`,
+`tasks`, `repositories`, `projects`, and the current `users` row. It
+requires a running agent run associated with exactly the requested runtime
+session and task, an active Docker workspace, matching project/repository
+ownership, no soft-deleted resources, and authenticated organization
+membership. A non-admin/non-owner user must have created the task. The
+returned broker `AgentID` is the exact run UUID, not the agent role or a
+caller-provided arbitrary header; policy snapshots must provision that scope.
+
+This *does not* register a public route or authorize background service
+identity automatically. Background worker access requires a separate trusted
+workload authentication contract rather than fabricating user claims.
+Auditable user/agent identity must be resolved again before delivery to
+prevent writing a response for a revoked or completed run.
+
+`session_resolver_test.go` includes coverage for successful binding,
+missing claims, missing run context, wrong tenant/run, no active run,
+and database failures. The tests have been formatted but **have not
+completed** in the current Fedora environment: Go's telemetry counter
+mmap repeatedly crashes with SIGBUS, accompanied by temp-filesystem
+quota exhaustion. This is a verification blocker; no merge or production
+activation is authorized from the unverified tests.
+
+The older `WorkspaceBridge` writes receipts through the generic Docker
+`WriteFile` API and is still vulnerable to workspace-controlled symlink
+redirection and duplicate receipt IDs. Do not activate it until delivery
+is moved to a host-controlled read-only-mounted artifact volume or another
+atomic no-follow, create-exclusive destination and a durable replay ledger.
