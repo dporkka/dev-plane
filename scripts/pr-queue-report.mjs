@@ -123,7 +123,7 @@ function escapeEvidenceLabel(value) {
 }
 
 /** A read-only recommendation, not an authorization to merge or classify root cause. */
-export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notInspected = false } = {}) {
+export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notInspected = false, incompleteSource = 'check-runs' } = {}) {
   if (!Array.isArray(checkRuns) || !Array.isArray(statuses)) throw new Error('CI evidence must be arrays');
   if (notInspected) return {
     status: 'not-inspected', category: 'not-inspected', confidence: 'not-observed',
@@ -131,12 +131,32 @@ export function diagnoseChecks(checkRuns, statuses, { incomplete = false, notIns
     nextAction: 'Inspect exact-head checks before making a merge decision.',
     attentionChecks: [], attentionTotal: null, evidenceComplete: false,
   };
-  if (incomplete) return {
-    status: 'incomplete', category: 'incomplete-evidence', confidence: 'observed',
-    summary: 'Additional check-run pages exist; the observed subset is insufficient.',
-    nextAction: 'Retrieve remaining check-run pagination before evaluating status.',
-    attentionChecks: [], attentionTotal: null, evidenceComplete: false,
-  };
+  if (incomplete) {
+    const source = {
+      'check-runs': [
+        'Additional check-run pages exist; the observed subset is insufficient.',
+        'Retrieve remaining check-run pages before evaluating status.',
+      ],
+      'commit-status': [
+        'Additional commit-status pages exist; the observed subset is insufficient.',
+        'Retrieve remaining commit-status pages before evaluating status.',
+      ],
+      'both': [
+        'Additional check-run and commit-status pages exist; the observed subset is insufficient.',
+        'Retrieve remaining check-run and commit-status pages before evaluating status.',
+      ],
+      'invalid-counts': [
+        'CI evidence counts are invalid; pagination and completeness cannot be established.',
+        'Re-query check-run and commit-status evidence and validate counts before evaluating status.',
+      ],
+    }[incompleteSource];
+    if (!source) throw new Error('Invalid incomplete evidence source');
+    return {
+      status: 'incomplete', category: 'incomplete-evidence', confidence: 'observed',
+      summary: source[0], nextAction: source[1],
+      attentionChecks: [], attentionTotal: null, evidenceComplete: false,
+    };
+  }
 
   const status = classifyChecks(checkRuns, statuses);
   const has = (...conclusions) => checkRuns.some(run => conclusions.includes(run.conclusion))
@@ -206,14 +226,17 @@ async function getEvidence(repo, pr, getJson) {
   if (!Array.isArray(checkRuns?.check_runs) || !Array.isArray(statuses?.statuses)) {
     throw new Error(`Incomplete check/status evidence for ${repo} #${pr.number}`);
   }
-  const incomplete = !Number.isSafeInteger(checkRuns.total_count)
+  const invalidCounts = !Number.isSafeInteger(checkRuns.total_count)
     || !Number.isSafeInteger(statuses.total_count)
     || checkRuns.total_count < checkRuns.check_runs.length
-    || statuses.total_count < statuses.statuses.length
-    || checkRuns.total_count > checkRuns.check_runs.length
-    || statuses.total_count > statuses.statuses.length;
-  if (incomplete) {
-    return diagnoseChecks(checkRuns.check_runs, statuses.statuses, { incomplete: true });
+    || statuses.total_count < statuses.statuses.length;
+  const moreCheckRuns = checkRuns.total_count > checkRuns.check_runs.length;
+  const moreStatuses = statuses.total_count > statuses.statuses.length;
+  if (invalidCounts || moreCheckRuns || moreStatuses) {
+    const incompleteSource = invalidCounts ? 'invalid-counts'
+      : moreCheckRuns && moreStatuses ? 'both'
+        : moreCheckRuns ? 'check-runs' : 'commit-status';
+    return diagnoseChecks(checkRuns.check_runs, statuses.statuses, { incomplete: true, incompleteSource });
   }
   return diagnoseChecks(checkRuns.check_runs, statuses.statuses);
 }
