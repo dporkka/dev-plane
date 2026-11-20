@@ -6,20 +6,26 @@ not an automatic release approval.
 
 ## Woodpecker inspection
 
-`verifier.WoodpeckerReader.ObserveAttempt` makes only three authenticated GETs
+`verifier.WoodpeckerReader.ObserveAttempt` makes four authenticated GETs
 to a configured Woodpecker server:
 
 - `/api/repos/{repo_id}` to confirm the repository ID and full name;
 - `/api/repos/{repo_id}/pipelines/{pipeline_number}` to confirm exact full
   source SHA, pipeline ID and number, rerun count, workflow/step and agent;
 - `/api/repos/{repo_id}/pipelines/{pipeline_number}/config` to obtain the
-  pipeline-scoped configuration bytes and calculate a deterministic digest.
+  pipeline-scoped configuration bytes and calculate a deterministic digest;
+- `/api/repos/{repo_id}/pipelines/{pipeline_number}` again to ensure the
+  attempt, worker, step and pipeline state did not change during inspection.
 
-The reader requires the provider to return an explicit non-null
-`rerun_count` (zero is valid) and validates full lowercase hexadecimal
-40- or 64-character Git SHAs. It rejects malformed or mismatched identifiers,
-missing/duplicate configuration files, non-200 HTTP responses, unexpected
-redirects, absent credentials, non-local plain HTTP, and oversized responses. It does not modify
+The reader requires an explicit non-null `rerun_count` (zero is valid)
+and validates full lowercase hexadecimal 40- or 64-character Git SHAs.
+It rejects malformed or mismatched identifiers, missing/duplicate
+configuration files, non-200 HTTP responses, unexpected redirects, absent
+credentials, non-local plain HTTP, and oversized responses. A reported
+successful step must include worker identity, valid start/finish timestamps,
+and an observed zero exit code. Any change between the two pipeline snapshots
+invalidates the diagnostic observation. These checks reduce false positives
+but do not provide immutable provider attestation. The reader does not modify
 the CI server or infer remote execution from forge statuses or webhook text.
 
 **Blocking gap:** The documented pipeline response exposes workflow

@@ -33,7 +33,7 @@ func TestWoodpeckerConfigurationAcceptsDocumentedByteArrayAndRejectsInvalidEleme
 					p := map[string]any{"id": 81, "number": 23, "commit": strings.Repeat("a", 40),
 						"rerun_count": 0, "status": "success",
 						"workflows": []any{map[string]any{"id": 9, "agent_id": 3,
-							"children": []any{map[string]any{"id": 7, "name": "test", "state": "success", "started": 1600000006, "finished": 1600000018}}}}}
+							"children": []any{map[string]any{"id": 7, "name": "test", "state": "success", "exit_code": 0, "started": 1600000006, "finished": 1600000018}}}}}
 					_ = json.NewEncoder(w).Encode(p)
 				case "/api/repos/11/pipelines/23/config":
 					_, _ = w.Write([]byte(tc.config))
