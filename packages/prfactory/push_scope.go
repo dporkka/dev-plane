@@ -22,12 +22,12 @@ func validGitHubPushURL(raw, owner, repo string) bool {
 	return strings.EqualFold(parsed.Path, want) || strings.EqualFold(parsed.Path, want+".git")
 }
 
-// sanitizedGitEnvironment strips user/global credentials and rewrite-injection
-// environment variables. The checked origin and final push see the same env.
+// sanitizedGitEnvironment strips all inherited Git settings, including
+// repository selectors (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE) and transport
+// overrides. Only the explicitly pinned Git settings below are reinstated.
+// The checked origin and final push must use this same controlled environment.
 func sanitizedGitEnvironment() []string {
-	ignored := []string{"GITHUB_TOKEN=", "GH_TOKEN=", "GIT_ASKPASS=", "SSH_ASKPASS=",
-		"GIT_CONFIG_COUNT=", "GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_", "GIT_SSH_COMMAND=", "GIT_SSH=",
-		"GIT_CONFIG_GLOBAL=", "GIT_CONFIG_NOSYSTEM=", "GIT_ALLOW_PROTOCOL="}
+	ignored := []string{"GITHUB_TOKEN=", "GH_TOKEN=", "SSH_ASKPASS=", "GIT_"}
 	result := make([]string, 0, len(os.Environ())+4)
 	for _, item := range os.Environ() {
 		block := false
