@@ -654,3 +654,4 @@ CREATE INDEX IF NOT EXISTS idx_agent_items_thread_id ON agent_items(thread_id);
 CREATE INDEX IF NOT EXISTS idx_agent_items_turn_id ON agent_items(turn_id);
 CREATE INDEX IF NOT EXISTS idx_agent_items_type ON agent_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_agent_items_status ON agent_items(status);
+
