@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -72,10 +71,10 @@ func (h *Handler) DeployTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var task struct {
-		Status     string
-		RepoID     string
-		Branch     string
-		ProjectID  string
+		Status    string
+		RepoID    string
+		Branch    string
+		ProjectID string
 	}
 	err := h.db.QueryRowContext(ctx, `
 		SELECT status, repository_id, target_branch, project_id
@@ -144,12 +143,10 @@ func (h *Handler) DeployTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	token := strings.TrimSpace(h.deployToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("deploy token is not configured"))
+	token, err := h.githubOperationToken(ctx, repoOwner, repoName, map[string]string{"deployments": "write"}, h.deployToken)
+	if err != nil {
+		h.logger.Warn("cannot acquire repository-scoped deployment token", "error", err)
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("repository-scoped deploy credentials unavailable"))
 		return
 	}
 

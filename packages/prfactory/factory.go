@@ -7,8 +7,8 @@ package prfactory
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -42,7 +42,8 @@ type Factory struct {
 	db          *sql.DB
 	logger      *slog.Logger
 	github      githubPRCreator
-	githubToken string
+	githubToken string // only explicit trusted injection; never inherited from global env
+	repoTokens  gateway.RepositoryTokenSource
 }
 
 // NewFactory creates a PR factory.
@@ -50,13 +51,11 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	f := &Factory{
-		db:          db,
-		logger:      logger,
-		githubToken: strings.TrimSpace(os.Getenv("GITHUB_TOKEN")),
-	}
-	if f.githubToken != "" {
-		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+	f := &Factory{db: db, logger: logger}
+	// Worker and HTTP paths both use app installation credentials.
+	// Deliberately never load GITHUB_TOKEN from the process environment.
+	if source, err := gateway.GitHubAppTokenSourceFromEnv(); err == nil {
+		f.WithRepositoryTokenSource(source)
 	}
 	return f
 }
@@ -71,6 +70,26 @@ func (f *Factory) WithGitHubGateway(gh *gateway.GitHubGateway) *Factory {
 func (f *Factory) WithGitHubToken(token string) *Factory {
 	f.githubToken = strings.TrimSpace(token)
 	return f
+}
+
+// WithRepositoryTokenSource configures a single-repository GitHub App token
+// source for the worker's git push and pull-request API operations.
+func (f *Factory) WithRepositoryTokenSource(src gateway.RepositoryTokenSource) *Factory {
+	f.repoTokens = src
+	if src != nil && f.github == nil {
+		f.github = gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
+	}
+	return f
+}
+
+func (f *Factory) repositoryToken(ctx context.Context, owner, name string) (string, error) {
+	if f.repoTokens != nil {
+		return f.repoTokens.Token(ctx, owner, name, map[string]string{"contents": "write", "pull_requests": "write"})
+	}
+	if f.githubToken != "" {
+		return f.githubToken, nil
+	}
+	return "", fmt.Errorf("repository-scoped GitHub App credentials not configured")
 }
 
 // CreatePullRequest opens a GitHub PR for completed task changes.
@@ -133,16 +152,23 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		branch = "main"
 	}
 
-	workspaceBranch := branch
+	if run.WorkspaceID == nil || *run.WorkspaceID == "" {
+		return nil, fmt.Errorf("completed agent run has no bound workspace")
+	}
+	ws, err := f.loadWorkspace(ctx, *run.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("load agent workspace: %w", err)
+	}
+	if err := validateFactoryWorkspace(task, run, ws); err != nil {
+		return nil, fmt.Errorf("verify agent repository scope: %w", err)
+	}
+	workspaceBranch := ws.Branch
+	if workspaceBranch == "" || workspaceBranch == branch {
+		return nil, fmt.Errorf("agent feature branch must differ from PR base branch")
+	}
 	workspacePath := ""
-	if run.WorkspaceID != nil {
-		ws, err := f.loadWorkspace(ctx, *run.WorkspaceID)
-		if err == nil && ws != nil && ws.Branch != "" {
-			workspaceBranch = ws.Branch
-		}
-		if err == nil && ws != nil && ws.WorktreePath != nil {
-			workspacePath = strings.TrimSpace(*ws.WorktreePath)
-		}
+	if ws.WorktreePath != nil {
+		workspacePath = strings.TrimSpace(*ws.WorktreePath)
 	}
 
 	// 6. Build PR title
@@ -152,24 +178,25 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	if f.github == nil {
-		return nil, fmt.Errorf("github gateway is not configured; set GITHUB_TOKEN or inject a GitHub gateway")
-	}
-	if f.githubToken == "" {
-		return nil, fmt.Errorf("github token is not configured")
+		return nil, fmt.Errorf("github gateway is not configured; provide a GitHub App installation")
 	}
 
-	repoOwner, repoName, err := f.getRepoOwnerName(ctx, task.RepositoryID)
+	repoOwner, repoName, err := f.getRepoOwnerNameForProject(ctx, task.RepositoryID, task.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
+	token, err := f.repositoryToken(ctx, repoOwner, repoName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve GitHub App installation token: %w", err)
+	}
 	if workspacePath != "" {
-		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
+		if err := f.pushBranch(ctx, workspacePath, workspaceBranch, repoOwner, repoName, token); err != nil {
 			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
 		}
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
-	created, err := f.createGitHubPR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft)
+	created, err := f.createGitHubPR(ctx, repoOwner, repoName, prTitle, prBody, workspaceBranch, branch, draft, token)
 	if err != nil {
 		return nil, fmt.Errorf("create github pull request: %w", err)
 	}
@@ -363,7 +390,7 @@ func (f *Factory) createPRRecord(ctx context.Context, pr *models.PullRequest) er
 }
 
 // pushBranch pushes the workspace branch to origin.
-func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) error {
+func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch, owner, repo, token string) error {
 	if strings.TrimSpace(workspacePath) == "" {
 		return fmt.Errorf("workspace path is required")
 	}
@@ -371,9 +398,13 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 		return fmt.Errorf("branch is required")
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "push", "origin", branch)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	cleanup, err := configureGitAskPass(cmd, f.githubToken)
+	env := sanitizedGitEnvironment()
+	if err := verifyGitPushRemote(ctx, workspacePath, branch, owner, repo, env); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=", "push", "--", "origin", branch)
+	cmd.Env = env
+	cleanup, err := configureGitAskPass(cmd, token)
 	if err != nil {
 		return err
 	}
@@ -387,14 +418,14 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch string) 
 }
 
 // createGitHubPR creates a PR via the GitHub API.
-func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, head, base string, draft bool) (*gateway.GitHubPR, error) {
+func (f *Factory) createGitHubPR(ctx context.Context, owner, name, title, body, head, base string, draft bool, token string) (*gateway.GitHubPR, error) {
 	if f.github == nil {
 		return nil, fmt.Errorf("github gateway is not configured")
 	}
-	if f.githubToken == "" {
+	if token == "" {
 		return nil, fmt.Errorf("github token is not configured")
 	}
-	return f.github.CreatePR(ctx, &oauth2.Token{AccessToken: f.githubToken, TokenType: "Bearer"}, owner, name, gateway.NewPR{
+	return f.github.CreatePR(ctx, &oauth2.Token{AccessToken: token, TokenType: "Bearer"}, owner, name, gateway.NewPR{
 		Title: title,
 		Body:  body,
 		Head:  head,
@@ -580,12 +611,17 @@ func (f *Factory) loadWorkspace(ctx context.Context, workspaceID string) (*model
 	return &ws, nil
 }
 
-// getRepoOwnerName extracts owner and name from repository record.
-func (f *Factory) getRepoOwnerName(ctx context.Context, repoID string) (owner, name string, err error) {
+// getRepoOwnerNameForProject proves the repository belongs to the task project
+// before minting a credential for that repository.
+func (f *Factory) getRepoOwnerNameForProject(ctx context.Context, repoID, projectID string) (owner, name string, err error) {
+	if repoID == "" || projectID == "" {
+		return "", "", errors.New("project and repository identity required")
+	}
 	var fullName string
 	err = f.db.QueryRowContext(ctx, `
-		SELECT full_name FROM repositories WHERE id = $1
-	`, repoID).Scan(&fullName)
+        SELECT full_name FROM repositories
+        WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL
+    `, repoID, projectID).Scan(&fullName)
 	if err != nil {
 		return "", "", fmt.Errorf("get repository: %w", err)
 	}

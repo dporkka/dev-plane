@@ -37,6 +37,7 @@ type Handler struct {
 	secretManager     *secrets.Manager
 	githubGateway     githubGateway
 	githubToken       string
+	repositoryTokens  gateway.RepositoryTokenSource
 	deployGateway     deployGateway
 	deployToken       string
 
@@ -112,6 +113,25 @@ func (h *Handler) WithGitHubGateway(g githubGateway) *Handler {
 func (h *Handler) WithGitHubToken(token string) *Handler {
 	h.githubToken = token
 	return h
+}
+
+// WithRepositoryTokenSource installs the repository-scoped, short-lived
+// GitHub App token source used by all privileged GitHub mutations.
+func (h *Handler) WithRepositoryTokenSource(source gateway.RepositoryTokenSource) *Handler {
+	h.repositoryTokens = source
+	return h
+}
+
+// githubOperationToken never uses the process-wide GITHUB_TOKEN. Static tokens
+// can only be provided by explicit trusted test/dev injection.
+func (h *Handler) githubOperationToken(ctx context.Context, owner, repo string, permissions map[string]string, explicitStaticToken string) (string, error) {
+	if h.repositoryTokens != nil {
+		return h.repositoryTokens.Token(ctx, owner, repo, permissions)
+	}
+	if explicitStaticToken != "" {
+		return explicitStaticToken, nil
+	}
+	return "", errors.New("repository-scoped GitHub App credentials are not configured")
 }
 
 // WithDeployGateway injects a deployment gateway for task deploy operations.

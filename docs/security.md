@@ -20,6 +20,21 @@ Secrets are referenced by name only throughout the system. Raw secret values are
 Registration -> Capability check -> Encryption -> Storage -> Access (audited, approved when policy requires) -> Rotation
 ```
 
+## GitHub App Credential Isolation
+
+GitHub API write operations (deployments, PR merges, agent branch pushes and
+PR creation) use short-lived GitHub App installation tokens. Each token is
+restricted to one repository and the exact permissions required by the
+operation. GitHub App responses are checked for unexpected repository access
+or elevated permissions before tokens are used. Unconfigured or unavailable
+installations fail closed rather than falling back to process-wide tokens.
+
+The PR factory checks that the repository belongs to the task's project and
+that the completed run's workspace matches the task and repository. Agent
+pushes refuse untrusted or rewritten origins, and Git pre-push hooks and
+credential helpers are disabled for the push subprocess. GitHub App signing
+keys should be mounted from secret storage, not stored in repositories.
+
 ## Agent Safety
 
 The following constraints define the production security target. Agent-run tool calls and dangerous HTTP workspace actions are evaluated by the capability kernel, and Docker-backed runtime-provider operations route through the same authorization paths before execution.

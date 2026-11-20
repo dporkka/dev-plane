@@ -16,6 +16,23 @@ import (
 	"github.com/ai-dev-control-plane/gateway"
 )
 
+type fakeRepositoryTokenSource struct {
+	calls       int
+	owner, repo string
+	permissions map[string]string
+	token       string
+	err         error
+}
+
+func (f *fakeRepositoryTokenSource) Token(_ context.Context, owner, repo string, permissions map[string]string) (string, error) {
+	f.calls++
+	f.owner, f.repo, f.permissions = owner, repo, permissions
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.token, nil
+}
+
 type fakeDeployGateway struct {
 	deployment *gateway.Deployment
 	err        error
@@ -28,7 +45,8 @@ func (g *fakeDeployGateway) CreateDeployment(ctx context.Context, token *oauth2.
 func TestDeployTaskSuccess(t *testing.T) {
 	h, mock, cleanup := setupTest(t)
 	defer cleanup()
-	h.WithDeployToken("test-deploy-token").WithDeployGateway(&fakeDeployGateway{
+	tokens := &fakeRepositoryTokenSource{token: "repo-only-deploy-token"}
+	h.WithRepositoryTokenSource(tokens).WithDeployGateway(&fakeDeployGateway{
 		deployment: &gateway.Deployment{
 			ID:  12345,
 			URL: "https://github.com/owner/repo/deployments/12345",
@@ -69,6 +87,10 @@ func TestDeployTaskSuccess(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if tokens.calls != 1 || tokens.owner != "owner" || tokens.repo != "repo" ||
+		len(tokens.permissions) != 1 || tokens.permissions["deployments"] != "write" {
+		t.Fatalf("deployment token scope: %#v", tokens)
 	}
 }
 
@@ -117,5 +139,13 @@ func TestDeployTaskMissingEnvironment(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandlerGitHubTokensIgnoreGlobalPAT(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "global-credential-that-must-not-be-used")
+	h := NewHandler(nil, nil)
+	if _, err := h.githubOperationToken(context.Background(), "other-org", "private-repo", map[string]string{"contents": "write"}, ""); err == nil {
+		t.Fatal("global PAT was accepted instead of scoped installation token")
 	}
 }

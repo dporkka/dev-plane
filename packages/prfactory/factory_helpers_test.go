@@ -158,17 +158,17 @@ func TestConfigureGitAskPass_NoToken(t *testing.T) {
 	}
 }
 
-func TestNewFactory_ReadsGitHubToken(t *testing.T) {
+func TestNewFactoryNeverUsesGlobalPAT(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", " env-token ")
 	t.Setenv("GITHUB_CLIENT_ID", "client-id")
 	t.Setenv("GITHUB_CLIENT_SECRET", "client-secret")
 
 	factory := NewFactory(nil, nil)
-	if factory.githubToken != "env-token" {
-		t.Errorf("token = %q, want env-token", factory.githubToken)
+	if factory.githubToken != "" {
+		t.Fatalf("factory must never inherit process-wide GITHUB_TOKEN; got token length %d", len(factory.githubToken))
 	}
-	if factory.github == nil {
-		t.Error("expected github gateway to be configured")
+	if factory.github != nil {
+		t.Fatal("global PAT must not configure Github integration")
 	}
 }
 
@@ -207,11 +207,11 @@ func TestGetRepoOwnerName(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT full_name FROM repositories").
-		WithArgs("repo-1").
+		WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"full_name"}).AddRow("acme/app"))
 
 	factory := NewFactory(db, nil)
-	owner, name, err := factory.getRepoOwnerName(context.Background(), "repo-1")
+	owner, name, err := factory.getRepoOwnerNameForProject(context.Background(), "repo-1", "project-1")
 	if err != nil {
 		t.Fatalf("getRepoOwnerName: %v", err)
 	}
@@ -232,11 +232,11 @@ func TestGetRepoOwnerName_InvalidFullName(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT full_name FROM repositories").
-		WithArgs("repo-1").
+		WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"full_name"}).AddRow("invalid"))
 
 	factory := NewFactory(db, nil)
-	_, _, err = factory.getRepoOwnerName(context.Background(), "repo-1")
+	_, _, err = factory.getRepoOwnerNameForProject(context.Background(), "repo-1", "project-1")
 	if err == nil {
 		t.Fatal("expected error for invalid full_name")
 	}
@@ -253,11 +253,11 @@ func TestGetRepoOwnerName_DBError(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT full_name FROM repositories").
-		WithArgs("repo-1").
+		WithArgs("repo-1", "project-1").
 		WillReturnError(sqlmock.ErrCancelled)
 
 	factory := NewFactory(db, nil)
-	_, _, err = factory.getRepoOwnerName(context.Background(), "repo-1")
+	_, _, err = factory.getRepoOwnerNameForProject(context.Background(), "repo-1", "project-1")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -271,4 +271,28 @@ func getEnv(cmd *exec.Cmd, key string) string {
 		}
 	}
 	return ""
+}
+
+type fakeRepoTokenSource struct {
+	owner, name string
+	perms       map[string]string
+	token       string
+}
+
+func (f *fakeRepoTokenSource) Token(_ context.Context, owner, name string, perms map[string]string) (string, error) {
+	f.owner, f.name, f.perms = owner, name, perms
+	return f.token, nil
+}
+func TestFactoryRepositoryTokenIsLeastPrivileged(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "global-credential")
+	src := &fakeRepoTokenSource{token: "per-repository"}
+	f := NewFactory(nil, nil).WithRepositoryTokenSource(src)
+	token, err := f.repositoryToken(context.Background(), "teamA", "repoB")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "per-repository" || src.owner != "teamA" || src.name != "repoB" ||
+		len(src.perms) != 2 || src.perms["contents"] != "write" || src.perms["pull_requests"] != "write" {
+		t.Fatalf("invalid repository permission scope: %#v", src)
+	}
 }

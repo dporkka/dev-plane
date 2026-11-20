@@ -489,12 +489,29 @@ GITHUB_APP_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----
 GITHUB_APP_WEBHOOK_SECRET=your-webhook-secret
 GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret
-GITHUB_TOKEN=your-github-app-installation-or-fine-scoped-token
+# Automated API/worker writes use per-repository installation tokens.
+# Optional GITHUB_TOKEN is for disposable live test runs only.
 ```
 
 ### 3. Install the App
 
 Install the GitHub App on your repositories to start receiving webhooks.
+
+For automated deployments, merges, and PR creation, configure a GitHub App
+using `GITHUB_APP_ID` and `GITHUB_APP_PRIVATE_KEY` (or
+`GITHUB_APP_PRIVATE_KEY_FILE` mounted from a secrets manager). Assign the
+App repository permissions for **Contents: write**, **Pull requests: write**,
+and **Deployments: write**, then install it on the selected repositories.
+
+Dev-plane mints short-lived installation tokens scoped to **one repository**
+and only the permissions needed by each operation. It validates the issued
+scope and never falls back to a shared process-wide `GITHUB_TOKEN` for
+multi-tenant API or worker operations. A missing installation or key causes
+privileged GitHub writes to fail closed.
+
+The PR factory also checks repository-to-project ownership, workspace identity,
+the resolved push URL and the protected branch before attempting a Git push.
+
 
 ---
 
