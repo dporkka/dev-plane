@@ -15,6 +15,10 @@ import (
 // previous lease expired. Lease expiry never authorizes automatic replay.
 var ErrRunLeaseUnavailable = errors.New("run execution lease unavailable")
 
+// errRunLeaseFinished stops renewal after this same worker has durably moved
+// its run to paused/completed; the enclosing executor must finish normally.
+var errRunLeaseFinished = errors.New("run reached a valid terminal or suspended state")
+
 // RunLeaseManager implements opt-in run liveness. The sweep only persists a
 // review marker; it never changes run status or re-executes side effects.
 // The database must have migration 025 installed before the feature is enabled.
@@ -91,6 +95,22 @@ func (m *RunLeaseManager) Renew(ctx context.Context, runID, token string, now ti
 		return fmt.Errorf("confirm run lease renewal: %w", err)
 	}
 	if n != 1 {
+		// A paused or completed run may have committed its state while this
+		// heartbeat was in flight. Confirm the token and unexpired lease
+		// rather than canceling a successfully suspended or finished run.
+		var status string
+		probeErr := m.db.QueryRowContext(ctx, `
+			SELECT status FROM agent_runs
+			WHERE id=$1 AND execution_lease_token=$2
+			  AND execution_lease_expires_at > $3
+			  AND recovery_review_required_at IS NULL
+		`, runID, token, now).Scan(&status)
+		if probeErr == nil && (status == "paused" || status == "completed") {
+			return errRunLeaseFinished
+		}
+		if probeErr != nil && !errors.Is(probeErr, sql.ErrNoRows) {
+			return fmt.Errorf("verify rejected run renewal: %w", probeErr)
+		}
 		return fmt.Errorf("%w: %s", ErrRunLeaseUnavailable, runID)
 	}
 	return nil
@@ -130,13 +150,13 @@ func (m *RunLeaseManager) FlagExpired(ctx context.Context, now time.Time, limit 
         SET recovery_review_required_at=$1
         WHERE id IN (
             SELECT id FROM agent_runs
-            WHERE status IN ('running','admitting')
+            WHERE status IN ('running','admitting','queued')
               AND execution_lease_token IS NOT NULL
               AND execution_lease_expires_at <= $1
               AND recovery_review_required_at IS NULL
             ORDER BY execution_lease_expires_at, id LIMIT $2
         )
-          AND status IN ('running','admitting')
+          AND status IN ('running','admitting','queued')
           AND execution_lease_expires_at <= $1
           AND recovery_review_required_at IS NULL
         RETURNING id
@@ -183,6 +203,10 @@ func (m *RunLeaseManager) Execute(ctx context.Context, runID string, execute fun
 				renewCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 				err := m.Renew(renewCtx, runID, token, time.Now().UTC(), m.ttl)
 				stop()
+				if errors.Is(err, errRunLeaseFinished) {
+					done <- nil
+					return
+				}
 				if err != nil {
 					cancel()
 					done <- err

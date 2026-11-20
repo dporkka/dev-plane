@@ -107,7 +107,7 @@ For the worker, set `DEV_PLANE_RUN_LEASE_ENABLED=1` **only after applying migrat
 
 When enabled, every accepted `runs.triggered` execution gets a unique worker execution token and a 90-second lease; the executing worker renews it every 20 seconds. A token cannot be stolen, even after expiry, because an external tool may still be performing irreversible side effects. Losing the token or failing to renew cancels the execution context. Cancellation is cooperative: nonresponsive external tools may continue, so lease expiry is **never proof that the process is dead**.
 
-Each worker runs a one-minute advisory sweep that atomically sets `agent_runs.recovery_review_required_at` on `running` or `admitting` runs with an expired lease. The sweep never changes status, requeues a run, publishes an artificial failure event, or replays a tool call. It is bounded and idempotent, and its only automatic effect is a database marker plus a warning in worker logs. Investigate with:
+Each worker runs a one-minute advisory sweep that atomically sets `agent_runs.recovery_review_required_at` on `running`, `admitting`, or retained-lease `queued` runs with an expired lease. The sweep never changes status, requeues a run, publishes an artificial failure event, or replays a tool call. It is bounded and idempotent, and its only automatic effect is a database marker plus a warning in worker logs. Investigate with:
 
 ```sql
 SELECT id, task_id, status, execution_lease_expires_at,

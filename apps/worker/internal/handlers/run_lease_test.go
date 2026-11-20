@@ -126,7 +126,7 @@ func TestRunLeaseSweepMarksOnlyExpiredLiveRunsWithoutReplaying(t *testing.T) {
 		{"live", "running", "expired", now.Add(-time.Second)},
 		{"completed", "completed", "old", now.Add(-time.Second)},
 		{"canceled", models.AgentRunStatusCancelled, "old", now.Add(-time.Second)},
-		{"queued", "queued", "active", now.Add(time.Minute)},
+		{"queued", "queued", "active", now.Add(2 * time.Minute)},
 	} {
 		if _, err := db.Exec("UPDATE agent_runs SET execution_lease_token=?,execution_lease_expires_at=? WHERE id=?", row.token, row.expire, row.id); err != nil {
 			t.Fatal(err)
@@ -262,5 +262,108 @@ func TestRunLeaseRejectionDoesNotReleaseAnotherWorkersAdmission(t *testing.T) {
 	}
 	if executor.calls != 0 || admission.releases != 0 {
 		t.Fatalf("foreign lease modified: calls=%d releases=%d", executor.calls, admission.releases)
+	}
+}
+
+func TestRunLeaseExecutePreservesDurablyPausedRun(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	lease.heartbeatInterval = 5 * time.Millisecond
+	lease.ttl = 100 * time.Millisecond
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		if _, err := db.Exec("UPDATE agent_runs SET status='paused' WHERE id='queued'"); err != nil {
+			return err
+		}
+		select {
+		case <-time.After(30 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err != nil {
+		t.Fatalf("durable paused handoff mistaken for lost lease: %v", err)
+	}
+	var token sql.NullString
+	var status string
+	if err := db.QueryRow("SELECT status, execution_lease_token FROM agent_runs WHERE id='queued'").Scan(&status, &token); err != nil {
+		t.Fatal(err)
+	}
+	if status != "paused" || token.Valid {
+		t.Fatalf("pause release: status=%q token=%v", status, token)
+	}
+}
+
+func TestRunLeaseSweepFlagsRetainedQueuedLease(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	now := time.Date(2026, 11, 19, 20, 0, 0, 0, time.UTC)
+	if err := lease.Acquire(context.Background(), "queued", "orphan", now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	// Execution failed before setting running, and scheduler release put it
+	// back to queued. The retained token must still receive review marking.
+	flagged, err := lease.FlagExpired(context.Background(), now.Add(2*time.Minute), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flagged) != 1 || flagged[0] != "queued" {
+		t.Fatalf("queued retained lease invisible to sweep: %v", flagged)
+	}
+	var status string
+	if err := db.QueryRow("SELECT status FROM agent_runs WHERE id='queued'").Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "queued" {
+		t.Fatalf("sweep re-executed or changed queued status to %q", status)
+	}
+}
+
+func TestRunLeaseExecutePreservesDurablyCompletedRun(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	lease.heartbeatInterval = 5 * time.Millisecond
+	lease.ttl = 100 * time.Millisecond
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		if _, err := db.Exec("UPDATE agent_runs SET status='completed' WHERE id='queued'"); err != nil {
+			return err
+		}
+		select {
+		case <-time.After(30 * time.Millisecond):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	})
+	if err != nil {
+		t.Fatalf("completed run falsely lost lease: %v", err)
+	}
+	var token sql.NullString
+	if err := db.QueryRow("SELECT execution_lease_token FROM agent_runs WHERE id='queued'").Scan(&token); err != nil {
+		t.Fatal(err)
+	}
+	if token.Valid {
+		t.Fatalf("completed run retained token: %q", token.String)
+	}
+}
+
+func TestRunLeaseExecuteStillCancelsExternallyCanceledRun(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	lease.heartbeatInterval = 5 * time.Millisecond
+	lease.ttl = 100 * time.Millisecond
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		if _, err := db.Exec("UPDATE agent_runs SET status='cancelled' WHERE id='queued'"); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+			return errors.New("worker was not canceled")
+		}
+	})
+	if !errors.Is(err, ErrRunLeaseUnavailable) {
+		t.Fatalf("user cancellation not respected: %v", err)
 	}
 }
