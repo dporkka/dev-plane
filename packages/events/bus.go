@@ -115,10 +115,19 @@ func (b *Bus) Publish(subject string, data []byte) error {
 }
 
 // Subscribe creates a durable subscription on the given subject.
+// Existing consumers use NATS's automatic callback acknowledgment.
 func (b *Bus) Subscribe(subject string, handler nats.MsgHandler) (*nats.Subscription, error) {
-	// Use subject as durable name (sanitized for NATS naming rules)
+	return b.SubscribeWithOptions(subject, handler)
+}
+
+// SubscribeWithOptions creates a durable subscription with subject-specific
+// JetStream behavior. Use nats.ManualAck() for handlers whose failure must
+// trigger redelivery instead of being acknowledged when their callback returns.
+func (b *Bus) SubscribeWithOptions(subject string, handler nats.MsgHandler, opts ...nats.SubOpt) (*nats.Subscription, error) {
+	// Use subject as durable name (sanitized for NATS naming rules).
 	durableName := strings.NewReplacer(".", "_", "*", "star", ">", "all").Replace(subject)
-	sub, err := b.js.Subscribe(subject, handler, nats.Durable(durableName))
+	options := append([]nats.SubOpt{nats.Durable(durableName)}, opts...)
+	sub, err := b.js.Subscribe(subject, handler, options...)
 	if err != nil {
 		return nil, fmt.Errorf("subscribe to %q: %w", subject, err)
 	}

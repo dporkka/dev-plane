@@ -101,6 +101,14 @@ Pending -> Queued -> Running -> Completed
 | `failed` | One or more steps failed |
 | `cancelled` | Run was cancelled by user |
 
+### Failure-event ownership
+
+`agents.run.failed` is an at-least-once event, not an unconditional instruction to fail a task. The worker locks the task row in a transaction before checking that the referenced run belongs to the task, has persisted `failed` status, and is the most recently created run for that task before moving an active task to `failed`. A late failure from an earlier run cannot overwrite a newer queued run or an already completed task. The `agents.run.failed` worker subscription uses JetStream manual ACK: handler success acknowledges the message, permanently malformed JSON or run/task UUIDs are terminated (`Term`) as poison messages, and transient database/publication errors request delayed negative acknowledgment and redelivery. Duplicate `tasks.failed` notifications are therefore possible and consumers must be idempotent.
+
+**Notification semantics:** `tasks.failed` is best-effort, not a durable at-least-once outbox. If publishing fails after a committed failed transition and a newer run supersedes that failure before redelivery, the older event is acknowledged without re-publishing a now-stale task-level failure. The persisted `agent_runs` failure remains queryable; downstream consumers needing guaranteed historical failure delivery require a separately implemented transactional outbox keyed to the run ID. This suppression applies only if the later run exists before redelivery. A concurrent newer run between the committed failure transition and `tasks.failed` publication can still cause consumers to process a stale task-level failure (including `build.failed` callbacks). There is no run-ID/version fence in `tasks.failed` or its consumers. Do not treat notifications as authoritative current task state without re-reading the task; guaranteeing ordered, durable delivery requires a versioned transactional outbox and consumer-side fencing. SQLite development mode omits PostgreSQL `FOR UPDATE` row locks and must not be treated as equivalent concurrency qualification.
+
+This guard prevents stale state regressions. It is **not** automatic retry scheduling for failed agent runs. The latter remains a separate policy concern.
+
 ### Retry Policy
 
 > **Not implemented yet.** The worker does not apply an application-level retry policy; only NATS-level redelivery of unacknowledged messages is used.

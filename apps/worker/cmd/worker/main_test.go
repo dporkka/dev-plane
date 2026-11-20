@@ -2,12 +2,23 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/nats-io/nats.go"
+
+	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/worker/internal/handlers"
 )
 
 func TestInitRuntimeProvider_RejectsLocalInProduction(t *testing.T) {
@@ -99,8 +110,102 @@ func TestStartHealthServer_Shutdown(t *testing.T) {
 	// After shutdown the server should not be reachable.
 	client := &http.Client{Timeout: 1 * time.Second}
 	url := fmt.Sprintf("http://%s/health", addr)
-	_, err := client.Get(url)
+	resp, err := client.Get(url)
 	if err == nil {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			t.Logf("close unexpected response: %v", closeErr)
+		}
 		t.Fatal("expected error after shutdown")
+	}
+}
+
+// Verify the actual worker subscription contract with a disposable NATS
+// JetStream server: callback failure must NOT auto-ack the event and must be
+// redelivered before the successful handler explicitly acknowledges it.
+func TestFailedRunSubscriptionRedeliversAfterTransientFailure(t *testing.T) {
+	binary, err := exec.LookPath("nats-server")
+	if err != nil {
+		t.Skip("nats-server not available for live JetStream redelivery test")
+	}
+	portReservation, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := portReservation.Addr().(*net.TCPAddr).Port
+	portReservation.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := exec.CommandContext(ctx, binary, "-js", "-a", "127.0.0.1", "-p", fmt.Sprint(port), "-sd", filepath.Join(t.TempDir(), "jetstream"))
+	if err := server.Start(); err != nil {
+		t.Fatalf("start nats-server: %v", err)
+	}
+	defer func() { cancel(); _ = server.Wait() }()
+
+	url := fmt.Sprintf("nats://127.0.0.1:%d", port)
+	var bus *events.Bus
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		bus, err = events.New(url)
+		if err == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatalf("connect disposable NATS server: %v", err)
+	}
+	defer bus.Close()
+	if err := bus.CreateStreams(); err != nil {
+		t.Fatalf("create JetStream streams: %v", err)
+	}
+
+	processor := &failOnceRunProcessor{attempts: make(chan uint64, 4)}
+	sub, err := bus.SubscribeWithOptions(events.AgentRunFailed, func(msg *nats.Msg) {
+		handleRunFailedDelivery(msg, processor, slog.Default())
+	}, nats.ManualAck())
+	if err != nil {
+		t.Fatalf("subscribe failed-run with manual ack: %v", err)
+	}
+	defer sub.Unsubscribe()
+
+	if err := bus.Publish(events.AgentRunFailed, []byte(`{"run_id":"run-1","task_id":"task-1","status":"failed"}`)); err != nil {
+		t.Fatalf("publish run failed: %v", err)
+	}
+	for want := uint64(1); want <= 2; want++ {
+		select {
+		case got := <-processor.attempts:
+			if got != want {
+				t.Fatalf("delivery = %d, want %d", got, want)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("timed out waiting for JetStream delivery %d", want)
+		}
+	}
+	if got := processor.calls.Load(); got != 2 {
+		t.Fatalf("attempts = %d, want exactly 2", got)
+	}
+}
+
+type failOnceRunProcessor struct {
+	calls    atomic.Uint64
+	attempts chan uint64
+}
+
+func (p *failOnceRunProcessor) HandleRunFailed(msg *nats.Msg) error {
+	attempt := p.calls.Add(1)
+	p.attempts <- attempt
+	if attempt == 1 {
+		return errors.New("simulated transient downstream publication failure")
+	}
+	return msg.Ack()
+}
+
+func TestClassifyRunFailure(t *testing.T) {
+	permanent := fmt.Errorf("nested decode error: %w", handlers.ErrMalformedRunFailedEvent)
+	if classifyRunFailure(permanent) != runFailureTerminate {
+		t.Fatal("permanent malformed event must be terminated, not retried")
+	}
+	if classifyRunFailure(errors.New("database unavailable")) != runFailureRetry {
+		t.Fatal("transient processing error must be retried")
 	}
 }

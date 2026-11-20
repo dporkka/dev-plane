@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/mattn/go-sqlite3"
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
@@ -32,6 +33,9 @@ type RunHandler struct {
 	executor  RunExecutor
 	reviewer  ReviewService
 	admission RunAdmission
+	// PostgreSQL uses a row lock; SQLite (single-connection development) does not
+	// support SELECT FOR UPDATE. Both retain the conditional update predicate.
+	failureLockQuery string
 }
 
 // RunExecutor executes queued agent runs.
@@ -59,7 +63,13 @@ type ReviewService interface {
 
 // NewRunHandler creates a new run handler.
 func NewRunHandler(db *sql.DB, logger *slog.Logger, eventBus WorkerEventPublisher) *RunHandler {
-	return &RunHandler{db: db, logger: logger, eventBus: eventBus}
+	lockQuery := `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`
+	if db != nil {
+		if _, sqlite := db.Driver().(*sqlite3.SQLiteDriver); sqlite {
+			lockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL`
+		}
+	}
+	return &RunHandler{db: db, logger: logger, eventBus: eventBus, failureLockQuery: lockQuery}
 }
 
 // WithRunExecutor enables runs.triggered execution dispatch.
@@ -148,23 +158,89 @@ func (h *RunHandler) HandleRunCompleted(msg *nats.Msg) error {
 	return ackMessage(msg)
 }
 
+// ErrMalformedRunFailedEvent identifies a permanent poison event that must not be retried.
+var ErrMalformedRunFailedEvent = errors.New("malformed agents.run.failed event")
+
 // HandleRunFailed processes agents.run.failed events.
 // It transitions the associated task to failed and publishes a tasks.failed event.
 func (h *RunHandler) HandleRunFailed(msg *nats.Msg) error {
 	var event events.AgentRunEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
-		return fmt.Errorf("unmarshal agent run event: %w", err)
+		return fmt.Errorf("unmarshal agent run event: %w: %w", ErrMalformedRunFailedEvent, err)
 	}
+	taskUUID, err := uuid.Parse(event.TaskID)
+	if err != nil {
+		return fmt.Errorf("invalid task_id: %w: %w", ErrMalformedRunFailedEvent, err)
+	}
+	runUUID, err := uuid.Parse(event.RunID)
+	if err != nil {
+		return fmt.Errorf("invalid run_id: %w: %w", ErrMalformedRunFailedEvent, err)
+	}
+	// PostgreSQL's UUID parameters require canonical database-safe values.
+	event.TaskID, event.RunID = taskUUID.String(), runUUID.String()
 
 	h.logger.Info("handling run failed", "run_id", event.RunID, "task_id", event.TaskID)
 
+	// Lock the task row before evaluating the latest run. PostgreSQL READ
+	// COMMITTED takes a fresh statement snapshot after this lock is granted;
+	// a single conditional UPDATE could otherwise read a stale subquery snapshot
+	// while waiting behind a scheduler's task-row update.
+	ctx := context.Background()
+	tx, err := h.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin run failure transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	lockQuery := h.failureLockQuery
+	if lockQuery == "" {
+		lockQuery = `SELECT id FROM tasks WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`
+	}
+	var lockedTaskID string
+	err = tx.QueryRowContext(ctx, lockQuery, event.TaskID).Scan(&lockedTaskID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ackMessage(msg)
+	}
+	if err != nil {
+		return fmt.Errorf("lock task for run failure: %w", err)
+	}
+
 	now := time.Now().UTC()
-	_, err := h.db.Exec(`
+	// JetStream can redeliver a failure after a follow-on run has been queued,
+	// reviewed, or completed. Only the latest persisted failed run may fail an
+	// active task; an event's task_id alone is not authority to change state.
+	// Retain 'failed' in the admissible states so a redelivery can republish
+	// tasks.failed after a transient publish error (at-least-once delivery).
+	result, err := tx.ExecContext(ctx, `
 		UPDATE tasks SET status = 'failed', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
-	`, now, event.TaskID)
+		  AND status IN ('running', 'failed')
+		  AND EXISTS (
+		    SELECT 1 FROM agent_runs AS failed_run
+		    WHERE failed_run.id = $3
+		      AND failed_run.task_id = tasks.id
+		      AND failed_run.status = 'failed'
+		      AND failed_run.id = (
+		        SELECT recent.id FROM agent_runs AS recent
+		        WHERE recent.task_id = tasks.id
+		        ORDER BY recent.created_at DESC, recent.id DESC
+		        LIMIT 1
+		      )
+		  )
+	`, now, event.TaskID, event.RunID)
 	if err != nil {
 		return fmt.Errorf("update task status to failed: %w", err)
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check failed task transition: %w", err)
+	}
+	if updated == 0 {
+		h.logger.Info("ignoring stale or inapplicable run failure", "run_id", event.RunID, "task_id", event.TaskID)
+		return ackMessage(msg)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit failed task transition: %w", err)
 	}
 
 	if h.eventBus != nil {
@@ -214,7 +290,7 @@ func (h *RunHandler) scheduleFollowOnRun(ctx context.Context, event events.Agent
 	if err != nil {
 		return false, "", "", fmt.Errorf("begin follow-on run transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	handoff, err := h.nextUnconsumedHandoff(ctx, tx, run)
 	if err != nil {
