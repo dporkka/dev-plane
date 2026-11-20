@@ -45,10 +45,11 @@ type WorkspaceBridge struct {
 	broker   *Broker
 	resolver SessionResolver
 	writer   WorkspaceWriter
+	receipts ReceiptStore
 }
 
-func NewWorkspaceBridge(broker *Broker, resolver SessionResolver, writer WorkspaceWriter) *WorkspaceBridge {
-	return &WorkspaceBridge{broker: broker, resolver: resolver, writer: writer}
+func NewWorkspaceBridge(broker *Broker, resolver SessionResolver, writer WorkspaceWriter, receipts ReceiptStore) *WorkspaceBridge {
+	return &WorkspaceBridge{broker: broker, resolver: resolver, writer: writer, receipts: receipts}
 }
 
 func validReceiptID(value string) bool {
@@ -65,7 +66,7 @@ func validReceiptID(value string) bool {
 }
 
 func (b *WorkspaceBridge) FetchToWorkspace(ctx context.Context, runtimeSessionID, receiptID, destination string) error {
-	if ctx == nil || ctx.Err() != nil || b == nil || b.broker == nil || b.resolver == nil || b.writer == nil ||
+	if ctx == nil || ctx.Err() != nil || b == nil || b.broker == nil || b.broker.policies == nil || b.resolver == nil || b.writer == nil || b.receipts == nil ||
 		!validReceiptID(receiptID) || strings.TrimSpace(runtimeSessionID) != runtimeSessionID || runtimeSessionID == "" {
 		return ErrDenied
 	}
@@ -75,12 +76,31 @@ func (b *WorkspaceBridge) FetchToWorkspace(ctx context.Context, runtimeSessionID
 		return ErrDenied
 	}
 
+	// Reserve globally before doing any outbound I/O; duplicates and database
+	// failures fail closed. Reservations are consumed even when delivery fails.
+	if err := b.receipts.Reserve(ctx, identity, receiptID); err != nil {
+		return ErrDenied
+	}
+	startRevision := b.broker.policies.Revision()
+
 	response, err := b.broker.Fetch(ctx, identity.TenantID, identity.AgentID, destination)
 	if err != nil {
 		return err
 	}
 	if response == nil || response.StatusCode < 200 || response.StatusCode >= 300 {
 		return fmt.Errorf("%w: upstream request did not succeed", ErrDenied)
+	}
+
+	// A revoked/updated policy or completed/moved run must not receive data
+	// fetched under the previous identity or policy generation.
+	// A separate durable delivery transaction is still needed to eliminate
+	// the tiny race between this final check and the workspace write.
+	if b.broker.policies.Revision() != startRevision {
+		return ErrDenied
+	}
+	current, err := b.resolver.ResolveAuthorizedSession(ctx, runtimeSessionID)
+	if err != nil || current != identity {
+		return ErrDenied
 	}
 
 	data, err := json.Marshal(WorkspaceFetchReceipt{

@@ -110,3 +110,63 @@ agent-controlled paths; per-run request IDs and replay protection; usage budgets
 durable audit attribution; concurrency and revocation-in-flight behavior; and
 exact-head CI against an isolated worker. The bridge is not a replacement for
 the container's `--network none` isolation.
+
+
+## Database-backed session authorization (draft, not activated)
+
+A concrete `NewDatabaseSessionResolver(db)` now implements the bridge's
+`SessionResolver` for a **user-authenticated, trusted-run-scoped** request.
+The caller must supply a validated user identity via the existing JWT
+middleware and select a run in trusted server code using
+`WithAuthorizedRun(ctx, runID)`. The run ID is **not** an authorization
+credential on its own.
+
+The resolver performs a fresh database join of `workspaces`, `agent_runs`,
+`tasks`, `repositories`, `projects`, and the current `users` row. It
+requires a running agent run associated with exactly the requested runtime
+session and task, an active Docker workspace, matching project/repository
+ownership, no soft-deleted resources, and authenticated organization
+membership. A non-admin/non-owner user must have created the task. The
+returned broker `AgentID` is the exact run UUID, not the agent role or a
+caller-provided arbitrary header; policy snapshots must provision that scope.
+
+This *does not* register a public route or authorize background service
+identity automatically. Background worker access requires a separate trusted
+workload authentication contract rather than fabricating user claims.
+Auditable user/agent identity must be resolved again before delivery to
+prevent writing a response for a revoked or completed run.
+
+`session_resolver_test.go` covers successful binding, missing claims,
+missing run scope, tenant/run mismatch, absent active runs and database
+failures. Focused tests passed after using a worktree-local Go telemetry
+configuration with mode `off`; the first runs hit a Go telemetry mmap
+SIGBUS under exhausted temporary-space quotas.
+
+The `WorkspaceBridge` now **requires** a `ReceiptStore` and refuses all
+requests if it is missing. The provided `SQLReceiptStore` uses migration
+`packages/db/migrations/025_create_agent_egress_receipts.sql` and a
+database unique constraint on `(agent_run_id, receipt_id)` to reserve
+a receipt **before** external I/O. Duplicate deliveries are rejected
+across processes; failed requests retain their reservations, and retries
+must use new IDs. A table migration is required **before** enabling the
+bridge; a missing table causes fail-closed denial.
+
+After fetching, the bridge again checks authenticated session ownership
+and the active policy revision. A revoked run or changed snapshot prevents
+delivering a previously fetched response. It cannot undo upstream I/O that
+occurred before revocation, nor provide a fully atomic revocation/delivery
+boundary when a policy changes between the final check and file write.
+
+**Critical remaining blocker:** The bridge writes receipts through Docker
+`WriteFile`, which can follow workspace-controlled symlinks. Do not activate
+it until delivery uses a host-controlled read-only-mounted artifact volume
+or an equivalent atomic no-follow, create-exclusive destination. The
+SQL receipt ledger prevents ID replay but does not address symlink attacks,
+in-flight policy races at the file-write boundary, request budgets,
+billing or production audit integration.
+
+Verification:
+- `go test -race ./internal/egresspolicy ./internal/modelrouter -count=1`
+- `go vet ./internal/egresspolicy`
+- Opt-in live test: `RUN_DOCKER_EGRESS_INTEGRATION=1` with a pre-pulled
+  `EGRESS_DOCKER_TEST_IMAGE` as documented above.
