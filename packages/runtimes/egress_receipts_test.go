@@ -32,6 +32,7 @@ type receiptInspectRunner struct {
 	source          string
 	writable        bool
 	denyReceiptRead bool
+	nonzeroReadExit bool
 }
 
 func (r *receiptInspectRunner) Run(ctx context.Context, name string, args []string, opts commandOptions) (commandOutput, error) {
@@ -45,9 +46,14 @@ func (r *receiptInspectRunner) Run(ctx context.Context, name string, args []stri
 		}
 		return commandOutput{Stdout: r.source + "|" + readWrite + "\n"}, nil
 	}
-	if r.denyReceiptRead && name == "docker" && len(args) >= 4 &&
+	if name == "docker" && len(args) >= 4 &&
 		args[0] == "exec" && containsArg(args, "test -r \"$1\"") {
-		return commandOutput{ExitCode: 1}, errors.New("sandbox UID cannot read receipt")
+		if r.denyReceiptRead {
+			return commandOutput{ExitCode: 1}, errors.New("sandbox UID cannot read receipt")
+		}
+		if r.nonzeroReadExit {
+			return commandOutput{ExitCode: 1}, nil
+		}
 	}
 	return r.fakeRunner.Run(ctx, name, args, opts)
 }
@@ -192,5 +198,27 @@ func TestDockerReceiptWriterFailsClosedWhenSandboxCannotRead(t *testing.T) {
 	}
 	if pending, _ := filepath.Glob(filepath.Join(dir, ".pending-*")); len(pending) != 0 {
 		t.Fatalf("staging artifact leaked: %v", pending)
+	}
+}
+
+func TestDockerReceiptWriterRejectsNonzeroReadExitWithoutCommandError(t *testing.T) {
+	base := t.TempDir()
+	session := "test-session"
+	dir := filepath.Join(base, session, "egress-receipts")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := &receiptInspectRunner{source: dir, nonzeroReadExit: true}
+	provider := &DockerProvider{baseDir: base, runner: runner, sessions: map[string]*dockerSession{
+		session: {id: session, container: "dev-plane-" + session, status: "ready"},
+	}}
+	if err := provider.WriteEgressReceipt(context.Background(), session, "read-failed", []byte("secret")); err == nil {
+		t.Fatal("reported successful delivery for nonzero sandbox read check exit code")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "read-failed.json")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("unreadable receipt was not removed: %v", err)
+	}
+	if pending, _ := filepath.Glob(filepath.Join(dir, ".pending-*")); len(pending) != 0 {
+		t.Fatalf("staging artifacts leaked: %v", pending)
 	}
 }
