@@ -1,13 +1,18 @@
 # Remote CI qualification: PostgreSQL and Woodpecker
 
-This validation-only change is stacked on PR #199 (itself stacked on #198
-and #197). It does **not** activate remote CI as a trusted merge gate.
+This validation-only change builds on PRs #197–#199, which are now merged into
+`main`. It does **not** activate remote CI as a trusted merge gate.
 
 ## PostgreSQL: real concurrent transactions
 
 The opt-in test `TestPostgresEvidenceMergeRealConcurrentTransactions` requires
 `DEVPLANE_TEST_POSTGRES_URL` pointing to a disposable database named exactly
-`devplane_ciqual`. It creates only the `evidence_bundles` table from the
+`devplane_ciqual`. The test rejects URL query keys `database`, `dbname`, or
+`service` that could override the database named in the path. Before any DDL
+or writes it also verifies `SELECT current_database()` on **both** independent
+connections; either mismatch fails closed. These checks prevent a plausible
+PostgreSQL DSN from silently redirecting a test into an application database.
+It creates only the `evidence_bundles` table from the
 production migration shape. It does **not** use, truncate, or clean up an
 existing application database. Each run uses unique work-item identifiers.
 
@@ -20,10 +25,13 @@ It verifies:
 - another update succeeds immediately after the rolled-back transaction;
 - a distinct candidate head has independent evidence.
 
-A local run on Fedora used PostgreSQL **18.6**, initialized in a private
-temporary directory using a Unix socket with TCP listening disabled. The
-race-detector validation **passed three consecutive runs** with Go's `-race`.
-`make test` without `DEVPLANE_TEST_POSTGRES_URL` skips this live-DB test.
+Earlier local runs used disposable PostgreSQL **18.6** on Fedora. A new run
+on a separate authorized host used an isolated rootless PostgreSQL **16**
+container bound to loopback, against the corrected DSN guard, and passed
+all 36-writer, rollback, and head-isolation cases. The container was removed
+afterward. The database package tests, Go vet, formatting and combined-stack
+race-detector tests also passed. `make test` without
+`DEVPLANE_TEST_POSTGRES_URL` skips this opt-in live-database test.
 
 The integration schema is intentionally small and mirrors the
 `evidence_bundles` table, not a proof of end-to-end production migrations.
@@ -69,5 +77,6 @@ successful and unsuccessful job and a queued/abandoned job on a disposable
 repo. Separately obtain tamper-evident assignment events and prove the exact
 job retry and executed config. Ensure attached artifacts are hashed from
 their bytes before attesting. Then verify receipt persistence/merge with a
-trusted policy. Until all are proven, leave release-gate wiring and the
-stacked pull requests in draft.
+trusted policy. Until all are proven, do not enable release-gate wiring. PRs #200–#202
+remain independently reviewable and must meet exact-head CI and review gates
+before merging; none grants production release authority.
