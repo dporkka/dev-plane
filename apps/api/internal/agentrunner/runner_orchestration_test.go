@@ -489,3 +489,21 @@ func insertRunnerFixture(t *testing.T, db *sql.DB, workspacePath, role string) {
 		t.Fatalf("insert runner fixture: %v", err)
 	}
 }
+
+// Completion must not be announced if persisting the completed run fails.
+func TestRunDoesNotSilentlyIgnoreCompletionPersistenceFailure(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec(`CREATE TRIGGER fail_run_completion BEFORE UPDATE ON agent_runs
+       WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'completion database unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"final_response","content":"Done."}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	err := runner.Run(context.Background(), "run-1")
+	if err == nil || !strings.Contains(err.Error(), "persist agent run completion") {
+		t.Fatalf("expected completion persistence failure, got %v", err)
+	}
+}
