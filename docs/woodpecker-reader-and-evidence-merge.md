@@ -1,7 +1,8 @@
 # Read-only Woodpecker diagnostics and atomic gate evidence
 
-This change extends the remote CI contract in PR #198 (stacked on #197).
-It adds a **read-only provider adapter**, not an automatic release approval.
+This change extends the signed remote CI contract merged in PR #198
+(prerequisite #197 is also merged). It adds a **read-only provider adapter**,
+not an automatic release approval.
 
 ## Woodpecker inspection
 
@@ -14,9 +15,11 @@ to a configured Woodpecker server:
 - `/api/repos/{repo_id}/pipelines/{pipeline_number}/config` to obtain the
   pipeline-scoped configuration bytes and calculate a deterministic digest.
 
-The reader rejects malformed or mismatched identifiers, missing/duplicate
-configuration files, non-200 HTTP responses, unexpected redirects, absent
-credentials, non-local plain HTTP, and oversized responses. It does not modify
+The reader requires the provider to return an explicit non-null
+`rerun_count` (zero is valid) and validates full lowercase hexadecimal
+40- or 64-character Git SHAs. It rejects malformed or mismatched identifiers,
+missing/duplicate configuration files, non-200 HTTP responses, unexpected
+redirects, absent credentials, non-local plain HTTP, and oversized responses. It does not modify
 the CI server or infer remote execution from forge statuses or webhook text.
 
 **Blocking gap:** The documented pipeline response exposes workflow
@@ -38,9 +41,19 @@ not proven by unit tests using a local HTTP fake.
 ## Atomic evidence merge
 
 `db.MergeEvidenceGates` is a new append-only per-gate operation keyed by
-`(work_item_id, head_sha)`. The base SHA must also match. A duplicate
-identical gate is idempotent; a conflicting gate name or base is rejected
-without modifying any stored evidence.
+`(work_item_id, head_sha)`. The base SHA must also match. The work-item,
+head and base identifiers cannot be empty or contain surrounding whitespace,
+so writes cannot disagree with normalized read lookups. A duplicate identical
+gate is idempotent; a conflicting gate name or base is rejected without
+modifying any stored evidence.
+
+Before comparing existing and incoming gates, the merge normalizes the input
+through the **same JSON representation** as persistence. This is necessary
+because Go `time.Time` values lose monotonic clock fields during JSON
+serialization, and `omitempty` converts non-nil empty artifact slices into
+absent fields. Comparing in-memory structs against JSON-decoded stored values
+would otherwise reject legitimate first inserts and idempotent retries.
+Different persisted execution facts still conflict and fail closed.
 
 - SQLite: `BEGIN IMMEDIATE` on a pinned connection serializes writers
   before a read/merge/write. Rollback on error.
@@ -53,10 +66,12 @@ without modifying any stored evidence.
   `MergeEvidenceGates`, not that replacement API, and must verify receipts
   against server-managed policies before persisting qualifying results.
 
-Tests cover idempotency, duplicate/conflicting gates, base conflicts,
-concurrent merges against one SQLite connection pool, and concurrent merges
-from two separate SQLite handles sharing a file. PostgreSQL integration and
-a real Woodpecker instance are not tested here.
+Tests cover idempotency, exact persisted execution timestamps, empty
+remote artifact slices, whitespace identifiers, duplicate/conflicting gates,
+base conflicts, concurrent merges against one SQLite connection pool,
+concurrent merges from two separate SQLite handles sharing a file, missing
+rerun metadata, and malformed source SHAs. PostgreSQL integration and a real
+Woodpecker instance are not tested in this PR.
 
 ## Security and release policy
 
