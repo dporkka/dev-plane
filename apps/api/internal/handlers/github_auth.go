@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -98,20 +99,14 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to get user profile: %w", err))
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("github api returned status %d", resp.StatusCode))
 		return
 	}
 
-	var ghUser struct {
-		ID        int64  `json:"id"`
-		Login     string `json:"login"`
-		Email     string `json:"email"`
-		Name      string `json:"name"`
-		AvatarURL string `json:"avatar_url"`
-	}
+	var ghUser githubOAuthProfile
 	if err := json.NewDecoder(resp.Body).Decode(&ghUser); err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to decode user profile: %w", err))
 		return
@@ -120,19 +115,17 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 	// Get primary email if email is not public
 	if ghUser.Email == "" {
 		emailResp, err := client.Get("https://api.github.com/user/emails")
-		if err == nil && emailResp.StatusCode == http.StatusOK {
-			var emails []struct {
-				Email    string `json:"email"`
-				Primary  bool   `json:"primary"`
-				Verified bool   `json:"verified"`
-			}
-			json.NewDecoder(emailResp.Body).Decode(&emails)
-			emailResp.Body.Close()
-			for _, e := range emails {
-				if e.Primary && e.Verified {
-					ghUser.Email = e.Email
-					break
+		if err == nil {
+			if emailResp.StatusCode == http.StatusOK {
+				verifiedEmail, decodeErr := verifiedGitHubPrimaryEmail(emailResp.Body)
+				_ = emailResp.Body.Close()
+				if decodeErr != nil {
+					respond.Error(w, http.StatusBadGateway, errors.New("invalid GitHub email response"))
+					return
 				}
+				ghUser.Email = verifiedEmail
+			} else {
+				_ = emailResp.Body.Close()
 			}
 		}
 	}
@@ -142,60 +135,16 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Existing GitHub identities retain their persisted organization and role;
-	// GitHub usernames can change independently of Dev-plane tenancy.
-	var userID, orgID, role string
-	err = h.db.QueryRowContext(ctx,
-		`SELECT id, organization_id, role FROM users WHERE github_id = $1 AND deleted_at IS NULL`,
-		fmt.Sprintf("%d", ghUser.ID),
-	).Scan(&userID, &orgID, &role)
-	if errors.Is(err, sql.ErrNoRows) {
-		// A GitHub username is not proof of membership in an existing
-		// Dev-plane organization with the same slug. Never adopt that org.
-		slug := ghUser.Login
-		var existingOrgID string
-		lookupErr := h.db.QueryRowContext(ctx,
-			`SELECT id FROM organizations WHERE slug = $1`, ghUser.Login,
-		).Scan(&existingOrgID)
-		if lookupErr == nil {
-			// Preserve readable slugs when available, but avoid collisions.
-			slug = fmt.Sprintf("%s-gh-%d", ghUser.Login, ghUser.ID)
-		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
-			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("lookup organization: %w", lookupErr))
-			return
-		}
-		orgID = uuid.New().String()
-		now := time.Now().UTC()
-		_, err = h.db.ExecContext(ctx, `
-            INSERT INTO organizations (id,name,slug,plan,settings,created_at,updated_at)
-            VALUES ($1,$2,$3,'free','{}',$4,$4)
-        `, orgID, ghUser.Name, slug, now)
-		if err != nil {
-			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create personal organization: %w", err))
-			return
-		}
-		userID = uuid.New().String()
-		role = "owner"
-		now = time.Now().UTC()
-		name := ghUser.Name
-		if name == "" {
-			name = ghUser.Login
-		}
-		_, err = h.db.ExecContext(ctx, `
-            INSERT INTO users (id, organization_id, email, name, avatar_url, role, github_id, github_username, settings, created_at, updated_at)
-            VALUES ($1, $2, $3, $4, $5, 'owner', $6, $7, '{}', $8, $8)
-        `, userID, orgID, ghUser.Email, name, ghUser.AvatarURL, fmt.Sprintf("%d", ghUser.ID), ghUser.Login, now)
-		if err != nil {
-			respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create GitHub user: %w", err))
-			return
-		}
-	} else if err != nil {
-		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("lookup GitHub user: %w", err))
+	// Resolve the immutable GitHub subject to its verified persisted tenant
+	// and role. Never choose a tenant from the mutable GitHub username.
+	principal, err := resolveGitHubOAuthPrincipal(ctx, h.db, ghUser)
+	if err != nil {
+		respond.Error(w, http.StatusForbidden, errors.New("GitHub identity has no active, unambiguous membership"))
 		return
 	}
 
-	// Generate JWT token
-	jwtToken, err := auth.GenerateToken(userID, orgID, ghUser.Email, role, h.config.JWTSecret, 60*time.Minute)
+	// JWT claims must reflect the persisted membership, never a hard-coded owner.
+	jwtToken, err := auth.GenerateToken(principal.UserID, principal.OrgID, ghUser.Email, principal.Role, h.config.JWTSecret, 60*time.Minute)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to generate token: %w", err))
 		return
@@ -214,4 +163,23 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		"token": jwtToken,
 		"email": ghUser.Email,
 	})
+}
+
+// verifiedGitHubPrimaryEmail accepts only GitHub's verified primary address.
+// A malformed upstream payload is an authentication error, not proof of identity.
+func verifiedGitHubPrimaryEmail(body io.Reader) (string, error) {
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&emails); err != nil {
+		return "", fmt.Errorf("decode GitHub email list: %w", err)
+	}
+	for _, email := range emails {
+		if email.Primary && email.Verified {
+			return email.Email, nil
+		}
+	}
+	return "", nil
 }
