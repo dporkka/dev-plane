@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -98,7 +99,7 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to get user profile: %w", err))
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("github api returned status %d", resp.StatusCode))
@@ -114,19 +115,17 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 	// Get primary email if email is not public
 	if ghUser.Email == "" {
 		emailResp, err := client.Get("https://api.github.com/user/emails")
-		if err == nil && emailResp.StatusCode == http.StatusOK {
-			var emails []struct {
-				Email    string `json:"email"`
-				Primary  bool   `json:"primary"`
-				Verified bool   `json:"verified"`
-			}
-			json.NewDecoder(emailResp.Body).Decode(&emails)
-			emailResp.Body.Close()
-			for _, e := range emails {
-				if e.Primary && e.Verified {
-					ghUser.Email = e.Email
-					break
+		if err == nil {
+			if emailResp.StatusCode == http.StatusOK {
+				verifiedEmail, decodeErr := verifiedGitHubPrimaryEmail(emailResp.Body)
+				_ = emailResp.Body.Close()
+				if decodeErr != nil {
+					respond.Error(w, http.StatusBadGateway, errors.New("invalid GitHub email response"))
+					return
 				}
+				ghUser.Email = verifiedEmail
+			} else {
+				_ = emailResp.Body.Close()
 			}
 		}
 	}
@@ -164,4 +163,23 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		"token": jwtToken,
 		"email": ghUser.Email,
 	})
+}
+
+// verifiedGitHubPrimaryEmail accepts only GitHub's verified primary address.
+// A malformed upstream payload is an authentication error, not proof of identity.
+func verifiedGitHubPrimaryEmail(body io.Reader) (string, error) {
+	var emails []struct {
+		Email    string `json:"email"`
+		Primary  bool   `json:"primary"`
+		Verified bool   `json:"verified"`
+	}
+	if err := json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(&emails); err != nil {
+		return "", fmt.Errorf("decode GitHub email list: %w", err)
+	}
+	for _, email := range emails {
+		if email.Primary && email.Verified {
+			return email.Email, nil
+		}
+	}
+	return "", nil
 }
