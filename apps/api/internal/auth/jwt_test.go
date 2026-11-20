@@ -220,29 +220,30 @@ func TestGenerateToken_ClaimsContainExpiry(t *testing.T) {
 
 // TestGenerateToken_ShortExpiry generates a token with short expiry.
 func TestGenerateToken_ShortExpiry(t *testing.T) {
-	token, err := GenerateToken("user-1", "org-1", "alice@example.com", "admin", testSecret, time.Second)
+	// JWT NumericDate truncates to whole seconds. A one-second TTL can
+	// therefore expire in less than a second (including during validation),
+	// depending on where in the current second token generation occurs.
+	token, err := GenerateToken("user-1", "org-1", "alice@example.com", "admin", testSecret, 2*time.Second)
 	if err != nil {
 		t.Fatalf("GenerateToken() error: %v", err)
 	}
 
-	// Should be valid immediately
 	claims, err := ValidateToken(token, testSecret)
 	if err != nil {
-		t.Fatalf("ValidateToken() error immediately after generation: %v", err)
+		t.Fatalf("ValidateToken() error after generation: %v", err)
 	}
-	if claims == nil {
-		t.Fatal("claims should not be nil")
+	if claims == nil || claims.ExpiresAt == nil {
+		t.Fatal("token must contain expiration claims")
 	}
 
-	// Wait for expiry
-	time.Sleep(2 * time.Second)
-
-	claims, err = ValidateToken(token, testSecret)
-	if err == nil {
-		t.Fatal("expected error after token expiry")
+	// Wait until the token's *actual encoded* expiration, not an arbitrary
+	// duration from issuance that may straddle a whole-second boundary.
+	if remaining := time.Until(claims.ExpiresAt.Time); remaining > 0 {
+		time.Sleep(remaining + 100*time.Millisecond)
 	}
-	if claims != nil {
-		t.Errorf("expected nil claims after expiry, got %+v", claims)
+	invalid, err := ValidateToken(token, testSecret)
+	if err == nil || invalid != nil {
+		t.Fatalf("expected expired token to be rejected; claims=%+v err=%v", invalid, err)
 	}
 }
 
