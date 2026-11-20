@@ -122,14 +122,19 @@ func (p *DockerProvider) WriteEgressReceipt(ctx context.Context, sessionID, rece
 	// actual sandbox identity can read the completed artifact. Never cat or
 	// log response bytes during this check.
 	artifact := egressReceiptMount + "/" + receiptID + ".json"
-	_, err = p.runner.Run(ctx, "docker", []string{
+	readCheck, err := p.runner.Run(ctx, "docker", []string{
 		"exec", sess.container, "sh", "-c", "test -r \"$1\"", "sh", artifact,
 	}, commandOptions{})
-	if err != nil {
+	if err != nil || readCheck.ExitCode != 0 {
 		if removeErr := os.Remove(finalPath); removeErr != nil {
 			return fmt.Errorf("container cannot read receipt and cleanup failed: %w", removeErr)
 		}
-		return fmt.Errorf("container cannot read host receipt: %w", err)
+		// Some runtime implementations return an unsuccessful exit status
+		// with a nil command error. Never classify that as readable.
+		if err != nil {
+			return fmt.Errorf("container cannot read host receipt: %w", err)
+		}
+		return fmt.Errorf("container receipt read check failed (exit %d)", readCheck.ExitCode)
 	}
 	return nil
 }
