@@ -1,8 +1,7 @@
 [tools]
+# Keep development Go identical to the root go.work toolchain.
+go = "1.26.8"
 node = "24"
-
-[settings]
-idiomatic_version_file_enable_tools = ["go"]
 
 [tasks.doctor]
 description = "Check the core local development toolchain"
@@ -12,7 +11,11 @@ node --version
 npm --version
 git --version
 docker --version
-docker compose version
+if docker compose version >/dev/null 2>&1; then
+  docker compose version
+else
+  docker-compose version
+fi
 '''
 
 [tasks.dev]
