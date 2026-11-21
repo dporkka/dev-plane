@@ -54,13 +54,17 @@ func TestEnsureTmpfsBaseDir_CreatesAndIsIdempotent(t *testing.T) {
 }
 
 func TestEnsureTmpfsBaseDir_RespectsDisableEnv(t *testing.T) {
-	// Use a directory under the package tree rather than t.TempDir(), because
-	 // /tmp may already be tmpfs and would mask the disable behavior.
+	// The package checkout itself can be on tmpfs (e.g. an ephemeral runner).
+	// Compare inode identity before and after to detect a newly mounted tmpfs.
 	dir, err := os.MkdirTemp(".", "tmpfs-disabled-*")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}
 	defer os.RemoveAll(dir)
+	before, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat base dir before: %v", err)
+	}
 	t.Setenv("WORKSPACE_TMPFS_DISABLE", "1")
 
 	got, err := EnsureTmpfsBaseDir(dir)
@@ -71,8 +75,12 @@ func TestEnsureTmpfsBaseDir_RespectsDisableEnv(t *testing.T) {
 		t.Errorf("path = %q, want %q", got, filepath.Clean(dir))
 	}
 
-	if runtime.GOOS == "linux" && isTmpfs(got) {
-		t.Errorf("isTmpfs(%q) = true, want false when WORKSPACE_TMPFS_DISABLE is set", dir)
+	after, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("stat base dir after: %v", err)
+	}
+	if !os.SameFile(before, after) {
+		t.Errorf("WORKSPACE_TMPFS_DISABLE changed the underlying directory identity for %q", dir)
 	}
 }
 
@@ -132,22 +140,5 @@ func TestIsTmpfs_DevShm(t *testing.T) {
 	}
 	if !isTmpfs(devShm) {
 		t.Errorf("isTmpfs(%q) = false, want true", devShm)
-	}
-}
-
-func TestIsTmpfs_RegularDir(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("tmpfs detection is Linux-specific")
-	}
-	// t.TempDir() may live under /tmp which is often tmpfs. Use a directory in
-	// the package tree, which is typically on the project's regular filesystem.
-	dir, err := os.MkdirTemp(".", "tmpfs-regular-dir-*")
-	if err != nil {
-		t.Fatalf("create temp dir: %v", err)
-	}
-	defer os.RemoveAll(dir)
-
-	if isTmpfs(dir) {
-		t.Errorf("isTmpfs(%q) = true, want false", dir)
 	}
 }

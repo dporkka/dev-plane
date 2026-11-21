@@ -15,7 +15,7 @@ env:
 jobs:
   live-e2e:
     name: Live End-to-End Integration
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4

@@ -43,6 +43,11 @@ import (
 )
 
 func main() {
+	os.Exit(runWorker())
+}
+
+// runWorker returns an exit code so connection and shutdown defers always run.
+func runWorker() int {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -57,6 +62,7 @@ func main() {
 		schedulerMaxParallel = flag.Int("scheduler-max-parallel", envIntOrDefault("SCHEDULER_MAX_PARALLEL", 2), "Maximum concurrently admitted scheduler-enabled runs per worker")
 		schedulerCPU         = flag.Float64("scheduler-cpu", envFloatOrDefault("SCHEDULER_CPU", 4), "Scheduler CPU capacity units")
 		schedulerMemoryMB    = flag.Int("scheduler-memory-mb", envIntOrDefault("SCHEDULER_MEMORY_MB", 8192), "Scheduler memory capacity in MiB")
+		runLeaseEnabled      = flag.Bool("run-lease-enabled", os.Getenv("DEV_PLANE_RUN_LEASE_ENABLED") == "1", "Enable opt-in run execution lease liveness (requires migration 025)")
 	)
 	flag.Parse()
 
@@ -98,13 +104,17 @@ func main() {
 	database, err := db.New(*dbURL)
 	if err != nil {
 		logger.Error("failed to connect to database", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	defer database.Close()
+	defer func() {
+		if err := database.Close(); err != nil {
+			logger.Error("database close failed", "error", err)
+		}
+	}()
 
 	if err := database.Ping(ctx); err != nil {
 		logger.Error("database ping failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("database connected")
 
@@ -112,20 +122,24 @@ func main() {
 	eventBus, err := events.New(*natsURL)
 	if err != nil {
 		logger.Error("failed to connect to NATS", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	defer eventBus.Close()
+	defer func() {
+		if err := eventBus.Close(); err != nil {
+			logger.Error("event bus close failed", "error", err)
+		}
+	}()
 
 	if err := eventBus.CreateStreams(); err != nil {
 		logger.Error("failed to create NATS streams", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("NATS event bus connected and streams created")
 
 	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
 	if err != nil {
 		logger.Error("failed to initialize workspace runtime", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("workspace runtime initialized", "runtime", runtimeProviderName, "base_dir", *runtimeBaseDir)
 
@@ -134,7 +148,7 @@ func main() {
 		keyring, err = crypto.ParseKeyring(keysRaw)
 		if err != nil {
 			logger.Error("invalid SECRET_ENCRYPTION_KEYS", "error", err)
-			os.Exit(1)
+			return 1
 		}
 		logger.Info("integration token keyring configured")
 	} else {
@@ -154,6 +168,16 @@ func main() {
 		WithRunExecutor(runExecutor).
 		WithRunAdmission(runAdmission).
 		WithReviewer(reviewService)
+	if *runLeaseEnabled {
+		lease := handlers.NewRunLeaseManager(database.DB, logger)
+		if err := lease.CheckSchema(ctx); err != nil {
+			logger.Error("run lease enabled before schema migration", "error", err)
+			return 1
+		}
+		runHandler.WithRunLease(lease)
+		go lease.RunReviewSweep(ctx, time.Minute)
+		logger.Info("run liveness leases enabled (expired runs flagged for manual review; no replay)")
+	}
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
 	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
@@ -177,7 +201,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.*", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTasks)
 	logger.Info("subscribed to tasks.*")
@@ -191,7 +215,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to agents.run.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunCompleted)
 	logger.Info("subscribed to agents.run.completed")
@@ -205,7 +229,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to agents.run.failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunFailed)
 	logger.Info("subscribed to agents.run.failed")
@@ -219,7 +243,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to review.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subReviewCompleted)
 	logger.Info("subscribed to review.completed")
@@ -233,7 +257,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.approved", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalApproved)
 	logger.Info("subscribed to approval.approved")
@@ -247,7 +271,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.rejected", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalRejected)
 	logger.Info("subscribed to approval.rejected")
@@ -261,7 +285,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to approval.requested", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subApprovalRequested)
 	logger.Info("subscribed to approval.requested")
@@ -275,7 +299,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.completed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTaskCompleted)
 	logger.Info("subscribed to tasks.completed")
@@ -288,7 +312,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to tasks.failed", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subTaskFailed)
 	logger.Info("subscribed to tasks.failed")
@@ -302,7 +326,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to runs.triggered", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subRunTriggered)
 	logger.Info("subscribed to runs.triggered")
@@ -316,7 +340,7 @@ func main() {
 	})
 	if err != nil {
 		logger.Error("failed to subscribe to webhooks.*", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	shutdownCtx.addSubscription(subWebhooks)
 	logger.Info("subscribed to webhooks.*")
@@ -326,7 +350,7 @@ func main() {
 	healthAddr, stopHealth := startHealthServer(ctx, healthPort, logger)
 	if healthAddr == "" {
 		logger.Error("failed to start worker health server", "port", healthPort)
-		os.Exit(1)
+		return 1
 	}
 	logger.Info("worker health server started", "addr", healthAddr)
 
@@ -339,6 +363,7 @@ func main() {
 	shutdownCtx.shutdown()
 	stopHealth()
 	logger.Info("worker service stopped gracefully")
+	return 0
 }
 
 // shutdownContext tracks subscriptions for graceful shutdown.
@@ -420,7 +445,7 @@ func envFloatOrDefault(key string, defaultValue float64) float64 {
 
 // startHealthServer starts a minimal HTTP server for container health checks.
 // It listens on the configured port and responds to GET /health with a JSON
-// status payload. The server is shut down when the provided context is cancelled.
+// status payload. The server is shut down when the provided context is canceled.
 // It returns the listener address and a function that can be called to wait for
 // graceful shutdown.
 func startHealthServer(ctx context.Context, port string, logger *slog.Logger) (string, func()) {
