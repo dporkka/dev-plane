@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Terminal,
   Workflow,
+  X,
   Zap,
 } from "lucide-react";
 import Image from "next/image";
@@ -76,6 +77,14 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
             Review
           </span>
           <ChevronDown size={14} className="text-[#777]" />
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={() => setMobileOpen(false)}
+            className="lg:hidden inline-flex items-center justify-center rounded-md p-1 text-[#555] hover:bg-[#e9e9e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
+          >
+            <X size={18} aria-hidden="true" />
+          </button>
         </div>
 
         <div className="px-2 pt-3 pb-2">

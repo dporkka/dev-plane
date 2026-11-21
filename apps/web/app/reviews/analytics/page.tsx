@@ -143,6 +143,10 @@ export default function ReviewAnalyticsPage() {
     setEnd(dateString(new Date()));
   }, []);
   const [repositoryId, setRepositoryId] = useState("all");
+  // A repository ID is meaningful only within its organization.
+  useEffect(() => {
+    setRepositoryId("all");
+  }, [selectedOrg]);
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [search, setSearch] = useState("");
 
