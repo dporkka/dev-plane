@@ -49,7 +49,7 @@ func TestValidateHeadRejectsContradictoryExecutionProof(t *testing.T) {
 func TestValidateHeadAcceptsCompletedCommandAndNonExecutableApproval(t *testing.T) {
 	start := time.Unix(1000, 0).UTC()
 	code := 0
-	bundle := EvidenceBundle{BaseSHA: "base123", HeadSHA: "head456",
+	bundle := EvidenceBundle{WorkItemID: "work-1", BaseSHA: "base123", HeadSHA: "head456",
 		Gates: []GateEvidence{
 			{Name: "changed", Status: GatePassed, Execution: &GateExecution{
 				SessionID: "session-1", AttemptID: "attempt-1",
@@ -58,7 +58,7 @@ func TestValidateHeadAcceptsCompletedCommandAndNonExecutableApproval(t *testing.
 			}},
 			{Name: GateIndependentReview, Status: GatePassed},
 		}}
-	if err := bundle.ValidateHead("head456"); err != nil {
-		t.Fatalf("ValidateHead() error = %v", err)
+	if err := bundle.ValidateHeadWithAuthorities("head456", nil, testApprovalVerifier(func(_, _, _ string) error { return nil })); err != nil {
+		t.Fatalf("ValidateHeadWithAuthorities() error = %v", err)
 	}
 }
