@@ -21,6 +21,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
 	"github.com/ai-dev-control-plane/api/internal/tools"
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/policies"
 	"github.com/ai-dev-control-plane/runtimes"
@@ -176,7 +177,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	for stepNum := nextStepNum; stepNum <= maxStepNum; stepNum++ {
 		// Check for context cancellation
 		if ctx.Err() != nil {
-			return r.failRun(ctx, runID, fmt.Sprintf("context cancelled: %v", ctx.Err()))
+			return r.failRun(ctx, runID, fmt.Sprintf("context canceled: %v", ctx.Err()))
 		}
 
 		action, modelResult, err := r.nextModelAction(ctx, run, task, systemPrompt, mailboxMessages, history)
@@ -331,14 +332,22 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	testResults := r.runFinalChecks(ctx, run, task, workspace, workspacePath)
 
 	// 7. Get git diff for summary
-	diffOutput, _ := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
+	diffOutput, diffErr := r.executeTool(ctx, run, task, workspace, workspacePath, "get_git_diff", json.RawMessage(`{}`))
+	if diffErr != nil {
+		// A missing diff is tolerable; a rejected ownership check is not.
+		if ownershipErr := execution.CheckEffectGuard(ctx); ownershipErr != nil {
+			return fmt.Errorf("run ownership lost before completion: %w", ownershipErr)
+		}
+	}
 
 	// Build summary
 	summary := r.buildSummary(state, testResults, diffOutput)
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+	if err := r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state); err != nil {
+		return fmt.Errorf("persist completed run: %w", err)
+	}
 
 	// Publish run.completed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
@@ -515,6 +524,9 @@ func (r *Runner) runToolStep(ctx context.Context, stepNum int, run *models.Agent
 
 // executeTool authorizes and dispatches a tool call to WorkspaceTools.
 func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *models.Task, workspace *models.Workspace, workspacePath, toolName string, input json.RawMessage) (json.RawMessage, error) {
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return nil, err
+	}
 	if err := r.authorizeTool(ctx, run, task, workspace, workspacePath, toolName, input); err != nil {
 		return nil, err
 	}
@@ -528,6 +540,9 @@ func (r *Runner) executeTool(ctx context.Context, run *models.AgentRun, task *mo
 
 // executeToolUnchecked dispatches a tool call after capability authorization.
 func (r *Runner) executeToolUnchecked(ctx context.Context, toolName, workspacePath string, input json.RawMessage) (json.RawMessage, error) {
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return nil, err
+	}
 	switch toolName {
 	case "read_file":
 		return r.tools.ReadFile(ctx, workspacePath, input)
@@ -707,20 +722,6 @@ func sandboxState(workspace *models.Workspace) string {
 	default:
 		return workspace.RuntimeProvider
 	}
-}
-
-// executeStep runs a single agent step (alias used by the loop).
-func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, workspacePath string) error {
-	output, err := r.executeToolUnchecked(ctx, *step.ToolName, workspacePath, step.ToolInput)
-	step.ToolOutput = output
-	if err != nil {
-		step.Status = models.AgentStepStatusFailed
-		errStr := err.Error()
-		step.Content = &errStr
-		return err
-	}
-	step.Status = models.AgentStepStatusCompleted
-	return nil
 }
 
 // streamStep publishes a step event via NATS.

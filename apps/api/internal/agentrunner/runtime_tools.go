@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/ai-dev-control-plane/runtimes"
 )
@@ -58,6 +59,9 @@ func agentRuntimeBaseDir() string {
 }
 
 func (r *Runner) executeRuntimeTool(ctx context.Context, provider runtimes.Provider, sessionID, toolName string, input json.RawMessage) (json.RawMessage, error) {
+	if err := execution.CheckEffectGuard(ctx); err != nil {
+		return nil, err
+	}
 	switch toolName {
 	case "read_file":
 		return runtimeReadFile(ctx, provider, sessionID, input)
@@ -192,7 +196,7 @@ func runtimeListDirectory(ctx context.Context, provider runtimes.Provider, sessi
 		req.Path = "."
 	}
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Dir:     req.Path,
+		Dir: req.Path,
 		Command: `for p in ./*; do
   [ -e "$p" ] || continue
   name=${p#./}
@@ -273,8 +277,8 @@ func runtimeRunCommand(ctx context.Context, provider runtimes.Provider, sessionI
 		timeoutSec = 600
 	}
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Command: req.Command,
-		Timeout: time.Duration(timeoutSec) * time.Second,
+		Command:     req.Command,
+		Timeout:     time.Duration(timeoutSec) * time.Second,
 		UnsafeShell: true,
 	})
 	if err != nil {
@@ -290,8 +294,8 @@ func runtimeRunCommand(ctx context.Context, provider runtimes.Provider, sessionI
 
 func runtimeInspectRepo(ctx context.Context, provider runtimes.Provider, sessionID string) (json.RawMessage, error) {
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Command: `find . -path './.git' -prune -o -type f -print | sed 's#^\./##' | head -n 1000`,
-		Timeout: 30 * time.Second,
+		Command:     `find . -path './.git' -prune -o -type f -print | sed 's#^\./##' | head -n 1000`,
+		Timeout:     30 * time.Second,
 		UnsafeShell: true,
 	})
 	if err != nil {
@@ -359,8 +363,8 @@ func runtimeCreateCommit(ctx context.Context, provider runtimes.Provider, sessio
 		return nil, fmt.Errorf("commit message is required")
 	}
 	result, err := provider.ExecuteCommand(ctx, sessionID, runtimes.Command{
-		Command: "git add -A && git -c user.email=dev-plane@example.invalid -c user.name='Dev Plane' commit -m " + shellQuote(req.Message) + " && git rev-parse HEAD",
-		Timeout: 60 * time.Second,
+		Command:     "git add -A && git -c user.email=dev-plane@example.invalid -c user.name='Dev Plane' commit -m " + shellQuote(req.Message) + " && git rev-parse HEAD",
+		Timeout:     60 * time.Second,
 		UnsafeShell: true,
 	})
 	if err != nil || result == nil || result.ExitCode != 0 {

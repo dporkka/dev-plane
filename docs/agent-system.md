@@ -107,6 +107,8 @@ For the worker, set `DEV_PLANE_RUN_LEASE_ENABLED=1` **only after applying migrat
 
 When enabled, every accepted `runs.triggered` execution gets a unique worker execution token and a 90-second lease; the executing worker renews it every 20 seconds. A token cannot be stolen, even after expiry, because an external tool may still be performing irreversible side effects. Losing the token or failing to renew cancels the execution context. Cancellation is cooperative: nonresponsive external tools may continue, so lease expiry is **never proof that the process is dead**.
 
+When the opt-in flag is enabled for the **legacy in-process agent runner**, an execution-scoped effect guard verifies the current token, status, deadline and recovery marker with the database immediately before local or workspace-runtime tool dispatch; stale owners and database failures reject the next dispatch. This is a **preflight** check, not atomic provider-enforced fencing: a side effect already underway may outlive lease loss and a lease can change after the check. The external agent-runtime supervisor deliberately operates with a detached context after starting a turn and is **not covered** by this guard. Do not enable lease-based recovery for external agent-runtime workers until their provider boundary honors durable ownership and cancellation; do not advertise exactly-once effects or automatic replay.
+
 Each worker runs a one-minute advisory sweep that atomically sets `agent_runs.recovery_review_required_at` on `running`, `admitting`, or retained-lease `queued` runs with an expired lease. The sweep never changes status, requeues a run, publishes an artificial failure event, or replays a tool call. It is bounded and idempotent, and its only automatic effect is a database marker plus a warning in worker logs. Investigate with:
 
 ```sql
@@ -117,7 +119,7 @@ WHERE recovery_review_required_at IS NOT NULL
 ORDER BY recovery_review_required_at DESC;
 ```
 
-**Caution:** Before resuming or retrying a flagged run, inspect the actual worker process, durable steps, workspace and external side effects. There is not yet a cross-worker fencing token enforced at every tool boundary or a durable event outbox. Clock skew between workers and database may affect expiry; use time synchronization. This is liveness instrumentation and **manual reconciliation**, not automatic failover, exactly-once execution or guaranteed terminal-state recovery. Issue #222 remains open until that end-to-end protocol exists.
+**Caution:** Before resuming or retrying a flagged run, inspect the actual worker process, durable steps, workspace and external side effects. There is not yet an atomic provider-enforced cross-worker fencing protocol or a durable event outbox. Clock skew between workers and database may affect expiry; use time synchronization. This is liveness instrumentation and **manual reconciliation**, not automatic failover, exactly-once execution or guaranteed terminal-state recovery. Issue #222 remains open until that end-to-end protocol exists.
 
 ### Retry Policy
 

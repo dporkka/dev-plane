@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ai-dev-control-plane/execution"
 	"github.com/ai-dev-control-plane/models"
 	"github.com/nats-io/nats.go"
 
@@ -365,5 +366,74 @@ func TestRunLeaseExecuteStillCancelsExternallyCanceledRun(t *testing.T) {
 	})
 	if !errors.Is(err, ErrRunLeaseUnavailable) {
 		t.Fatalf("user cancellation not respected: %v", err)
+	}
+}
+
+func TestRunLeaseExecuteGatesEffectsAfterTokenLoss(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		if _, err := db.Exec("UPDATE agent_runs SET status='running' WHERE id='queued'"); err != nil {
+			return err
+		}
+		if err := execution.CheckEffectGuard(ctx); err != nil {
+			return err
+		}
+		if _, err := db.Exec("UPDATE agent_runs SET execution_lease_token='foreign' WHERE id='queued'"); err != nil {
+			return err
+		}
+		return execution.CheckEffectGuard(ctx)
+	})
+	if !errors.Is(err, ErrRunLeaseUnavailable) {
+		t.Fatalf("stale token must deny next effect: %v", err)
+	}
+}
+
+func TestRunLeaseEffectPreflightRejectsExpiredAndUnverifiableOwnership(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	now := time.Date(2026, 11, 19, 20, 0, 0, 0, time.UTC)
+	if err := lease.Acquire(context.Background(), "queued", "owner-a", now, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE agent_runs SET status='running' WHERE id='queued'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(30*time.Second)); err != nil {
+		t.Fatalf("live owner denied: %v", err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(61*time.Second)); !errors.Is(err, ErrRunLeaseUnavailable) {
+		t.Fatalf("expired owner authorized: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := lease.CheckEffectOwner(context.Background(), "queued", "owner-a", now.Add(30*time.Second)); err == nil {
+		t.Fatal("unavailable database must deny preflight")
+	}
+}
+
+func TestRunLeaseExecutePassesClaimedTokenForStatusWrites(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	if _, err := db.Exec("UPDATE agent_runs SET status = 'admitting' WHERE id = 'queued'"); err != nil {
+		t.Fatal(err)
+	}
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		var claimedToken string
+		if err := db.QueryRowContext(ctx, "SELECT execution_lease_token FROM agent_runs WHERE id = 'queued'").Scan(&claimedToken); err != nil {
+			return err
+		}
+		token, err := execution.RunStatusLeaseToken(ctx, "queued")
+		if err != nil {
+			return err
+		}
+		if token == "" || token != claimedToken {
+			t.Error("status writer did not receive the claimed token")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
