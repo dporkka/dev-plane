@@ -31,9 +31,11 @@ staging before this switch can work.
 
 ## Safety constraints
 
-- Requests with explicit models, cost caps, structured output or context
-  size over 32768 tokens fail closed while the canary mode is active.
-  These require a separate capability/billing verification before expansion.
+- Requests with explicit models, cost caps, or context size over 32768
+  characters fail closed while the canary mode is active.
+- Structured JSON actions are forwarded to Bifrost using OpenAI-compatible
+  response_format=json_object. Provider JSON-mode support and schema
+  conformance still require staging validation before enabling live agents.
 - Billing is NOT READY: the old Go ModelInfo cost catalog contains stale
   assumptions; shared task aliases do not have guaranteed per-token prices.
   The current OpenAI-compatible client may report a zero estimated cost
@@ -65,3 +67,18 @@ This PR does not create a virtual key or install any secrets. Provision
 a separate Dev Plane virtual key with a restricted model/provider allowlist
 and monthly budget before setting the flag. The optional PR Triage
 consumer must use a distinct virtual key for separate auditability.
+
+## Legacy model-driven runner integration
+
+The production default of apps/api/internal/agentrunner.NewRunner wires
+modelrouter.NewRouter with modelrouter.AllProviders. With the environment flag
+enabled, this is an actual execution path, not a dormant HTTP adapter.
+Agent-runner requests include StructuredReq=true for JSON model actions;
+the shared Bifrost adapter forwards response_format=json_object accordingly.
+A localhost end-to-end test exercises NewRunner through the HTTP gateway
+boundary. Invalid or non-JSON model actions remain rejected by the
+existing agent-runner parseModelAction validation.
+
+The separately selected agent_runtime external execution backend does not
+use this legacy Go model router; that backend needs a separate migration
+before claiming 100% of Dev Plane traffic is routed through shared Bifrost.

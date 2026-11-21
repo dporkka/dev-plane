@@ -69,7 +69,6 @@ func TestSharedBifrostDoesNotOverrideExplicitConstraints(t *testing.T) {
 	r := NewRouter(&Config{SharedBifrostRouting: true, MaxCostPer1K: 1}, direct, bifrost)
 	for _, req := range []CallRequest{
 		{TaskType: TaskTypeReview, CostCap: 0.01},
-		{TaskType: TaskTypeReview, StructuredReq: true},
 		{TaskType: TaskTypeReview, PreferredModel: "explicit-model"},
 		{TaskType: TaskTypeReview, ContextSize: 500000},
 	} {

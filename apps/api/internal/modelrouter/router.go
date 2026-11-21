@@ -200,7 +200,7 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if r.config.SharedBifrostRouting {
 		if !eligibleForSharedBifrost(req) {
-			return nil, fmt.Errorf("shared bifrost route does not support explicit model, cost cap, structured output, or context over 32768 tokens")
+			return nil, fmt.Errorf("shared bifrost route does not support explicit model, cost cap, or context over 32768 tokens")
 		}
 		return r.routeSharedBifrost(ctx, req)
 	}
@@ -239,7 +239,6 @@ func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, e
 // or model constraints before the gateway's capabilities are proven in staging.
 func eligibleForSharedBifrost(req CallRequest) bool {
 	return req.CostCap == 0 &&
-		!req.StructuredReq &&
 		req.PreferredModel == "" &&
 		(req.ContextSize == 0 || req.ContextSize <= 32768)
 }
