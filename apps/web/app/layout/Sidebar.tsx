@@ -8,6 +8,7 @@ import {
   FolderGit,
   GitBranch,
   LayoutDashboard,
+  GitPullRequest,
   Settings,
   Terminal,
 } from "lucide-react";
@@ -18,6 +19,7 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/projects", label: "Projects", icon: FolderGit },
   { href: "/repositories", label: "Repositories", icon: GitBranch },
+  { href: "/reviews/triage", label: "PR triage", icon: GitPullRequest },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

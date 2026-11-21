@@ -85,6 +85,41 @@ export type WorkspaceStatus =
 
 export type PRState = 'open' | 'closed' | 'merged';
 
+// External GitHub PRs are advisory triage records, not agent-generated PRs.
+
+export interface ExternalPRTriageItem {
+  repo: string;
+  number: number;
+  title: string;
+  url: string;
+  head_sha: string;
+  base_branch: string;
+  bucket: 'candidate' | 'review' | 'draft' | 'dependency-blocked' | 'ci-blocked' | 'needs-repair';
+  score: number;
+  draft: boolean;
+  reasons: string[];
+  dependencies: string[];
+  snapshot_at: string;
+}
+
+export interface ExternalPRTriagePage {
+  items: ExternalPRTriageItem[];
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  advisory_only: true;
+  completeness_unverified: true;
+}
+
+export interface ExternalPRTriageImportResult {
+  imported: number;
+  received: number;
+  warnings: number;
+  advisory_only: true;
+}
+
+
+
 export type MessageType =
   | 'handoff'
   | 'review_comment'
