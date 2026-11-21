@@ -208,14 +208,14 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 // persistRunCompletion makes a bounded attempt to finalize an already
 // executed run. On persistent failure the worker redelivers; the durable
 // final_response marker prevents replay of model and tool actions.
-func (r *Runner) persistRunCompletion(ctx context.Context, runID, summary string, state *RunState) error {
+func (r *Runner) persistRunCompletion(ctx context.Context, runID, summary string, state *RunState, event string) error {
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("persist agent run completion: %w", err)
 		}
-		lastErr = r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+		lastErr = r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state, event)
 		if lastErr == nil {
 			return nil
 		}
@@ -234,7 +234,7 @@ func (r *Runner) persistRunCompletion(ctx context.Context, runID, summary string
 	return fmt.Errorf("persist agent run completion after %d attempts: %w", maxAttempts, lastErr)
 }
 
-func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState) error {
+func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState, event string) error {
 	if r.db == nil {
 		return nil
 	}
@@ -243,9 +243,9 @@ func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary
 	result, err := r.db.ExecContext(ctx, `
         UPDATE agent_runs
         SET status = $1, summary = $2, total_cost = $3,
-            completed_at = $4, updated_at = $4
-        WHERE id = $5
-    `, status, summary, state.CostSoFar, now, runID)
+            completed_at = $4, updated_at = $4, pending_completion_event = $5
+        WHERE id = $6
+    `, status, summary, state.CostSoFar, now, event, runID)
 	if err != nil {
 		return err
 	}

@@ -42,9 +42,10 @@ type RunExecutor interface {
 var ErrRunAdmissionDeferred = errors.New("run admission deferred")
 
 type RunAdmissionDecision struct {
-	Allowed    bool
-	Reason     string
-	RetryAfter time.Duration
+	Allowed       bool
+	Reason        string
+	RetryAfter    time.Duration
+	SkipExecution bool
 }
 
 type RunAdmission interface {
@@ -458,6 +459,9 @@ func (h *RunHandler) HandleRunTriggered(msg *nats.Msg) error {
 		decision, err := h.admission.AdmitRun(ctx, event.RunID, event.TaskID)
 		if err != nil {
 			return fmt.Errorf("admit run %s: %w", event.RunID, err)
+		}
+		if decision.SkipExecution {
+			return ackMessage(msg)
 		}
 		if !decision.Allowed {
 			reason := strings.TrimSpace(decision.Reason)

@@ -179,7 +179,8 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     summary             TEXT,
     metadata            JSONB DEFAULT '{}',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    pending_completion_event TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);

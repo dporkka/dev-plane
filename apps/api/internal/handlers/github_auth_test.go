@@ -181,3 +181,33 @@ func TestGitHubOAuthRejectsMissingProviderSubject(t *testing.T) {
 }
 
 var _ *sql.DB
+
+func TestGitHubOAuthConcurrentSubjectUsesWinningMembership(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	columns := []string{"id", "organization_id", "role", "deleted_at", "org_deleted_at"}
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM users u").WithArgs("42").WillReturnRows(sqlmock.NewRows(columns))
+	mock.ExpectExec("INSERT INTO organizations").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO organizations").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec("INSERT INTO users").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+	mock.ExpectBegin()
+	mock.ExpectQuery("FROM users u").WithArgs("42").
+		WillReturnRows(sqlmock.NewRows(columns).AddRow("winner", "winner-org", "member", nil, nil))
+	mock.ExpectCommit()
+
+	got, err := resolveGitHubOAuthPrincipal(context.Background(), db, githubOAuthProfile{
+		ID: 42, Login: "example", Email: "user@example.com",
+	})
+	if want := (githubOAuthPrincipal{UserID: "winner", OrgID: "winner-org", Role: "member"}); err != nil || got != want {
+		t.Fatalf("principal = %+v, %v; want %+v", got, err, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -680,6 +680,7 @@ func setupSchedulerAdmissionDB(t *testing.T) *sql.DB {
 			task_id TEXT NOT NULL,
 			status TEXT NOT NULL,
 			metadata TEXT DEFAULT '{}',
+			pending_completion_event TEXT,
 			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
@@ -886,4 +887,30 @@ func insertHandoffFixture(t *testing.T, db *sql.DB, id, runID, toAgent string) {
 
 func contains(value, substr string) bool {
 	return strings.Contains(value, substr)
+}
+
+func TestCompletedRunAdmissionOnlyRecoversPendingCompletion(t *testing.T) {
+	db := setupSchedulerAdmissionDB(t)
+	defer db.Close()
+	insertSchedulerTask(t, db, "task-1", "run-1", "queued", "{}")
+	if _, err := db.Exec(`
+		UPDATE tasks SET deleted_at = CURRENT_TIMESTAMP WHERE id = 'task-1';
+		UPDATE agent_runs SET status = 'completed', pending_completion_event = '{}' WHERE id = 'run-1';
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	admission := NewSchedulerAdmission(db, SchedulerCapacity{})
+	ctx := context.Background()
+	decision, err := admission.AdmitRun(ctx, "run-1", "task-1")
+	if err != nil || !decision.Allowed || decision.SkipExecution {
+		t.Fatalf("pending completion admission = %+v, %v", decision, err)
+	}
+	if _, err := db.Exec(`UPDATE agent_runs SET pending_completion_event = NULL WHERE id = 'run-1'`); err != nil {
+		t.Fatal(err)
+	}
+	decision, err = admission.AdmitRun(ctx, "run-1", "task-1")
+	if err != nil || !decision.SkipExecution {
+		t.Fatalf("delivered completion admission = %+v, %v", decision, err)
+	}
 }

@@ -377,6 +377,7 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			error_message TEXT,
 			summary TEXT,
 			metadata TEXT DEFAULT '{}',
+			pending_completion_event TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);

@@ -23,10 +23,16 @@ The OAuth handler introduced by `fix/security-oauth-membership-binding-20261120`
 ## Coordinated deployment
 
 - **Do not use an ordinary rolling/mixed-version OAuth deployment.** Old replicas still derive tenants from the mutable username and issue owner claims. Mixed-version traffic may disagree about the same user.
-- Temporarily stop **OAuth callback admission** at the entrypoint; leave unrelated application traffic available if safe. Deploy the migration and update **all** login-serving replicas, and verify their version and live route ownership. **Do not reopen the callback yet.**
-- After all old organization-creation handlers have stopped, audit the existing `organizations` rows using `github-user-` slugs. Distinguish legitimate identities from legacy/squatted slugs by matching the suffix to the actual immutable `users.github_id` within each organization; reconcile all collisions before admitting login traffic. Do not automatically assign a colliding organization to the arriving GitHub identity.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:0d4d6a6962315015a9de785cf0681dd42416a84537730f375a332dad5ccd07bc -->
+
+- Temporarily stop **OAuth callback admission** at the entrypoint; leave unrelated application traffic available if safe. Deploy the migration and update **every replica serving login or authenticated API routes**, and verify their version and live route ownership. **Do not reopen the callback yet.**
+- After all old organization-creation handlers have stopped, audit the existing `organizations` rows using `github-user-` slugs. Distinguish legitimate identities from legacy/squatted slugs by matching the numeric ID immediately after the prefix to the actual immutable `users.github_id` within each organization; reconcile all collisions before admitting login traffic. Do not automatically assign a colliding organization to the arriving GitHub identity.
 - Reopen OAuth callback admission **only after** the migration, live replica verification, and reserved-slug audit all pass. If the unique index fails because of historical duplicate subjects, leave login admission disabled until the records can be independently reconciled. Do not weaken uniqueness or allow a fallback to username binding.
-- A newly provisioned account receives an organization slug of `github-user-<numeric GitHub ID>`. Do not change this back to a user-controlled login name for compatibility. User-created organizations cannot reserve the `github-user-` prefix.
+- A newly provisioned account receives an organization slug of `github-user-<numeric GitHub ID>` when available. If that slug is occupied, provisioning creates a separate organization with a random suffix on the same base slug. Do not change this back to a user-controlled login name for compatibility. User-created organizations cannot reserve the `github-user-` prefix.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 
 ## Rollback and limitations

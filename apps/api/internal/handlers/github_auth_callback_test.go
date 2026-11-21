@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -110,6 +112,9 @@ func TestGitHubCallbackNewIdentityCannotClaimExistingSlug(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "role", "deleted_at", "org_deleted_at"}))
 	mock.ExpectExec("INSERT INTO organizations").
 		WithArgs(sqlmock.AnyArg(), "Example", "github-user-1234", sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec("INSERT INTO organizations").
+		WithArgs(sqlmock.AnyArg(), "Example", githubFallbackSlug{}, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO users").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "user@example.com", "Example", "", "1234", "new-github-login", sqlmock.AnyArg()).
@@ -143,4 +148,11 @@ func TestGitHubCallbackNewIdentityCannotClaimExistingSlug(t *testing.T) {
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+type githubFallbackSlug struct{}
+
+func (githubFallbackSlug) Match(value driver.Value) bool {
+	slug, ok := value.(string)
+	return ok && strings.HasPrefix(slug, "github-user-1234-") && len(slug) > len("github-user-1234-")
 }

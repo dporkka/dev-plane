@@ -116,7 +116,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	// Worker redelivery is at-least-once. A terminal run must not re-run
 	// the model or tools, even if a duplicate execution message arrives.
 	if run.Status == models.AgentRunStatusCompleted {
-		return nil
+		return r.deliverRunCompletion(ctx, runID)
 	}
 
 	// 2. Load task and workspace
@@ -352,29 +352,27 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	if err := r.persistRunCompletion(ctx, runID, summary, state); err != nil {
+	completion := map[string]any{
+		"run_id":     runID,
+		"task_id":    run.TaskID,
+		"agent_role": run.AgentRole,
+		"status":     models.AgentRunStatusCompleted,
+		"steps":      state.ToolCalls,
+		"summary":    summary,
+		"timestamp":  now,
+	}
+	payload, err := json.Marshal(completion)
+	if err != nil {
+		return fmt.Errorf("encode agent run completion: %w", err)
+	}
+	if err := r.persistRunCompletion(ctx, runID, summary, state, string(payload)); err != nil {
 		return err
 	}
 
-	// Publish run.completed event
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), completion)
+	if err := r.deliverRunCompletion(ctx, runID); err != nil {
+		return err
+	}
 
 	r.logger.Info("agent run completed", "run_id", runID, "steps", state.ToolCalls, "duration_ms", time.Since(startTime).Milliseconds())
 
