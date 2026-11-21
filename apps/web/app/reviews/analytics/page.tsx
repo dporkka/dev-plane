@@ -133,7 +133,7 @@ function NotTracked({ detail }: { detail: string }) {
 }
 
 export default function ReviewAnalyticsPage() {
-  const { selectedOrg } = useStore();
+  const { selectedOrg, user } = useStore();
   const [section, setSection] = useState<Section>("summary");
   // A static Next.js page must not bake the build day's date into hydrated inputs.
   const [start, setStart] = useState("");
@@ -151,8 +151,8 @@ export default function ReviewAnalyticsPage() {
   const [search, setSearch] = useState("");
 
   const { data, isPending, isFetching, isError, refetch } = useQuery({
-    queryKey: ["review-analytics", selectedOrg],
-    enabled: !!selectedOrg,
+    queryKey: ["review-analytics", user?.id, selectedOrg],
+    enabled: !!selectedOrg && !!user,
     staleTime: 60_000,
     queryFn: async () => {
       const projects = rows<ProjectRef>(await api.listProjects(selectedOrg!));
