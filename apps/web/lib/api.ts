@@ -86,7 +86,12 @@ export const api = {
   cancelRun: (id: string): Promise<any> => getClient().cancelRun(id),
 
   // ─── Reviews ────────────────────────────────────────────────────
-  getReview: (runId: string): Promise<any> => getClient().getReview(runId),
+  getReview: (runId: string) => getClient().getReview(runId),
+
+  getReviewMetrics: (
+    orgId: string,
+    filters: { start: string; end: string; repository?: string },
+  ) => getClient().getReviewMetrics(orgId, filters),
 
   // ─── Pull Requests ──────────────────────────────────────────────
   createPullRequest: (taskId: string): Promise<any> =>
@@ -94,6 +99,8 @@ export const api = {
 
   listPullRequests: (projectId: string): Promise<any> =>
     getClient().listPullRequests(projectId),
+
+  getPullRequest: (id: string) => getClient().getPullRequest(id),
 
   // ─── Projects ───────────────────────────────────────────────────
   listProjects: (orgId: string): Promise<any> =>

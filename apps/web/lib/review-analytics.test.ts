@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   type ReviewPR,
   csvCell,
+  filterReviewPRs,
   medianHoursToMerge,
   normalizeReviewPR,
   summarizePullRequests,
@@ -102,5 +103,81 @@ test("empty, invalid, and reversed ranges never display fabricated totals", () =
   assert.equal(
     summarizePullRequests(prs, "2026-11-21", "2026-11-01", "all").total,
     0,
+  );
+});
+
+test("preserves linked run, task, and draft state for triage details", () => {
+  const record = normalizeReviewPR({
+    id: "5",
+    repository_id: "a",
+    state: "open",
+    created_at: "2026-11-15T00:00:00Z",
+    run_id: "run-123",
+    task_id: "task-456",
+    draft: true,
+    branch: "feature",
+    base_branch: "main",
+    body: "Change summary",
+  });
+  assert.equal(record?.run_id, "run-123");
+  assert.equal(record?.task_id, "task-456");
+  assert.equal(record?.draft, true);
+  assert.equal(record?.branch, "feature");
+});
+
+test("triage filters by status, repository, text and orders newest first", () => {
+  const candidates = [
+    {
+      id: "old",
+      repository_id: "a",
+      status: "open" as const,
+      created_at: "2026-11-01T00:00:00Z",
+      title: "Patch auth",
+    },
+    {
+      id: "new",
+      repository_id: "a",
+      status: "open" as const,
+      created_at: "2026-11-20T00:00:00Z",
+      title: "Patch auth session",
+    },
+    {
+      id: "merged",
+      repository_id: "b",
+      status: "merged" as const,
+      created_at: "2026-11-21T00:00:00Z",
+      title: "Patch auth",
+    },
+  ];
+  const filtered = filterReviewPRs(
+    candidates,
+    {
+      status: "open",
+      repositoryId: "a",
+      search: "auth",
+    },
+    new Map([
+      ["a", "team/auth"],
+      ["b", "team/core"],
+    ]),
+  );
+  assert.deepEqual(
+    filtered.map((pr) => pr.id),
+    ["new", "old"],
+  );
+  assert.deepEqual(
+    filterReviewPRs(
+      candidates,
+      {
+        status: "all",
+        repositoryId: "all",
+        search: "team/core",
+      },
+      new Map([
+        ["a", "team/auth"],
+        ["b", "team/core"],
+      ]),
+    ).map((pr) => pr.id),
+    ["merged"],
   );
 });

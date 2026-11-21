@@ -17,7 +17,6 @@ import {
   Settings,
   ShieldCheck,
   Terminal,
-  Workflow,
   X,
   Zap,
 } from "lucide-react";
@@ -27,8 +26,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
 const navigation = [
-  { href: "/tasks", name: "Triage", icon: Workflow },
-  { href: "/reviews/analytics", name: "Review", icon: GitPullRequest },
+  { href: "/reviews", name: "PR Reviews", icon: GitPullRequest },
   { href: "/dashboard", name: "Verify", icon: CheckCircle2 },
   { href: "/settings/policies", name: "Security", icon: ShieldCheck },
   { href: "/tasks", name: "Coding Agent", icon: Code2 },
@@ -37,7 +35,8 @@ const navigation = [
 ];
 
 const tabs = [
-  { href: "/reviews/analytics", name: "PR reviews", icon: GitPullRequest },
+  { href: "/reviews", name: "PR reviews", icon: GitPullRequest },
+  { href: "/reviews/analytics", name: "Review analytics", icon: BarChart3 },
   { href: "/dashboard", name: "CI/CD reviews", icon: Terminal },
   { href: "/tasks", name: "Coding Agent", icon: Bot },
   { href: "/projects", name: "Projects", icon: FolderGit2 },
@@ -69,6 +68,14 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex min-h-screen bg-white text-[#171717]">
+      {mobileOpen && (
+        <button
+          type="button"
+          aria-label="Dismiss navigation backdrop"
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-30 bg-black/30 lg:hidden"
+        />
+      )}
       <aside
         id="review-primary-sidebar"
         className={`${mobileOpen ? "flex" : "hidden"} lg:flex fixed lg:sticky top-0 left-0 z-40 lg:z-auto w-[248px] xl:w-[282px] shrink-0 flex-col border-r border-[#e5e5e5] bg-[#fafafa] h-screen`}
@@ -117,9 +124,11 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
               item.name.toLowerCase().includes(search.toLowerCase()),
             )
             .map((item) => {
-              const active = pathname.startsWith("/reviews")
-                ? item.name === "Analytics"
-                : pathname === item.href;
+              const active =
+                item.href === "/reviews"
+                  ? pathname.startsWith("/reviews") &&
+                    !pathname.startsWith("/reviews/analytics")
+                  : pathname === item.href;
               return (
                 <Link
                   key={item.name}
@@ -192,7 +201,7 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
               <Link
                 key={tab.name}
                 href={tab.href}
-                className={`h-full whitespace-nowrap flex items-center gap-2 border-b-2 px-3 text-sm ${tab.href === "/reviews/analytics" && pathname.startsWith("/reviews") ? "border-[#fb563e] text-[#1c1c1c] font-medium" : "border-transparent text-[#727272] hover:text-black"}`}
+                className={`h-full whitespace-nowrap flex items-center gap-2 border-b-2 px-3 text-sm ${(tab.href === "/reviews" ? pathname.startsWith("/reviews") && !pathname.startsWith("/reviews/analytics") : pathname === tab.href) ? "border-[#fb563e] text-[#1c1c1c] font-medium" : "border-transparent text-[#727272] hover:text-black"}`}
               >
                 <tab.icon size={17} />
                 {tab.name}

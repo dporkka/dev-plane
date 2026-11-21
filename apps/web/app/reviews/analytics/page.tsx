@@ -5,30 +5,24 @@ import {
   type ReviewPR,
   csvCell,
   medianHoursToMerge,
-  normalizeReviewPR,
   summarizePullRequests,
 } from "@/lib/review-analytics";
-import { useStore } from "@/lib/store";
-import type { Repository } from "@/lib/types";
+import { useReviewWorkspace } from "@/lib/review-workspace";
 import { useQuery } from "@tanstack/react-query";
 import {
   CalendarDays,
   ChevronRight,
   Download,
-  ExternalLink,
   GitMerge,
   GitPullRequest,
   Info,
-  LockKeyhole,
   RefreshCw,
   Search,
-  ShieldCheck,
   SlidersHorizontal,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-type ProjectRef = { id: string; name?: string };
 type Section = "summary" | "quality" | "time" | "security" | "details";
 const sections: { id: Section; label: string }[] = [
   { id: "summary", label: "Summary" },
@@ -37,15 +31,6 @@ const sections: { id: Section; label: string }[] = [
   { id: "security", label: "PR security reviews" },
   { id: "details", label: "Review details" },
 ];
-
-function rows<T>(response: unknown): T[] {
-  if (Array.isArray(response)) return response as T[];
-  if (response && typeof response === "object" && "data" in response) {
-    const result = (response as { data: unknown }).data;
-    if (Array.isArray(result)) return result as T[];
-  }
-  return [];
-}
 
 function dateString(date: Date) {
   return [
@@ -133,7 +118,16 @@ function NotTracked({ detail }: { detail: string }) {
 }
 
 export default function ReviewAnalyticsPage() {
-  const { selectedOrg, user } = useStore();
+  const {
+    user,
+    selectedOrg,
+    data,
+    isPending,
+    isFetching,
+    isError,
+    refetch,
+    repoNames,
+  } = useReviewWorkspace();
   const [section, setSection] = useState<Section>("summary");
   // A static Next.js page must not bake the build day's date into hydrated inputs.
   const [start, setStart] = useState("");
@@ -150,42 +144,31 @@ export default function ReviewAnalyticsPage() {
   const [filtersVisible, setFiltersVisible] = useState(false);
   const [search, setSearch] = useState("");
 
-  const { data, isPending, isFetching, isError, refetch } = useQuery({
-    queryKey: ["review-analytics", user?.id, selectedOrg],
-    enabled: !!selectedOrg && !!user,
+  const {
+    data: metrics,
+    isPending: metricsPending,
+    isError: metricsError,
+  } = useQuery({
+    queryKey: [
+      "review-metrics",
+      user?.id,
+      selectedOrg,
+      start,
+      end,
+      repositoryId,
+    ],
+    enabled: !!user && !!selectedOrg && !!start && !!end && start <= end,
+    queryFn: () =>
+      api.getReviewMetrics(selectedOrg!, {
+        start,
+        end,
+        ...(repositoryId !== "all" ? { repository: repositoryId } : {}),
+      }),
     staleTime: 60_000,
-    queryFn: async () => {
-      const projects = rows<ProjectRef>(await api.listProjects(selectedOrg!));
-      const settled = await Promise.allSettled(
-        projects.map(async (project) => {
-          const [prs, repos] = await Promise.all([
-            api.listPullRequests(project.id),
-            api.listRepos(project.id),
-          ]);
-          return {
-            prs: rows<unknown>(prs)
-              .map(normalizeReviewPR)
-              .filter((pr): pr is ReviewPR => pr !== null),
-            repos: rows<Repository>(repos),
-          };
-        }),
-      );
-      const complete = settled.filter((item) => item.status === "fulfilled");
-      return {
-        projects: projects.length,
-        failedProjects: settled.length - complete.length,
-        prs: complete.flatMap((item) => item.value.prs),
-        repos: complete.flatMap((item) => item.value.repos),
-      };
-    },
   });
 
   const prs = data?.prs || [];
   const repos = data?.repos || [];
-  const repoNames = useMemo(
-    () => new Map(repos.map((repo) => [repo.id, repo.full_name || repo.name])),
-    [repos],
-  );
   const summary = useMemo(
     () => summarizePullRequests(prs, start, end, repositoryId),
     [prs, start, end, repositoryId],
@@ -540,14 +523,54 @@ export default function ReviewAnalyticsPage() {
                 </div>
               </MetricCard>
               <MetricCard
-                title="Review Comments by Severity"
-                note="Cannot infer comment severity from pull-request statuses."
-                className="min-h-[300px]"
+                title="Reviewer Findings by Severity"
+                note="Findings from persisted Dev Plane review reports linked to PRs created in the selected period."
               >
-                <div className="flex h-[245px] flex-col items-center justify-center text-center">
-                  <ShieldCheck size={30} className="text-[#b5b5b5] mb-3" />
-                  <NotTracked detail="Connect review findings and severity events to enable this report." />
-                </div>
+                {metricsError ? (
+                  <div role="alert" className="text-sm text-[#9a3333] mt-8">
+                    Review findings unavailable.
+                  </div>
+                ) : metricsPending ? (
+                  <div className="text-sm text-[#888] mt-8">
+                    Loading findings…
+                  </div>
+                ) : !metrics?.reviewed_prs ? (
+                  <NotTracked detail="No persisted review reports are linked to PRs in this period." />
+                ) : (
+                  <div className="space-y-3 mt-5">
+                    {(
+                      [
+                        ["Critical", metrics.critical_findings, "bg-red-500"],
+                        ["High", metrics.high_findings, "bg-orange-500"],
+                        ["Medium", metrics.medium_findings, "bg-amber-400"],
+                        ["Low", metrics.low_findings, "bg-emerald-500"],
+                        ["Info", metrics.info_findings, "bg-sky-400"],
+                      ] as const
+                    ).map(([label, count, color]) => (
+                      <div
+                        key={label}
+                        className="flex items-center gap-3 text-xs"
+                      >
+                        <span className="w-16 text-[#727272]">{label}</span>
+                        <div className="h-2.5 flex-1 rounded-full bg-[#f2f2f2] overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${color}`}
+                            style={{
+                              width: `${Math.max(0, (count / Math.max(1, metrics.critical_findings, metrics.high_findings, metrics.medium_findings, metrics.low_findings, metrics.info_findings)) * 100)}%`,
+                            }}
+                          />
+                        </div>
+                        <span className="w-7 text-right tabular-nums font-medium">
+                          {count}
+                        </span>
+                      </div>
+                    ))}
+                    <p className="text-xs text-[#888] pt-2">
+                      {metrics.reviewed_prs} linked PRs have persisted review
+                      reports.
+                    </p>
+                  </div>
+                )}
               </MetricCard>
               <MetricCard
                 title="Repository Activity"
@@ -638,23 +661,50 @@ export default function ReviewAnalyticsPage() {
         )}
 
         {section === "security" && (
-          <div className="max-w-3xl rounded-[18px] border border-[#e5e5e5] bg-white p-8 text-center">
-            <LockKeyhole size={30} className="mx-auto mb-4 text-[#8f8f8f]" />
-            <h2 className="font-semibold">
-              Security review analytics are not yet available
-            </h2>
-            <p className="text-sm text-[#777] mt-2">
-              A reliable severity report needs persisted findings, scan
-              provenance, and their dispositions. PR status alone cannot
-              establish whether a security issue was found or resolved.
-            </p>
-            <Link
-              href="/settings/policies"
-              className="inline-flex items-center mt-5 text-sm font-medium underline underline-offset-4"
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <MetricCard
+              title="Security findings"
+              note="Persisted findings categorized as security, for linked PR reviews in this UTC date range."
             >
-              Review security policies{" "}
-              <ExternalLink size={13} className="ml-1" />
-            </Link>
+              <p className="text-3xl font-semibold mt-6 text-center">
+                {metricsError
+                  ? "Unavailable"
+                  : metricsPending
+                    ? "—"
+                    : metrics?.reviewed_prs
+                      ? metrics.security_findings
+                      : "No data"}
+              </p>
+            </MetricCard>
+            <MetricCard title="Critical and high findings">
+              <p className="text-3xl font-semibold mt-6 text-center">
+                {metricsError
+                  ? "Unavailable"
+                  : metricsPending
+                    ? "—"
+                    : metrics?.reviewed_prs
+                      ? metrics.critical_findings + metrics.high_findings
+                      : "No data"}
+              </p>
+            </MetricCard>
+            <MetricCard title="PRs with persisted reviews">
+              <p className="text-3xl font-semibold mt-6 text-center">
+                {metricsError
+                  ? "Unavailable"
+                  : metricsPending
+                    ? "—"
+                    : (metrics?.reviewed_prs ?? 0)}
+              </p>
+            </MetricCard>
+            <div className="md:col-span-2 lg:col-span-3 text-sm text-[#777] p-4 border border-[#eaeaea] rounded-xl">
+              These numbers cover Dev Plane reviewer findings attached to
+              agent-generated PRs, not all external GitHub/CodeRabbit security
+              reviews. A zero count with no reviewed PRs is not evidence of a
+              clean security scan.
+              <Link href="/settings/policies" className="underline ml-2">
+                Review security policies
+              </Link>
+            </div>
           </div>
         )}
 
