@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -101,7 +102,11 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("failed to get user profile: %w", err))
 		return
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			slog.Warn("failed to close GitHub profile response", "error", closeErr)
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("github api returned status %d", resp.StatusCode))
@@ -123,20 +128,32 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 	// Get primary email if email is not public
 	if ghUser.Email == "" {
 		emailResp, err := client.Get("https://api.github.com/user/emails")
-		if err == nil && emailResp.StatusCode == http.StatusOK {
-			var emails []struct {
-				Email    string `json:"email"`
-				Primary  bool   `json:"primary"`
-				Verified bool   `json:"verified"`
-			}
-			json.NewDecoder(emailResp.Body).Decode(&emails)
-			emailResp.Body.Close()
-			for _, e := range emails {
-				if e.Primary && e.Verified {
-					ghUser.Email = e.Email
-					break
+		if err == nil {
+			func() {
+				defer func() {
+					if closeErr := emailResp.Body.Close(); closeErr != nil {
+						slog.Warn("failed to close GitHub email response", "error", closeErr)
+					}
+				}()
+				if emailResp.StatusCode != http.StatusOK {
+					return
 				}
-			}
+				var emails []struct {
+					Email    string `json:"email"`
+					Primary  bool   `json:"primary"`
+					Verified bool   `json:"verified"`
+				}
+				if decodeErr := json.NewDecoder(emailResp.Body).Decode(&emails); decodeErr != nil {
+					slog.Warn("invalid GitHub email response", "error", decodeErr)
+					return
+				}
+				for _, e := range emails {
+					if e.Primary && e.Verified {
+						ghUser.Email = e.Email
+						break
+					}
+				}
+			}()
 		}
 	}
 

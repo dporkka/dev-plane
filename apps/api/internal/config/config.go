@@ -46,7 +46,7 @@ func Load() (*Config, error) {
 			return nil, errors.New("GITHUB_OAUTH_REDIRECT_URL must be an absolute, query-free web callback URL")
 		}
 		loopback := parsed.Hostname() == "localhost" || parsed.Hostname() == "127.0.0.1" || parsed.Hostname() == "::1"
-		if parsed.Scheme != "https" && !(parsed.Scheme == "http" && loopback) {
+		if parsed.Scheme != "https" && (parsed.Scheme != "http" || !loopback) {
 			return nil, errors.New("GITHUB_OAUTH_REDIRECT_URL must use HTTPS outside localhost")
 		}
 	}
