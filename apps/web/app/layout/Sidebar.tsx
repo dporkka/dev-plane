@@ -3,6 +3,7 @@
 import { useStore } from "@/lib/store";
 import {
   Activity,
+  BarChart3,
   ChevronLeft,
   ChevronRight,
   FolderGit,
@@ -16,6 +17,7 @@ import { usePathname } from "next/navigation";
 
 const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/reviews/analytics", label: "Reviews & Analytics", icon: BarChart3 },
   { href: "/projects", label: "Projects", icon: FolderGit },
   { href: "/repositories", label: "Repositories", icon: GitBranch },
   { href: "/settings", label: "Settings", icon: Settings },
