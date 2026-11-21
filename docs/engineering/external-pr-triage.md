@@ -96,3 +96,44 @@ organization-scoped external source as an additional dataset rather than
 overwriting its task-owned `pull_requests` rows. Prefer eventually replacing
 the manual import with a signed GitHub webhook + reconciliation worker and a
 bounded durable queue. Do not invoke the scanner from an API request.
+
+
+## Verification and provider-adapter prerequisites
+
+The local release gate is repeatable without credentials or a remote deployment:
+
+- `GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GOMAXPROCS=2 GOFLAGS=-p=1 make test`
+  validates the repository, including the SQLite real import/read round trip.
+- `go test ./apps/api/internal/server -run TestExternalPRTriageAuthenticatedHTTP -count=1`
+  exercises actual JWT middleware and HTTP routes against an ephemeral SQLite
+  database (owner import, member read, cross-organization denial, role demotion).
+- `pnpm --dir apps/web typecheck` and `pnpm --dir apps/web build` validate
+  Next.js compilation and that `/reviews/triage` is a built route.
+- The separate `TestRunMigrationsPostgres` can be pointed at an isolated
+  PostgreSQL test database with `POSTGRES_TEST_DATABASE_URL`. Do not run it
+  against production or a database containing user data.
+
+**Remote production/staging was not deployed by this change.** Live GitHub
+OAuth, callback domain routing, full browser authentication, and actual
+PostgreSQL deployment privileges still require a provisioned staging
+environment. The smoke test uses disposable local accounts and a short-lived,
+locally signed synthetic JWT.
+
+Future review-provider and CI adapters should have distinct trust labels:
+
+1. **CodeRabbit/PR-Agent/Reviewdog:** obtain findings from authenticated
+   GitHub review/comment/check APIs using a repository-scoped GitHub App
+   installation token. Preserve provider identity, review ID, source URL,
+   file/line, severity, and the exact PR head SHA. The finding is an advisory
+   observation and never an approval.
+2. **Woodpecker/Dagger:** read pipeline run metadata from an authenticated
+   provider API, bind evidence to the exact repository, head SHA, tested base
+   SHA and run ID, and compare to a live GitHub head at decision time. Unknown
+   source, missing check, or insufficient provenance must fail closed.
+3. Reuse the **same organization-scoped review inbox** rather than creating
+   another dashboard or merging external observations into task-owned
+   `pull_requests`. Keep the source adapters disabled until repository-scoped
+   GitHub credential hardening (#232, stacked on #229) and the unified
+   reviews UI (#235/#236) are reconciled.
+
+This avoids promoting untrusted imported `verified` flags to CI authority.

@@ -69,6 +69,15 @@ func TestPRTriageSQLiteImportAndReadRoundTrip(t *testing.T) {
 		t.Fatalf("stale import: %d %s", stale.Code, stale.Body.String())
 	}
 
+	// Regression: an earlier instant with a positive timezone offset must not
+	// replace newer UTC evidence when SQLite compares stored TEXT timestamps.
+	staleOffset := httptest.NewRecorder()
+	olderWithOffset := created.Add(-30 * time.Minute).In(time.FixedZone("UTC+2", 2*60*60))
+	h.ImportPRTriage(staleOffset, triageRequest(http.MethodPost, makeSnapshot("Offset older title", olderWithOffset), "owner"))
+	if staleOffset.Code != http.StatusOK || !strings.Contains(staleOffset.Body.String(), `"imported":0`) {
+		t.Fatalf("offset stale import: %d %s", staleOffset.Code, staleOffset.Body.String())
+	}
+
 	get := func() (int, map[string]any) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/organizations/org-1/pr-triage", nil)

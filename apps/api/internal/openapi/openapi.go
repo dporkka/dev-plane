@@ -184,6 +184,36 @@ func BuildSpec() *Spec {
 func buildComponents() Components {
 	return Components{
 		Schemas: map[string]*Schema{
+			"ExternalPRTriageSourcePR": {
+				Type:     "object",
+				Required: []string{"repo", "number", "title", "url", "headRefOid", "baseRefName"},
+				Properties: map[string]*Schema{
+					"repo": {Type: "string"}, "number": {Type: "integer"},
+					"title": {Type: "string"}, "url": {Type: "string", Format: "uri"},
+					"headRefOid": {Type: "string"}, "baseRefName": {Type: "string"},
+					"isDraft": {Type: "boolean"},
+				},
+			},
+			"ExternalPRTriageImportDecision": {
+				Type:     "object",
+				Required: []string{"pr", "bucket", "score"},
+				Properties: map[string]*Schema{
+					"pr":           {Ref: "#/components/schemas/ExternalPRTriageSourcePR"},
+					"bucket":       {Type: "string", Enum: []interface{}{"candidate", "review", "draft", "dependency-blocked", "ci-blocked", "needs-repair"}},
+					"score":        {Type: "integer"},
+					"reasons":      {Type: "array", Items: &Schema{Type: "string"}},
+					"dependencies": {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
+			"ExternalPRTriageImportSnapshot": {
+				Type:     "object",
+				Required: []string{"generated_at", "decisions"},
+				Properties: map[string]*Schema{
+					"generated_at": {Type: "string", Format: "date-time"},
+					"decisions":    {Type: "array", Items: &Schema{Ref: "#/components/schemas/ExternalPRTriageImportDecision"}},
+					"warnings":     {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
 			"Organization": {
 				Type:     "object",
 				Required: []string{"id", "name", "slug", "plan", "created_at", "updated_at"},
@@ -1952,12 +1982,7 @@ func buildPaths() map[string]PathItem {
 				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string", Format: "uuid"}},
 			},
 			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
-				"application/json": {Schema: &Schema{Type: "object", Required: []string{"generated_at", "decisions"},
-					Properties: map[string]*Schema{
-						"generated_at": {Type: "string", Format: "date-time"},
-						"decisions":    {Type: "array", Items: &Schema{Type: "object"}},
-						"warnings":     {Type: "array", Items: &Schema{Type: "string"}},
-					}}},
+				"application/json": {Schema: &Schema{Ref: "#/components/schemas/ExternalPRTriageImportSnapshot"}},
 			}},
 			Responses: map[string]Response{
 				"200": {Description: "Number of advisory snapshots imported"},

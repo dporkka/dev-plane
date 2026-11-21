@@ -58,6 +58,11 @@ function TriageRow({ item }: { item: ExternalPRTriageItem }) {
 
 export default function ExternalPRTriagePage() {
   const { selectedOrg } = useStore();
+  // Remount the scoped inbox when changing organizations, including pagination.
+  return <ExternalPRTriageWorkspace key={selectedOrg ?? "none"} selectedOrg={selectedOrg} />;
+}
+
+function ExternalPRTriageWorkspace({ selectedOrg }: { selectedOrg: string | null }) {
   const [bucket, setBucket] = useState("");
   const [repoText, setRepoText] = useState("");
   const [repo, setRepo] = useState("");
@@ -128,16 +133,16 @@ export default function ExternalPRTriagePage() {
         {data.items.map((item) => <TriageRow key={`${item.repo}#${item.number}`} item={item} />)}
       </ul>}
 
-      {data && (
+      {(data || page > 0) && (
         <div className="flex items-center justify-between gap-3 text-sm text-gray-400">
-          <span>Showing {data.items.length} records, offset {data.offset}. Inventory completeness is unverified.</span>
+          <span>Showing {data?.items.length ?? 0} records, offset {data?.offset ?? page * PAGE_SIZE}. Inventory completeness is unverified.</span>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setPage((p) => Math.max(0, p - 1))} disabled={page === 0}
               className="rounded border border-[#30363d] p-2 disabled:opacity-30" aria-label="Previous page">
               <ChevronLeft className="h-4 w-4" />
             </button>
             <span>Page {page + 1}</span>
-            <button type="button" onClick={() => setPage((p) => p + 1)} disabled={!data.has_more}
+            <button type="button" onClick={() => setPage((p) => p + 1)} disabled={!data?.has_more}
               className="rounded border border-[#30363d] p-2 disabled:opacity-30" aria-label="Next page">
               <ChevronRight className="h-4 w-4" />
             </button>

@@ -160,3 +160,28 @@ func TestPRTriageSnapshotValidationRejectsSpoofedURLsAndDuplicates(t *testing.T)
 		t.Fatal("duplicate PR accepted")
 	}
 }
+
+func TestImportPRTriageFailsClosedWhenRepoDisconnectsDuringImport(t *testing.T) {
+	h, mock, cleanup := setupTest(t)
+	defer cleanup()
+	expectAuthorizeOrganization(mock, testOrgID)
+	mock.ExpectQuery("SELECT role FROM users").WithArgs(testUserID, testOrgID).
+		WillReturnRows(sqlmock.NewRows([]string{"role"}).AddRow("owner"))
+	mock.ExpectQuery("(?s)SELECT r.id, r.full_name FROM repositories").WithArgs(testOrgID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "full_name"}).AddRow("repo-id", "owner/repo"))
+	mock.ExpectBegin()
+	mock.ExpectExec("INSERT INTO external_pr_triage").WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery("SELECT EXISTS").WithArgs("repo-id", testOrgID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
+	mock.ExpectRollback()
+	now := time.Now().UTC().Format(time.RFC3339)
+	payload := fmt.Sprintf(`{"generated_at":%q,"decisions":[{"pr":{"repo":"owner/repo","number":9,"title":"Cutover","url":"https://github.com/owner/repo/pull/9","headRefOid":%q,"baseRefName":"main"},"bucket":"review","score":50}]}`, now, strings.Repeat("a", 40))
+	rec := httptest.NewRecorder()
+	h.ImportPRTriage(rec, triageRequest(http.MethodPost, payload, "owner"))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("got %d: %s", rec.Code, rec.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

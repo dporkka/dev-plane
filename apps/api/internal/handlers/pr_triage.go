@@ -51,7 +51,7 @@ func validHexSHA(s string) bool {
 		return false
 	}
 	for _, c := range s {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
 			return false
 		}
 	}
@@ -163,7 +163,7 @@ func (h *Handler) ImportPRTriage(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, name string
 		if err := rows.Scan(&id, &name); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			respond.Error(w, 500, errors.New("repository lookup failed"))
 			return
 		}
@@ -174,7 +174,7 @@ func (h *Handler) ImportPRTriage(w http.ResponseWriter, r *http.Request) {
 		repoIDs[key] = id
 	}
 	rowsErr := rows.Err()
-	rows.Close()
+	_ = rows.Close()
 	if rowsErr != nil {
 		respond.Error(w, 500, errors.New("repository lookup failed"))
 		return
@@ -192,7 +192,7 @@ func (h *Handler) ImportPRTriage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, 500, errors.New("triage import transaction failed"))
 		return
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	imported := 0
 	for _, d := range snapshot.Decisions {
 		reasons, _ := json.Marshal(nonNilStrings(d.Reasons))
@@ -211,7 +211,7 @@ func (h *Handler) ImportPRTriage(w http.ResponseWriter, r *http.Request) {
     received_at = CURRENT_TIMESTAMP, organization_id = EXCLUDED.organization_id
    WHERE external_pr_triage.snapshot_at <= EXCLUDED.snapshot_at
   `, repoIDs[strings.ToLower(d.PR.Repo)], orgID, d.PR.Number, d.PR.Title, d.PR.URL,
-			d.PR.HeadSHA, d.PR.Base, d.Bucket, d.Score, d.PR.Draft, string(reasons), string(deps), snapshot.GeneratedAt)
+			d.PR.HeadSHA, d.PR.Base, d.Bucket, d.Score, d.PR.Draft, string(reasons), string(deps), snapshot.GeneratedAt.UTC())
 		if err != nil {
 			respond.Error(w, 500, errors.New("triage import failed"))
 			return
@@ -223,7 +223,22 @@ func (h *Handler) ImportPRTriage(w http.ResponseWriter, r *http.Request) {
 		}
 		// A repo disconnected during import must fail the entire transaction.
 		if affected == 0 {
-			// A newer snapshot can already exist, so do not claim this decision imported.
+			// Zero rows can mean a stale snapshot OR a disconnected repository.
+			// Preserve the skip behavior only if the repository is still live.
+			var eligible bool
+			err := tx.QueryRowContext(r.Context(), `SELECT EXISTS (
+				SELECT 1 FROM repositories r JOIN projects p ON p.id = r.project_id
+				WHERE r.id = $1 AND p.organization_id = $2 AND r.deleted_at IS NULL AND p.deleted_at IS NULL
+			)`, repoIDs[strings.ToLower(d.PR.Repo)], orgID).Scan(&eligible)
+			if err != nil {
+				respond.Error(w, http.StatusInternalServerError, errors.New("triage repository state could not be verified"))
+				return
+			}
+			if !eligible {
+				respond.Error(w, http.StatusConflict, errors.New("repository disconnected during triage import"))
+				return // deferred transaction rollback
+			}
+			// The live repository already has newer evidence.
 			continue
 		}
 		imported++
@@ -333,7 +348,7 @@ func (h *Handler) ListPRTriage(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, 500, errors.New("triage query failed"))
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []externalPRTriageItem{}
 	for rows.Next() {
 		var item externalPRTriageItem

@@ -19,3 +19,21 @@ func TestPRTriageEndpointsInOpenAPI(t *testing.T) {
 		t.Fatal("import missing authentication or request body")
 	}
 }
+
+func TestPRTriageImportOpenAPIDescribesNestedDecision(t *testing.T) {
+	spec := BuildSpec()
+	schema := spec.Components.Schemas["ExternalPRTriageImportDecision"]
+	if schema == nil || schema.Properties["pr"] == nil ||
+		schema.Properties["bucket"] == nil || schema.Properties["score"] == nil {
+		t.Fatal("import decision needs explicit required fields")
+	}
+	source := spec.Components.Schemas["ExternalPRTriageSourcePR"]
+	if source == nil {
+		t.Fatal("missing nested source PR schema")
+	}
+	for _, field := range []string{"repo", "number", "title", "url", "headRefOid", "baseRefName"} {
+		if source.Properties[field] == nil {
+			t.Fatalf("missing source PR field %s", field)
+		}
+	}
+}
