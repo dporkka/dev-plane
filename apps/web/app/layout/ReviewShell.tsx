@@ -49,6 +49,12 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
   const [search, setSearch] = useState("");
   const [mobileOpen, setMobileOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeMobileNavigation = () => {
+    setMobileOpen(false);
+    menuButtonRef.current?.focus();
+  };
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -64,6 +70,7 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-white text-[#171717]">
       <aside
+        id="review-primary-sidebar"
         className={`${mobileOpen ? "flex" : "hidden"} lg:flex fixed lg:sticky top-0 left-0 z-40 lg:z-auto w-[248px] xl:w-[282px] shrink-0 flex-col border-r border-[#e5e5e5] bg-[#fafafa] h-screen`}
       >
         <div className="h-14 px-4 border-b border-[#ededed] flex items-center gap-2">
@@ -80,7 +87,7 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
           <button
             type="button"
             aria-label="Close navigation"
-            onClick={() => setMobileOpen(false)}
+            onClick={closeMobileNavigation}
             className="lg:hidden inline-flex items-center justify-center rounded-md p-1 text-[#555] hover:bg-[#e9e9e9] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1"
           >
             <X size={18} aria-hidden="true" />
@@ -173,6 +180,9 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               aria-label="Open navigation"
+              aria-expanded={mobileOpen}
+              aria-controls="review-primary-sidebar"
+              ref={menuButtonRef}
               onClick={() => setMobileOpen(!mobileOpen)}
               className="lg:hidden mr-2 px-2 py-1 border rounded-md"
             >
