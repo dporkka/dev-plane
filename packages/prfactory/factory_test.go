@@ -14,14 +14,14 @@ func TestCreateGitHubPRRequiresGatewayAndToken(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "")
 	factory := NewFactory(nil, nil)
 
-	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
+	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false, ""); err == nil {
 		t.Fatal("expected missing gateway error")
 	} else if !strings.Contains(err.Error(), "gateway") {
 		t.Fatalf("error = %v, want gateway", err)
 	}
 
 	factory.github = &fakeGitHubPRCreator{}
-	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false); err == nil {
+	if _, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "head", "main", false, ""); err == nil {
 		t.Fatal("expected missing token error")
 	} else if !strings.Contains(err.Error(), "token") {
 		t.Fatalf("error = %v, want token", err)
@@ -37,7 +37,7 @@ func TestCreateGitHubPRSendsTokenAndDraftPayload(t *testing.T) {
 	factory := NewFactory(nil, nil).WithGitHubToken("ghp_test")
 	factory.github = creator
 
-	pr, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "agent/task", "main", true)
+	pr, err := factory.createGitHubPR(context.Background(), "owner", "repo", "title", "body", "agent/task", "main", true, "ghp_test")
 	if err != nil {
 		t.Fatalf("createGitHubPR() error: %v", err)
 	}

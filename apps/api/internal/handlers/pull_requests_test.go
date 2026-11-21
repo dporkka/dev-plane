@@ -61,7 +61,8 @@ func TestMergePullRequest(t *testing.T) {
 	defer cleanup()
 
 	fakeGH := &fakeMergeGateway{result: &gateway.MergePRResult{Merged: true, SHA: "abc123"}}
-	h = h.WithGitHubGateway(fakeGH).WithGitHubToken("gh-token")
+	tokens := &fakeRepositoryTokenSource{token: "repo-only-merge-token"}
+	h = h.WithGitHubGateway(fakeGH).WithRepositoryTokenSource(tokens)
 
 	pub := &fakeEventPublisher{}
 	h = h.WithEventPublisher(pub)
@@ -99,6 +100,10 @@ func TestMergePullRequest(t *testing.T) {
 
 	if len(fakeGH.calls) != 1 {
 		t.Fatalf("merge calls = %d, want 1", len(fakeGH.calls))
+	}
+	if tokens.calls != 1 || tokens.owner != "owner" || tokens.repo != "repo" ||
+		len(tokens.permissions) != 1 || tokens.permissions["contents"] != "write" {
+		t.Fatalf("merge token scope: %#v", tokens)
 	}
 	if fakeGH.calls[0].Method != "squash" {
 		t.Errorf("merge method = %q, want squash", fakeGH.calls[0].Method)

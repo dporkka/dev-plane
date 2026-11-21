@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -76,7 +75,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repoIDs []string
 	for rows.Next() {
@@ -114,7 +113,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer prRows.Close()
+	defer func() { _ = prRows.Close() }()
 
 	var prs []PullRequestResponse
 	for prRows.Next() {
@@ -227,9 +226,9 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Verify task exists and is in a valid state for PR creation
 	var task struct {
-		Status   string
-		RepoID   string
-		Branch   string
+		Status string
+		RepoID string
+		Branch string
 	}
 	err := h.db.QueryRowContext(ctx, `
 		SELECT status, repository_id, target_branch
@@ -281,11 +280,11 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	// Publish pr.created event
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      pr.ID,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"branch":     pr.Branch,
-			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"pr_id":     pr.ID,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"branch":    pr.Branch,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("pr.created", data); pubErr != nil {
@@ -419,12 +418,10 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token := strings.TrimSpace(h.githubToken)
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token == "" {
-		respond.Error(w, http.StatusServiceUnavailable, errors.New("github token is not configured"))
+	token, err := h.githubOperationToken(ctx, repoOwner, repoName, map[string]string{"contents": "write"}, h.githubToken)
+	if err != nil {
+		h.logger.Warn("cannot acquire repository-scoped merge token", "error", err)
+		respond.Error(w, http.StatusServiceUnavailable, errors.New("repository-scoped merge credentials unavailable"))
 		return
 	}
 
@@ -465,11 +462,11 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      id,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
-			"timestamp":  now.Format(time.RFC3339),
+			"pr_id":     id,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"sha":       mergeResult.SHA,
+			"timestamp": now.Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish(events.PRMerged, data); pubErr != nil {

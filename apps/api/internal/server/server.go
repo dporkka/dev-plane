@@ -22,6 +22,7 @@ import (
 	"github.com/ai-dev-control-plane/api/internal/otel"
 	"github.com/ai-dev-control-plane/api/internal/secrets"
 	events "github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/gateway"
 )
 
 // Server is the HTTP server for the API service.
@@ -92,6 +93,14 @@ func (s *Server) routes() {
 	auditLogger := audit.NewLogger(s.db, s.logger)
 	capabilityKernel := capability.NewKernel(nil, nil, auditLogger, s.logger)
 	h := handlers.NewHandler(s.db, s.logger).WithCapabilityKernel(capabilityKernel)
+	// No process-wide PAT fallback. GitHub operations are disabled until
+	// an App signing key is configured and repository-scoped tokens can be minted.
+	if source, err := gateway.GitHubAppTokenSourceFromEnv(); err == nil {
+		h.WithRepositoryTokenSource(source)
+	} else {
+		s.logger.Warn("GitHub App repository-scoped operations unavailable", "error", err)
+	}
+
 	if s.config.SecretKeys != "" {
 		keyring, err := secrets.ParseKeyring(s.config.SecretKeys)
 		if err != nil {
