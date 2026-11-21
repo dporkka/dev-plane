@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_organization_id ON users(organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_github_id_unique ON users(github_id) WHERE github_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_deleted_at ON users(deleted_at);
 
 -- =====================================================
@@ -653,4 +654,3 @@ CREATE INDEX IF NOT EXISTS idx_agent_items_thread_id ON agent_items(thread_id);
 CREATE INDEX IF NOT EXISTS idx_agent_items_turn_id ON agent_items(turn_id);
 CREATE INDEX IF NOT EXISTS idx_agent_items_type ON agent_items(item_type);
 CREATE INDEX IF NOT EXISTS idx_agent_items_status ON agent_items(status);
-
