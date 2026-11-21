@@ -27,6 +27,21 @@ To avoid conflicts, optional ports are `STAGING_DB_PORT`, `STAGING_API_PORT`, an
 
 The script refuses to run as root or when application `.env` files are present. The API starts in a newly created working directory containing only copied migrations, with a sanitized environment and no GitHub or cloud credentials. The browser test only accepts uncredentialed HTTP loopback origins. Playwright reuses **browser binaries only**, never browser profiles or existing authenticated sessions.
 
+## GitHub-hosted qualification (advisory)
+
+The `.github/workflows/review-staging-smoke.yml` workflow runs on pushes to the
+`feat/isolated-review-staging-qa-*` branch pattern. It checks out the exact SHA
+without persisting credentials, installs isolated PostgreSQL/Chromium tooling,
+then runs the same disposable local API + database + production web smoke on a
+GitHub-hosted Ubuntu runner. No application or GitHub OAuth secrets are
+available to this job; the job has read-only repository permissions. The
+result is an **advisory check** for the specific pushed head, not a required
+`main` check or substitute for independent review.
+
+The workflow is intentionally scoped to staging QA branches. Once its
+implementation is merged into a trusted branch, operators may run it
+manually via GitHub Actions if they need additional test evidence.
+
 ## Coverage
 
 | Check | Expected outcome |

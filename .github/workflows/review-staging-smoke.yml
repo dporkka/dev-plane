@@ -1,0 +1,92 @@
+name: Review staging smoke (advisory)
+
+# A no-secrets, read-only QA run for the isolated review staging stack.
+# This is NOT an approval, required merge gate, or remote OAuth certification.
+on:
+  push:
+    branches:
+      - "feat/isolated-review-staging-qa-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-staging-smoke-${{ github.repository }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-staging:
+    name: Localhost API/Postgres/browser QA (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source without persisting credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Record exact checkout (no mutable refs)
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test -z "$(git status --porcelain)"
+          {
+            echo "## Isolated review staging QA (advisory)"
+            echo "Exact tested commit: $EXPECTED_SHA"
+            echo "Source branch: $GITHUB_REF"
+            echo "No GitHub OAuth, production credentials, remote staging, or reviewer approval validated."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install local PostgreSQL tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends postgresql postgresql-client
+          test -x "$(pg_config --bindir)/initdb"
+          test -x "$(pg_config --bindir)/pg_ctl"
+
+      - name: Install isolated Playwright and Chromium
+        working-directory: scripts/staging
+        shell: bash
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Verify smoke-test safeguards
+        working-directory: scripts/staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test
+          bash -n run-local-review.sh
+          node --check review-smoke.cjs
+
+      - name: Exercise actual API, migrated PostgreSQL and production web
+        shell: bash
+        env:
+          GOTELEMETRY: "off"
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: |
+          set -euo pipefail
+          bash scripts/staging/run-local-review.sh
+          echo "PASS: live localhost smoke with synthetic users only." >> "$GITHUB_STEP_SUMMARY"
