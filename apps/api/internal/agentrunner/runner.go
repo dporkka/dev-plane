@@ -45,10 +45,16 @@ func NewRunner(db *sql.DB, workspaceTools *tools.WorkspaceTools, polEng *policie
 		logger = slog.Default()
 	}
 	kernel := capability.NewKernel(polEng, budgetEng, nil, logger)
+	providers, err := modelrouter.ProvidersForMode(os.Getenv("DEV_PLANE_LLM_ROUTING_MODE"))
+	if err != nil {
+		// A misconfigured exclusive gateway mode must never silently switch
+		// to direct inference. The empty provider set fails closed at execution.
+		logger.Error("invalid model routing mode; inference disabled", "error", err)
+	}
 	return &Runner{
 		db:       db,
 		tools:    workspaceTools,
-		router:   modelrouter.NewRouter(nil, modelrouter.AllProviders()...),
+		router:   modelrouter.NewRouter(nil, providers...),
 		policies: polEng,
 		budget:   budgetEng,
 		kernel:   kernel,
@@ -176,7 +182,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 	for stepNum := nextStepNum; stepNum <= maxStepNum; stepNum++ {
 		// Check for context cancellation
 		if ctx.Err() != nil {
-			return r.failRun(ctx, runID, fmt.Sprintf("context cancelled: %v", ctx.Err()))
+			return r.failRun(ctx, runID, fmt.Sprintf("context canceled: %v", ctx.Err()))
 		}
 
 		action, modelResult, err := r.nextModelAction(ctx, run, task, systemPrompt, mailboxMessages, history)
@@ -338,7 +344,9 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+	if err := r.completeRunWithRecovery(ctx, runID, summary, state); err != nil {
+		return fmt.Errorf("persist completed run: %w", err)
+	}
 
 	// Publish run.completed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
@@ -707,20 +715,6 @@ func sandboxState(workspace *models.Workspace) string {
 	default:
 		return workspace.RuntimeProvider
 	}
-}
-
-// executeStep runs a single agent step (alias used by the loop).
-func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, workspacePath string) error {
-	output, err := r.executeToolUnchecked(ctx, *step.ToolName, workspacePath, step.ToolInput)
-	step.ToolOutput = output
-	if err != nil {
-		step.Status = models.AgentStepStatusFailed
-		errStr := err.Error()
-		step.Content = &errStr
-		return err
-	}
-	step.Status = models.AgentStepStatusCompleted
-	return nil
 }
 
 // streamStep publishes a step event via NATS.
