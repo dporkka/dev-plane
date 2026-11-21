@@ -412,3 +412,28 @@ func TestRunLeaseEffectPreflightRejectsExpiredAndUnverifiableOwnership(t *testin
 		t.Fatal("unavailable database must deny preflight")
 	}
 }
+
+func TestRunLeaseExecutePassesClaimedTokenForStatusWrites(t *testing.T) {
+	db := newRunLeaseTestDB(t)
+	lease := NewRunLeaseManager(db, slog.Default())
+	if _, err := db.Exec("UPDATE agent_runs SET status = 'admitting' WHERE id = 'queued'"); err != nil {
+		t.Fatal(err)
+	}
+	err := lease.Execute(context.Background(), "queued", func(ctx context.Context) error {
+		var claimedToken string
+		if err := db.QueryRowContext(ctx, "SELECT execution_lease_token FROM agent_runs WHERE id = 'queued'").Scan(&claimedToken); err != nil {
+			return err
+		}
+		token, err := execution.RunStatusLeaseToken(ctx, "queued")
+		if err != nil {
+			return err
+		}
+		if token == "" || token != claimedToken {
+			t.Error("status writer did not receive the claimed token")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

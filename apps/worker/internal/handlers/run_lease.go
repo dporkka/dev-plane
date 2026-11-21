@@ -14,7 +14,7 @@ import (
 
 // ErrRunLeaseUnavailable means a run is already owned, not queued, or its
 // previous lease expired. Lease expiry never authorizes automatic replay.
-var ErrRunLeaseUnavailable = errors.New("run execution lease unavailable")
+var ErrRunLeaseUnavailable = execution.ErrRunLeaseUnavailable
 
 // errRunLeaseFinished stops renewal after this same worker has durably moved
 // its run to paused/completed; the enclosing executor must finish normally.
@@ -216,6 +216,7 @@ func (m *RunLeaseManager) Execute(ctx context.Context, runID string, execute fun
 		return err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
+	runCtx = execution.WithRunStatusLease(runCtx, runID, token)
 	runCtx = execution.WithEffectGuard(runCtx, func(verifyCtx context.Context) error {
 		return m.CheckEffectOwner(verifyCtx, runID, token, time.Now().UTC())
 	})
