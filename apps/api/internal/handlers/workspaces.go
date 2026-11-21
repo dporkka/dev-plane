@@ -107,6 +107,13 @@ func (h *Handler) ListTaskWorkspaces(w http.ResponseWriter, r *http.Request) {
 		}
 		workspaces = append(workspaces, ws)
 	}
+	// database/sql may close rows automatically at EOF. An implicit close
+	// error is surfaced by rows.Err(), not by the deferred rows.Close().
+	if err := rows.Err(); err != nil {
+		h.logger.Error("workspace row iteration failed", "error", err)
+		respond.Error(w, http.StatusInternalServerError, errors.New("unable to list workspaces"))
+		return
+	}
 
 	if workspaces == nil {
 		workspaces = []WorkspaceResponse{}
