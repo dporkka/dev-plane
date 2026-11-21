@@ -5,6 +5,13 @@ export interface ReviewPR {
   status: "open" | "closed" | "merged";
   created_at: string;
   merged_at?: string;
+  run_id?: string;
+  task_id?: string;
+  branch?: string;
+  base_branch?: string;
+  body?: string;
+  draft?: boolean;
+  updated_at?: string;
   title?: string;
   number?: number;
   url?: string;
@@ -37,10 +44,44 @@ export function normalizeReviewPR(value: unknown): ReviewPR | null {
     merged_at:
       typeof record.merged_at === "string" ? record.merged_at : undefined,
     status,
+    run_id: typeof record.run_id === "string" ? record.run_id : undefined,
+    task_id: typeof record.task_id === "string" ? record.task_id : undefined,
+    branch: typeof record.branch === "string" ? record.branch : undefined,
+    base_branch:
+      typeof record.base_branch === "string" ? record.base_branch : undefined,
+    body: typeof record.body === "string" ? record.body : undefined,
+    draft: typeof record.draft === "boolean" ? record.draft : undefined,
+    updated_at:
+      typeof record.updated_at === "string" ? record.updated_at : undefined,
     title: typeof record.title === "string" ? record.title : undefined,
     number: typeof record.number === "number" ? record.number : undefined,
     url: typeof record.url === "string" ? record.url : undefined,
   };
+}
+
+/** Read-only triage view. Keep filter semantics independent of presentation. */
+export function filterReviewPRs(
+  prs: ReviewPR[],
+  options: {
+    status: "all" | ReviewPR["status"];
+    repositoryId: string;
+    search: string;
+  },
+  repoNames: Map<string, string>,
+): ReviewPR[] {
+  const query = options.search.trim().toLowerCase();
+  return prs
+    .filter(
+      (pr) =>
+        (options.status === "all" || pr.status === options.status) &&
+        (options.repositoryId === "all" ||
+          pr.repository_id === options.repositoryId) &&
+        (!query ||
+          `${pr.title || ""} ${pr.number ?? ""} ${repoNames.get(pr.repository_id) || pr.repository_id}`
+            .toLowerCase()
+            .includes(query)),
+    )
+    .sort((a, b) => b.created_at.localeCompare(a.created_at));
 }
 
 /** Protect CSV exports from formula injection in untrusted titles and repository names. */
