@@ -402,15 +402,44 @@ func (f *Factory) pushBranch(ctx context.Context, workspacePath, branch, owner, 
 	if err := verifyGitPushRemote(ctx, workspacePath, branch, owner, repo, env); err != nil {
 		return err
 	}
-	// Workspace-local Git config may contain URL-specific proxy/TLS overrides,
-	// which take precedence over a generic -c http.proxy/http.sslVerify.
-	// Pin both supported GitHub URL forms for this exact repository.
-	args, err := trustedGitPushCommandArgs(workspacePath, branch, owner, repo)
+	destination, err := trustedGitHubPushURL(owner, repo)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Env = env
+
+	// Resolve the branch and shared object directory without credentials.
+	ref := "refs/heads/" + branch
+	resolve := exec.CommandContext(ctx, "git", "-C", workspacePath, "rev-parse",
+		"--path-format=absolute", "--git-path", "objects", "--show-object-format",
+		"--verify", "--end-of-options", ref+"^{commit}")
+	resolve.Env = env
+	resolved, err := resolve.Output()
+	if err != nil {
+		return fmt.Errorf("resolve workspace push source: %w", err)
+	}
+	source := strings.Split(strings.TrimSuffix(string(resolved), "\n"), "\n")
+	if len(source) != 3 || !filepath.IsAbs(source[0]) {
+		return errors.New("invalid workspace push source")
+	}
+
+	// The credentialed process reads only the workspace's objects, not its
+	// Git configuration. Leave CA selection to Git's system trust defaults.
+	pushRepo, err := os.MkdirTemp("", "dev-plane-git-push-*")
+	if err != nil {
+		return fmt.Errorf("create git push directory: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(pushRepo) }()
+	init := exec.CommandContext(ctx, "git", "init", "--bare", "--template=", "--object-format="+source[1], pushRepo)
+	init.Env = env
+	if err := init.Run(); err != nil {
+		return fmt.Errorf("initialize isolated git push repository: %w", err)
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "-C", pushRepo,
+		"-c", "http.sslVerify=true", "-c", "http.followRedirects=false",
+		"-c", "core.hooksPath=/dev/null", "-c", "credential.helper=",
+		"push", "--", destination, source[2]+":"+ref)
+	cmd.Env = append(env, "GIT_OBJECT_DIRECTORY="+source[0])
 	cleanup, err := configureGitAskPass(cmd, token)
 	if err != nil {
 		return err

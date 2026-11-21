@@ -20,7 +20,7 @@ func validGitHubPushURL(raw, owner, repo string) bool {
 		return false
 	}
 	want := "/" + owner + "/" + repo
-	return strings.EqualFold(parsed.Path, want) || strings.EqualFold(parsed.Path, want+".git")
+	return parsed.Path == want || parsed.Path == want+".git"
 }
 
 // sanitizedGitEnvironment strips all inherited Git settings, including
@@ -75,13 +75,8 @@ func verifyGitPushRemote(ctx context.Context, workspacePath, branch, owner, repo
 	return nil
 }
 
-// trustedGitTransportArgs pins the HTTP/TLS policy for the only authorized
-// GitHub repository. Git matches URL-specific http.* settings by longest URL,
-// so global -c http.proxy= / http.sslVerify=true ALONE cannot override
-// malicious workspace-local http.https://github.com/owner/repo.* values.
-// Note: validation of arbitrary local Git configuration/rewrite and
-// race-free transport isolation still requires a separate release gate.
-func trustedGitTransportArgs(owner, repo string) ([]string, error) {
+// trustedGitHubPushURL builds the destination without consulting workspace configuration.
+func trustedGitHubPushURL(owner, repo string) (string, error) {
 	valid := func(value string, isOwner bool) bool {
 		if len(value) == 0 || len(value) > 100 || value == "." || value == ".." {
 			return false
@@ -99,43 +94,7 @@ func trustedGitTransportArgs(owner, repo string) ([]string, error) {
 		return true
 	}
 	if !valid(owner, true) || !valid(repo, false) {
-		return nil, fmt.Errorf("invalid GitHub repository segments")
+		return "", fmt.Errorf("invalid GitHub repository segments")
 	}
-	// The actual push remote might contain '.git' or omit it. Protect both.
-	opts := []string{
-		"-c", "http.proxy=",
-		"-c", "remote.origin.proxy=",
-		"-c", "http.sslVerify=true",
-		"-c", "http.sslCAInfo=",
-		"-c", "http.sslCAPath=",
-		"-c", "http.extraHeader=",
-		"-c", "http.followRedirects=false",
-	}
-	base := "https://github.com/" + owner + "/" + repo
-	for _, raw := range []string{base, base + ".git"} {
-		prefix := "http." + raw + "."
-		for _, v := range []string{
-			"proxy=", "sslVerify=true", "sslCAInfo=", "sslCAPath=",
-			"extraHeader=", "followRedirects=false",
-		} {
-			opts = append(opts, "-c", prefix+v)
-		}
-	}
-	return opts, nil
-}
-
-// trustedGitPushCommandArgs builds a scoped credentialed push invocation.
-// Only the selected repository's HTTPS destination receives the token.
-func trustedGitPushCommandArgs(workspacePath, branch, owner, repo string) ([]string, error) {
-	if strings.TrimSpace(workspacePath) == "" || strings.TrimSpace(branch) == "" {
-		return nil, errors.New("git workspace and branch required")
-	}
-	transport, err := trustedGitTransportArgs(owner, repo)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{"-C", workspacePath}
-	args = append(args, transport...)
-	return append(args, "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=",
-		"push", "--", "origin", branch), nil
+	return "https://github.com/" + owner + "/" + repo + ".git", nil
 }

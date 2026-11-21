@@ -9,83 +9,30 @@ import (
 	"testing"
 )
 
-func TestGitTransportUsesPinnedHTTPSSettingsAgainstWorkspaceConfig(t *testing.T) {
-	repo := t.TempDir()
-	cmd := exec.Command("git", "init", "-q", repo)
-	cmd.Env = sanitizedGitEnvironment()
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("init: %v %s", err, out)
-	}
-	for _, pair := range [][2]string{
-		{"http.https://github.com/team/repo.git.proxy", "http://attacker.invalid:8080"},
-		{"http.https://github.com/team/repo.git.sslVerify", "false"},
-		{"http.https://github.com/team/repo.git.sslCAInfo", "/tmp/attacker-ca.pem"},
-		{"http.https://github.com/team/repo.git.followRedirects", "true"},
-		{"http.https://github.com/team/repo.git.extraHeader", "Authorization: attacker"},
-		{"remote.origin.proxy", "http://attacker.invalid:9000"},
+func TestVerifyGitPushRemoteRejectsMixedCaseOrigin(t *testing.T) {
+	for _, origin := range []string{
+		"https://github.com/Team/repo.git",
+		"https://github.com/team/Repo",
 	} {
-		cmd = exec.Command("git", "-C", repo, "config", pair[0], pair[1])
-		cmd.Env = sanitizedGitEnvironment()
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("config: %v %s", err, out)
-		}
-	}
-	trusted, err := trustedGitTransportArgs("team", "repo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	values := []struct{ key, expected string }{
-		{"http.proxy", ""},
-		{"http.sslVerify", "true"},
-		{"http.sslCAInfo", ""},
-		{"http.followRedirects", "false"},
-		{"http.extraHeader", ""},
-	}
-	for _, v := range values {
-		t.Run(v.key, func(t *testing.T) {
-			args := append([]string{"-C", repo}, trusted...)
-			args = append(args, "config", "--get-urlmatch", v.key, "https://github.com/team/repo.git")
-			cmd := exec.Command("git", args...)
-			cmd.Env = sanitizedGitEnvironment()
-			out, err := cmd.CombinedOutput()
-			if err != nil || strings.TrimSpace(string(out)) != v.expected {
-				t.Fatalf("%s: got %q, want %q; err=%v", v.key, out, v.expected, err)
+		t.Run(origin, func(t *testing.T) {
+			path := gitRepoForPushTest(t)
+			addPushRemote(t, path, origin)
+			err := verifyGitPushRemote(context.Background(), path, "agent/feature", "team", "repo", sanitizedGitEnvironment())
+			if err == nil || !strings.Contains(err.Error(), "does not match authorized") {
+				t.Fatalf("mixed case origin should be rejected: %v", err)
 			}
 		})
 	}
-	args := append([]string{"-C", repo}, trusted...)
-	args = append(args, "config", "--get", "remote.origin.proxy")
-	cmd = exec.Command("git", args...)
-	cmd.Env = sanitizedGitEnvironment()
-	out, err := cmd.CombinedOutput()
-	if err != nil || strings.TrimSpace(string(out)) != "" {
-		t.Fatalf("remote proxy override=%q err=%v", out, err)
-	}
 }
-func TestGitTransportNoDotGitURLAlsoPinned(t *testing.T) {
-	args, err := trustedGitTransportArgs("team", "repo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{"http.https://github.com/team/repo.proxy=", "http.https://github.com/team/repo.sslVerify=true"} {
-		var found bool
-		for _, s := range args {
-			if s == key {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("unprotected no-dot-git transport setting %q", key)
-		}
-	}
-}
+
 func TestGitTransportRejectsMaliciousRepositorySegments(t *testing.T) {
 	for _, v := range [][2]string{{"team/other", "repo"}, {"team", "../repo"}, {"team", "evil:repo"}, {"", "repo"}, {"team", ""}, {"team", "repo?x"}} {
-		if _, err := trustedGitTransportArgs(v[0], v[1]); err == nil {
+		if _, err := trustedGitHubPushURL(v[0], v[1]); err == nil {
 			t.Errorf("accepted unsafe segments %q/%q", v[0], v[1])
 		}
 	}
 }
+
 func TestSanitizedGitEnvironmentDropsAmbientProxyAndTrustOverrides(t *testing.T) {
 	for _, key := range []string{"HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy", "CURL_CA_BUNDLE", "SSL_CERT_FILE", "SSL_CERT_DIR", "GIT_SSL_NO_VERIFY"} {
 		t.Setenv(key, "http://attacker.invalid")
@@ -103,77 +50,86 @@ func TestSanitizedGitEnvironmentDropsAmbientProxyAndTrustOverrides(t *testing.T)
 	}
 }
 
-func TestTrustedPushCommandAppliesTransportBeforeRemoteInvocation(t *testing.T) {
-	args, err := trustedGitPushCommandArgs("/tmp/worktree", "feature/security", "team", "repo")
+func TestPushBranchIsolatesTransportFromWorkspaceConfig(t *testing.T) {
+	git, err := exec.LookPath("git")
 	if err != nil {
 		t.Fatal(err)
 	}
-	joined := strings.Join(args, " ")
-	for _, v := range []string{
-		"-C /tmp/worktree", "-c http.https://github.com/team/repo.git.proxy=",
-		"-c http.https://github.com/team/repo.git.sslVerify=true",
-		"-c http.https://github.com/team/repo.git.followRedirects=false",
-		"-c core.hooksPath=/dev/null", "-c credential.helper=",
-		"push -- origin feature/security",
-	} {
-		if !strings.Contains(joined, v) {
-			t.Errorf("command lost trusted option %q: %s", v, joined)
+	runGit := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(git, args...)
+		cmd.Env = sanitizedGitEnvironment()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
 		}
+		return strings.TrimSpace(string(out))
 	}
-	if _, err := trustedGitPushCommandArgs("/tmp/worktree", "feature/x", "team/other", "repo"); err == nil {
-		t.Fatal("accepted invalid GitHub organization")
-	}
-}
 
-func TestRealPushBranchUsesPinnedTransportWithoutNetwork(t *testing.T) {
+	repo := gitRepoForPushTest(t)
+	addPushRemote(t, repo, "https://github.com/team/repo")
+	runGit("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.com",
+		"commit", "--allow-empty", "-qm", "source commit")
+	worktree := filepath.Join(t.TempDir(), "worktree")
+	runGit("-C", repo, "worktree", "add", "-b", "agent/feature", worktree)
+	for _, pair := range [][2]string{
+		{"remote.origin.proxy", "http://proxy.invalid:8080"},
+		{"http.https://github.com/team/repo.git.proxy", "http://proxy.invalid:8080"},
+		{"http.https://github.com/team/repo.git.sslVerify", "false"},
+		{"http.https://github.com/team/repo.git.sslCAInfo", "/bad/ca.pem"},
+	} {
+		runGit("-C", worktree, "config", pair[0], pair[1])
+	}
+	commit := runGit("-C", worktree, "rev-parse", "HEAD")
+	target := t.TempDir()
+	runGit("init", "-q", "--bare", target)
+
+	// Check the actual credentialed invocation, then forward its refspec to
+	// a local bare repository to exercise packing and updating the branch.
 	bin := t.TempDir()
-	script := filepath.Join(bin, "git")
 	source := `#!/bin/sh
-for arg do
-  case "$arg" in
-    check-ref-format) exit 0 ;;
-    remote) printf '%s\n' 'https://github.com/team/repo.git'; exit 0 ;;
-    push)
-      printf '%s\n' "$@" > "$TEST_CAPTURE_ARGS"
-      env > "$TEST_CAPTURE_ENV"
-      exit 0
-      ;;
+set -eu
+[ "$1" = "-C" ] || exec "$TEST_REAL_GIT" "$@"
+dir="$2"
+shift 2
+tls_verify=
+while [ "${1:-}" = "-c" ]; do
+  case "$2" in
+    http.sslVerify=true) tls_verify=yes ;;
+    http.*sslCAInfo=*|http.*sslCAPath=*) exit 1 ;;
   esac
+  shift 2
 done
-exit 7
+if [ "${1:-}" != "push" ]; then
+  exec "$TEST_REAL_GIT" -C "$dir" "$@"
+fi
+[ "$2" = "--" ]
+[ "$3" = "https://github.com/team/repo.git" ]
+[ "$4" = "$TEST_COMMIT:refs/heads/agent/feature" ]
+[ "$tls_verify" = "yes" ]
+[ -z "${HTTPS_PROXY+x}" ]
+[ -z "${CURL_CA_BUNDLE+x}" ]
+[ "$("$GIT_ASKPASS" 'Username')" = "x-access-token" ]
+[ "$("$GIT_ASKPASS" 'Password')" = "dummy" ]
+if "$TEST_REAL_GIT" -C "$dir" config --local --get-regexp '^(http\.|remote\.)'; then
+  exit 1
+fi
+GIT_ALLOW_PROTOCOL=file exec "$TEST_REAL_GIT" -C "$dir" push -- "$TEST_TARGET" "$4"
 `
-	if err := os.WriteFile(script, []byte(source), 0700); err != nil {
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(source), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+":"+os.Getenv("PATH"))
-	t.Setenv("TEST_CAPTURE_ARGS", filepath.Join(bin, "args.txt"))
-	t.Setenv("TEST_CAPTURE_ENV", filepath.Join(bin, "env.txt"))
-	t.Setenv("HTTPS_PROXY", "http://attacker.invalid:9000")
-	t.Setenv("CURL_CA_BUNDLE", "/tmp/attacker-root.pem")
-	f := &Factory{}
-	if err := f.pushBranch(context.Background(), t.TempDir(), "agent/feature", "team", "repo", "dummy"); err != nil {
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("TEST_REAL_GIT", git)
+	t.Setenv("TEST_COMMIT", commit)
+	t.Setenv("TEST_TARGET", target)
+	t.Setenv("HTTPS_PROXY", "http://proxy.invalid:9000")
+	t.Setenv("CURL_CA_BUNDLE", "/bad/ambient-ca.pem")
+
+	if err := (&Factory{}).pushBranch(context.Background(), worktree, "agent/feature", "team", "repo", "dummy"); err != nil {
 		t.Fatal(err)
 	}
-	argsBytes, err := os.ReadFile(filepath.Join(bin, "args.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	args := string(argsBytes)
-	for _, want := range []string{"http.https://github.com/team/repo.git.proxy=",
-		"http.https://github.com/team/repo.git.sslVerify=true",
-		"http.https://github.com/team/repo.git.sslCAInfo=",
-		"http.https://github.com/team/repo.git.followRedirects=false",
-		"credential.helper=", "push\n", "origin\n", "agent/feature\n"} {
-		if !strings.Contains(args, want) {
-			t.Errorf("missing %q in actual git push args:\n%s", want, args)
-		}
-	}
-	envBytes, err := os.ReadFile(filepath.Join(bin, "env.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	env := string(envBytes)
-	if strings.Contains(env, "attacker.invalid") || strings.Contains(env, "attacker-root.pem") {
-		t.Errorf("ambient proxy/CA reached push process")
+	if got := runGit("-C", target, "rev-parse", "refs/heads/agent/feature"); got != commit {
+		t.Fatalf("pushed commit %s, want %s", got, commit)
 	}
 }
