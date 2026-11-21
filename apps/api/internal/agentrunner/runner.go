@@ -113,6 +113,12 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 		return fmt.Errorf("load agent run %s: %w", runID, err)
 	}
 
+	// Worker redelivery is at-least-once. A terminal run must not re-run
+	// the model or tools, even if a duplicate execution message arrives.
+	if run.Status == models.AgentRunStatusCompleted {
+		return r.deliverRunCompletion(ctx, runID)
+	}
+
 	// 2. Load task and workspace
 	task, err := r.loadTask(ctx, run.TaskID)
 	if err != nil {
@@ -166,17 +172,23 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 5. Agent loop
 	maxSteps := 50
-	history := r.loadRunHistory(ctx, run.ID)
+	history, err := r.loadRunHistory(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("load run history: %w", err)
+	}
 	state := seedRunState(run, history)
 	startTime := time.Now()
 	mailboxMessages := r.loadMailboxMessages(ctx, task.ID, run.AgentRole, 20)
 
 	nextStepNum := nextStepNumber(history)
 	maxStepNum := nextStepNum + maxSteps - 1
-	for stepNum := nextStepNum; stepNum <= maxStepNum; stepNum++ {
+	// A final response was already written by a previous delivery. Resume
+	// finalization only: never ask the model for another action or tool.
+	resumeFinalization := hasDurableFinalResponse(history)
+	for stepNum := nextStepNum; stepNum <= maxStepNum && !resumeFinalization; stepNum++ {
 		// Check for context cancellation
 		if ctx.Err() != nil {
-			return r.failRun(ctx, runID, fmt.Sprintf("context cancelled: %v", ctx.Err()))
+			return r.failRun(ctx, runID, fmt.Sprintf("context canceled: %v", ctx.Err()))
 		}
 
 		action, modelResult, err := r.nextModelAction(ctx, run, task, systemPrompt, mailboxMessages, history)
@@ -250,6 +262,7 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 			if content == "" {
 				content = "Agent reported completion."
 			}
+			terminalMarker := "final_response"
 			step := &models.AgentStep{
 				ID:         uuid.New().String(),
 				AgentRunID: runID,
@@ -257,9 +270,10 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 				StepType:   models.AgentStepTypeMessage,
 				Status:     models.AgentStepStatusCompleted,
 				Content:    &content,
+				ToolName:   &terminalMarker,
 			}
 			if err := r.persistStep(ctx, step); err != nil {
-				r.logger.Error("failed to persist final response step", "error", err, "step", stepNum)
+				return fmt.Errorf("persist final response: %w", err)
 			}
 			_ = r.streamStep(ctx, step, "completed")
 			history = append(history, *step)
@@ -338,27 +352,27 @@ func (r *Runner) Run(ctx context.Context, runID string) error {
 
 	// 8. Mark run as completed
 	now := time.Now().UTC()
-	r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state)
+	completion := map[string]any{
+		"run_id":     runID,
+		"task_id":    run.TaskID,
+		"agent_role": run.AgentRole,
+		"status":     models.AgentRunStatusCompleted,
+		"steps":      state.ToolCalls,
+		"summary":    summary,
+		"timestamp":  now,
+	}
+	payload, err := json.Marshal(completion)
+	if err != nil {
+		return fmt.Errorf("encode agent run completion: %w", err)
+	}
+	if err := r.persistRunCompletion(ctx, runID, summary, state, string(payload)); err != nil {
+		return err
+	}
 
-	// Publish run.completed event
-	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
-	_ = r.publishEvent(ctx, events.StreamAgents, events.AgentRunCompleted, map[string]any{
-		"run_id":     runID,
-		"task_id":    run.TaskID,
-		"agent_role": run.AgentRole,
-		"status":     models.AgentRunStatusCompleted,
-		"steps":      state.ToolCalls,
-		"summary":    summary,
-		"timestamp":  now,
-	})
+	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.completed", runID), completion)
+	if err := r.deliverRunCompletion(ctx, runID); err != nil {
+		return err
+	}
 
 	r.logger.Info("agent run completed", "run_id", runID, "steps", state.ToolCalls, "duration_ms", time.Since(startTime).Milliseconds())
 
@@ -565,6 +579,10 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 	}
 
 	resource := toolResource(toolName, input)
+	organization := r.loadTaskOrganization(ctx, task)
+	if err := validateAgentExecutionScope(run, task, workspace, organization); err != nil {
+		return fmt.Errorf("invalid agent execution scope: %w", err)
+	}
 	revision := ""
 	if toolRequiresWorkspaceRevision(toolName) {
 		var err error
@@ -573,7 +591,6 @@ func (r *Runner) authorizeTool(ctx context.Context, run *models.AgentRun, task *
 			return fmt.Errorf("capture workspace subject revision for %s: %w", toolName, err)
 		}
 	}
-	organization := r.loadTaskOrganization(ctx, task)
 	req := capability.Request{
 		ActorType:    "agent",
 		AgentRole:    run.AgentRole,
@@ -709,20 +726,6 @@ func sandboxState(workspace *models.Workspace) string {
 	}
 }
 
-// executeStep runs a single agent step (alias used by the loop).
-func (r *Runner) executeStep(ctx context.Context, step *models.AgentStep, workspacePath string) error {
-	output, err := r.executeToolUnchecked(ctx, *step.ToolName, workspacePath, step.ToolInput)
-	step.ToolOutput = output
-	if err != nil {
-		step.Status = models.AgentStepStatusFailed
-		errStr := err.Error()
-		step.Content = &errStr
-		return err
-	}
-	step.Status = models.AgentStepStatusCompleted
-	return nil
-}
-
 // streamStep publishes a step event via NATS.
 func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventType string) error {
 	if r.eventBus == nil {
@@ -750,6 +753,20 @@ func (r *Runner) streamStep(ctx context.Context, step *models.AgentStep, eventTy
 
 	subject := fmt.Sprintf("runs.%s.steps", step.AgentRunID)
 	return r.eventBus.Publish(subject, data)
+}
+
+// hasDurableFinalResponse accepts only a successfully persisted terminal
+// message, never an ordinary agent message or handoff. The marker is stored in
+// the existing agent_steps.tool_name column without a database migration.
+func hasDurableFinalResponse(history []models.AgentStep) bool {
+	for _, step := range history {
+		if step.StepType == models.AgentStepTypeMessage &&
+			step.Status == models.AgentStepStatusCompleted &&
+			step.ToolName != nil && *step.ToolName == "final_response" {
+			return true
+		}
+	}
+	return false
 }
 
 func nextStepNumber(history []models.AgentStep) int {

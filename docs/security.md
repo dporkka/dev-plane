@@ -20,6 +20,34 @@ Secrets are referenced by name only throughout the system. Raw secret values are
 Registration -> Capability check -> Encryption -> Storage -> Access (audited, approved when policy requires) -> Rotation
 ```
 
+## HTTP Client Address Trust
+
+The API does not trust `X-Forwarded-For`, `X-Real-IP`, or
+`True-Client-IP` from arbitrary clients. In particular, it does not use
+Chi's deprecated unconditional `RealIP` middleware; the request peer address
+remains `RemoteAddr`. If a deployment needs original-client attribution,
+configure a trusted ingress that validates and normalizes those headers, and
+add a trust-aware proxy policy before consuming them. Do not use untrusted
+forwarded headers for authentication, abuse detection, or authorization.
+
+## Agent completion replay protection
+
+Agent final responses now carry an explicit persisted marker in
+`agent_steps.tool_name` while retaining the existing `message` step type.
+If a completion update fails, the runner retries the database write a bounded
+number of times. On worker redelivery it verifies persisted step history and
+completes finalization without asking the model to run tools again. Missing or
+unreadable history blocks execution rather than assuming an empty history.
+
+**Operational limitations:** This protects runs whose terminal step was saved
+by the updated runner. Drain or independently reconcile pre-upgrade in-flight
+runs before rollout; previous unmarked final-response messages cannot be
+safely distinguished from ordinary messages. Database unavailability can leave
+runs nonterminal until redelivery, and completed-event publication is not yet
+backed by a transactional outbox. Also, this change does not introduce an
+exclusive distributed execution lease; concurrent deliveries before a final
+response is stored still require a separate concurrency safeguard.
+
 ## Agent Safety
 
 The following constraints define the production security target. Agent-run tool calls and dangerous HTTP workspace actions are evaluated by the capability kernel, and Docker-backed runtime-provider operations route through the same authorization paths before execution.
@@ -121,7 +149,6 @@ deny_production_secrets  secret  read          -> deny   (scope == "production")
 deny_destructive_db      command destructive_db -> deny
 deny_large_delete        file    delete        -> deny   (min_size_mb >= 10)
 deny_push_main           git     push          -> deny   (branch == "main")
-deny_production_deploy   deploy  *             -> deny   (environment == "production")
 
 # Admin-only: sensitive operations
 admin_deploy_prod        deploy  *             -> admin_only  (environment == "production")
@@ -133,7 +160,7 @@ admin_modify_policies    policy  *             -> admin_only
 
 ### Policy Evaluation Order
 
-Policies are evaluated by finding all matching rules and returning the most restrictive effect (`admin_only` > `deny` > `ask` > `allow`). If no rule matches, the kernel's default (`ask`) is used. RBAC is checked first; `ask` and `admin_only` require approval or elevated privileges.
+Policies are evaluated by finding all matching rules and returning the most restrictive effect (`deny` > `admin_only` > `ask` > `allow`). If no rule matches, the kernel's default (`ask`) is used. RBAC is checked first; `ask` and `admin_only` require approval or elevated privileges.
 
 ## Role-Based Access Control (RBAC)
 

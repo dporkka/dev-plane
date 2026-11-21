@@ -286,3 +286,46 @@ func stringSliceDiff(a, b []string) string {
 	}
 	return ""
 }
+
+func TestGitHubProviderSubjectCannotBelongToTwoOrganizations(t *testing.T) {
+	database, err := New(":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer database.Close()
+	if err := database.RunMigrations("migrations"); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+
+	for _, row := range []struct{ id, slug string }{
+		{"org-a", "org-a"},
+		{"org-b", "org-b"},
+	} {
+		if _, err := database.Exec(
+			"INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)",
+			row.id, row.slug, row.slug,
+		); err != nil {
+			t.Fatalf("seed organization: %v", err)
+		}
+	}
+	if _, err := database.Exec(
+		"INSERT INTO users (id, organization_id, email, github_id) VALUES (?, ?, ?, ?)",
+		"user-a", "org-a", "a@example.com", "42",
+	); err != nil {
+		t.Fatalf("seed first external subject: %v", err)
+	}
+
+	if _, err := database.Exec(
+		"INSERT INTO users (id, organization_id, email, github_id) VALUES (?, ?, ?, ?)",
+		"user-b", "org-b", "b@example.com", "42",
+	); err == nil {
+		t.Fatal("a single GitHub subject must not bind to multiple organizations")
+	}
+	// Users without a GitHub identity remain valid for other login providers.
+	if _, err := database.Exec(
+		"INSERT INTO users (id, organization_id, email, github_id) VALUES (?, ?, ?, NULL)",
+		"user-local", "org-b", "local@example.com",
+	); err != nil {
+		t.Fatalf("non-GitHub users should remain valid: %v", err)
+	}
+}

@@ -19,10 +19,10 @@ const (
 )
 
 // MoreRestrictiveThan returns true if e is more restrictive than other.
-// Order: allow < ask < deny < admin_only
+// Order: allow < ask < admin_only < deny; explicit denies cannot be elevated.
 func (e Effect) MoreRestrictiveThan(other Effect) bool {
 	order := map[Effect]int{
-		EffectAllow: 0, EffectAsk: 1, EffectDeny: 2, EffectAdminOnly: 3,
+		EffectAllow: 0, EffectAsk: 1, EffectAdminOnly: 2, EffectDeny: 3,
 	}
 	return order[e] > order[other]
 }
@@ -106,7 +106,6 @@ func DefaultEngine() *Engine {
 		{Name: "deny_destructive_db", ResourceType: "command", Action: "destructive_db", Effect: EffectDeny, Priority: 300},
 		{Name: "deny_large_delete", ResourceType: "file", Action: "delete", Effect: EffectDeny, Priority: 300, Conditions: map[string]any{"min_size_mb": 10}},
 		{Name: "deny_push_main", ResourceType: "git", Action: "push", Effect: EffectDeny, Priority: 300, Conditions: map[string]any{"branch": "main"}},
-		{Name: "deny_production_deploy", ResourceType: "deploy", Action: "*", Effect: EffectDeny, Priority: 300, Conditions: map[string]any{"environment": "production"}},
 
 		// Admin-only: sensitive operations
 		{Name: "admin_deploy_prod", ResourceType: "deploy", Action: "*", Effect: EffectAdminOnly, Priority: 400, Conditions: map[string]any{"environment": "production"}},
@@ -219,19 +218,18 @@ func checkConditions(policy Policy, req EvaluationRequest) bool {
 
 	for key, expected := range policy.Conditions {
 		actual, exists := req.Details[key]
-		if !exists {
-			// If the condition key is not in the request details,
-			// check common context fields.
-			switch key {
-			case "scope":
-				actual = getScope(req)
-			case "branch":
-				actual = getBranch(req)
-			case "environment":
-				actual = getEnvironment(req)
-			default:
-				return false
+		// The concrete workspace/task branch is authoritative. An agent or
+		// client-supplied Details map must not override it.
+		if key == "branch" {
+			if branch := getBranch(req); branch != "" {
+				actual, exists = branch, true
 			}
+		}
+		// Scope and environment must be explicitly supplied by the caller
+		// from the target resource, never inferred from runtime provider or
+		// task risk level (they represent unrelated concepts).
+		if !exists {
+			return false
 		}
 
 		// Numeric comparisons for threshold conditions.
@@ -255,14 +253,6 @@ func checkConditions(policy Policy, req EvaluationRequest) bool {
 	return true
 }
 
-// getScope extracts the scope from the evaluation request.
-func getScope(req EvaluationRequest) string {
-	if req.Workspace != nil && req.Workspace.RuntimeProvider != "" {
-		return req.Workspace.RuntimeProvider
-	}
-	return ""
-}
-
 // getBranch extracts the branch from the evaluation request.
 func getBranch(req EvaluationRequest) string {
 	if req.Workspace != nil {
@@ -270,14 +260,6 @@ func getBranch(req EvaluationRequest) string {
 	}
 	if req.Task != nil {
 		return req.Task.TargetBranch
-	}
-	return ""
-}
-
-// getEnvironment extracts the environment from the evaluation request.
-func getEnvironment(req EvaluationRequest) string {
-	if req.Task != nil {
-		return string(req.Task.RiskLevel)
 	}
 	return ""
 }

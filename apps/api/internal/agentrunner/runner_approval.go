@@ -205,17 +205,56 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 	return nil
 }
 
-func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState) error {
+// persistRunCompletion makes a bounded attempt to finalize an already
+// executed run. On persistent failure the worker redelivers; the durable
+// final_response marker prevents replay of model and tool actions.
+func (r *Runner) persistRunCompletion(ctx context.Context, runID, summary string, state *RunState, event string) error {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("persist agent run completion: %w", err)
+		}
+		lastErr = r.updateRunCompletion(ctx, runID, models.AgentRunStatusCompleted, summary, state, event)
+		if lastErr == nil {
+			return nil
+		}
+		if attempt == maxAttempts-1 {
+			break
+		}
+		delay := time.Duration(attempt+1) * 50 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("persist agent run completion: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+	return fmt.Errorf("persist agent run completion after %d attempts: %w", maxAttempts, lastErr)
+}
+
+func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary string, state *RunState, event string) error {
 	if r.db == nil {
 		return nil
 	}
 
 	now := time.Now().UTC()
-	_, err := r.db.ExecContext(ctx, `
-		UPDATE agent_runs
-		SET status = $1, summary = $2, total_cost = $3,
-		    completed_at = $4, updated_at = $4
-		WHERE id = $5
-	`, status, summary, state.CostSoFar, now, runID)
-	return err
+	result, err := r.db.ExecContext(ctx, `
+        UPDATE agent_runs
+        SET status = $1, summary = $2, total_cost = $3,
+            completed_at = $4, updated_at = $4, pending_completion_event = $5
+        WHERE id = $6
+    `, status, summary, state.CostSoFar, now, event, runID)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("verify run completion row: %w", err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("expected one run completion row, updated %d", affected)
+	}
+	return nil
 }

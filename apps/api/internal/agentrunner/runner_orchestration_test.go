@@ -377,6 +377,7 @@ func setupRunnerOrchestrationDB(t *testing.T) *sql.DB {
 			error_message TEXT,
 			summary TEXT,
 			metadata TEXT DEFAULT '{}',
+			pending_completion_event TEXT,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -487,5 +488,129 @@ func insertRunnerFixture(t *testing.T, db *sql.DB, workspacePath, role string) {
 	`, workspacePath, role)
 	if err != nil {
 		t.Fatalf("insert runner fixture: %v", err)
+	}
+}
+
+// Completion must not be announced if persisting the completed run fails.
+func TestRunDoesNotSilentlyIgnoreCompletionPersistenceFailure(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec(`CREATE TRIGGER fail_run_completion BEFORE UPDATE ON agent_runs
+       WHEN NEW.status = 'completed' BEGIN SELECT RAISE(FAIL, 'completion database unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"final_response","content":"Done."}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	err := runner.Run(context.Background(), "run-1")
+	if err == nil || !strings.Contains(err.Error(), "persist agent run completion") {
+		t.Fatalf("expected completion persistence failure, got %v", err)
+	}
+}
+
+// An execution redelivery must never invoke the model again after the final
+// response has been durably written but the run-completion UPDATE failed.
+func TestRunRedeliveryAfterCompletionWriteFailureSkipsModel(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec(`CREATE TRIGGER fail_completion BEFORE UPDATE ON agent_runs
+        WHEN NEW.status='completed' BEGIN SELECT RAISE(FAIL, 'completion not persisted'); END`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"final_response","content":"all done"}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	if err := runner.Run(context.Background(), "run-1"); err == nil {
+		t.Fatal("completion write failure should be propagated")
+	}
+	var finalSteps int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_steps WHERE agent_run_id='run-1' AND tool_name='final_response' AND status='completed'`).Scan(&finalSteps); err != nil {
+		t.Fatal(err)
+	}
+	if finalSteps != 1 {
+		t.Fatalf("expected one durable final response marker, got %d", finalSteps)
+	}
+	if _, err := db.Exec("DROP TRIGGER fail_completion"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Run(context.Background(), "run-1"); err != nil {
+		t.Fatalf("redelivery failed: %v", err)
+	}
+	if len(provider.calls) != 1 {
+		t.Fatalf("redelivery invoked model again, calls=%d", len(provider.calls))
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id='run-1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != models.AgentRunStatusCompleted {
+		t.Fatalf("final status %q", status)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM agent_steps WHERE agent_run_id='run-1' AND tool_name='final_response'`).Scan(&finalSteps); err != nil {
+		t.Fatal(err)
+	}
+	if finalSteps != 1 {
+		t.Fatalf("duplicate final response after redelivery: %d", finalSteps)
+	}
+}
+
+func TestRunRedeliveryOfCompletedRunIsNoOp(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec(`UPDATE agent_runs SET status='completed' WHERE id='run-1'`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"tool_call","tool_name":"write_file","tool_input":{"path":"bad","content":"bad"}}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	if err := runner.Run(context.Background(), "run-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(provider.calls) != 0 {
+		t.Fatalf("completed run invoked model %d times", len(provider.calls))
+	}
+}
+
+func TestRunHistoryReadFailureFailsClosedBeforeModel(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec("DROP TABLE agent_steps"); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"final_response","content":"unexpected"}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	if err := runner.Run(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "load run history") {
+		t.Fatalf("unsafe history failure: %v", err)
+	}
+	if len(provider.calls) != 0 {
+		t.Fatalf("history failed but model called %d times", len(provider.calls))
+	}
+}
+
+func TestRunFinalResponsePersistenceFailureIsNotSuccess(t *testing.T) {
+	db := setupRunnerOrchestrationDB(t)
+	defer db.Close()
+	insertRunnerFixture(t, db, t.TempDir(), models.AgentRoleImplementer)
+	if _, err := db.Exec(`CREATE TRIGGER reject_final_step BEFORE INSERT ON agent_steps
+       WHEN NEW.tool_name='final_response' BEGIN SELECT RAISE(FAIL,'final response not stored'); END`); err != nil {
+		t.Fatal(err)
+	}
+	provider := &fakeModelProvider{responses: []string{`{"action":"final_response","content":"done"}`}}
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+		WithModelRouter(modelrouter.NewRouter(testRouterConfig(), provider))
+	if err := runner.Run(context.Background(), "run-1"); err == nil || !strings.Contains(err.Error(), "persist final response") {
+		t.Fatalf("silent final response loss: %v", err)
+	}
+	var status string
+	if err := db.QueryRow(`SELECT status FROM agent_runs WHERE id='run-1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status == models.AgentRunStatusCompleted {
+		t.Fatal("run completed without durable final response")
 	}
 }
