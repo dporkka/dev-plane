@@ -27,21 +27,32 @@ func TestGetWorkspaceDiff(t *testing.T) {
 	}
 
 	// Initialize git repo, commit a file, then modify it so there is a diff.
-	cmd := exec.Command("git", "init")
-	cmd.Dir = workspacePath
-	if err := cmd.Run(); err != nil {
-		t.Fatalf("failed to init git repo: %v", err)
+	// Validate the fixture setup: an unsuccessful commit would make the test
+	// return a misleading empty diff even when the handler is working.
+	runGit := func(args ...string) {
+		t.Helper()
+		command := exec.Command("git", append([]string{"-C", workspacePath}, args...)...)
+		out, err := command.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v (%s)", args, err, out)
+		}
 	}
-	exec.Command("git", "-C", workspacePath, "config", "user.email", "test@test.com").Run()
-	exec.Command("git", "-C", workspacePath, "config", "user.name", "Test").Run()
+	runGit("init")
+	runGit("config", "user.email", "test@test.com")
+	runGit("config", "user.name", "Test")
 	if err := os.WriteFile(filepath.Join(workspacePath, "file.txt"), []byte("hello\n"), 0644); err != nil {
 		t.Fatalf("failed to create test file: %v", err)
 	}
-	exec.Command("git", "-C", workspacePath, "add", ".").Run()
-	exec.Command("git", "-C", workspacePath, "commit", "-m", "initial").Run()
+	runGit("add", ".")
+	runGit("commit", "-m", "initial")
 	if err := os.WriteFile(filepath.Join(workspacePath, "file.txt"), []byte("world\n"), 0644); err != nil {
 		t.Fatalf("failed to modify test file: %v", err)
 	}
+
+	// A machine-level external diff helper must never override the raw patch API.
+	// Without --no-ext-diff, this exits nonzero and the handler hides the error
+	// behind an apparently clean empty diff.
+	t.Setenv("GIT_EXTERNAL_DIFF", "false")
 
 	expectAuthorizeWorkspace(mock, workspaceID)
 	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
@@ -67,6 +78,38 @@ func TestGetWorkspaceDiff(t *testing.T) {
 
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unfulfilled expectations: %v", err)
+	}
+}
+
+func TestGetWorkspaceDiff_FailsClosedWhenGitCommandFails(t *testing.T) {
+	h, mock, cleanupDB := setupTest(t)
+	defer cleanupDB()
+
+	baseDir := t.TempDir()
+	t.Setenv("WORKSPACE_BASE_DIR", baseDir)
+	workspaceID := "ws-no-repo"
+	workspacePath := filepath.Join(baseDir, workspaceID)
+	if err := os.MkdirAll(workspacePath, 0755); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+
+	expectAuthorizeWorkspace(mock, workspaceID)
+	mock.ExpectQuery("SELECT worktree_path FROM workspaces").
+		WithArgs(workspaceID).
+		WillReturnRows(sqlmock.NewRows([]string{"worktree_path"}).AddRow(workspacePath))
+
+	req := workspaceRequest(http.MethodGet, "/workspaces/"+workspaceID+"/diff", workspaceID, nil)
+	rec := httptest.NewRecorder()
+	h.GetWorkspaceDiff(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Git command failure must not appear as an empty diff: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), workspacePath) {
+		t.Fatal("internal workspace path leaked in error response")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("unfulfilled expectations: %v", err)
 	}
 }
 

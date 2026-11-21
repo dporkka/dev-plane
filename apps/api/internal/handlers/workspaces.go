@@ -269,12 +269,17 @@ func (h *Handler) GetWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "diff", "--", ".")
+	// Always return a raw patch regardless of machine/user Git diff settings.
+	// External diff helpers (including GIT_EXTERNAL_DIFF) may fail or transform
+	// output, making real changes appear as an empty diff.
+	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "diff", "--no-ext-diff", "--no-textconv", "--no-color", "--", ".")
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		// Diff may be empty or repo may not be initialized; return empty diff gracefully
-		respond.JSON(w, http.StatusOK, map[string]string{"diff": ""})
+		// A failed diff command is not evidence of a clean workspace. Do not
+		// expose Git stderr, which may include local paths or other sensitive data.
+		h.logger.Error("workspace diff command failed", "workspace_id", id, "error", err)
+		respond.Error(w, http.StatusInternalServerError, errors.New("unable to compute workspace diff"))
 		return
 	}
 
