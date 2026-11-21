@@ -84,7 +84,10 @@ createdb -h 127.0.0.1 -p "$DB_PORT" devplane_review_stage_qa ||
   fail "could not create disposable staging QA database"
 
 echo "Building API + SDK + production web app"
-(cd "$ROOT/apps/api" && GOTELEMETRY=off go build -o "$SESSION_DIR/api" ./cmd/api)
+# Isolate Go compiler telemetry from this machine's shared/corrupted counter
+# files; avoid concurrent compiler processes when staging on a busy host.
+mkdir -p "$SESSION_DIR/go-config"
+(cd "$ROOT/apps/api" && XDG_CONFIG_HOME="$SESSION_DIR/go-config" GOTELEMETRY=off go build -p 1 -o "$SESSION_DIR/api" ./cmd/api)
 (cd "$ROOT/packages/sdk/typescript" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null && npm run build >/dev/null)
 (cd "$ROOT/apps/web" && npm ci --ignore-scripts --no-audit --no-fund >/dev/null)
 SDK_INSTALLED_DIST="$ROOT/apps/web/node_modules/@ai-cp/dev-plane-sdk/dist"
