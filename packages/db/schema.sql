@@ -169,6 +169,10 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     model               TEXT,
     provider            TEXT,
     status              TEXT NOT NULL DEFAULT 'pending',
+    execution_lease_token TEXT,
+    execution_lease_expires_at TIMESTAMPTZ,
+    execution_heartbeat_at TIMESTAMPTZ,
+    recovery_review_required_at TIMESTAMPTZ,
     started_at          TIMESTAMPTZ,
     completed_at        TIMESTAMPTZ,
     prompt_tokens       INTEGER DEFAULT 0,
@@ -184,6 +188,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 CREATE INDEX IF NOT EXISTS idx_agent_runs_task_id ON agent_runs(task_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_workspace_id ON agent_runs(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_agent_runs_status ON agent_runs(status);
+CREATE INDEX IF NOT EXISTS idx_agent_runs_liveness_review ON agent_runs(status, execution_lease_expires_at) WHERE execution_lease_token IS NOT NULL AND recovery_review_required_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_runs_created_at ON agent_runs(created_at);
 
 -- =====================================================
