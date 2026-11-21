@@ -71,7 +71,7 @@ export function ReviewShell({ children }: { children: React.ReactNode }) {
       {mobileOpen && (
         <button
           type="button"
-          aria-label="Close navigation"
+          aria-label="Dismiss navigation backdrop"
           onClick={() => setMobileOpen(false)}
           className="fixed inset-0 z-30 bg-black/30 lg:hidden"
         />

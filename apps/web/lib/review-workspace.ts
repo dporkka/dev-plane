@@ -62,11 +62,11 @@ export async function loadReviewWorkspace(orgId: string) {
 }
 
 export function useReviewWorkspace() {
-  const { selectedOrg } = useStore();
+  const { selectedOrg, user } = useStore();
   const query = useQuery({
-    queryKey: ["review-analytics", selectedOrg],
+    queryKey: ["review-analytics", user?.id, selectedOrg],
     queryFn: () => loadReviewWorkspace(selectedOrg!),
-    enabled: !!selectedOrg,
+    enabled: !!selectedOrg && !!user,
     staleTime: 60_000,
   });
   const data = query.data;
@@ -80,5 +80,5 @@ export function useReviewWorkspace() {
       ),
     [data?.repos],
   );
-  return { ...query, selectedOrg, data, repoNames };
+  return { ...query, user, selectedOrg, data, repoNames };
 }

@@ -62,18 +62,32 @@ function ReportCard({
 export default function ReviewDetailsPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { repoNames } = useReviewWorkspace();
+  const {
+    user,
+    selectedOrg,
+    data: workspace,
+    isPending: workspacePending,
+    isError: workspaceError,
+    repoNames,
+  } = useReviewWorkspace();
+  // A direct PR URL is only viewable if it occurs in the active organization's
+  // authorized PR listing. Avoid showing cached details after an org switch.
+  const workspacePR = workspace?.prs.find((item) => item.id === id);
   const prQuery = useQuery({
-    queryKey: ["review-pr", id],
+    queryKey: ["review-pr", user?.id, selectedOrg, id],
     queryFn: () => api.getPullRequest(id),
-    enabled: !!id,
+    enabled: !!user && !!selectedOrg && !!workspacePR,
     staleTime: 60_000,
   });
-  const pr = normalizeReviewPR(prQuery.data);
+  const candidate = normalizeReviewPR(prQuery.data);
+  const pr =
+    workspacePR && candidate?.repository_id === workspacePR.repository_id
+      ? candidate
+      : null;
   const reviewQuery = useQuery({
-    queryKey: ["review-report", pr?.run_id],
+    queryKey: ["review-report", user?.id, selectedOrg, pr?.run_id],
     queryFn: () => api.getReview(pr!.run_id!),
-    enabled: !!pr?.run_id,
+    enabled: !!user && !!selectedOrg && !!pr?.run_id,
     retry: false,
     staleTime: 60_000,
   });
@@ -83,9 +97,16 @@ export default function ReviewDetailsPage() {
     findings.filter((item) => item.severity?.toLowerCase() === severity).length;
   const highCount = severityCount("critical") + severityCount("high");
 
-  if (prQuery.isPending)
+  if (!user || !selectedOrg) {
+    return (
+      <main className="p-8 text-sm text-[#777]">
+        Sign in and select an organization to view pull request details.
+      </main>
+    );
+  }
+  if (workspacePending || (!!workspacePR && prQuery.isPending))
     return <div className="p-8 text-sm text-[#777]">Loading pull request…</div>;
-  if (prQuery.isError || !pr)
+  if (workspaceError || !workspacePR || prQuery.isError || !pr)
     return (
       <main className="p-8 space-y-4">
         <Link

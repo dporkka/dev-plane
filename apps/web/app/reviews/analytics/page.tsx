@@ -149,13 +149,21 @@ export default function ReviewAnalyticsPage() {
     isPending: metricsPending,
     isError: metricsError,
   } = useQuery({
-    queryKey: ["review-metrics", user?.id, selectedOrg, start, end, repositoryId],
-    enabled: !!user && !!selectedOrg && !!start && !!end && start <= end,
-    queryFn: () => api.getReviewMetrics(selectedOrg!, {
+    queryKey: [
+      "review-metrics",
+      user?.id,
+      selectedOrg,
       start,
       end,
-      ...(repositoryId !== "all" ? { repository: repositoryId } : {}),
-    }),
+      repositoryId,
+    ],
+    enabled: !!user && !!selectedOrg && !!start && !!end && start <= end,
+    queryFn: () =>
+      api.getReviewMetrics(selectedOrg!, {
+        start,
+        end,
+        ...(repositoryId !== "all" ? { repository: repositoryId } : {}),
+      }),
     staleTime: 60_000,
   });
 
