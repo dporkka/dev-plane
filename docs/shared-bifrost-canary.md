@@ -9,7 +9,7 @@ not maintain a duplicate model/provider fallback catalog.
 
 Set:
 - BIFROST_URL=https://STAGING-GATEWAY/v1 (the client also accepts root URL)
-- BIFROST_API_KEY=VIRTUAL-KEY-ISSUED-FOR-DEV-PLANE
+- BIFROST_API_KEY=VIRTUAL-KEY-ISSUED-FOR-DEV-PLANE (server-side only)
 - BIFROST_SHARED_ROUTING_ENABLED=true
 
 The switch is false by default. When true, Dev Plane routes eligible model
@@ -55,3 +55,13 @@ staging before this switch can work.
 
 All new HTTP verification uses a local test server and test-only keys.
 No real provider invocation or production configuration update is performed.
+
+In shared mode Dev Plane now authenticates with Bifrost's dedicated
+X-Bf-Vk governance header, not Authorization Bearer. HTTPS is mandatory
+for non-loopback addresses. The legacy mode retains its existing
+Authorization Bearer behavior for backward compatibility.
+
+This PR does not create a virtual key or install any secrets. Provision
+a separate Dev Plane virtual key with a restricted model/provider allowlist
+and monthly budget before setting the flag. The optional PR Triage
+consumer must use a distinct virtual key for separate auditability.

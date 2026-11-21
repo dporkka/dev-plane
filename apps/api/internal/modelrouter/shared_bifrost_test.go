@@ -140,3 +140,69 @@ func TestSharedBifrostCallsActualV1EndpointAndReturnsActualModel(t *testing.T) {
 		t.Fatalf("actual model=%q", result.Model)
 	}
 }
+
+// The shared Bifrost service uses a dedicated virtual-key header for
+// governance. Bearer is reserved for separately configured dashboard auth.
+func TestSharedBifrostUsesVirtualKeyHeader(t *testing.T) {
+	t.Setenv("BIFROST_SHARED_ROUTING_ENABLED", "true")
+	t.Setenv("BIFROST_API_KEY", "test-product-virtual-key")
+	var called bool
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if got := r.Header.Get("X-Bf-Vk"); got != "test-product-virtual-key" {
+			t.Errorf("virtual key header not sent")
+		}
+		if r.Header.Get("Authorization") != "" {
+			t.Error("shared Bifrost must not mislabel the virtual key as a Bearer token")
+		}
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("path: %s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   "openrouter/openai/gpt-6-luna",
+			"choices": []any{map[string]any{"message": map[string]any{"content": "OK"}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 8, "completion_tokens": 2},
+		})
+	}))
+	defer upstream.Close()
+	t.Setenv("BIFROST_URL", upstream.URL)
+	provider := NewBifrostProvider()
+	provider.client = upstream.Client()
+	r := NewRouter(DefaultConfig(), provider)
+	_, err := r.RouteCall(context.Background(), CallRequest{TaskType: TaskTypeCode, Messages: []Message{{Role: "user", Content: "hello"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("never reached shared gateway")
+	}
+}
+
+func TestSharedBifrostNeverRedirectsVirtualKey(t *testing.T) {
+	t.Setenv("BIFROST_SHARED_ROUTING_ENABLED", "true")
+	t.Setenv("BIFROST_API_KEY", "test-private-gateway-key")
+	reached := false
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		if r.Header.Get("x-bf-vk") != "" {
+			t.Error("private Bifrost key leaked through redirect")
+		}
+	}))
+	defer target.Close()
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/collect", http.StatusTemporaryRedirect)
+	}))
+	defer gateway.Close()
+	t.Setenv("BIFROST_URL", gateway.URL)
+	provider := NewBifrostProvider()
+	_, err := provider.Call(context.Background(), CallRequest{
+		PreferredModel: "bifrost/coding",
+		Messages:       []Message{{Role: "user", Content: "hello"}},
+	})
+	if err == nil {
+		t.Fatal("redirect should fail closed")
+	}
+	if reached {
+		t.Fatal("gateway redirect was followed")
+	}
+}

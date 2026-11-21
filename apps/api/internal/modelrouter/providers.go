@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -489,6 +490,23 @@ func sharedBifrostBaseURL(raw string) string {
 	return base + "/v1"
 }
 
+// sharedBifrostURLSafe rejects insecure remote transports before placing a
+// virtual key on the network; loopback HTTP is allowed for local development.
+func sharedBifrostURLSafe(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	if u.Scheme == "https" {
+		return true
+	}
+	if u.Scheme != "http" {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 // NewBifrostProvider creates a new Bifrost provider.
 func NewBifrostProvider() *BifrostProvider {
 	return &BifrostProvider{
@@ -552,6 +570,29 @@ func (p *BifrostProvider) Models() []ModelInfo {
 func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
 	if !p.IsAvailable() {
 		return nil, fmt.Errorf("bifrost: %w", ProviderNotConnectedError)
+	}
+	if os.Getenv("BIFROST_SHARED_ROUTING_ENABLED") == "true" {
+		if !sharedBifrostURLSafe(p.baseURL) {
+			return nil, errors.New("shared Bifrost requires HTTPS or loopback HTTP")
+		}
+		client := p.client
+		if client == nil {
+			client = &http.Client{}
+		}
+		// Nonstandard auth headers may be copied across redirects by net/http.
+		// Never send a scoped virtual key to a redirect destination.
+		restricted := *client
+		restricted.CheckRedirect = func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		}
+		result, err := callOpenAICompatibleWithHeaders(ctx, &restricted, p.baseURL,
+			p.Name(), req, p.Models(), map[string]string{"X-Bf-Vk": p.apiKey})
+		if err != nil {
+			// Avoid printing upstream response text that may contain sensitive
+			// prompt content or credential-bearing URLs.
+			return nil, errors.New("shared Bifrost inference failed; inspect protected gateway logs")
+		}
+		return result, nil
 	}
 	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
 }
