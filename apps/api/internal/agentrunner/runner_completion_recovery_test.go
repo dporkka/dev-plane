@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"testing/synctest"
+	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/ai-dev-control-plane/api/internal/modelrouter"
@@ -86,6 +88,28 @@ func TestCompleteRunWithRecoveryPersistsFailedStatusIfCompletionCannotBeSaved(t 
 	if e := mock.ExpectationsWereMet(); e != nil {
 		t.Fatal(e)
 	}
+}
+
+func TestCompleteRunWithRecoveryPersistsFailedStatusAfterCompletionDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		mock.ExpectExec("UPDATE agent_runs").WithArgs("completed", "done", 0.0, sqlmock.AnyArg(), "run-1").
+			WillDelayFor(time.Hour).WillReturnResult(sqlmock.NewResult(0, 1))
+		mock.ExpectExec("UPDATE agent_runs").WithArgs("failed", sqlmock.AnyArg(), sqlmock.AnyArg(), "run-1").
+			WillReturnResult(sqlmock.NewResult(0, 1))
+		runner := &Runner{db: db, logger: slog.Default()}
+		err = runner.completeRunWithRecovery(context.Background(), "run-1", "done", &RunState{})
+		if !errors.Is(err, sqlmock.ErrCancelled) || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("must preserve the write error and deadline: %v", err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestUpdateRunCompletionRecognizesPriorCommittedAttempt(t *testing.T) {

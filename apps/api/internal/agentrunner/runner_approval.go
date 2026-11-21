@@ -237,8 +237,8 @@ func (r *Runner) requestModelApproval(ctx context.Context, run *models.AgentRun,
 // run's status. A late agent completion must never undo a cancellation or fail.
 var ErrRunTerminalStateChanged = errors.New("run is no longer running")
 
-// completeRunWithRecovery attempts bounded persistence using a fresh, short
-// cleanup context even if the calling request has already been canceled.
+// completeRunWithRecovery gives completion retries and the fallback write
+// separate time limits, even if the calling request has already been canceled.
 // A completion is never announced until its state has actually been stored.
 // If saving completion proves impossible, a conditional failed transition makes
 // the run eligible for manual recovery, but only if that transition succeeds.
@@ -251,6 +251,7 @@ func (r *Runner) completeRunWithRecovery(ctx context.Context, runID, summary str
 	defer cancel()
 
 	var completionErr error
+retryCompletion:
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			pause := time.Duration(attempt*40) * time.Millisecond
@@ -258,7 +259,7 @@ func (r *Runner) completeRunWithRecovery(ctx context.Context, runID, summary str
 			select {
 			case <-persistCtx.Done():
 				timer.Stop()
-				return errors.Join(fmt.Errorf("persist run completion: %w", completionErr), persistCtx.Err())
+				break retryCompletion
 			case <-timer.C:
 			}
 		}
@@ -270,11 +271,16 @@ func (r *Runner) completeRunWithRecovery(ctx context.Context, runID, summary str
 			return fmt.Errorf("persist run completion: %w", completionErr)
 		}
 	}
+	if err := persistCtx.Err(); err != nil {
+		completionErr = errors.Join(completionErr, err)
+	}
 
 	// We must not emit a failure event for a transition that was not stored.
 	// A conditional update also protects cancellations and newer terminal states.
+	fallbackCtx, cancelFallback := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelFallback()
 	now := time.Now().UTC()
-	result, err := r.db.ExecContext(persistCtx, `
+	result, err := r.db.ExecContext(fallbackCtx, `
         UPDATE agent_runs
         SET status = $1, error_message = $2, completed_at = $3, updated_at = $3
         WHERE id = $4 AND status = 'running'
@@ -292,11 +298,11 @@ func (r *Runner) completeRunWithRecovery(ctx context.Context, runID, summary str
 	r.logger.Error("completion persistence failed; run marked failed for manual recovery", "run_id", runID, "error", completionErr)
 	// An accurate failure event is permitted only after the database confirmed
 	// the failed terminal transition. Failed publication remains best-effort.
-	_ = r.publishEvent(persistCtx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
+	_ = r.publishEvent(fallbackCtx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
 		"run_id": runID, "status": models.AgentRunStatusFailed,
 		"error": "completion persistence failed", "timestamp": now,
 	})
-	_ = r.publishEvent(persistCtx, events.StreamAgents, events.AgentRunFailed, map[string]any{
+	_ = r.publishEvent(fallbackCtx, events.StreamAgents, events.AgentRunFailed, map[string]any{
 		"run_id": runID, "status": models.AgentRunStatusFailed,
 		"error": "completion persistence failed", "timestamp": now,
 	})
