@@ -67,7 +67,11 @@ func (h *Handler) ListTaskWorkspaces(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			h.logger.Warn("failed to close workspace rows", "error", closeErr)
+		}
+	}()
 
 	var workspaces []WorkspaceResponse
 	for rows.Next() {
