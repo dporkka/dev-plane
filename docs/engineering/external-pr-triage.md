@@ -91,9 +91,10 @@ decisions; larger scans should be chunked into bounded, recent snapshots.
 
 ## Follow-up design
 
-When Dev Plane's unified review inbox stack (#235/#236) merges, adopt this
-organization-scoped external source as an additional dataset rather than
-overwriting its task-owned `pull_requests` rows. Prefer eventually replacing
+This branch is stacked on review workspace #236 (which depends on #235).
+External snapshots are a separate source tab at `/reviews/triage` beside
+task-owned PRs and analytics. Merge parent branches first, then retarget and
+revalidate the child; never overwrite task-owned `pull_requests` rows. Prefer eventually replacing
 the manual import with a signed GitHub webhook + reconciliation worker and a
 bounded durable queue. Do not invoke the scanner from an API request.
 

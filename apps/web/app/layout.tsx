@@ -1,30 +1,22 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "./layout/Sidebar";
-import { TopBar } from "./layout/TopBar";
+import { AppShell } from "./layout/AppShell";
 import { Providers } from "./layout/providers";
 
 export const metadata: Metadata = {
-  title: "AI Dev Control Plane",
-  description: "Control plane for AI software teams",
+  title: "Dev Plane | Engineering Reviews",
+  description:
+    "Review, verify, and manage software delivery from one workspace",
 };
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode;
-}) {
+}: { children: React.ReactNode }) {
   return (
     <html lang="en" className="dark">
       <body>
         <Providers>
-          <div className="flex h-screen bg-[#0d1117]">
-            <Sidebar />
-            <div className="flex-1 flex flex-col min-w-0">
-              <TopBar />
-              <main className="flex-1 overflow-auto p-6">{children}</main>
-            </div>
-          </div>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>

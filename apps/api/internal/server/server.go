@@ -181,6 +181,7 @@ func (s *Server) routes() {
 			r.Get("/runs/{id}/stream", h.StreamAgentRun)
 
 			// Reviews
+			r.Get("/organizations/{orgID}/review-metrics", h.GetReviewMetrics)
 			r.Get("/runs/{runId}/review", h.GetReview)
 			r.Post("/runs/{runId}/review", h.RequestReview)
 

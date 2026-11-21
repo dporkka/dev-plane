@@ -38,6 +38,7 @@ import type {
   RespondApprovalRequest,
   RetryRunResponse,
   ReviewReport,
+  ReviewMetrics,
   RotateSecretRequest,
   RunEvent,
   RunStreamEvent,
@@ -398,6 +399,20 @@ export class DevPlaneClient {
   }
 
   // ─── Reviews ──────────────────────────────────────────────────────
+
+  getReviewMetrics(
+    orgId: string,
+    filters: { start: string; end: string; repository?: string },
+  ) {
+    const params = new URLSearchParams({
+      start: filters.start,
+      end: filters.end,
+      ...(filters.repository ? { repository: filters.repository } : {}),
+    });
+    return this.request<ReviewMetrics>(
+      `/api/v1/organizations/${encodeURIComponent(orgId)}/review-metrics?${params.toString()}`,
+    );
+  }
 
   getReview(runId: string) {
     return this.request<ReviewReport>(`/api/v1/runs/${runId}/review`);

@@ -7,6 +7,13 @@
     "moduleResolution": "node",
     "jsx": "react-jsx"
   },
-  "include": ["lib/auth-token.ts", "lib/auth-token.test.ts"],
+  "include": [
+    "lib/auth-token.ts",
+    "lib/auth-token.test.ts",
+    "lib/review-analytics.ts",
+    "lib/review-analytics.test.ts",
+    "lib/review-navigation.ts",
+    "lib/review-navigation.test.ts"
+  ],
   "exclude": ["node_modules", ".next"]
 }

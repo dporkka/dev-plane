@@ -755,6 +755,20 @@ func buildComponents() Components {
 					"created_at":   {Type: "string", Format: "date-time"},
 				},
 			},
+			"ReviewMetrics": {
+				Type:     "object",
+				Required: []string{"reviewed_prs", "approvable_prs", "critical_findings", "high_findings", "medium_findings", "low_findings", "info_findings", "security_findings"},
+				Properties: map[string]*Schema{
+					"reviewed_prs":      {Type: "integer", Description: "PRs in the UTC creation-date window linked to a persisted review report"},
+					"approvable_prs":    {Type: "integer"},
+					"critical_findings": {Type: "integer"},
+					"high_findings":     {Type: "integer"},
+					"medium_findings":   {Type: "integer"},
+					"low_findings":      {Type: "integer"},
+					"info_findings":     {Type: "integer"},
+					"security_findings": {Type: "integer"},
+				},
+			},
 			"ReviewReport": {
 				Type:     "object",
 				Required: []string{"run_id", "summary", "findings", "risk_level", "approvable", "suggestions", "test_coverage", "security_notes", "diff_summary", "created_at"},
@@ -1882,6 +1896,28 @@ func buildPaths() map[string]PathItem {
 	}
 
 	// Reviews
+	paths["/api/v1/organizations/{orgID}/review-metrics"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Dashboard"},
+			Summary:     "Get persisted PR review finding metrics",
+			Description: "Aggregates Dev Plane review_reports linked to PRs created in the inclusive UTC date window. This is not live GitHub or CodeRabbit telemetry.",
+			OperationID: "getReviewMetrics",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Description: "Organization ID", Schema: &Schema{Type: "string"}},
+				{Name: "start", In: "query", Required: true, Description: "First PR creation date, UTC", Schema: &Schema{Type: "string", Format: "date"}},
+				{Name: "end", In: "query", Required: true, Description: "Last PR creation date, UTC (inclusive)", Schema: &Schema{Type: "string", Format: "date"}},
+				{Name: "repository", In: "query", Description: "Optional repository UUID", Schema: &Schema{Type: "string", Format: "uuid"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Persisted review metrics", Content: map[string]MediaType{"application/json": {Schema: &Schema{Ref: "#/components/schemas/ReviewMetrics"}}}},
+				"400": {Description: "Invalid date range or repository UUID"},
+				"401": {Description: "Authentication required"},
+				"404": {Description: "Organization not found or not accessible"},
+				"500": {Description: "Review metrics unavailable"},
+			},
+		},
+	}
 	paths["/api/v1/runs/{runId}/review"] = PathItem{
 		Get: &Operation{
 			Tags:        []string{"Agent Runs"},

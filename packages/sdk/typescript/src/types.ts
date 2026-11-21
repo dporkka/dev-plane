@@ -546,6 +546,18 @@ export interface DiffSummary {
   files: FileChange[];
 }
 
+/** Persisted review findings joined to agent-created PRs in a UTC date window. */
+export interface ReviewMetrics {
+  reviewed_prs: number;
+  approvable_prs: number;
+  critical_findings: number;
+  high_findings: number;
+  medium_findings: number;
+  low_findings: number;
+  info_findings: number;
+  security_findings: number;
+}
+
 export interface ReviewReport {
   run_id: string;
   summary: string;
