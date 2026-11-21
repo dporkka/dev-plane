@@ -25,18 +25,16 @@ func requireValidCredential(t *testing.T, name string, err error) {
 }
 
 func TestIntegrationBifrost(t *testing.T) {
-	apiKey := skipIfMissing(t, "BIFROST_API_KEY")
-	baseURL := os.Getenv("BIFROST_URL")
-	if baseURL == "" {
-		baseURL = "http://localhost:8083"
+	skipIfMissing(t, "BIFROST_API_KEY")
+	skipIfMissing(t, "BIFROST_MODEL_CATALOG_JSON")
+	provider := NewBifrostProvider()
+	models := provider.Models()
+	if len(models) == 0 {
+		t.Skip("Bifrost model catalog unverified")
 	}
 
-	provider := NewBifrostProvider()
-	provider.baseURL = baseURL
-	provider.apiKey = apiKey
-
 	result, err := provider.Call(context.Background(), CallRequest{
-		PreferredModel: "bifrost/gpt-4o",
+		PreferredModel: models[0].Name,
 		Messages:       []Message{{Role: "user", Content: "Say hello"}},
 	})
 	requireValidCredential(t, "BIFROST_API_KEY", err)
