@@ -34,6 +34,7 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 	}
 
 	var out struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -53,13 +54,17 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 		return nil, fmt.Errorf("%s chat completion: response contained no choices", providerName)
 	}
 	prompt, completion, total := normalizeUsage(out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Usage.TotalTokens)
+	actualModel := model
+	if strings.TrimSpace(out.Model) != "" {
+		actualModel = out.Model
+	}
 	return &CallResult{
 		Content:          out.Choices[0].Message.Content,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
 		Cost:             estimateCost(models, model, prompt, completion),
-		Model:            model,
+		Model:            actualModel,
 		Provider:         providerName,
 		FinishReason:     out.Choices[0].FinishReason,
 	}, nil

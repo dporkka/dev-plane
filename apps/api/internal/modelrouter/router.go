@@ -3,6 +3,7 @@ package modelrouter
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 )
@@ -56,15 +57,20 @@ type Config struct {
 	MaxCostPer1K float64
 	// ProviderPriority defines the order of preference when scores tie.
 	ProviderPriority []string
+	// SharedBifrostRouting delegates model selection/fallback to the canonical
+	// Bifrost gateway rather than duplicating its model policies in Go.
+	// Opt-in only after upstream virtual keys and task routes are validated.
+	SharedBifrostRouting bool
 }
 
 // DefaultConfig returns sensible default router configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultModel:     "gpt-4o",
-		DefaultProvider:  "openai",
-		MaxCostPer1K:     0.10,
-		ProviderPriority: []string{"openai", "bifrost", "anthropic", "groq", "fireworks", "gemini"},
+		DefaultModel:         "gpt-4o",
+		DefaultProvider:      "openai",
+		MaxCostPer1K:         0.10,
+		ProviderPriority:     []string{"openai", "bifrost", "anthropic", "groq", "fireworks", "gemini"},
+		SharedBifrostRouting: os.Getenv("BIFROST_SHARED_ROUTING_ENABLED") == "true",
 	}
 }
 
@@ -192,6 +198,12 @@ func (r *Router) SelectModel(ctx context.Context, taskType, difficulty, latencyR
 
 // RouteCall selects the best model and executes the call.
 func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, error) {
+	if r.config.SharedBifrostRouting {
+		if !eligibleForSharedBifrost(req) {
+			return nil, fmt.Errorf("shared bifrost route does not support explicit model, cost cap, structured output, or context over 32768 tokens")
+		}
+		return r.routeSharedBifrost(ctx, req)
+	}
 	modelInfo, err := r.SelectModel(ctx, req.TaskType, req.Difficulty, req.LatencyReq, req.ContextSize, req.CostCap)
 	if err != nil {
 		return nil, fmt.Errorf("select model: %w", err)
@@ -221,6 +233,60 @@ func (r *Router) RouteCall(ctx context.Context, req CallRequest) (*CallResult, e
 	result.Model = modelInfo.Name
 	result.Provider = modelInfo.Provider
 	return result, nil
+}
+
+// eligibleForSharedBifrost avoids widening explicit cost, structure, context,
+// or model constraints before the gateway's capabilities are proven in staging.
+func eligibleForSharedBifrost(req CallRequest) bool {
+	return req.CostCap == 0 &&
+		!req.StructuredReq &&
+		req.PreferredModel == "" &&
+		(req.ContextSize == 0 || req.ContextSize <= 32768)
+}
+
+func sharedBifrostAlias(req CallRequest) string {
+	if req.Difficulty == DifficultyHard || req.Difficulty == DifficultyExpert {
+		return "bifrost/agent"
+	}
+	switch req.TaskType {
+	case TaskTypeCode, TaskTypeRefactor, TaskTypeTest:
+		return "bifrost/coding"
+	case TaskTypeReview:
+		return "bifrost/code-review"
+	case TaskTypeDocs:
+		return "bifrost/summarize"
+	case TaskTypeSimple:
+		return "bifrost/cheap"
+	default:
+		return "bifrost/agent"
+	}
+}
+
+// routeSharedBifrost is deliberately fail-closed: ungoverned direct-provider
+// fallbacks must not bypass the gateway's tenant budgets or allowlists.
+func (r *Router) routeSharedBifrost(ctx context.Context, req CallRequest) (*CallResult, error) {
+	for _, provider := range r.providers {
+		if provider.Name() != "bifrost" {
+			continue
+		}
+		if !provider.IsAvailable() {
+			return nil, fmt.Errorf("shared bifrost gateway is unavailable")
+		}
+		req.PreferredModel = sharedBifrostAlias(req)
+		result, err := provider.Call(ctx, req)
+		if err != nil {
+			return nil, fmt.Errorf("shared bifrost inference failed: %w", err)
+		}
+		if result == nil {
+			return nil, fmt.Errorf("shared bifrost returned nil response")
+		}
+		if result.Model == "" {
+			result.Model = req.PreferredModel
+		}
+		result.Provider = "bifrost"
+		return result, nil
+	}
+	return nil, fmt.Errorf("shared bifrost routing enabled but no bifrost provider is registered")
 }
 
 // tryFallback attempts to call the next best available model.

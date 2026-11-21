@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/ai-dev-control-plane/api/internal/config"
@@ -209,8 +210,8 @@ func (p *AnthropicProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Anthropic provider is configured.
 func (p *AnthropicProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -284,8 +285,8 @@ func (p *GeminiProvider) Call(ctx context.Context, req CallRequest) (*CallResult
 
 // IsAvailable returns true if the Gemini provider is configured.
 func (p *GeminiProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -372,8 +373,8 @@ func (p *GroqProvider) Call(ctx context.Context, req CallRequest) (*CallResult, 
 
 // IsAvailable returns true if the Groq provider is configured.
 func (p *GroqProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -460,8 +461,8 @@ func (p *FireworksProvider) Call(ctx context.Context, req CallRequest) (*CallRes
 
 // IsAvailable returns true if the Fireworks provider is configured.
 func (p *FireworksProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // --------------------
@@ -478,11 +479,21 @@ type BifrostProvider struct {
 	once    sync.Once
 }
 
+// sharedBifrostBaseURL accepts a gateway root URL or its /v1 API root.
+// The OpenAI-compatible HTTP adapter appends /chat/completions itself.
+func sharedBifrostBaseURL(raw string) string {
+	base := strings.TrimRight(raw, "/")
+	if strings.HasSuffix(base, "/v1") {
+		return base
+	}
+	return base + "/v1"
+}
+
 // NewBifrostProvider creates a new Bifrost provider.
 func NewBifrostProvider() *BifrostProvider {
 	return &BifrostProvider{
 		envKeyProvider: envKeyProvider{envName: "BIFROST_API_KEY"},
-		baseURL:        config.EnvOrDefault("BIFROST_URL", "http://localhost:8083"),
+		baseURL:        sharedBifrostBaseURL(config.EnvOrDefault("BIFROST_URL", "http://localhost:8083")),
 	}
 }
 
@@ -547,8 +558,8 @@ func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResul
 
 // IsAvailable returns true if the Bifrost provider is configured.
 func (p *BifrostProvider) IsAvailable() bool {
-    p.loadAPIKey()
-    return p.apiKey != ""
+	p.loadAPIKey()
+	return p.apiKey != ""
 }
 
 // AllProviders returns a list of all available provider instances.
@@ -562,4 +573,3 @@ func AllProviders() []Provider {
 		NewBifrostProvider(),
 	}
 }
-
