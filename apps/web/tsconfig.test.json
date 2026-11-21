@@ -11,7 +11,8 @@
     "lib/auth-token.ts",
     "lib/auth-token.test.ts",
     "lib/review-analytics.ts",
-    "lib/review-analytics.test.ts"
+    "lib/review-analytics.test.ts",
+    "lib/review-task-route.test.ts"
   ],
   "exclude": ["node_modules", ".next"]
 }
