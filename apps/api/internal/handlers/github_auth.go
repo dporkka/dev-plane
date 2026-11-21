@@ -29,6 +29,7 @@ func NewGitHubAuthHandler(db *sql.DB, cfg *config.Config) *GitHubAuthHandler {
 	oauthCfg := &oauth2.Config{
 		ClientID:     cfg.GitHubClientID,
 		ClientSecret: cfg.GitHubSecret,
+		RedirectURL:  cfg.GitHubRedirectURL,
 		Endpoint:     github.Endpoint,
 		Scopes:       []string{"repo", "read:org", "user:email"},
 	}
@@ -56,7 +57,9 @@ func (h *GitHubAuthHandler) GitHubAuthRedirect(w http.ResponseWriter, r *http.Re
 		MaxAge:   600,
 		HttpOnly: true,
 		Secure:   h.config.OAuthCookieSecure,
-		SameSite: http.SameSiteStrictMode,
+		// GitHub returns from another site via a top-level navigation.
+		// Strict would suppress the state cookie on that callback.
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	url := h.oauth.AuthCodeURL(state)
@@ -206,6 +209,8 @@ func (h *GitHubAuthHandler) GitHubAuthCallback(w http.ResponseWriter, r *http.Re
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
+		Secure:   h.config.OAuthCookieSecure,
+		SameSite: http.SameSiteLaxMode,
 	})
 
 	respond.JSON(w, http.StatusOK, map[string]string{
