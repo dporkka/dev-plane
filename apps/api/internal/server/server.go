@@ -190,6 +190,10 @@ func (s *Server) routes() {
 			r.Get("/organizations/{orgID}/approvals", h.ListOrganizationApprovals)
 			r.Post("/approvals/{id}/respond", h.RespondApproval)
 
+			// External GitHub PR triage (advisory only; no merge/write actions)
+			r.Get("/organizations/{orgID}/pr-triage", h.ListPRTriage)
+			r.Post("/organizations/{orgID}/pr-triage/import", h.ImportPRTriage)
+
 			// Pull Requests
 			r.Get("/projects/{projectID}/pull-requests", h.ListPullRequests)
 			r.Get("/pull-requests/{id}", h.GetPullRequest)

@@ -93,6 +93,12 @@ export const api = {
     filters: { start: string; end: string; repository?: string },
   ) => getClient().getReviewMetrics(orgId, filters),
 
+  // ─── External GitHub PR triage (advisory; never a merge gate) ──
+  listExternalPRTriage: (
+    orgId: string,
+    filters: { bucket?: string; repo?: string; limit?: number; offset?: number } = {},
+  ) => getClient().listExternalPRTriage(orgId, filters),
+
   // ─── Pull Requests ──────────────────────────────────────────────
   createPullRequest: (taskId: string): Promise<any> =>
     getClient().createPullRequest(taskId),

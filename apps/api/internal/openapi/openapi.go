@@ -184,6 +184,36 @@ func BuildSpec() *Spec {
 func buildComponents() Components {
 	return Components{
 		Schemas: map[string]*Schema{
+			"ExternalPRTriageSourcePR": {
+				Type:     "object",
+				Required: []string{"repo", "number", "title", "url", "headRefOid", "baseRefName"},
+				Properties: map[string]*Schema{
+					"repo": {Type: "string"}, "number": {Type: "integer"},
+					"title": {Type: "string"}, "url": {Type: "string", Format: "uri"},
+					"headRefOid": {Type: "string"}, "baseRefName": {Type: "string"},
+					"isDraft": {Type: "boolean"},
+				},
+			},
+			"ExternalPRTriageImportDecision": {
+				Type:     "object",
+				Required: []string{"pr", "bucket", "score"},
+				Properties: map[string]*Schema{
+					"pr":           {Ref: "#/components/schemas/ExternalPRTriageSourcePR"},
+					"bucket":       {Type: "string", Enum: []interface{}{"candidate", "review", "draft", "dependency-blocked", "ci-blocked", "needs-repair"}},
+					"score":        {Type: "integer"},
+					"reasons":      {Type: "array", Items: &Schema{Type: "string"}},
+					"dependencies": {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
+			"ExternalPRTriageImportSnapshot": {
+				Type:     "object",
+				Required: []string{"generated_at", "decisions"},
+				Properties: map[string]*Schema{
+					"generated_at": {Type: "string", Format: "date-time"},
+					"decisions":    {Type: "array", Items: &Schema{Ref: "#/components/schemas/ExternalPRTriageImportDecision"}},
+					"warnings":     {Type: "array", Items: &Schema{Type: "string"}},
+				},
+			},
 			"Organization": {
 				Type:     "object",
 				Required: []string{"id", "name", "slug", "plan", "created_at", "updated_at"},
@@ -1937,6 +1967,64 @@ func buildPaths() map[string]PathItem {
 				"200": {Description: "List of pending approvals", Content: map[string]MediaType{
 					"application/json": {Schema: &Schema{Type: "array", Items: &Schema{Ref: "#/components/schemas/Approval"}}},
 				}},
+			},
+		},
+	}
+
+	// Imported external PR triage is a read-only advisory feed, not a merge gate.
+	paths["/api/v1/organizations/{orgID}/pr-triage"] = PathItem{
+		Get: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "List imported external GitHub PR triage decisions",
+			Description: "Organization-scoped cache; incomplete and potentially stale. No merge authority is implied.",
+			OperationID: "listExternalPRTriage",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string", Format: "uuid"}},
+				{Name: "bucket", In: "query", Schema: &Schema{Type: "string"}},
+				{Name: "repo", In: "query", Schema: &Schema{Type: "string"}},
+				{Name: "limit", In: "query", Schema: &Schema{Type: "integer"}},
+				{Name: "offset", In: "query", Schema: &Schema{Type: "integer"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Paginated advisory PR cache (not live GitHub checks)", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Type: "object", Properties: map[string]*Schema{
+						"items": {Type: "array", Items: &Schema{Type: "object", Properties: map[string]*Schema{
+							"repo": {Type: "string"}, "number": {Type: "integer"}, "title": {Type: "string"},
+							"url": {Type: "string"}, "head_sha": {Type: "string"},
+							"bucket": {Type: "string"}, "score": {Type: "integer"}, "draft": {Type: "boolean"},
+							"snapshot_at":  {Type: "string", Format: "date-time"},
+							"reasons":      {Type: "array", Items: &Schema{Type: "string"}},
+							"dependencies": {Type: "array", Items: &Schema{Type: "string"}},
+						}}},
+						"limit": {Type: "integer"}, "offset": {Type: "integer"},
+						"has_more": {Type: "boolean"}, "advisory_only": {Type: "boolean"},
+						"completeness_unverified": {Type: "boolean"},
+					}}},
+				}},
+				"400": {Description: "Invalid filters"},
+				"404": {Description: "Organization not found"},
+			},
+		},
+	}
+	paths["/api/v1/organizations/{orgID}/pr-triage/import"] = PathItem{
+		Post: &Operation{
+			Tags:        []string{"Pull Requests"},
+			Summary:     "Import PR Triage snapshot for connected repositories",
+			Description: "Owner/admin only. Strict size and repository authorization limits. Does not write to GitHub.",
+			OperationID: "importExternalPRTriage",
+			Security:    []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string", Format: "uuid"}},
+			},
+			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{
+				"application/json": {Schema: &Schema{Ref: "#/components/schemas/ExternalPRTriageImportSnapshot"}},
+			}},
+			Responses: map[string]Response{
+				"200": {Description: "Number of advisory snapshots imported"},
+				"400": {Description: "Invalid snapshot, unconnected or ambiguous repo"},
+				"403": {Description: "Verified owner/admin access required"},
+				"404": {Description: "Organization not found"},
 			},
 		},
 	}

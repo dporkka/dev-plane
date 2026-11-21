@@ -72,6 +72,27 @@ describe('DevPlaneClient', () => {
     });
   });
 
+  test('encodes external PR triage filters and retains bearer auth', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test', token: 'test-token' });
+    await client.listExternalPRTriage('org-1', { bucket: 'needs-repair', repo: 'my org/repo', offset: 50, limit: 50 });
+    const requested = new URL(state.input);
+    assert.equal(requested.pathname, '/api/v1/organizations/org-1/pr-triage');
+    assert.equal(requested.searchParams.get('bucket'), 'needs-repair');
+    assert.equal(requested.searchParams.get('repo'), 'my org/repo');
+    assert.equal(requested.searchParams.get('offset'), '50');
+    assert.equal(requested.searchParams.get('limit'), '50');
+    assert.equal((state.init?.headers as Record<string, string>)?.Authorization, 'Bearer test-token');
+  });
+
+  test('posts bounded scanner snapshots without changing GitHub', async () => {
+    const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
+    const snapshot = { generated_at: '2026-11-21T12:00:00Z', decisions: [] };
+    await client.importExternalPRTriage('org-1', snapshot);
+    assert.equal(state.input, 'http://api.test/api/v1/organizations/org-1/pr-triage/import');
+    assert.equal(state.init?.method, 'POST');
+    assert.deepEqual(JSON.parse(state.init?.body as string), snapshot);
+  });
+
   test('returns artifact responses as Blobs', async () => {
     const client = new DevPlaneClient({ baseUrl: 'http://api.test' });
     const blob = await client.getArtifact('art-1');

@@ -18,6 +18,8 @@ import type {
   DestroyWorkspaceResponse,
   ExecRequest,
   ExecResult,
+  ExternalPRTriageImportResult,
+  ExternalPRTriagePage,
   GenerateSpecResponse,
   HealthStatus,
   Integration,
@@ -439,6 +441,29 @@ export class DevPlaneClient {
       method: 'POST',
       body: JSON.stringify({ response, response_note: note } satisfies RespondApprovalRequest),
     });
+  }
+
+  // ─── External PR triage (advisory only) ──────────────────────────
+
+  listExternalPRTriage(orgId: string, filters: {
+    bucket?: string; repo?: string; limit?: number; offset?: number;
+  } = {}) {
+    const params = new URLSearchParams();
+    if (filters.bucket) params.set('bucket', filters.bucket);
+    if (filters.repo) params.set('repo', filters.repo);
+    if (filters.limit !== undefined) params.set('limit', String(filters.limit));
+    if (filters.offset !== undefined) params.set('offset', String(filters.offset));
+    const query = params.toString();
+    return this.request<ExternalPRTriagePage>(
+      `/api/v1/organizations/${encodeURIComponent(orgId)}/pr-triage${query ? '?' + query : ''}`,
+    );
+  }
+
+  importExternalPRTriage(orgId: string, snapshot: unknown) {
+    return this.request<ExternalPRTriageImportResult>(
+      `/api/v1/organizations/${encodeURIComponent(orgId)}/pr-triage/import`,
+      { method: 'POST', body: JSON.stringify(snapshot) },
+    );
   }
 
   // ─── Pull Requests ────────────────────────────────────────────────

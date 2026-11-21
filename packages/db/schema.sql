@@ -269,6 +269,31 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_state ON pull_requests(state);
 CREATE INDEX IF NOT EXISTS idx_pull_requests_created_at ON pull_requests(created_at);
 
 -- =====================================================
+-- 8b. external PR triage (advisory cache)
+-- =====================================================
+-- External PRs are distinct from agent-created pull_requests, which require a task.
+-- This table only caches advisory snapshots; it never grants merge authority.
+CREATE TABLE IF NOT EXISTS external_pr_triage (
+    repository_id UUID NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    number INTEGER NOT NULL CHECK (number > 0),
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    head_sha TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    bucket TEXT NOT NULL,
+    score INTEGER NOT NULL,
+    draft BOOLEAN NOT NULL,
+    reasons TEXT NOT NULL DEFAULT '[]',
+    dependencies TEXT NOT NULL DEFAULT '[]',
+    snapshot_at TIMESTAMPTZ NOT NULL,
+    received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repository_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_external_pr_triage_org_priority
+    ON external_pr_triage (organization_id, score DESC, snapshot_at DESC);
+
+-- =====================================================
 -- 8c. deployments
 -- =====================================================
 CREATE TABLE IF NOT EXISTS deployments (
