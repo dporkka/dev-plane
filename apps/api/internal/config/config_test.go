@@ -75,6 +75,16 @@ func TestLoad_FromEnv(t *testing.T) {
 	assertEqual(t, cfg.GitHubWebhookSecret, "webhook-secret")
 }
 
+func TestLoad_OptionalLoopbackBindHost(t *testing.T) {
+    t.Setenv("JWT_SECRET", "this-is-a-very-long-development-secret-key")
+    t.Setenv("API_BIND_HOST", "127.0.0.1")
+    cfg, err := Load()
+    if err != nil {
+        t.Fatalf("Load() unexpected error: %v", err)
+    }
+    assertEqual(t, cfg.BindHost, "127.0.0.1")
+}
+
 func TestLoad_CustomPort(t *testing.T) {
 	setValidJWTSecret(t)
 	os.Setenv("PORT", "4000")

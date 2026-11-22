@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,9 +17,9 @@ import (
 	"time"
 
 	"github.com/joho/godotenv"
-	"github.com/pressly/goose/v3"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/pressly/goose/v3"
 
 	"github.com/ai-dev-control-plane/api/internal/config"
 	"github.com/ai-dev-control-plane/api/internal/server"
@@ -73,7 +74,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	addr := fmt.Sprintf(":%s", cfg.Port)
+	addr := listenAddress(cfg)
 	go func() {
 		logger.Info("server listening", "addr", addr)
 		if err := srv.Start(addr); err != nil && err != http.ErrServerClosed {
@@ -92,6 +93,12 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("server stopped gracefully")
+}
+
+// listenAddress preserves the public-by-default API binding while allowing
+// staging and local tests to restrict the listener to loopback.
+func listenAddress(cfg *config.Config) string {
+	return net.JoinHostPort(cfg.BindHost, cfg.Port)
 }
 
 // initDB initializes a database connection based on the DATABASE_URL.

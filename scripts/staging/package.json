@@ -1,0 +1,13 @@
+{
+  "name": "@dev-plane/staging-review-qa",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Isolated browser and API smoke validation against local staging only",
+  "scripts": {
+    "smoke": "node review-smoke.cjs",
+    "test": "node --test review-smoke-contract.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
+  }
+}
