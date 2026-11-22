@@ -2,8 +2,10 @@ package modelrouter
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -473,83 +475,129 @@ func (p *FireworksProvider) IsAvailable() bool {
 // Bifrost exposes an OpenAI-compatible chat-completions endpoint.
 type BifrostProvider struct {
 	envKeyProvider
-	baseURL string
-	client  *http.Client
-	models  []ModelInfo
-	once    sync.Once
+	baseURL    string
+	client     *http.Client
+	models     []ModelInfo
+	catalogErr error
+	once       sync.Once
 }
 
-// NewBifrostProvider creates a new Bifrost provider.
+// Bifrost model metadata is operator-confirmed. It must also be allowed in
+// Nulang Cloud's BIFROST_ALLOWED_MODELS; Dev Plane never guesses prices.
+type bifrostModelDescriptor struct {
+	ID                       string   `json:"id"`
+	MaxContext               int      `json:"max_context"`
+	CodingStrength           int      `json:"coding_strength"`
+	ReasoningStrength        int      `json:"reasoning_strength"`
+	LatencyMs                int      `json:"latency_ms"`
+	CostPer1KInput           *float64 `json:"input_usd_per_1k"`
+	CostPer1KOutput          *float64 `json:"output_usd_per_1k"`
+	PricingVerified          bool     `json:"pricing_verified"`
+	SupportsStructuredOutput bool     `json:"supports_structured_output"`
+	SupportsVision           bool     `json:"supports_vision"`
+	SupportsFunctionCalling  bool     `json:"supports_function_calling"`
+}
+
+// NewBifrostProvider creates a provider for the Nulang Cloud OpenAI-compatible
+// HTTP endpoint. The model catalog is empty unless explicitly verified by
+// the operator, preventing stale hard-coded model/pricing metadata from egress.
 func NewBifrostProvider() *BifrostProvider {
+	base := config.EnvOrDefault("BIFROST_URL", "http://localhost:3000/v1")
+	base = strings.TrimRight(base, "/")
+	if !strings.HasSuffix(base, "/v1") {
+		base += "/v1"
+	}
 	return &BifrostProvider{
 		envKeyProvider: envKeyProvider{envName: "BIFROST_API_KEY"},
-		baseURL:        config.EnvOrDefault("BIFROST_URL", "http://localhost:8083"),
+		baseURL:        base,
 	}
 }
 
-// Name returns the provider name.
 func (p *BifrostProvider) Name() string { return "bifrost" }
 
-// Models returns the Bifrost model catalog.
+// Models exposes only explicitly operator-verified gateway model IDs, with
+// pricing and capabilities. An incomplete catalog disables the entire list.
 func (p *BifrostProvider) Models() []ModelInfo {
 	p.once.Do(func() {
-		p.models = []ModelInfo{
-			{
-				Name:                     "bifrost/gpt-4o",
-				Provider:                 "bifrost",
-				MaxContext:               128000,
-				CodingStrength:           9,
-				ReasoningStrength:        8,
-				LatencyMs:                2500,
-				CostPer1KInput:           0.005,
-				CostPer1KOutput:          0.015,
-				SupportsStructuredOutput: true,
-				SupportsVision:           true,
-				SupportsFunctionCalling:  true,
-			},
-			{
-				Name:                     "bifrost/claude-sonnet",
-				Provider:                 "bifrost",
-				MaxContext:               200000,
-				CodingStrength:           9,
-				ReasoningStrength:        9,
-				LatencyMs:                3000,
-				CostPer1KInput:           0.003,
-				CostPer1KOutput:          0.015,
-				SupportsStructuredOutput: true,
-				SupportsVision:           true,
-				SupportsFunctionCalling:  true,
-			},
-			{
-				Name:                     "bifrost/gemini-flash",
-				Provider:                 "bifrost",
-				MaxContext:               1000000,
-				CodingStrength:           7,
-				ReasoningStrength:        7,
-				LatencyMs:                1200,
-				CostPer1KInput:           0.00015,
-				CostPer1KOutput:          0.0006,
-				SupportsStructuredOutput: true,
-				SupportsVision:           true,
-				SupportsFunctionCalling:  true,
-			},
+		raw := strings.TrimSpace(os.Getenv("BIFROST_MODEL_CATALOG_JSON"))
+		if raw == "" {
+			p.catalogErr = errors.New("BIFROST_MODEL_CATALOG_JSON not configured")
+			return
 		}
+		var specs []bifrostModelDescriptor
+		if err := json.Unmarshal([]byte(raw), &specs); err != nil {
+			p.catalogErr = fmt.Errorf("invalid Bifrost model catalog JSON: %w", err)
+			return
+		}
+		if len(specs) == 0 {
+			p.catalogErr = errors.New("bifrost model catalog is empty")
+			return
+		}
+		models := make([]ModelInfo, 0, len(specs))
+		seen := make(map[string]struct{}, len(specs))
+		for _, spec := range specs {
+			provider, upstreamID, qualified := strings.Cut(spec.ID, "/")
+			switch provider {
+			case "openrouter", "openai", "anthropic", "groq", "ollama":
+			default:
+				qualified = false
+			}
+			if !qualified || upstreamID == "" || len(spec.ID) > 256 ||
+				strings.ContainsAny(spec.ID, " \r\n\t") ||
+				!spec.PricingVerified || spec.CostPer1KInput == nil || spec.CostPer1KOutput == nil || spec.MaxContext <= 0 ||
+				spec.CodingStrength < 1 || spec.CodingStrength > 10 ||
+				spec.ReasoningStrength < 1 || spec.ReasoningStrength > 10 ||
+				spec.LatencyMs <= 0 ||
+				*spec.CostPer1KInput < 0 || *spec.CostPer1KOutput < 0 ||
+				math.IsNaN(*spec.CostPer1KInput) || math.IsNaN(*spec.CostPer1KOutput) ||
+				math.IsInf(*spec.CostPer1KInput, 0) || math.IsInf(*spec.CostPer1KOutput, 0) {
+				p.catalogErr = fmt.Errorf("unverified or invalid Bifrost model metadata for %q", spec.ID)
+				return
+			}
+			if _, exists := seen[spec.ID]; exists {
+				p.catalogErr = fmt.Errorf("duplicate Bifrost model %q", spec.ID)
+				return
+			}
+			seen[spec.ID] = struct{}{}
+			models = append(models, ModelInfo{
+				Name: spec.ID, Provider: "bifrost", MaxContext: spec.MaxContext,
+				CodingStrength: spec.CodingStrength, ReasoningStrength: spec.ReasoningStrength,
+				LatencyMs: spec.LatencyMs, CostPer1KInput: *spec.CostPer1KInput,
+				CostPer1KOutput:          *spec.CostPer1KOutput,
+				SupportsStructuredOutput: spec.SupportsStructuredOutput,
+				SupportsVision:           spec.SupportsVision,
+				SupportsFunctionCalling:  spec.SupportsFunctionCalling,
+			})
+		}
+		p.models = models
 	})
-	return p.models
+	return append([]ModelInfo(nil), p.models...)
 }
 
-// Call executes a model call via the Bifrost gateway.
+// Call never substitutes a model outside the verified catalog. The server also
+// enforces its independent tenant and model allowlists.
 func (p *BifrostProvider) Call(ctx context.Context, req CallRequest) (*CallResult, error) {
+	models := p.Models()
+	if p.catalogErr != nil {
+		return nil, fmt.Errorf("bifrost: %w", p.catalogErr)
+	}
 	if !p.IsAvailable() {
 		return nil, fmt.Errorf("bifrost: %w", ErrProviderNotConnected)
 	}
-	return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, p.Models())
+	for _, model := range models {
+		if model.Name == req.PreferredModel {
+			if req.StructuredReq && !model.SupportsStructuredOutput {
+				return nil, fmt.Errorf("bifrost model %q does not support structured output", model.Name)
+			}
+			return callOpenAICompatible(ctx, p.client, p.baseURL, p.apiKey, p.Name(), req, models)
+		}
+	}
+	return nil, fmt.Errorf("bifrost model %q is not in verified catalog", req.PreferredModel)
 }
 
-// IsAvailable returns true if the Bifrost provider is configured.
 func (p *BifrostProvider) IsAvailable() bool {
 	p.loadAPIKey()
-	return p.apiKey != ""
+	return p.apiKey != "" && len(p.Models()) != 0 && p.catalogErr == nil
 }
 
 // AllProviders returns a list of all available provider instances.

@@ -293,7 +293,7 @@ func TestRouter_SelectModel_ContextSize(t *testing.T) {
 	}
 }
 
-// TestRouter_SelectModel_NoMatchingModel returns fallback when no models match.
+// TestRouter_SelectModel_NoMatchingModel rejects unavailable models under active caps.
 func TestRouter_SelectModel_NoMatchingModel(t *testing.T) {
 	// Provider not available
 	p1 := &mockProvider{
@@ -311,20 +311,15 @@ func TestRouter_SelectModel_NoMatchingModel(t *testing.T) {
 
 	router := NewRouter(config, p1)
 
-	// No providers available, should return fallback model
+	// No available providers can satisfy the configured budget.
 	model, err := router.SelectModel(context.Background(), TaskTypeCode, DifficultyMedium, LatencyNormal, 0, 0)
-	if err != nil {
-		t.Fatalf("SelectModel() error: %v", err)
+	if err == nil || model != nil {
+		t.Fatalf("unavailable providers must fail closed under configured cost cap: model=%+v err=%v", model, err)
 	}
-	if model == nil {
-		t.Fatal("SelectModel() returned nil")
-	}
-	if model.Name != "fallback-model" {
-		t.Errorf("expected fallback model, got %s", model.Name)
-	}
+
 }
 
-// TestRouter_SelectModel_NoProvidersAvailable returns fallback.
+// TestRouter_SelectModel_NoProvidersAvailable fails closed under active caps.
 func TestRouter_SelectModel_NoProvidersAvailable(t *testing.T) {
 	p1 := &mockProvider{
 		name:      "openai",
@@ -345,16 +340,10 @@ func TestRouter_SelectModel_NoProvidersAvailable(t *testing.T) {
 	router := NewRouter(config, p1, p2)
 
 	model, err := router.SelectModel(context.Background(), TaskTypeCode, DifficultyMedium, LatencyNormal, 0, 0)
-	if err != nil {
-		t.Fatalf("SelectModel() error: %v", err)
+	if err == nil || model != nil {
+		t.Fatalf("unavailable providers must fail closed under configured cost cap: model=%+v err=%v", model, err)
 	}
-	if model == nil {
-		t.Fatal("SelectModel() returned nil")
-	}
-	// Should return fallback model
-	if model.Name != config.DefaultModel {
-		t.Errorf("expected default model %s, got %s", config.DefaultModel, model.Name)
-	}
+
 }
 
 // ProvidersForMode must never add direct API providers to the exclusive gateway lane.
@@ -677,6 +666,7 @@ func TestDefaultConfig(t *testing.T) {
 
 // TestProvider_Models verifies each real provider returns expected models.
 func TestProvider_Models(t *testing.T) {
+	t.Setenv("BIFROST_MODEL_CATALOG_JSON", verifiedBifrostModel)
 	tests := []struct {
 		name       string
 		provider   Provider
@@ -716,8 +706,8 @@ func TestProvider_Models(t *testing.T) {
 		{
 			name:       "Bifrost",
 			provider:   NewBifrostProvider(),
-			minModels:  2,
-			modelNames: []string{"bifrost/gpt-4o", "bifrost/claude-sonnet", "bifrost/gemini-flash"},
+			minModels:  1,
+			modelNames: []string{"groq/openai/gpt-oss-120b"},
 		},
 	}
 
@@ -833,6 +823,7 @@ func TestProvider_IsAvailable(t *testing.T) {
 
 	t.Run("Bifrost with env var", func(t *testing.T) {
 		t.Setenv("BIFROST_API_KEY", "test-key-bifrost")
+		t.Setenv("BIFROST_MODEL_CATALOG_JSON", verifiedBifrostModel)
 		p := NewBifrostProvider()
 		if !p.IsAvailable() {
 			t.Error("expected Bifrost provider to be available with API key")

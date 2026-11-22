@@ -183,10 +183,11 @@ func TestGeminiProviderCallUsesGenerateContent(t *testing.T) {
 
 func TestBifrostProviderCallUsesChatCompletions(t *testing.T) {
 	t.Setenv("BIFROST_API_KEY", "test-bifrost-key")
+	t.Setenv("BIFROST_MODEL_CATALOG_JSON", strings.Replace(verifiedBifrostModel, `"supports_structured_output":false`, `"supports_structured_output":true`, 1))
 	var captured map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/chat/completions" {
-			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("path = %q, want /v1/chat/completions", r.URL.Path)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer test-bifrost-key" {
 			t.Fatalf("authorization = %q", got)
@@ -195,6 +196,7 @@ func TestBifrostProviderCallUsesChatCompletions(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model": "openai/gpt-oss-120b",
 			"choices": []map[string]any{{
 				"message":       map[string]any{"content": `{"action":"final_response","content":"done"}`},
 				"finish_reason": "stop",
@@ -209,18 +211,18 @@ func TestBifrostProviderCallUsesChatCompletions(t *testing.T) {
 	defer server.Close()
 
 	provider := NewBifrostProvider()
-	provider.baseURL = server.URL
+	provider.baseURL = server.URL + "/v1"
 	provider.client = server.Client()
 
 	result, err := provider.Call(context.Background(), CallRequest{
-		PreferredModel: "bifrost/gpt-4o",
+		PreferredModel: "groq/openai/gpt-oss-120b",
 		StructuredReq:  true,
 		Messages:       []Message{{Role: "user", Content: "return json"}},
 	})
 	if err != nil {
 		t.Fatalf("Call() error: %v", err)
 	}
-	if captured["model"] != "bifrost/gpt-4o" {
+	if captured["model"] != "groq/openai/gpt-oss-120b" {
 		t.Fatalf("model = %v", captured["model"])
 	}
 	responseFormat, ok := captured["response_format"].(map[string]any)
@@ -230,7 +232,7 @@ func TestBifrostProviderCallUsesChatCompletions(t *testing.T) {
 	if result.Content != `{"action":"final_response","content":"done"}` {
 		t.Fatalf("content = %q", result.Content)
 	}
-	if result.Provider != "bifrost" || result.Model != "bifrost/gpt-4o" {
+	if result.Provider != "bifrost" || result.Model != "groq/openai/gpt-oss-120b" {
 		t.Fatalf("route = %s/%s", result.Provider, result.Model)
 	}
 }
