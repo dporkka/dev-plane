@@ -20,6 +20,11 @@ type GiteaForge struct {
 	httpClient  *http.Client
 }
 
+const (
+	giteaRequestTimeout   = 10 * time.Second
+	maxGiteaResponseBytes = 4 * 1024 * 1024
+)
+
 var _ Forge = (*GiteaForge)(nil)
 var _ ForgeAuthorityProvider = (*GiteaForge)(nil)
 
@@ -32,27 +37,37 @@ func NewGiteaForge(instanceURL string, client *http.Client) (*GiteaForge, error)
 		return nil, err
 	}
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		client = &http.Client{}
+	}
+	// Preserve the caller's transport (including private CA configuration)
+	// without modifying its client. A redirect is not proof that the target
+	// has the same forge authority, even on the same host or another port.
+	boundedClient := *client
+	boundedClient.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	if boundedClient.Timeout <= 0 || boundedClient.Timeout > giteaRequestTimeout {
+		boundedClient.Timeout = giteaRequestTimeout
 	}
 	return &GiteaForge{
 		instanceURL: root,
 		apiBaseURL:  root + "/api/v1",
-		httpClient:  client,
+		httpClient:  &boundedClient,
 	}, nil
 }
 
 func canonicalGiteaInstanceURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", fmt.Errorf("invalid gitea instance URL %q", raw)
+	if err != nil || parsed.Scheme == "" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("invalid gitea instance URL")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("invalid gitea instance URL %q: scheme must be http or https", raw)
+		return "", fmt.Errorf("invalid gitea instance URL: scheme must be http or https")
 	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", fmt.Errorf("invalid gitea instance URL %q: userinfo, query, and fragment are not allowed", raw)
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return "", fmt.Errorf("invalid gitea instance URL: userinfo, query, and fragment are not allowed")
 	}
 	parsed.Host = strings.ToLower(parsed.Host)
 	path := strings.TrimRight(parsed.Path, "/")
@@ -209,15 +224,26 @@ func (f *GiteaForge) do(ctx context.Context, credential ForgeCredential, method,
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= http.StatusBadRequest {
-		errorBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("gitea API error %d: %s", resp.StatusCode, strings.TrimSpace(string(errorBody)))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		// Provider-controlled error bodies can echo credentials or contain
+		// sensitive repository data. Do not include them in loggable errors.
+		return fmt.Errorf("gitea API error %d", resp.StatusCode)
 	}
 	if out == nil {
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return fmt.Errorf("decode gitea response: %w", err)
+	if resp.ContentLength > maxGiteaResponseBytes {
+		return fmt.Errorf("gitea response exceeds size limit")
+	}
+	encoded, err := io.ReadAll(io.LimitReader(resp.Body, maxGiteaResponseBytes+1))
+	if err != nil {
+		return fmt.Errorf("read gitea response")
+	}
+	if len(encoded) > maxGiteaResponseBytes {
+		return fmt.Errorf("gitea response exceeds size limit")
+	}
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return fmt.Errorf("decode invalid gitea response")
 	}
 	return nil
 }

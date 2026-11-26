@@ -68,6 +68,17 @@ The v1 provider currently supports:
 - exact reviewed-head binding through `head_commit_id`;
 - webhook create/delete.
 
+### Transport boundary
+
+Supply an operator-controlled instance URL and narrowly scoped token. Prefer HTTPS;
+HTTP is appropriate only for trusted local or otherwise protected development
+networks. The adapter preserves a supplied HTTP transport (for example, a private
+CA) but caps requests at ten seconds and refuses all redirects. It rejects
+non-2xx status codes without including provider-controlled error bodies and
+limits decoded response input to 4 MiB. Credentials must never be embedded in
+instance URLs or passed to agents. Infrastructure must enforce instance
+allowlisting/egress policy where repository connection settings are user supplied.
+
 ### Draft pull requests
 
 Gitea 1.25's create-pull-request request schema does not expose a draft input even though pull-request responses expose draft state. Dev Plane therefore returns `ErrUnsupportedForgeCapability` when a caller requests `Draft=true` through this provider.
