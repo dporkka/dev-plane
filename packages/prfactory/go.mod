@@ -10,6 +10,7 @@ require (
 	github.com/ai-dev-control-plane/gateway v0.0.0
 	github.com/ai-dev-control-plane/models v0.0.0
 	github.com/ai-dev-control-plane/reviewer v0.0.0
+	github.com/ai-dev-control-plane/repoprotocol v0.0.0
 	github.com/google/uuid v1.6.0
 )
 
@@ -21,5 +22,6 @@ replace (
 	github.com/ai-dev-control-plane/gateway => ../gateway
 	github.com/ai-dev-control-plane/models => ../models
 	github.com/ai-dev-control-plane/reviewer => ../reviewer
+	github.com/ai-dev-control-plane/repoprotocol => ../repoprotocol
 	github.com/ai-dev-control-plane/securityscan => ../securityscan
 )

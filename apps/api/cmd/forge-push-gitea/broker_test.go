@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/prfactory"
+	rp "github.com/ai-dev-control-plane/repoprotocol"
 	"github.com/pressly/goose/v3"
 )
 
@@ -411,6 +414,75 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 		execSQL("UPDATE approvals SET response='approved' WHERE id=$1", approval3)
 		if prPosts.Load() != 1 {
 			t.Fatal("preflight mutated upstream")
+		}
+
+		identity := "gitea:" + server.URL + "#77"
+		item := rp.WorkItem{ID: "trusted-fixture", Repository: identity, Objective: "verify exact fixture", OwnershipPaths: []string{"src/**"}, Risk: rp.RiskLow, Cost: 1, RequiredGates: []string{"build"}, BaseSHA: base, State: rp.WorkReadyToLand}
+		if err := database.PutWorkItem(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, nil); err == nil {
+			t.Fatal("unbound CI accepted")
+		}
+		if err := prfactory.BindGiteaCIWorkItem(ctx, database.DB, request, item.ID, []string{"other"}); err == nil {
+			t.Fatal("wrong gate set bound")
+		}
+		if err := prfactory.BindGiteaCIWorkItem(ctx, database.DB, request, item.ID, item.RequiredGates); err != nil {
+			t.Fatalf("binding failed: %v", err)
+		}
+		if err := prfactory.BindGiteaCIWorkItem(ctx, database.DB, request, item.ID, item.RequiredGates); err == nil {
+			t.Fatal("binding replaced")
+		}
+		public, private, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zero := 0
+		stamp := time.Now().UTC()
+		record := rp.RemoteCIRecord{Version: 1, Provider: "fixture", Repository: identity, HeadSHA: head, PipelineID: "1", DefinitionSHA256: strings.Repeat("c", 64), RunID: "2", JobID: "3", AttemptID: "4", WorkerID: "worker", State: rp.CIStateTerminal, Outcome: rp.CIOutcomePassed, ExitCode: &zero, QueuedAt: stamp.Add(-time.Minute), AssignedAt: stamp.Add(-50 * time.Second), StartedAt: stamp.Add(-40 * time.Second), FinishedAt: stamp.Add(-time.Second)}
+		signed, err := rp.SignRemoteCIReceipt(record, "fixture-key", private)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pins := map[string]rp.RemoteCIPolicy{"build": {Provider: record.Provider, Repository: identity, DefinitionSHA256: record.DefinitionSHA256, SignerKeyID: "fixture-key", PublicKey: public, PipelineID: "1", RunID: "2", JobID: "3", AttemptID: "4"}}
+		bundle := rp.EvidenceBundle{WorkItemID: item.ID, BaseSHA: base, HeadSHA: head, Gates: []rp.GateEvidence{{Name: "build", Status: rp.GatePassed, RemoteCI: &signed}}}
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, pins); err == nil {
+			t.Fatal("missing evidence accepted")
+		}
+		if err := database.PutEvidenceBundle(ctx, bundle); err != nil {
+			t.Fatal(err)
+		}
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, pins); err != nil {
+			t.Fatalf("valid CI rejected: %v", err)
+		}
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, "other", pins); err == nil {
+			t.Fatal("wrong operator-selected work item accepted")
+		}
+		execSQL("UPDATE work_items SET state='failed' WHERE id=$1", item.ID)
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, pins); err == nil {
+			t.Fatal("failed work item accepted")
+		}
+		execSQL("UPDATE work_items SET state='ready_to_land' WHERE id=$1", item.ID)
+
+		item.RequiredGates = []string{"other"}
+		if err := database.PutWorkItem(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, pins); err == nil {
+			t.Fatal("mutated gate set accepted")
+		}
+		item.RequiredGates = []string{"build"}
+		if err := database.PutWorkItem(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+		old := pins["build"]
+		old.AttemptID = "5"
+		pins["build"] = old
+		if err := prfactory.CheckGiteaCIForWorkItem(ctx, database.DB, request, item.ID, pins); err == nil {
+			t.Fatal("old signed attempt accepted")
+		}
+		if prPosts.Load() != 1 {
+			t.Fatal("CI preflight mutated upstream")
 		}
 
 	}
