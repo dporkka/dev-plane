@@ -41,9 +41,9 @@ func TestDeployTaskSuccess(t *testing.T) {
 		WithArgs(taskID).
 		WillReturnRows(sqlmock.NewRows([]string{"status", "repository_id", "target_branch", "project_id"}).
 			AddRow("pr_created", "repo-1", "main", "proj-1"))
-	mock.ExpectQuery("SELECT owner, name FROM repositories").
+	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").
 		WithArgs("repo-1").
-		WillReturnRows(sqlmock.NewRows([]string{"owner", "name"}).AddRow("owner", "repo"))
+		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow("owner", "repo", nil))
 	mock.ExpectExec("INSERT INTO deployments").
 		WithArgs(sqlmock.AnyArg(), taskID, "staging", "main", "12345", "https://github.com/owner/repo/deployments/12345", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))

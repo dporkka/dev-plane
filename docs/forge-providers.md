@@ -91,6 +91,51 @@ This is deliberate. The provider must not silently weaken a requested draft into
 
 Git transport credentials are a separate concern. In particular, GitHub's `x-access-token` HTTPS convention must not become the generic Gitea credential model. The PR Factory migration should introduce a separate Git push credential/transport boundary before enabling end-to-end Gitea branch publication.
 
+## Runtime PR publication
+
+The API request path and worker approval path both construct the same PR
+Factory. Set the same environment on both services; restart the worker when
+changing its configuration.
+
+- `FORGE_PROVIDER=github` (default): existing `GITHUB_TOKEN` behavior.
+- `FORGE_PROVIDER=gitea`: set `GITEA_URL` to the operator-controlled instance
+  root, and `GITEA_TOKEN` to a scoped API token. An unsupported or incomplete
+  selection fails closed, without using GitHub credentials.
+- For HTTPS push, explicitly configure **both** `GITEA_GIT_USERNAME` and
+  `GITEA_GIT_PASSWORD`; neither is inferred from the API token. Keep both
+  unset for SSH. The effective fetch and push destination must match the
+  stored repository forge authority.
+
+The current runtime selects one instance per service process. A repository
+with another provider or instance is rejected before publication. Keep
+credential-bearing Git execution in a trusted isolated workspace; checking
+remote destinations alone does not make arbitrary agent-controlled Git
+configuration safe. The API's existing GitHub-only merge and deployment
+endpoints reject repositories with Gitea authority until provider-neutral
+merge and deployment semantics are wired. Signed Gitea ingress does not yet
+dispatch agent tasks in the worker.
+
+### Reproducible disposable Gitea qualification
+
+With Go dependencies/toolchain already cached and a trusted, checksum-verified
+Gitea 1.27.3 executable, run from the repository root:
+
+```sh
+python3 packages/prfactory/testdata/live_gitea.py --binary /path/to/gitea
+```
+
+The opt-in runner creates an isolated SQLite-backed Gitea server listening only
+on loopback, a synthetic private repository and separate bootstrap/scoped API
+tokens. It runs a build-tagged PR Factory integration test (real Gitea
+publication, mocked Dev Plane DB records, explicit stale-head rejection and
+independent merged-state lookup). It terminates the server and removes the
+temporary directory even on a test failure. It does not download a binary,
+contact production, use operator credentials, or run in ordinary CI.
+
+The harness seeds a branch through Gitea before publication; it does not
+certify Git push credentials or workspace isolation. Temporary 405 handling in
+the test is not a production merge retry policy.
+
 ## Migration sequence
 
 1. Qualify the `gateway.Forge` contract and both adapters on the repository-native Go toolchain.

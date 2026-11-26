@@ -76,7 +76,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var repoIDs []string
 	for rows.Next() {
@@ -114,7 +114,7 @@ func (h *Handler) ListPullRequests(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer prRows.Close()
+	defer func() { _ = prRows.Close() }()
 
 	var prs []PullRequestResponse
 	for prRows.Next() {
@@ -227,9 +227,9 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Verify task exists and is in a valid state for PR creation
 	var task struct {
-		Status   string
-		RepoID   string
-		Branch   string
+		Status string
+		RepoID string
+		Branch string
 	}
 	err := h.db.QueryRowContext(ctx, `
 		SELECT status, repository_id, target_branch
@@ -274,6 +274,10 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	pr, err := factory.CreatePullRequest(ctx, taskID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
+		if errors.Is(err, prfactory.ErrForgeConfiguration) {
+			respond.Error(w, http.StatusServiceUnavailable, errors.New("forge runtime configuration is unavailable"))
+			return
+		}
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("create pull request: %w", err))
 		return
 	}
@@ -281,11 +285,11 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	// Publish pr.created event
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      pr.ID,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"branch":     pr.Branch,
-			"timestamp":  time.Now().UTC().Format(time.RFC3339),
+			"pr_id":     pr.ID,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"branch":    pr.Branch,
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish("pr.created", data); pubErr != nil {
@@ -351,11 +355,12 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	var runID sql.NullString
 	var mergedAt sql.NullTime
 	var repoOwner, repoName, taskID, taskStatus string
+	var repoSettings sql.NullString
 
 	err := h.db.QueryRowContext(ctx, `
 		SELECT pr.id, pr.task_id, pr.run_id, pr.repository_id, pr.number, pr.title, pr.body,
 		       pr.branch, pr.base_branch, pr.url, pr.state, pr.draft, pr.created_by, pr.merged_at,
-		       pr.created_at, pr.updated_at, r.owner, r.name, t.status
+		       pr.created_at, pr.updated_at, r.owner, r.name, t.status, r.settings
 		FROM pull_requests pr
 		JOIN repositories r ON r.id = pr.repository_id
 		JOIN tasks t ON t.id = pr.task_id
@@ -363,7 +368,7 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 	`, id).Scan(
 		&pr.ID, &taskID, &runID, &pr.RepoID, &pr.Number, &pr.Title, &pr.Body,
 		&pr.Branch, &pr.BaseBranch, &pr.URL, &pr.State, &pr.Draft, &pr.CreatedBy,
-		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus,
+		&mergedAt, &pr.CreatedAt, &pr.UpdatedAt, &repoOwner, &repoName, &taskStatus, &repoSettings,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -419,6 +424,10 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !requireGitHubRepository(w, repoSettings) {
+		return
+	}
+
 	token := strings.TrimSpace(h.githubToken)
 	if token == "" {
 		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
@@ -465,11 +474,11 @@ func (h *Handler) MergePullRequest(w http.ResponseWriter, r *http.Request) {
 
 	if h.eventBus != nil {
 		event := map[string]interface{}{
-			"pr_id":      id,
-			"task_id":    taskID,
-			"pr_number":  pr.Number,
-			"sha":        mergeResult.SHA,
-			"timestamp":  now.Format(time.RFC3339),
+			"pr_id":     id,
+			"task_id":   taskID,
+			"pr_number": pr.Number,
+			"sha":       mergeResult.SHA,
+			"timestamp": now.Format(time.RFC3339),
 		}
 		data, _ := json.Marshal(event)
 		if pubErr := h.eventBus.Publish(events.PRMerged, data); pubErr != nil {

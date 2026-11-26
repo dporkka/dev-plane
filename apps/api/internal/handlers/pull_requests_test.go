@@ -77,11 +77,11 @@ func TestMergePullRequest(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner", "repo", "pr_created", nil,
 		))
 	mock.ExpectExec("UPDATE pull_requests SET state").
 		WithArgs(sqlmock.AnyArg(), prID).
@@ -124,11 +124,11 @@ func TestMergePullRequest_AlreadyMerged(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "merged", false, testUserID, &now,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner", "repo", "pr_created", nil,
 		))
 
 	rec := httptest.NewRecorder()
@@ -154,11 +154,11 @@ func TestMergePullRequest_WrongTaskStatus(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "running",
+			now, now, "owner", "repo", "running", nil,
 		))
 
 	rec := httptest.NewRecorder()
@@ -187,11 +187,11 @@ func TestMergePullRequest_GitHubError(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner", "repo", "pr_created", nil,
 		))
 
 	rec := httptest.NewRecorder()
@@ -225,11 +225,11 @@ func TestMergePullRequest_DeniedByPolicy(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner", "repo", "pr_created", nil,
 		))
 
 	rec := httptest.NewRecorder()
@@ -256,11 +256,11 @@ func TestMergePullRequest_MissingToken(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "task_id", "run_id", "repository_id", "number", "title", "body",
 			"branch", "base_branch", "url", "state", "draft", "created_by", "merged_at",
-			"created_at", "updated_at", "owner", "name", "status",
+			"created_at", "updated_at", "owner", "name", "status", "settings",
 		}).AddRow(
 			prID, taskID, nil, repoID, 42, "title", "body",
 			"feature", "main", "https://github.com/owner/repo/pull/42", "open", false, testUserID, nil,
-			now, now, "owner", "repo", "pr_created",
+			now, now, "owner", "repo", "pr_created", nil,
 		))
 
 	rec := httptest.NewRecorder()

@@ -46,6 +46,7 @@ type Factory struct {
 	forge             gateway.Forge
 	forgeCredential   gateway.ForgeCredential
 	gitPushCredential GitPushCredential
+	configErr         error
 
 	// Deprecated compatibility mirrors for existing package callers/tests. They
 	// no longer own PR publication or Git transport behavior.
@@ -53,9 +54,8 @@ type Factory struct {
 	githubToken string
 }
 
-// NewFactory creates a PR factory. GITHUB_TOKEN remains the backward-compatible
-// default for GitHub installations while forge and Git transport credentials are
-// represented independently internally.
+// NewFactory creates the shared API/worker PR factory. GitHub remains the
+// default; an explicit Gitea selection never falls back to GitHub credentials.
 func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	if logger == nil {
 		logger = slog.Default()
@@ -63,6 +63,16 @@ func NewFactory(db *sql.DB, logger *slog.Logger) *Factory {
 	f := &Factory{
 		db:     db,
 		logger: logger,
+	}
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FORGE_PROVIDER"))) {
+	case "gitea":
+		f.configErr = f.configureGiteaRuntime()
+		return f
+	case "", "github":
+		// Preserve the legacy GitHub default and token convention.
+	default:
+		f.configErr = fmt.Errorf("%w: unsupported FORGE_PROVIDER", ErrForgeConfiguration)
+		return f
 	}
 	if token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN")); token != "" {
 		gh := gateway.NewGitHubGateway(os.Getenv("GITHUB_CLIENT_ID"), os.Getenv("GITHUB_CLIENT_SECRET"))
@@ -129,6 +139,9 @@ func (f *Factory) WithGitHubToken(token string) *Factory {
 //  8. Save PR record in DB
 //  9. Update task status to "pr_created"
 func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models.PullRequest, error) {
+	if f.configErr != nil {
+		return nil, f.configErr
+	}
 	f.logger.Info("creating pull request", "task_id", taskID)
 
 	// 1. Load task
