@@ -28,7 +28,7 @@ func TestIntegrationBifrost(t *testing.T) {
 	apiKey := skipIfMissing(t, "BIFROST_API_KEY")
 	baseURL := os.Getenv("BIFROST_URL")
 	if baseURL == "" {
-		baseURL = "http://localhost:8083"
+		baseURL = "http://localhost:8083/v1"
 	}
 
 	provider := NewBifrostProvider()
@@ -36,12 +36,19 @@ func TestIntegrationBifrost(t *testing.T) {
 	provider.apiKey = apiKey
 
 	result, err := provider.Call(context.Background(), CallRequest{
-		PreferredModel: "bifrost/gpt-4o",
+		PreferredModel: "route/auto",
+		Route:          RouteAuto,
+		TaskType:       TaskTypeSimple,
+		Difficulty:     DifficultyEasy,
+		LatencyReq:     LatencyNormal,
 		Messages:       []Message{{Role: "user", Content: "Say hello"}},
 	})
 	requireValidCredential(t, "BIFROST_API_KEY", err)
 	if result.Content == "" {
 		t.Fatal("expected non-empty content")
+	}
+	if result.Model == "" || result.Model == "route/auto" {
+		t.Fatalf("expected gateway-resolved model, got %q", result.Model)
 	}
 }
 

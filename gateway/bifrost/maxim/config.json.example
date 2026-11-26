@@ -1,0 +1,232 @@
+{
+  "$schema": "https://www.getbifrost.ai/schema",
+  "encryption_key": "env.BIFROST_ENCRYPTION_KEY",
+  "client": {
+    "initial_pool_size": 100,
+    "drop_excess_requests": false,
+    "enable_logging": true,
+    "disable_content_logging": true,
+    "logging_headers": [
+      "x-devplane-route",
+      "x-devplane-task-type",
+      "x-devplane-difficulty",
+      "x-devplane-agent-role",
+      "x-devplane-risk"
+    ],
+    "enforce_auth_on_inference": false
+  },
+  "providers": {
+    "openrouter": {
+      "keys": [
+        {
+          "name": "openrouter-primary",
+          "value": "env.OPENROUTER_API_KEY",
+          "models": ["*"],
+          "weight": 1.0
+        }
+      ],
+      "network_config": {
+        "default_request_timeout_in_seconds": 120,
+        "max_retries": 2
+      }
+    },
+    "openai": {
+      "keys": [
+        {
+          "name": "complexity-embeddings",
+          "value": "env.OPENAI_API_KEY",
+          "models": ["text-embedding-3-small"],
+          "weight": 1.0
+        }
+      ]
+    }
+  },
+  "governance": {
+    "complexity_analyzer_config": {
+      "semantic": {
+        "provider": "openai",
+        "embedding_model": "text-embedding-3-small",
+        "timeout": "1.5s",
+        "min_similarity": 0.35,
+        "message_history_count": 1,
+        "count_toward_budgets": false,
+        "vector_store": "embedded"
+      },
+      "session": {
+        "enabled": true
+      },
+      "keywords": {
+        "simple_keywords": [
+          "summarize this code or document",
+          "classify this request",
+          "fix grammar or rewrite a short message",
+          "rename a variable or make a tiny local edit",
+          "explain a small function without changing behavior"
+        ],
+        "medium_keywords": [
+          "implement a contained API endpoint with tests",
+          "fix a localized bug and add regression coverage",
+          "refactor one module while preserving behavior",
+          "review a pull request for correctness and maintainability",
+          "add validation, error handling, or structured output"
+        ],
+        "complex_keywords": [
+          "debug a concurrency bug or deadlock across services",
+          "design or change a distributed systems protocol",
+          "perform a repository-wide migration with compatibility constraints",
+          "investigate a security-critical bug with multiple attack paths",
+          "solve a long-horizon coding task requiring many tool calls and verification rounds"
+        ]
+      }
+    },
+    "routing_rules": [
+      {
+        "id": "devplane-explicit-security",
+        "name": "Dev Plane explicit security route",
+        "enabled": true,
+        "cel_expression": "model == \"route/security_review\"",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 0
+      },
+      {
+        "id": "devplane-explicit-reasoning",
+        "name": "Dev Plane explicit high reasoning route",
+        "enabled": true,
+        "cel_expression": "model == \"route/reasoning_high\"",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 1
+      },
+      {
+        "id": "devplane-explicit-agentic",
+        "name": "Dev Plane explicit long-horizon agent route",
+        "enabled": true,
+        "cel_expression": "model == \"route/agentic_long_horizon\"",
+        "targets": [
+          {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/z-ai/glm-5.3",
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 2
+      },
+      {
+        "id": "devplane-explicit-coding-deep",
+        "name": "Dev Plane explicit deep coding route",
+        "enabled": true,
+        "cel_expression": "model == \"route/coding_deep\"",
+        "targets": [
+          {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/z-ai/glm-5.3-flash",
+          "openrouter/z-ai/glm-5.3"
+        ],
+        "scope": "global",
+        "priority": 3
+      },
+      {
+        "id": "devplane-explicit-cheap",
+        "name": "Dev Plane cheap and fast routes",
+        "enabled": true,
+        "cel_expression": "model in [\"route/cheap_classification\", \"route/cheap_summary\", \"route/balanced_chat\", \"route/coding_fast\", \"route/ultra_low_latency\"]",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash"
+        ],
+        "scope": "global",
+        "priority": 4
+      },
+      {
+        "id": "devplane-auto-critical-review",
+        "name": "Auto route hard review and architecture to stronger reasoning",
+        "enabled": true,
+        "cel_expression": "model == \"route/auto\" && headers[\"x-devplane-difficulty\"] in [\"hard\", \"expert\"] && headers[\"x-devplane-task-type\"] in [\"review\", \"architecture\"]",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 20
+      },
+      {
+        "id": "devplane-auto-hard-code",
+        "name": "Auto route hard coding work to DeepSeek Flash",
+        "enabled": true,
+        "cel_expression": "model == \"route/auto\" && headers[\"x-devplane-difficulty\"] in [\"hard\", \"expert\"] && headers[\"x-devplane-task-type\"] in [\"code\", \"refactor\", \"debug\", \"test\"]",
+        "targets": [
+          {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/z-ai/glm-5.3-flash",
+          "openrouter/z-ai/glm-5.3"
+        ],
+        "scope": "global",
+        "priority": 21
+      },
+      {
+        "id": "devplane-auto-complex-code",
+        "name": "Auto route semantically complex code to DeepSeek Flash",
+        "enabled": true,
+        "cel_expression": "model == \"route/auto\" && complexity_tier == \"COMPLEX\" && headers[\"x-devplane-task-type\"] in [\"code\", \"refactor\", \"debug\", \"test\"]",
+        "targets": [
+          {"provider": "openrouter", "model": "deepseek/deepseek-v4.1-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 22
+      },
+      {
+        "id": "devplane-auto-complex-general",
+        "name": "Auto route other complex tasks to stronger reasoning",
+        "enabled": true,
+        "cel_expression": "model == \"route/auto\" && complexity_tier == \"COMPLEX\"",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash",
+          "openrouter/z-ai/glm-5.3-flash"
+        ],
+        "scope": "global",
+        "priority": 23
+      },
+      {
+        "id": "devplane-auto-default",
+        "name": "Auto route default inexpensive model",
+        "enabled": true,
+        "cel_expression": "model == \"route/auto\"",
+        "targets": [
+          {"provider": "openrouter", "model": "z-ai/glm-5.3-flash", "weight": 1.0}
+        ],
+        "fallbacks": [
+          "openrouter/deepseek/deepseek-v4.1-flash"
+        ],
+        "scope": "global",
+        "priority": 99
+      }
+    ]
+  }
+}

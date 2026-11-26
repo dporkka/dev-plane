@@ -42,9 +42,11 @@ func (r *Runner) failRun(ctx context.Context, runID string, errorMsg string) err
 			SET status = $1, error_message = $2, completed_at = $3, updated_at = $3
 			WHERE id = $4
 		`, models.AgentRunStatusFailed, errorMsg, now, runID)
+		if err := r.recordRoutingOutcome(ctx, runID, models.AgentRunStatusFailed, nil, errorMsg); err != nil {
+			r.logger.Warn("failed to record routing failure outcome", "run_id", runID, "error", err)
+		}
 	}
 
-	// Publish run.failed event
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.failed", runID), map[string]any{
 		"run_id":    runID,
 		"status":    models.AgentRunStatusFailed,
@@ -71,6 +73,9 @@ func (r *Runner) pauseRun(ctx context.Context, runID string, reason string) erro
 			SET status = $1, error_message = $2, updated_at = $3
 			WHERE id = $4
 		`, models.AgentRunStatusPaused, reason, now, runID)
+		if err := r.markRoutingHumanIntervention(ctx, runID); err != nil {
+			r.logger.Warn("failed to record routing human intervention", "run_id", runID, "error", err)
+		}
 	}
 
 	_ = r.publishEvent(ctx, events.StreamRuns, fmt.Sprintf("runs.%s.paused", runID), map[string]any{
@@ -217,5 +222,13 @@ func (r *Runner) updateRunCompletion(ctx context.Context, runID, status, summary
 		    completed_at = $4, updated_at = $4
 		WHERE id = $5
 	`, status, summary, state.CostSoFar, now, runID)
-	return err
+	if err != nil {
+		return err
+	}
+	// If the caller did not already attach verifier details, still close pending
+	// routing rows with the run's terminal status.
+	if err := r.recordRoutingOutcome(ctx, runID, status, nil, ""); err != nil {
+		r.logger.Warn("failed to record terminal routing outcome", "run_id", runID, "error", err)
+	}
+	return nil
 }

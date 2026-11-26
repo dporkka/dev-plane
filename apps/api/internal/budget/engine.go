@@ -10,6 +10,11 @@ import (
 	"github.com/ai-dev-control-plane/models"
 )
 
+const (
+	CostAuthorityLocal    = "dev-plane"
+	CostAuthorityExternal = "external"
+)
+
 // Engine enforces budget constraints on agent runs.
 type Engine struct {
 	db     *sql.DB
@@ -30,36 +35,48 @@ func (e *Engine) WithLogger(logger *slog.Logger) *Engine {
 
 // RunState tracks the current state of an agent run for budget checking.
 type RunState struct {
-	CostSoFar       float64
-	DurationMinutes int
-	ModelCalls      int
-	ToolCalls       int
-	ShellCommands   int
-	FilesChanged    int
-	DiffSizeKB      int
+	CostSoFar             float64
+	ExternalCostAuthority bool
+	DurationMinutes       int
+	ModelCalls            int
+	ToolCalls             int
+	ShellCommands         int
+	FilesChanged          int
+	DiffSizeKB            int
 }
 
 // CheckResult contains the outcome of a budget check.
 type CheckResult struct {
-	Allowed    bool
-	Reason     string
-	Remaining  float64
-	Violations []string
+	Allowed       bool
+	Reason        string
+	Remaining     float64
+	CostAuthority string
+	Violations    []string
 }
 
-// CheckRun verifies if a run is within budget constraints.
+// CheckRun verifies if a run is within budget constraints. When an external
+// model gateway is the authoritative spend enforcer, Dev Plane deliberately
+// skips only dollar-denominated limits. Operational limits remain local.
 func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *RunState) (*CheckResult, error) {
+	externalCostAuthority := runState != nil && runState.ExternalCostAuthority
+	costAuthority := CostAuthorityLocal
+	if externalCostAuthority {
+		costAuthority = CostAuthorityExternal
+	}
+
 	if budget == nil || budget.IsUnlimited() {
-		return &CheckResult{Allowed: true, Remaining: -1}, nil
+		return &CheckResult{Allowed: true, Remaining: -1, CostAuthority: costAuthority}, nil
 	}
 
 	result := &CheckResult{
-		Allowed:    true,
-		Violations: []string{},
+		Allowed:       true,
+		Remaining:     -1,
+		CostAuthority: costAuthority,
+		Violations:    []string{},
 	}
 
-	// Check per-run limits
-	if budget.MaxCost != nil && runState != nil {
+	// Check per-run dollar limits only when Dev Plane has authoritative cost.
+	if !externalCostAuthority && budget.MaxCost != nil && runState != nil {
 		if runState.CostSoFar > *budget.MaxCost {
 			result.Allowed = false
 			result.Violations = append(result.Violations,
@@ -101,10 +118,10 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 		}
 	}
 
-	// Check per-period limits (require DB)
+	// Check per-period limits (require DB). Gateway-authoritative traffic must
+	// not be compared against the incomplete local model_usage cost ledger.
 	if e.db != nil {
-		// Check daily spend
-		if budget.MaxDailySpend != nil {
+		if !externalCostAuthority && budget.MaxDailySpend != nil {
 			dailySpend, err := e.GetDailySpend(ctx, budget.OrganizationID)
 			if err != nil {
 				e.logWarn("failed to get daily spend", "error", err)
@@ -115,7 +132,6 @@ func (e *Engine) CheckRun(ctx context.Context, budget *models.Budget, runState *
 			}
 		}
 
-		// Check concurrent runs for project-level budgets
 		if budget.MaxConcurrentAgents > 0 && budget.ProjectID != nil {
 			concurrent, err := e.GetConcurrentRuns(ctx, *budget.ProjectID)
 			if err != nil {
@@ -164,7 +180,7 @@ func (e *Engine) CheckRunStart(ctx context.Context, budget *models.Budget, runSt
 // RecordUsage persists model usage for budget tracking.
 func (e *Engine) RecordUsage(ctx context.Context, runID, taskID, model, provider string, promptTokens, completionTokens int, cost float64, latencyMs int) error {
 	if e.db == nil {
-		return nil // Best-effort when no DB
+		return nil
 	}
 
 	_, err := e.db.ExecContext(ctx, `
@@ -183,7 +199,7 @@ func (e *Engine) RecordUsage(ctx context.Context, runID, taskID, model, provider
 	return nil
 }
 
-// GetDailySpend returns total spend for an organization today.
+// GetDailySpend returns total locally-accounted spend for an organization today.
 func (e *Engine) GetDailySpend(ctx context.Context, orgID string) (float64, error) {
 	if e.db == nil {
 		return 0, nil
@@ -254,7 +270,7 @@ func (e *Engine) GetConcurrentAdmissionRuns(ctx context.Context, projectID strin
 	return count, nil
 }
 
-// GetRunCost returns the total cost so far for a specific run.
+// GetRunCost returns the total locally-accounted cost so far for a specific run.
 func (e *Engine) GetRunCost(ctx context.Context, runID string) (float64, error) {
 	if e.db == nil {
 		return 0, nil
@@ -277,7 +293,7 @@ func (e *Engine) GetRunCost(ctx context.Context, runID string) (float64, error) 
 	return 0, nil
 }
 
-// GetTaskCost returns the total cost so far for a specific task.
+// GetTaskCost returns the total locally-accounted cost so far for a specific task.
 func (e *Engine) GetTaskCost(ctx context.Context, taskID string) (float64, error) {
 	if e.db == nil {
 		return 0, nil
@@ -301,7 +317,7 @@ func (e *Engine) GetTaskCost(ctx context.Context, taskID string) (float64, error
 	return 0, nil
 }
 
-// GetPeriodSpend returns total spend for an organization in the given period.
+// GetPeriodSpend returns locally-accounted spend for an organization in the given period.
 func (e *Engine) GetPeriodSpend(ctx context.Context, orgID string, period string) (float64, error) {
 	if e.db == nil {
 		return 0, nil
@@ -342,15 +358,12 @@ func (e *Engine) GetPeriodSpend(ctx context.Context, orgID string, period string
 	return 0, nil
 }
 
-// logWarn logs a warning message if a logger is attached.
 func (e *Engine) logWarn(msg string, args ...any) {
 	if e.logger != nil {
 		e.logger.Warn(msg, args...)
 	}
 }
 
-// generateID generates a unique identifier for usage records.
-// Uses timestamp-based fallback when no UUID library is available.
 func generateID() string {
 	return fmt.Sprintf("mu-%d-%d", time.Now().UnixNano(), time.Now().Unix())
 }
