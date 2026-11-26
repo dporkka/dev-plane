@@ -1,0 +1,187 @@
+package main
+
+import (
+	"context"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/cgi"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/ai-dev-control-plane/db"
+	"github.com/ai-dev-control-plane/prfactory"
+)
+
+func TestReviewedBrokerDurableAuthority(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "source")
+	remote := filepath.Join(root, "acme", "widget.git")
+	if err := os.MkdirAll(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(remote), 0700); err != nil {
+		t.Fatal(err)
+	}
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("/usr/bin/git", args...)
+		cmd.Dir = dir
+		cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + root, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "LC_ALL=C"}
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("fixture Git %s failed: %v %s", args[0], err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	git(source, "init", "--template=", "-b", "main")
+	commit := func(msg string) string {
+		git(source, "-c", "user.name=fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", msg)
+		return git(source, "rev-parse", "HEAD")
+	}
+	base := commit("base")
+	git(root, "clone", "--bare", source, remote)
+	git(remote, "config", "http.receivepack", "true")
+	head := commit("review")
+	git(source, "branch", "export")
+	bundle := filepath.Join(root, "export.bundle")
+	git(source, "bundle", "create", bundle, "refs/heads/export")
+	backend := &cgi.Handler{Path: filepath.Join(git(source, "--exec-path"), "git-http-backend"), Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=fixture"}}
+	var calls, mutations, bad atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.URL.Path == "/api/v1/repos/acme/widget" {
+			if r.Method != http.MethodGet || r.Header.Get("Authorization") != "token fixture-api" {
+				bad.Add(1)
+				http.Error(w, "denied", 401)
+				return
+			}
+			origin := "http://" + r.Host
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 77, "name": "widget", "full_name": "acme/widget", "clone_url": origin + "/acme/widget.git", "html_url": origin + "/acme/widget", "default_branch": "main"})
+			return
+		}
+		if r.Header.Get("Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("writer:fixture-push")) {
+			bad.Add(1)
+			http.Error(w, "denied", 401)
+			return
+		}
+		if r.Method == http.MethodPost {
+			mutations.Add(1)
+		}
+		backend.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	for key, value := range map[string]string{
+		"GITEA_URL": server.URL, "GITEA_TOKEN": "fixture-api", "GITEA_BINDING_GENERATION": "1", "GITEA_GIT_USERNAME": "writer",
+		"GITEA_GIT_PASSWORD": "fixture-push", "GITEA_PUSH_REPOSITORY_ID": "77", "GITEA_PUSH_URL": server.URL + "/acme/widget.git", "GITEA_CLONE_TOKEN": "",
+	} {
+		t.Setenv(key, value)
+	}
+	dsn := "file:" + filepath.Join(root, "broker.db")
+	if external := os.Getenv("DEVPLANE_TEST_PUSH_POSTGRES_URL"); external != "" {
+		u, err := url.Parse(external)
+		if err != nil || u.Scheme != "postgres" || u.Hostname() != "127.0.0.1" || u.Port() == "" || u.User == nil || u.User.String() != "fixture" || u.Path != "/devplane_push_test" || u.RawQuery != "sslmode=disable" || u.Fragment != "" {
+			t.Fatal("disposable loopback PostgreSQL required")
+		}
+		dsn = external
+	}
+	database, err := db.New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = database.Close() }()
+	database.SetMaxOpenConns(1)
+	if database.Driver == "postgres" {
+		var tables int
+		if err := database.QueryRow("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'").Scan(&tables); err != nil || tables != 0 {
+			t.Fatal("fixture database must be empty")
+		}
+	}
+	if err := database.RunMigrations("../../../../packages/db/migrations"); err != nil {
+		t.Fatal(err)
+	}
+	id := func(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+	org, user, project, repo, task, workspace, run, review, approval := id(1), id(2), id(3), id(4), id(5), id(6), id(7), id(8), id(9)
+	execSQL := func(q string, args ...any) {
+		t.Helper()
+		if _, err := database.Exec(q, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execSQL("INSERT INTO organizations(id,name,slug) VALUES ($1,'fixture','fixture')", org)
+	execSQL("INSERT INTO users(id,organization_id,email) VALUES ($1,$2,'fixture@example.test')", user, org)
+	execSQL("INSERT INTO projects(id,organization_id,name,slug) VALUES ($1,$2,'fixture','fixture')", project, org)
+	execSQL("INSERT INTO repositories(id,project_id,owner,name,full_name,clone_url,settings) VALUES ($1,$2,'acme','widget','acme/widget',$3,$4)", repo, project, server.URL+"/acme/widget.git", fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, server.URL))
+	execSQL("INSERT INTO tasks(id,project_id,repository_id,created_by,title,status) VALUES ($1,$2,$3,$4,'fixture','reviewing')", task, project, repo, user)
+	execSQL("INSERT INTO workspaces(id,repository_id,task_id,name,branch,base_branch,runtime_provider,status) VALUES ($1,$2,$3,'fixture','agent/fixture','main','docker','ready')", workspace, repo, task)
+	execSQL("UPDATE tasks SET workspace_id=$1 WHERE id=$2", workspace, task)
+	now := time.Now().UTC().Truncate(time.Second)
+	execSQL("INSERT INTO agent_runs(id,task_id,workspace_id,status,completed_at) VALUES ($1,$2,$3,'completed',$4)", run, task, workspace, now)
+	execSQL("INSERT INTO review_reports(id,run_id,summary,risk_level,approvable,created_at) VALUES ($1,$2,'fixture','low',TRUE,$3)", review, run, now)
+	execSQL("INSERT INTO approvals(id,task_id,agent_run_id,approval_type,requested_by,responded_by,response,responded_at) VALUES ($1,$2,$3,'pr_create',$4,$4,'approved',$5)", approval, task, run, user, now)
+	execSQL("INSERT INTO gitea_repository_bindings(repository_id,project_id,organization_id,instance_url,upstream_repository_id,full_name) VALUES ($1,$2,$3,$4,77,'acme/widget')", repo, project, org, server.URL)
+	req := prfactory.ReviewedPushRequest{GiteaBindingRequest: prfactory.GiteaBindingRequest{RepositoryID: repo, ProjectID: project, OrganizationID: org, UpstreamRepositoryID: 77}, TaskID: task, RunID: run, ReviewID: review, ApprovalID: approval, Branch: "agent/fixture", BaseBranch: "main", HeadSHA: head, BaseSHA: base, BundlePath: bundle, ExpectedGeneration: 1}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	reject := func(r prfactory.ReviewedPushRequest) {
+		t.Helper()
+		if err := prfactory.PublishReviewedGiteaBundle(ctx, database.DB, r); !errors.Is(err, prfactory.ErrReviewedPush) {
+			t.Fatalf("expected authority rejection, got %v", err)
+		}
+	}
+	wrong := req
+	wrong.ApprovalID = id(19)
+	reject(wrong)
+	wrong = req
+	wrong.RunID = id(17)
+	reject(wrong)
+	wrong = req
+	wrong.ReviewID = id(18)
+	reject(wrong)
+	wrong = req
+	wrong.OrganizationID = id(11)
+	reject(wrong)
+	wrong = req
+	wrong.Branch = "agent/other"
+	reject(wrong)
+	wrong = req
+	wrong.ExpectedGeneration = 2
+	reject(wrong)
+	execSQL("UPDATE approvals SET response='rejected' WHERE id=$1", approval)
+	reject(req)
+	execSQL("UPDATE approvals SET response='approved' WHERE id=$1", approval)
+	execSQL("UPDATE review_reports SET approvable=FALSE WHERE id=$1", review)
+	reject(req)
+	execSQL("UPDATE review_reports SET approvable=TRUE WHERE id=$1", review)
+	execSQL("UPDATE gitea_repository_bindings SET revoked_at=$1 WHERE repository_id=$2", now, repo)
+	reject(req)
+	execSQL("UPDATE gitea_repository_bindings SET revoked_at=NULL WHERE repository_id=$1", repo)
+	if calls.Load() != 0 {
+		t.Fatal("invalid authority reached forge")
+	}
+	t.Setenv("GITEA_GIT_PASSWORD", "fixture-api")
+	reject(req)
+	t.Setenv("GITEA_GIT_PASSWORD", "fixture-push")
+	if err := prfactory.PublishReviewedGiteaBundle(ctx, database.DB, req); err != nil {
+		t.Logf("fixture calls=%d mutations=%d bad=%d", calls.Load(), mutations.Load(), bad.Load())
+		t.Fatal(err)
+	}
+	if mutations.Load() == 0 || bad.Load() != 0 || git(remote, "rev-parse", "refs/heads/agent/fixture") != head || git(remote, "rev-parse", "refs/heads/main") != base {
+		t.Fatal("incorrect publication")
+	}
+	reject(req)
+	var status sql.NullString
+	if err := database.QueryRow("SELECT status FROM tasks WHERE id=$1", task).Scan(&status); err != nil || status.String != "reviewing" {
+		t.Fatal("broker must not create a PR or change task state")
+	}
+}
