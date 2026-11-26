@@ -112,8 +112,82 @@ credential-bearing Git execution in a trusted isolated workspace; checking
 remote destinations alone does not make arbitrary agent-controlled Git
 configuration safe. The API's existing GitHub-only merge and deployment
 endpoints reject repositories with Gitea authority until provider-neutral
-merge and deployment semantics are wired. Signed Gitea ingress does not yet
-dispatch agent tasks in the worker.
+merge and deployment semantics are wired. Signed Gitea ingress records
+externally bound receipts but does not yet dispatch agent tasks in the worker.
+
+### Signed Gitea webhook receipts
+
+Apply migration 026 before enabling the worker. Configure the same operator-
+controlled instance root (`GITEA_URL`) and instance-specific signing secret
+(`GITEA_WEBHOOK_SECRET`) in the API and worker; register that secret and
+`POST /api/v1/webhooks/gitea` in Gitea. Use a different secret for every
+instance; never reuse the GitHub signing key. The endpoint is disabled unless
+both settings are valid. This is independent of `FORGE_PROVIDER`.
+
+Ingress verifies the body HMAC and requires the signed repository numeric ID,
+full name, and canonical HTML URL to match the configured root (including
+any installation subpath). No inbound Host or forwarding header selects the
+instance. The envelope preserves the original signed bytes through base64
+encoding, so the worker independently verifies the signature and instance
+before writing a receipt. Broker publishers still require trusted access:
+configure NATS TLS and subject authorization, and protect its storage because
+in-flight messages contain the original body and signature. A broker with a
+smaller message limit can reject a delivery (HTTP 503); size for base64
+expansion or constrain accepted webhook sizes operationally.
+
+The receipt ledger stores only instance URL, signed external repository ID
+and name, body SHA-256, delivery ID, event type, and receipt time. Atomic
+SQL uniqueness constraints suppress repeated delivery IDs and identical
+signed bodies even if a replay changes an unsigned event/delivery header.
+This is receipt deduplication, not event sequencing or task exactly-once
+execution. Event type and delivery headers are **untrusted hints**; do not
+use either as authorization. Equal signed bytes under different delivery
+IDs intentionally produce one receipt.
+
+The existing `webhooks_star` durable subscription now uses manual ACK.
+Persistence/configuration failures leave received Gitea events unacknowledged
+for retry; invalid signatures and malformed/legacy envelopes are discarded.
+Processed/failed notification subjects are drained without dispatching them
+again. GitHub/Linear retain their prior error-ACK behavior; GitHub issue
+routing also excludes Gitea rows and rejects ambiguous GitHub matches.
+Deploy the migration and compatible worker with the API, and drain or
+reconcile old webhook deliveries before upgrade or signing-key rotation
+(the old envelopes did not preserve authenticated bytes). Retain receipts
+for the lifetime of their signing key; there is no authenticated timestamp
+that makes blindly expiring the replay ledger safe.
+
+**No tenant binding or agent execution yet:** a local repository connection
+stores user-provided name/URL, not verified ownership of the upstream
+repository ID. Do not route receipts to projects/users or treat merge/review
+events as policy approval. The next phase must establish explicit
+instance + immutable upstream repository ID authorization and independent
+provider state verification before any task/PR mutation.
+
+For optional local broker qualification, with a trusted `nats-server` binary:
+
+```sh
+DEVPLANE_TEST_NATS_SERVER=/absolute/path/to/nats-server \
+  go test -race -run '^TestLiveGiteaReceiptJetStreamRedelivery$' ./apps/worker/internal/webhooks/...
+```
+
+The test starts a loopback-only ephemeral JetStream broker and migrated
+SQLite fixture, reuses a synthetic existing wildcard durable, injects a
+database failure, observes real redelivery, and verifies that replay and
+outcome messages leave only one receipt. It never connects to `NATS_URL`.
+The binary, broker state and fixture are independent of production.
+
+A second opt-in test exercises the same receipt insert across independent
+PostgreSQL connection pools. Use only a fresh empty `devplane_gitea_receipts_test`
+database on an isolated loopback PostgreSQL process with user `fixture`:
+
+```sh
+DEVPLANE_TEST_GITEA_RECEIPTS_POSTGRES_URL='postgres://fixture@127.0.0.1:55439/devplane_gitea_receipts_test?sslmode=disable' \
+  go test -race -run '^TestPostgresGiteaReceiptConcurrentWriters$' ./apps/worker/internal/webhooks/...
+```
+
+Substitute the actual ephemeral fixture port; the test refuses a different
+database name, host, user, query options or nonempty public schema. Destroy
+the disposable PostgreSQL instance after the test.
 
 ### Reproducible disposable Gitea qualification
 

@@ -12,7 +12,7 @@ import (
 
 func TestGiteaWebhookRequiresDeliveryAndPublisher(t *testing.T) {
 	const secret = "synthetic-secret"
-	const valid = `{"repository":{"id":77,"full_name":"acme/widget"}}`
+	const valid = `{"repository":{"id":77,"full_name":"acme/widget","html_url":"https://git.example.test/acme/widget"}}`
 	for _, tc := range []struct {
 		name, body, delivery string
 		publisher            *webhookEventPublisher
@@ -24,7 +24,7 @@ func TestGiteaWebhookRequiresDeliveryAndPublisher(t *testing.T) {
 		{name: "missing repository", body: `{"repository":{"id":77}}`, delivery: "delivery-3", publisher: &webhookEventPublisher{}, want: http.StatusBadRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewGiteaWebhookHandler().WithWebhookSecret(secret)
+			h := NewGiteaWebhookHandler().WithWebhookSecret(secret).WithInstanceURL("https://git.example.test")
 			if tc.publisher != nil {
 				h.WithEventPublisher(tc.publisher)
 			}

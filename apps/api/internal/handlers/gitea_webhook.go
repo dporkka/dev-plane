@@ -17,6 +17,7 @@ import (
 type GiteaWebhookHandler struct {
 	eventBus      EventPublisher
 	webhookSecret string
+	instanceURL   string
 }
 
 func NewGiteaWebhookHandler() *GiteaWebhookHandler {
@@ -33,9 +34,16 @@ func (h *GiteaWebhookHandler) WithEventPublisher(pub EventPublisher) *GiteaWebho
 	return h
 }
 
+// WithInstanceURL binds ingress to one operator-configured Gitea instance.
+// Invalid or absent configuration leaves the handler disabled.
+func (h *GiteaWebhookHandler) WithInstanceURL(instanceURL string) *GiteaWebhookHandler {
+	h.instanceURL, _ = gateway.GiteaWebhookInstanceURL(instanceURL)
+	return h
+}
+
 func (h *GiteaWebhookHandler) GiteaWebhook(w http.ResponseWriter, r *http.Request) {
-	if h.webhookSecret == "" {
-		respond.Error(w, http.StatusServiceUnavailable, fmt.Errorf("gitea webhook secret is not configured"))
+	if h.webhookSecret == "" || h.instanceURL == "" {
+		respond.Error(w, http.StatusServiceUnavailable, fmt.Errorf("gitea webhook instance and secret are required"))
 		return
 	}
 
@@ -57,8 +65,8 @@ func (h *GiteaWebhookHandler) GiteaWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if event.DeliveryID == "" || event.RepositoryID <= 0 || strings.TrimSpace(event.Repository) == "" {
-		respond.Error(w, http.StatusBadRequest, fmt.Errorf("gitea webhook delivery and repository identity are required"))
+	if _, err := gateway.GiteaWebhookReceiptIdentity(h.instanceURL, event.DeliveryID, event.EventType, event.Repository, event.Payload); err != nil {
+		respond.Error(w, http.StatusBadRequest, err)
 		return
 	}
 	if h.eventBus == nil {
@@ -66,12 +74,13 @@ func (h *GiteaWebhookHandler) GiteaWebhook(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	payload, err := json.Marshal(events.WebhookEvent{
-		Source:       event.Source,
-		EventType:    event.EventType,
-		DeliveryID:   event.DeliveryID,
-		RepositoryID: event.Repository,
-		Payload:      event.Payload,
-		Signature:    event.Signature,
+		Source:        event.Source,
+		EventType:     event.EventType,
+		DeliveryID:    event.DeliveryID,
+		RepositoryID:  event.Repository,
+		ForgeInstance: h.instanceURL,
+		SignedPayload: event.Payload,
+		Signature:     event.Signature,
 	})
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, fmt.Errorf("marshal gitea webhook event"))

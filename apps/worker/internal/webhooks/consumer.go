@@ -26,9 +26,11 @@ type EventPublisher interface {
 
 // Consumer processes webhook events from the WEBHOOKS stream.
 type Consumer struct {
-	db       *sql.DB
-	logger   *slog.Logger
-	eventBus EventPublisher
+	db            *sql.DB
+	logger        *slog.Logger
+	eventBus      EventPublisher
+	giteaInstance string
+	giteaSecret   string
 }
 
 // NewConsumer creates a new webhook consumer.
@@ -42,9 +44,23 @@ func NewConsumer(db *sql.DB, logger *slog.Logger, eventBus EventPublisher) *Cons
 
 // Handle processes a single webhook message.
 func (c *Consumer) Handle(msg *nats.Msg) error {
+	// The existing durable subscribes to webhooks.*. Outcome events must
+	// never be treated as fresh ingress or republished recursively.
+	if msg.Subject != "" && msg.Subject != events.WebhookReceived {
+		return ack(msg)
+	}
 	var event events.WebhookEvent
 	if err := json.Unmarshal(msg.Data, &event); err != nil {
 		c.logger.Error("failed to unmarshal webhook event", "error", err)
+		return ack(msg)
+	}
+
+	if event.Source == "gitea" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := c.recordGiteaReceipt(ctx, event); err != nil {
+			return err // manual ACK: JetStream can retry transient failures
+		}
 		return ack(msg)
 	}
 
@@ -71,7 +87,10 @@ func (c *Consumer) Handle(msg *nats.Msg) error {
 	if err != nil {
 		c.logger.Error("failed to process webhook", "source", event.Source, "error", err)
 		_ = c.publishWebhookFailed(ctx, event, err)
-		return err
+		// Preserve the legacy GitHub/Linear failure acknowledgement behavior.
+		// Their task creation is not yet idempotent, so do not change replay
+		// semantics when using explicit ACKs for Gitea.
+		return errors.Join(err, ack(msg))
 	}
 
 	_ = c.publishWebhookProcessed(ctx, event)
@@ -136,14 +155,14 @@ func (c *Consumer) handleGitHubIssue(ctx context.Context, event events.WebhookEv
 	sourceID := fmt.Sprintf("%d", payload.Issue.Number)
 
 	taskID, err := c.createTask(ctx, createTaskRequest{
-		projectID:     repo.ProjectID,
-		repositoryID:  repo.ID,
-		createdBy:     createdBy,
-		source:        models.TaskSourceGitHub,
-		sourceID:      sourceID,
-		title:         payload.Issue.Title,
-		description:   payload.Issue.Body,
-		targetBranch:  repo.DefaultBranch,
+		projectID:    repo.ProjectID,
+		repositoryID: repo.ID,
+		createdBy:    createdBy,
+		source:       models.TaskSourceGitHub,
+		sourceID:     sourceID,
+		title:        payload.Issue.Title,
+		description:  payload.Issue.Body,
+		targetBranch: repo.DefaultBranch,
 	})
 	if err != nil {
 		return err
@@ -234,23 +253,23 @@ func (c *Consumer) handleLinearIssue(ctx context.Context, event events.WebhookEv
 	}
 
 	metadata, _ := json.Marshal(map[string]any{
-		"linear_team_id":    payload.Data.Team.ID,
-		"linear_team_name":  payload.Data.Team.Name,
-		"linear_team_key":   payload.Data.Team.Key,
-		"linear_issue_url":  payload.Data.URL,
-		"linear_issue_id":   payload.Data.ID,
+		"linear_team_id":   payload.Data.Team.ID,
+		"linear_team_name": payload.Data.Team.Name,
+		"linear_team_key":  payload.Data.Team.Key,
+		"linear_issue_url": payload.Data.URL,
+		"linear_issue_id":  payload.Data.ID,
 	})
 
 	taskID, err := c.createTask(ctx, createTaskRequest{
-		projectID:     integration.Config.ProjectID,
-		repositoryID:  integration.Config.RepositoryID,
-		createdBy:     createdBy,
-		source:        models.TaskSourceLinear,
-		sourceID:      payload.Data.Identifier,
-		title:         payload.Data.Title,
-		description:   payload.Data.Description,
-		targetBranch:  repo.DefaultBranch,
-		metadata:      metadata,
+		projectID:    integration.Config.ProjectID,
+		repositoryID: integration.Config.RepositoryID,
+		createdBy:    createdBy,
+		source:       models.TaskSourceLinear,
+		sourceID:     payload.Data.Identifier,
+		title:        payload.Data.Title,
+		description:  payload.Data.Description,
+		targetBranch: repo.DefaultBranch,
+		metadata:     metadata,
 	})
 	if err != nil {
 		return err
@@ -393,20 +412,40 @@ func (c *Consumer) lookupRepositoryByID(ctx context.Context, id string) (*reposi
 }
 
 func (c *Consumer) lookupRepository(ctx context.Context, fullName string) (*repositoryRecord, error) {
-	var repo repositoryRecord
-	err := c.db.QueryRowContext(ctx, `
-		SELECT r.id, r.project_id, p.organization_id, r.default_branch
-		FROM repositories r
-		JOIN projects p ON p.id = r.project_id
-		WHERE r.full_name = $1 AND r.deleted_at IS NULL
-	`, fullName).Scan(&repo.ID, &repo.ProjectID, &repo.OrganizationID, &repo.DefaultBranch)
+	// Only GitHub issues use this lookup. A same-named Gitea repository is
+	// not a GitHub authority; ambiguous GitHub connections cannot select a
+	// tenant by row order.
+	rows, err := c.db.QueryContext(ctx, `
+        SELECT r.id, r.project_id, p.organization_id, r.default_branch, r.settings
+        FROM repositories r
+        JOIN projects p ON p.id = r.project_id
+        WHERE r.full_name = $1 AND r.deleted_at IS NULL AND p.deleted_at IS NULL
+    `, fullName)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil
-		}
 		return nil, err
 	}
-	return &repo, nil
+	defer func() { _ = rows.Close() }()
+	var matched *repositoryRecord
+	for rows.Next() {
+		var repo repositoryRecord
+		var settings sql.NullString
+		if err := rows.Scan(&repo.ID, &repo.ProjectID, &repo.OrganizationID, &repo.DefaultBranch, &settings); err != nil {
+			return nil, err
+		}
+		authority, err := models.ParseRepositoryForgeSettings(json.RawMessage(settings.String))
+		if err != nil || authority.Provider != models.ForgeProviderGitHub {
+			continue
+		}
+		if matched != nil {
+			c.logger.Warn("ambiguous github webhook repository")
+			return nil, nil
+		}
+		matched = &repo
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return matched, nil
 }
 
 func (c *Consumer) lookupOrganizationUser(ctx context.Context, organizationID string) (string, error) {
