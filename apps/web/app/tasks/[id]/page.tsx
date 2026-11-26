@@ -4,11 +4,13 @@ import { StatusBadge } from "@/components/common/StatusBadge";
 import { TimeAgo } from "@/components/common/TimeAgo";
 import { CostBadge } from "@/components/run/CostBadge";
 import { TaskActions } from "@/components/task/TaskActions";
+import { TaskDependencies } from "@/components/task/TaskDependencies";
 import { TaskSpecPreview } from "@/components/task/TaskSpecPreview";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { api } from "@/lib/api";
-import type { TaskSpec } from "@/lib/types";
+import { buildTaskDependencyIndex } from "@/lib/task-view";
+import type { Task, TaskSpec } from "@/lib/types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -65,6 +67,18 @@ export default function TaskDetailPage() {
     queryFn: () => api.getTask(taskId),
   });
 
+  // Authorized, project-scoped snapshot only: never look up arbitrary dependency
+  // IDs outside the current task's project or imply live scheduler admission.
+  const {
+    data: projectTasks,
+    isLoading: dependenciesLoading,
+    isError: dependenciesError,
+  } = useQuery({
+    queryKey: ["tasks", task?.project_id],
+    queryFn: () => api.listTasks(task.project_id),
+    enabled: !!task?.project_id,
+  });
+
   const { data: runs } = useQuery({
     queryKey: ["runs", taskId],
     queryFn: () => api.listRuns(taskId),
@@ -104,6 +118,8 @@ export default function TaskDetailPage() {
   const approvalList = approvals?.data || approvals || [];
   const workspaceList = workspaces?.data || workspaces || [];
   const spec = parseSpec(task);
+  const projectTaskList: Task[] = projectTasks?.data || projectTasks || [];
+  const dependencyView = buildTaskDependencyIndex(projectTaskList).get(taskId);
 
   const getPriorityColor = (p: string) => {
     switch (p) {
@@ -166,6 +182,18 @@ export default function TaskDetailPage() {
           />
         </div>
       </div>
+
+      {dependenciesLoading ? (
+        <output className="block text-sm text-gray-500">
+          Loading task dependencies...
+        </output>
+      ) : dependenciesError ? (
+        <output className="block text-sm text-amber-300">
+          Dependency information is unavailable for this project.
+        </output>
+      ) : (
+        dependencyView && <TaskDependencies view={dependencyView} />
+      )}
 
       {/* Metadata cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
