@@ -222,7 +222,9 @@ func (f *GiteaForge) do(ctx context.Context, credential ForgeCredential, method,
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	// The response is already consumed or rejected; close errors cannot
+	// change the outcome of the completed API request.
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		// Provider-controlled error bodies can echo credentials or contain
@@ -262,18 +264,7 @@ type giteaRepository struct {
 }
 
 func (r giteaRepository) normalize() ForgeRepository {
-	return ForgeRepository{
-		ID:            r.ID,
-		Name:          r.Name,
-		FullName:      r.FullName,
-		Description:   r.Description,
-		Private:       r.Private,
-		CloneURL:      r.CloneURL,
-		SSHURL:        r.SSHURL,
-		HTMLURL:       r.HTMLURL,
-		DefaultBranch: r.DefaultBranch,
-		PushedAt:      r.PushedAt,
-	}
+	return ForgeRepository(r)
 }
 
 type giteaPullRequest struct {

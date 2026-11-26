@@ -47,13 +47,7 @@ func (f *GitHubForge) GetRepository(ctx context.Context, credential ForgeCredent
 }
 
 func (f *GitHubForge) CreatePullRequest(ctx context.Context, credential ForgeCredential, owner, name string, pr ForgeNewPullRequest) (*ForgePullRequest, error) {
-	created, err := f.gateway.CreatePR(ctx, githubForgeToken(credential), owner, name, NewPR{
-		Title: pr.Title,
-		Body:  pr.Body,
-		Head:  pr.Head,
-		Base:  pr.Base,
-		Draft: pr.Draft,
-	})
+	created, err := f.gateway.CreatePR(ctx, githubForgeToken(credential), owner, name, NewPR(pr))
 	if err != nil {
 		return nil, err
 	}
