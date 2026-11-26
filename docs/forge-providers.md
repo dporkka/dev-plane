@@ -706,3 +706,39 @@ authority; a passing diagnostic is not a reusable authorization token.
 There is no live Gitea CI signer in this pilot. Woodpecker's existing
 diagnostic reader intentionally refuses to attest release success without
 authoritative assignment evidence; do not weaken that contract.
+
+## Controller-owned CI lifecycle ledger
+
+Migration 033 introduces an opt-in execution lifecycle source for the
+existing RemoteCIAttestor, using the distinct provider identity
+`dev-plane-ci`. It is not a Woodpecker adapter and cannot manufacture
+Woodpecker assignment evidence. The trusted controller reserves an exact
+attempt, assigns a worker once, records observed process start, and records
+the observed process exit. Compare-and-set transitions reject duplicate
+assignment, out-of-order state changes, mismatched revision or definition,
+and terminal verdict rewrites. A cryptographically random fencing token
+is hashed in storage and cleared on terminal completion. The token is
+never to be supplied to job containers.
+
+The attestor reads the ledger using the same independently configured
+current attempt policy. Queue/assignment/running records cannot qualify as
+release successes. A failed or abandoned attempt never becomes a green
+release verdict. A retry requires a new attempt identity, independently
+selected by trusted policy; do not select the last successful attempt.
+
+This package is a persistence and readback contract, **not a deployed CI
+service**. No HTTP routes, scheduler wiring, worker credentials, production
+signer or merge capability are added. Only a trusted controller that
+independently verifies checkout, immutable definition, worker identity and
+actual process lifecycle may call the writer. Job code must not access its
+database credentials, fencing token or signer key. The signer should use
+a separate read-only role. Restrict updates/deletes to trusted lifecycle
+operations; database owners remain able to alter data. Crash, cancellation,
+timeout, lease expiry and authoritative current-attempt selection need
+separate controller reconciliation before production use. An uncompleted
+attempt is deliberately not a passed execution. Host clock regressions
+fail closed rather than fabricate timestamps.
+
+Use the existing signer protocol and retain the Woodpecker diagnostic
+reader's fail-closed behavior until a genuine assignment source is
+available. Rollback of migration 033 refuses to discard existing attempts.
