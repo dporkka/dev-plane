@@ -337,8 +337,12 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 	}
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(`
-		CREATE TABLE repositories (
-			id TEXT PRIMARY KEY,
+		CREATE TABLE organizations (id TEXT PRIMARY KEY, deleted_at DATETIME);
+        CREATE TABLE projects (id TEXT PRIMARY KEY, organization_id TEXT, deleted_at DATETIME);
+        CREATE TABLE repositories (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            owner TEXT, name TEXT, full_name TEXT, settings TEXT,
 			clone_url TEXT NOT NULL,
 			default_branch TEXT NOT NULL,
 			deleted_at DATETIME
@@ -346,6 +350,7 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 		CREATE TABLE tasks (
 			id TEXT PRIMARY KEY,
 			repository_id TEXT NOT NULL,
+            project_id TEXT NOT NULL,
 			target_branch TEXT NOT NULL,
 			workspace_id TEXT,
 			status TEXT NOT NULL,
@@ -391,10 +396,12 @@ func setupTaskHandlerDB(t *testing.T) *sql.DB {
 func insertApprovedTaskFixture(t *testing.T, db *sql.DB) {
 	t.Helper()
 	_, err := db.Exec(`
-		INSERT INTO repositories (id, clone_url, default_branch)
-		VALUES ('repo-1', 'https://example.invalid/repo.git', 'main');
-		INSERT INTO tasks (id, repository_id, target_branch, status)
-		VALUES ('task-1', 'repo-1', 'main', 'approved');
+		INSERT INTO organizations (id) VALUES ('org-1');
+        INSERT INTO projects (id, organization_id) VALUES ('project-1','org-1');
+        INSERT INTO repositories (id, project_id, clone_url, default_branch)
+        VALUES ('repo-1', 'project-1', 'https://example.invalid/repo.git', 'main');
+        INSERT INTO tasks (id, repository_id, project_id, target_branch, status)
+        VALUES ('task-1', 'repo-1', 'project-1', 'main', 'approved');
 	`)
 	if err != nil {
 		t.Fatalf("insert approved task fixture: %v", err)

@@ -258,6 +258,10 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Spec:         req.Spec,
 	})
 	if err != nil {
+		if errors.Is(err, errTaskRepositoryScope) {
+			respond.Error(w, http.StatusNotFound, errors.New("repository not found in project"))
+			return
+		}
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
@@ -555,6 +559,8 @@ func scanTask(scanner taskScanner, t *Task) error {
 	return nil
 }
 
+var errTaskRepositoryScope = errors.New("repository or creator is outside the project")
+
 func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task, error) {
 	priority := opts.Priority
 	if priority == "" {
@@ -589,15 +595,28 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 		metadata = opts.Metadata
 	}
 
-	_, err := h.db.ExecContext(ctx, `
+	result, err := h.db.ExecContext(ctx, `
 		INSERT INTO tasks (id, project_id, repository_id, created_by, source, source_id, title,
 			description, status, priority, risk_level, target_branch, spec,
 			acceptance_criteria, max_cost, max_runtime_minutes, approval_requirements, metadata, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9, $10, $11, $12,
-			'[]', $13, 60, '[]', $14, $15, $15)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9, $10, $11, $12,
+            '[]', $13, 60, '[]', $14, $15, $15
+        FROM repositories r
+        JOIN projects p ON p.id=r.project_id
+        JOIN organizations o ON o.id=p.organization_id
+        JOIN users u ON u.organization_id=p.organization_id
+        WHERE r.id=$3 AND r.project_id=$2 AND u.id=$4
+          AND r.deleted_at IS NULL AND p.deleted_at IS NULL AND o.deleted_at IS NULL AND u.deleted_at IS NULL
 	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, opts.MaxCost, metadata, now)
 	if err != nil {
 		return Task{}, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return Task{}, err
+	}
+	if rows != 1 {
+		return Task{}, errTaskRepositoryScope
 	}
 
 	task := Task{

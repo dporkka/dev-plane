@@ -19,6 +19,8 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
+	"github.com/ai-dev-control-plane/models"
+	"github.com/ai-dev-control-plane/prfactory"
 	"github.com/ai-dev-control-plane/runtimes"
 )
 
@@ -84,12 +86,6 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 
 	h.logger.Info("handling task approved", "task_id", event.TaskID)
 
-	if resumed, err := h.publishExistingQueuedRun(context.Background(), event.TaskID); err != nil {
-		return err
-	} else if resumed {
-		return ackMessage(msg)
-	}
-
 	runMetadata, err := approvedTaskRunMetadata(event.Data)
 	if err != nil {
 		return err
@@ -102,18 +98,49 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		TargetBranch  string
 		CloneURL      string
 		DefaultBranch string
+		ProjectID     string
 	}
+	var settings sql.NullString
 	err = h.db.QueryRow(`
-		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch
+		SELECT t.id, t.repository_id, t.target_branch, r.clone_url, r.default_branch, t.project_id, r.settings
 		FROM tasks t
 		JOIN repositories r ON r.id = t.repository_id
-		WHERE t.id = $1 AND t.deleted_at IS NULL AND r.deleted_at IS NULL
-	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch)
+		JOIN projects p ON p.id=r.project_id
+        JOIN organizations o ON o.id=p.organization_id
+        WHERE t.id=$1 AND t.project_id=r.project_id AND t.deleted_at IS NULL AND r.deleted_at IS NULL
+          AND p.deleted_at IS NULL AND o.deleted_at IS NULL
+	`, event.TaskID).Scan(&task.ID, &task.RepositoryID, &task.TargetBranch, &task.CloneURL, &task.DefaultBranch, &task.ProjectID, &settings)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ackMessage(msg) // Task not found, ack to remove from queue
 		}
 		return fmt.Errorf("load task: %w", err)
+	}
+
+	authority, err := models.ParseRepositoryForgeSettings([]byte(settings.String))
+	if err != nil {
+		return fmt.Errorf("invalid repository forge settings: %w", err)
+	}
+	if authority.Provider == models.ForgeProviderGitea {
+		forge, credential, err := prfactory.ConfiguredGiteaBindingForge()
+		if err != nil {
+			return err
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		binding, err := prfactory.VerifyGiteaRepositoryBinding(ctx, h.db, forge, credential, task.RepositoryID, task.ProjectID)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if binding.CloneURL != task.CloneURL {
+			return prfactory.ErrGiteaRepositoryBinding
+		}
+	}
+
+	if resumed, err := h.publishExistingQueuedRun(context.Background(), event.TaskID); err != nil {
+		return err
+	} else if resumed {
+		return ackMessage(msg)
 	}
 
 	now := time.Now().UTC()

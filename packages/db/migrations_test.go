@@ -33,6 +33,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 		"evidence_bundles",
 		"detection_results",
 		"gitea_webhook_receipts",
+		"gitea_repository_bindings",
 		"integrations",
 		"model_usage",
 		"organizations",

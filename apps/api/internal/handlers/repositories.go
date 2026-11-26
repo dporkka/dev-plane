@@ -137,14 +137,18 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	connectionStatus := "connected"
+	if strings.EqualFold(strings.TrimSpace(req.Provider), "gitea") {
+		connectionStatus = "pending"
+	}
 	id := uuid.New().String()
 	now := time.Now().UTC()
 	_, err = h.db.ExecContext(ctx, `
 		INSERT INTO repositories (id, project_id, owner, name, full_name, clone_url,
 			default_branch, connection_status, settings, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, 'main', 'connected', $7, $8, $9)
+		VALUES ($1, $2, $3, $4, $5, $6, 'main', $7, $8, $9, $10)
 	`, id, projectID, connection.Owner, connection.Name, connection.FullName, connection.CloneURL,
-		connection.Settings, now, now)
+		connectionStatus, connection.Settings, now, now)
 	if err != nil {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
@@ -158,7 +162,7 @@ func (h *Handler) ConnectRepository(w http.ResponseWriter, r *http.Request) {
 		FullName:         connection.FullName,
 		CloneURL:         connection.CloneURL,
 		DefaultBranch:    "main",
-		ConnectionStatus: "connected",
+		ConnectionStatus: connectionStatus,
 		Settings:         connection.Settings,
 		CreatedAt:        now,
 		UpdatedAt:        now,
@@ -310,9 +314,17 @@ func (h *Handler) SyncRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var settings sql.NullString
+	if err := h.db.QueryRowContext(ctx, "SELECT settings FROM repositories WHERE id = $1 AND deleted_at IS NULL", id).Scan(&settings); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
+		return
+	}
+	if !requireGitHubRepository(w, settings) {
+		return
+	}
 	now := time.Now().UTC()
 	_, err := h.db.ExecContext(ctx, `
-		UPDATE repositories SET last_synced_at = $1, connection_status = 'connected', updated_at = $1
+        UPDATE repositories SET last_synced_at = $1, connection_status = 'connected', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
 	`, now, id)
 	if err != nil {

@@ -47,7 +47,7 @@ func TestCreatePullRequestRejectsRepositoryForgeMismatchBeforePublication(t *tes
 	// default review report. The repository authority lookup must then stop the
 	// flow before Git push or CreatePullRequest on the configured forge.
 	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").
-		WithArgs("repo-1").
+		WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow(
 			"acme", "widget", `{"forge":{"provider":"gitea","base_url":"https://git.example.test"}}`,
 		))
