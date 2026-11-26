@@ -479,6 +479,77 @@ named volume is mounted, and no_new_privs is enabled. Do not enable a
 production worker until the actual deployment image/runtime and end-to-end
 worker routing, revocation, and trusted artifact publication are qualified.
 
+## Operator-only reviewed revision push pilot
+
+`forge-push-gitea` is a standalone broker command, **not** an agent tool,
+HTTP endpoint, NATS consumer, or automatic PR publication path. It requires
+an independently reviewed full SHA-1 base/head pair, a completed/reviewed
+run, an approvable review report, and a matching durable approved PR-creation
+approval from an active user in the bound organization. The task must still
+be reviewing and its ready Docker workspace must own the exact `agent/`
+branch and target base. Existing review reports do not store a commit SHA:
+operator `--apply` is a separate, mandatory confirmation of the exact
+revision. Do not infer the approved SHA from agent metadata or a mutable
+branch. Review the complete diff and commit history independently first.
+
+Export a full Git bundle containing `refs/heads/export` from the isolated
+workspace without any write credential. Stage it as a regular file in a
+private operator-owned directory. The broker copies at most 64 MiB into a
+new private staging directory, imports the explicit ref into a fresh bare
+SHA-1 repository, verifies the exact head, base ancestry and object integrity,
+and never checks out or executes repository content. The credential-bearing
+Git subprocesses use a minimal environment and URL-scoped authorization;
+agent configuration, hooks, helpers, redirects and inherited proxies are
+not used. `/usr/bin/git` is required on the trusted Linux broker host.
+
+Run only under a separate trusted OS identity, with a private temporary
+filesystem and resource quotas (the compressed bundle size limit is not a
+limit on decompressed Git objects). Use independently scoped, repository-
+restricted credentials, never the execution worker environment:
+
+- `DATABASE_URL`, `GITEA_URL`, `GITEA_TOKEN`, `GITEA_BINDING_GENERATION`: existing
+  trusted binding configuration; the API token is not the Git write token.
+- `GITEA_PUSH_REPOSITORY_ID`, `GITEA_PUSH_URL`: pin the write credential to the
+  verified numeric upstream repository and exact HTTPS clone URL.
+- `GITEA_GIT_USERNAME`, `GITEA_GIT_PASSWORD`: dedicated Git write credential;
+  never provide these to an agent or execution worker. Cleartext HTTP is
+  permitted only for literal loopback test servers.
+
+```sh
+go run ./apps/api/cmd/forge-push-gitea \
+  --repository-id LOCAL_REPO_UUID --project-id PROJECT_UUID \
+  --organization-id ORGANIZATION_UUID --upstream-repository-id 123 \
+  --expected-generation 1 --task-id TASK_UUID --run-id RUN_UUID \
+  --review-id REVIEW_UUID --approval-id APPROVAL_UUID \
+  --branch agent/REVIEWED_BRANCH --base-branch main \
+  --base FULL_REVIEWED_BASE_SHA --head FULL_REVIEWED_HEAD_SHA \
+  --bundle /private/operator-staging/review.bundle --apply
+```
+
+The broker revalidates local and upstream authority before remote lookup
+and again immediately before push. It checks the remote base and requires
+an absent destination; an empty expected old ref lease prevents replacing
+an existing branch, including a competing writer's branch. It independently
+reads the remote head after push. No PR is created and no task state is
+changed. On an ambiguous result, inspect the actual remote ref; do not
+blindly retry, delete or force-update it. A concurrent base change or
+revocation after the final check cannot be made atomic with the remote
+Git mutation; restrict remote permissions, coordinate the operator and
+stop credentials upstream in emergencies.
+
+This is a manual pilot, not production end-to-end publication. The command
+has no durable immutable review-to-SHA attestation, publication receipt,
+automated workspace export, or automatic integration with PR Factory. The
+existing PR Factory path is unchanged. The next gate is persisting verified
+revision evidence and requiring the confirmed remote head for PR creation
+and subsequent exact-head merge. Do not enable automatic agent publication.
+
+Focused tests use synthetic local Git smart HTTP and disposable databases:
+
+```sh
+go test -race ./packages/prfactory ./apps/api/cmd/forge-push-gitea
+```
+
 ## Migration sequence
 
 1. Qualify the `gateway.Forge` contract and both adapters on the repository-native Go toolchain.
