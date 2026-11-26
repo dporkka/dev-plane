@@ -1,0 +1,30 @@
+name: Device Enrollment (storage and proofs)
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/internal/devices/**'
+      - 'packages/db/migrations/025_device_enrollment.sql'
+      - 'scripts/tests/test_device_enrollment_sqlite.py'
+      - '.github/workflows/device-enrollment.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26.0'
+      - name: Enrollment proof and scope tests
+        run: |
+          cd apps/api/internal/devices
+          GO111MODULE=off go test -race -count=1 ./...
+          GO111MODULE=off go vet ./...
+      - name: Migration SQL and revocation contract
+        run: python3 scripts/tests/test_device_enrollment_sqlite.py -v

@@ -1,0 +1,3 @@
+/devplane
+*.test
+coverage.out
