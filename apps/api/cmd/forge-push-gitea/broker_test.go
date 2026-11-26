@@ -62,6 +62,8 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	var remoteHead atomic.Value
 	remoteHead.Store(head)
 	var prMismatch atomic.Bool
+	var foreignPR atomic.Bool
+	var staleBase atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.URL.Path == "/api/v1/repos/acme/widget" {
@@ -86,6 +88,9 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 				sha := remoteHead.Load().(string)
 				if branch == "main" {
 					sha = base
+					if staleBase.Load() {
+						sha = head
+					}
 				}
 				_ = json.NewEncoder(w).Encode(map[string]any{"name": branch, "commit": map[string]any{"id": sha}})
 				return
@@ -100,7 +105,12 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 			if prMismatch.Load() {
 				sha = base
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/concurrent", "sha": sha}, "base": map[string]any{"ref": "main", "sha": base}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/concurrent", "sha": sha, "repo": map[string]any{"id": func() int {
+				if foreignPR.Load() {
+					return 88
+				}
+				return 77
+			}()}}, "base": map[string]any{"ref": "main", "sha": base, "repo": map[string]any{"id": 77}}})
 			return
 		}
 		if r.Header.Get("Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("writer:fixture-push")) {
@@ -340,6 +350,48 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 		if _, err := factory.CreatePullRequest(ctx, task); err == nil || prPosts.Load() != 1 {
 			t.Fatal("duplicate PR attempt")
 		}
+		request := prfactory.GiteaMergePreflightRequest{PullRequestID: pr.ID, RepositoryID: repo, ProjectID: project, OrganizationID: org, ExpectedHeadSHA: head, ExpectedBaseSHA: base, ExpectedGeneration: 1}
+		check := func(req prfactory.GiteaMergePreflightRequest) error {
+			_, err := prfactory.CheckGiteaMergePreflight(ctx, database.DB, req)
+			return err
+		}
+		if err := check(request); err != nil {
+			t.Fatalf("valid merge preflight failed: %v", err)
+		}
+		wrong := request
+		wrong.ExpectedHeadSHA = base
+		if err := check(wrong); err == nil {
+			t.Fatal("wrong head accepted")
+		}
+		wrong = request
+		wrong.OrganizationID = id(30)
+		if err := check(wrong); err == nil {
+			t.Fatal("foreign tenant accepted")
+		}
+		staleBase.Store(true)
+		if err := check(request); err == nil {
+			t.Fatal("advanced base accepted")
+		}
+		staleBase.Store(false)
+		foreignPR.Store(true)
+		if err := check(request); err == nil {
+			t.Fatal("forked PR accepted")
+		}
+		foreignPR.Store(false)
+		prMismatch.Store(true)
+		if err := check(request); err == nil {
+			t.Fatal("changed PR head accepted")
+		}
+		prMismatch.Store(false)
+		execSQL("UPDATE approvals SET response='rejected' WHERE id=$1", approval3)
+		if err := check(request); err == nil {
+			t.Fatal("revoked approval accepted")
+		}
+		execSQL("UPDATE approvals SET response='approved' WHERE id=$1", approval3)
+		if prPosts.Load() != 1 {
+			t.Fatal("preflight mutated upstream")
+		}
+
 	}
 	// A receipt cannot refer to a different SHA or nonexistent intent.
 	if _, err := database.Exec("INSERT INTO gitea_publication_receipts(approval_id,observed_head_sha) VALUES ($1,$2)", approval2, base); err == nil {

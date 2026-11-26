@@ -583,6 +583,35 @@ Focused tests use synthetic local Git smart HTTP and disposable databases:
 go test -race ./packages/prfactory ./apps/api/cmd/forge-push-gitea
 ```
 
+## Read-only Gitea merge revision preflight
+
+The operator-only command below checks the existing PR creation intent,
+publication receipt, approval and review snapshot, tenant and active binding
+generation, latest run, workspace, and exact live base/head branches and PR.
+The upstream PR must be open, non-draft, unmerged, and its head and base
+repository numeric IDs must both equal the verified binding. A fork cannot
+substitute a same-named branch. The current base branch tip is checked
+independently of the PR's reported base SHA. The local evidence is read
+again after remote lookups.
+
+```sh
+go run ./apps/api/cmd/forge-check-gitea-merge \
+  --pr-id LOCAL_PR_UUID --repository-id LOCAL_REPO_UUID \
+  --project-id PROJECT_UUID --organization-id ORGANIZATION_UUID \
+  --expected-generation 1 --base FULL_BASE_SHA --head FULL_HEAD_SHA
+```
+
+Use the existing configured Gitea instance/token and generation with a
+read-only database principal and an independently read-only forge credential.
+The command performs SELECTs and GETs only; no merge is attempted. A pass
+is a point-in-time revision observation, **not authorization to merge**.
+A separate merge approval, policy evaluation, trusted exact-head CI proof,
+branch protection, durable PR identity receipt and single-use merge intent
+are still needed. The existing GitHub merge endpoint stays unchanged and
+rejects Gitea. No production Gitea merge is enabled. The Gitea merge API
+supports a head SHA precondition but not an atomic base SHA precondition;
+do not infer atomicity from preflight or readback.
+
 ## Migration sequence
 
 1. Qualify the `gateway.Forge` contract and both adapters on the repository-native Go toolchain.

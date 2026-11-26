@@ -96,6 +96,10 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	if pr.Number <= 0 || pr.Branch != "agent/pilot" || pr.BaseBranch != "main" {
 		t.Fatal("unexpected published PR identity")
 	}
+	snapshot, err := branchReader.GetMergeSnapshot(ctx, f.forgeCredential, "forgepilot", "pilot", pr.Number)
+	if err != nil || snapshot.Head.Repo.ID != repo.ID || snapshot.Base.Repo.ID != repo.ID || snapshot.Head.SHA != expected || snapshot.Base.SHA != baseRef.SHA || snapshot.Merged || snapshot.Draft {
+		t.Fatalf("live merge snapshot not verified: %v", err)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
 	}
