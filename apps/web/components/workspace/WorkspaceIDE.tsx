@@ -4,6 +4,13 @@ import { CodeEditor } from "@/components/code/CodeMirror";
 import { DiffViewer } from "@/components/code/DiffViewer";
 import { Terminal } from "@/components/run/Terminal";
 import { api } from "@/lib/api";
+import {
+  makeEditorBuffer,
+  editEditorBuffer,
+  acknowledgeSavedContent,
+  remoteMatchesBaseline,
+} from "@/lib/editor-buffer";
+import type { EditorBuffer } from "@/lib/editor-buffer";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   FileCode,
@@ -13,7 +20,7 @@ import {
   ScrollText,
   Terminal as TerminalIcon,
 } from "lucide-react";
-import React, { useState, useCallback, useEffect } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import { FileBrowser } from "./FileBrowser";
 import type { FileWithStatus } from "./FileBrowser";
 import { RunStatusBar } from "./RunStatusBar";
@@ -26,13 +33,6 @@ interface WorkspaceIDEProps {
   initialRunStatus?: RunStatus;
 }
 
-interface OpenFile {
-  path: string;
-  content: string;
-  language: "typescript" | "javascript" | "json" | "markdown";
-  isDirty: boolean;
-}
-
 export function WorkspaceIDE({
   workspaceId,
   initialRunStatus,
@@ -40,7 +40,9 @@ export function WorkspaceIDE({
   const [editorTabs, setEditorTabs] = useState<EditorTab[]>([]);
   const [activeEditorTab, setActiveEditorTab] = useState<string | null>(null);
   const [activeRightTab, setActiveRightTab] = useState("terminal");
-  const [openFiles, setOpenFiles] = useState<Map<string, OpenFile>>(new Map());
+  const [openFiles, setOpenFiles] = useState<Map<string, EditorBuffer>>(new Map());
+  const savingPaths = useRef(new Set<string>());
+  const [conflictedPath, setConflictedPath] = useState<string | null>(null);
   const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
   const [diffContent, setDiffContent] = useState<string>("");
   const [showDiff, setShowDiff] = useState(false);
@@ -125,12 +127,7 @@ export function WorkspaceIDE({
           typeof result === "string" ? result : result.content || "";
         const lang = detectLanguage(path);
 
-        const openFile: OpenFile = {
-          path,
-          content,
-          language: lang,
-          isDirty: false,
-        };
+        const openFile = makeEditorBuffer(path, content, lang);
 
         setOpenFiles((prev) => new Map(prev).set(path, openFile));
         setEditorTabs((prev) => [
@@ -151,6 +148,12 @@ export function WorkspaceIDE({
 
   const handleCloseEditorTab = useCallback(
     (id: string) => {
+      if (
+        openFiles.get(id)?.isDirty &&
+        !window.confirm(`Discard unsaved changes to ${id}?`)
+      ) {
+        return;
+      }
       setEditorTabs((prev) => {
         const filtered = prev.filter((t) => t.id !== id);
         if (activeEditorTab === id) {
@@ -166,7 +169,7 @@ export function WorkspaceIDE({
         return next;
       });
     },
-    [activeEditorTab],
+    [activeEditorTab, openFiles],
   );
 
   const handleFileChange = useCallback((path: string, value: string) => {
@@ -174,38 +177,112 @@ export function WorkspaceIDE({
       const file = prev.get(path);
       if (!file) return prev;
       const next = new Map(prev);
-      next.set(path, { ...file, content: value, isDirty: true });
+      next.set(path, editEditorBuffer(file, value));
       return next;
     });
-    setEditorTabs((prev) =>
-      prev.map((t) => (t.id === path ? { ...t, isDirty: true } : t)),
-    );
   }, []);
 
   const handleSaveFile = useCallback(
     async (path: string) => {
       const file = openFiles.get(path);
-      if (!file || !file.isDirty) return;
+      if (!file || !file.isDirty || savingPaths.current.has(path)) return;
+      savingPaths.current.add(path);
+      const snapshot = file.content;
       try {
-        await writeMutation.mutateAsync({ path, content: file.content });
+        // Agents may update files while a human is editing. Refuse obvious
+        // stale writes; true atomic compare-and-swap belongs in the API.
+        const remote = await api.readWorkspaceFile(workspaceId, path);
+        const remoteContent =
+          typeof remote === "string" ? remote : remote.content;
+        if (
+          typeof remoteContent !== "string" ||
+          !remoteMatchesBaseline(file, remoteContent)
+        ) {
+          setConflictedPath(path);
+          setTerminalLogs((prev) => [
+            ...prev,
+            `[Conflict] ${path} changed in the workspace. Local edits kept; reload only after saving a copy.`,
+          ]);
+          return;
+        }
+
+        await writeMutation.mutateAsync({ path, content: snapshot });
         setOpenFiles((prev) => {
+          const current = prev.get(path);
+          if (!current) return prev;
           const next = new Map(prev);
-          next.set(path, { ...file, isDirty: false });
+          next.set(path, acknowledgeSavedContent(current, snapshot));
           return next;
         });
-        setEditorTabs((prev) =>
-          prev.map((t) => (t.id === path ? { ...t, isDirty: false } : t)),
-        );
+        setConflictedPath((current) => current === path ? null : current);
         setTerminalLogs((prev) => [...prev, `[Saved] ${path}`]);
       } catch (err) {
         setTerminalLogs((prev) => [
           ...prev,
           `[Error] Failed to save ${path}: ${(err as Error).message}`,
         ]);
+      } finally {
+        savingPaths.current.delete(path);
       }
     },
-    [openFiles, writeMutation],
+    [openFiles, workspaceId, writeMutation],
   );
+
+  // Warn before browser refresh/close if a human has unsaved CodeMirror edits.
+  useEffect(() => {
+    if (![...openFiles.values()].some((file) => file.isDirty)) return;
+    const preventUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnload);
+    return () => window.removeEventListener("beforeunload", preventUnload);
+  }, [openFiles]);
+
+  const handleCopyConflictedDraft = useCallback(async () => {
+    if (!conflictedPath) return;
+    const file = openFiles.get(conflictedPath);
+    if (!file) return;
+    try {
+      await navigator.clipboard.writeText(file.content);
+      setTerminalLogs((prev) => [
+        ...prev,
+        `[Copied] Unsaved draft of ${conflictedPath}`,
+      ]);
+    } catch (err) {
+      setTerminalLogs((prev) => [
+        ...prev,
+        `[Error] Failed to copy draft: ${(err as Error).message}`,
+      ]);
+    }
+  }, [conflictedPath, openFiles]);
+
+  const handleReloadConflictedFile = useCallback(async () => {
+    if (!conflictedPath) return;
+    const file = openFiles.get(conflictedPath);
+    if (!file) return;
+    if (
+      file.isDirty &&
+      !window.confirm(`Discard your local draft of ${conflictedPath} and reload the workspace version?`)
+    ) return;
+    try {
+      const remote = await api.readWorkspaceFile(workspaceId, conflictedPath);
+      const text = typeof remote === "string" ? remote : remote.content;
+      if (typeof text !== "string") throw new Error("Unsupported file response");
+      setOpenFiles((prev) => {
+        if (!prev.has(conflictedPath)) return prev;
+        const next = new Map(prev);
+        next.set(conflictedPath, makeEditorBuffer(file.path, text, file.language));
+        return next;
+      });
+      setConflictedPath(null);
+    } catch (err) {
+      setTerminalLogs((prev) => [
+        ...prev,
+        `[Error] Failed to reload ${conflictedPath}: ${(err as Error).message}`,
+      ]);
+    }
+  }, [conflictedPath, openFiles, workspaceId]);
 
   const handleRequestDiff = useCallback((_path: string) => {
     setShowDiff(true);
@@ -255,9 +332,26 @@ export function WorkspaceIDE({
         )}
       </div>
 
+      {conflictedPath && (
+        <div role="alert" className="flex items-center gap-3 border-b border-yellow-700 bg-yellow-950 px-3 py-2 text-xs text-yellow-100">
+          <span className="flex-1">
+            {conflictedPath} changed outside this editor. Your local draft is preserved; saving is blocked.
+          </span>
+          <button type="button" className="underline" onClick={handleCopyConflictedDraft}>
+            Copy local draft
+          </button>
+          <button type="button" className="underline" onClick={handleReloadConflictedFile}>
+            Reload remote
+          </button>
+        </div>
+      )}
+
       {/* Tabs */}
       <WorkspaceTabs
-        editorTabs={editorTabs}
+        editorTabs={editorTabs.map((tab) => ({
+          ...tab,
+          isDirty: openFiles.get(tab.id)?.isDirty ?? false,
+        }))}
         activeEditorTab={activeEditorTab}
         onSelectEditorTab={(id) => {
           setActiveEditorTab(id);
