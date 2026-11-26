@@ -61,10 +61,10 @@ type Config struct {
 // DefaultConfig returns sensible default router configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		DefaultModel:     "gpt-4o",
-		DefaultProvider:  "openai",
+		DefaultModel:     "bifrost/gpt-4o",
+		DefaultProvider:  "bifrost",
 		MaxCostPer1K:     0.10,
-		ProviderPriority: []string{"openai", "bifrost", "anthropic", "groq", "fireworks", "gemini"},
+		ProviderPriority: []string{"bifrost", "openai", "anthropic", "groq", "fireworks", "gemini"},
 	}
 }
 
