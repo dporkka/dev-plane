@@ -1,0 +1,30 @@
+name: PR Queue Contract
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/pr-queue-report.mjs
+      - scripts/pr-queue-report.test.mjs
+      - .github/workflows/pr-queue-contract.yml
+  push:
+    branches: [main]
+    paths:
+      - scripts/pr-queue-report.mjs
+      - scripts/pr-queue-report.test.mjs
+      - .github/workflows/pr-queue-contract.yml
+
+permissions:
+  contents: read
+
+jobs:
+  unit-contract:
+    name: Read-only queue tool regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test scripts/pr-queue-report.test.mjs

@@ -82,8 +82,8 @@ func TestApplySecurityScanUnavailableAddsVisibleFinding(t *testing.T) {
 
 	reviewer.applySecurityScan(context.Background(), report, "/workspace")
 
-	if !report.Approvable {
-		t.Fatal("scanner unavailability should be visible but not automatically block approval")
+	if report.Approvable {
+		t.Fatal("scanner unavailability must block approval")
 	}
 	if report.RiskLevel != "medium" {
 		t.Fatalf("risk level = %q, want medium", report.RiskLevel)
@@ -110,6 +110,9 @@ func TestApplySecurityScanNoWorkspaceAddsVisibleFinding(t *testing.T) {
 
 	reviewer.applySecurityScan(context.Background(), report, "")
 
+	if report.Approvable {
+		t.Fatal("missing worktree path must block approval")
+	}
 	if report.RiskLevel != "medium" {
 		t.Fatalf("risk level = %q, want medium", report.RiskLevel)
 	}
@@ -130,4 +133,56 @@ type fakeSecurityScanner struct {
 func (s *fakeSecurityScanner) ScanAll(ctx context.Context, req securityscan.ScanRequest) ([]*securityscan.ScanResult, error) {
 	s.requests = append(s.requests, req)
 	return s.results, s.err
+}
+
+func TestApplySecurityScanNoScannerBlocksApproval(t *testing.T) {
+	reviewer := NewReviewer(nil, nil).WithSecurityScanner(nil)
+	report := &ReviewReport{Approvable: true, RiskLevel: "low"}
+	reviewer.applySecurityScan(context.Background(), report, "/workspace")
+	if report.Approvable {
+		t.Fatal("unconfigured scanner must block approval")
+	}
+	if len(report.Findings) == 0 {
+		t.Fatal("expected explicit scanner unavailable finding")
+	}
+}
+
+func TestApplySecurityScanEmptyResultsBlocksApproval(t *testing.T) {
+	reviewer := NewReviewer(nil, nil).WithSecurityScanner(&fakeSecurityScanner{})
+	report := &ReviewReport{Approvable: true, RiskLevel: "low"}
+	reviewer.applySecurityScan(context.Background(), report, "/workspace")
+	if report.Approvable {
+		t.Fatal("no scanner results must block approval")
+	}
+	if len(report.Findings) == 0 {
+		t.Fatal("expected explicit missing results finding")
+	}
+}
+
+func TestApplySecurityScanEmbeddedScannerFailureBlocksApproval(t *testing.T) {
+	reviewer := NewReviewer(nil, nil).WithSecurityScanner(&fakeSecurityScanner{
+		results: []*securityscan.ScanResult{
+			{ScannerName: "gitleaks", RawOutput: "scan error: execution failed"},
+			{ScannerName: "trivy", Summary: securityscan.ScanSummary{Total: 0}},
+		},
+	})
+	report := &ReviewReport{Approvable: true, RiskLevel: "low"}
+	reviewer.applySecurityScan(context.Background(), report, "/workspace")
+	if report.Approvable {
+		t.Fatal("one failed scanner must invalidate approval even if another succeeds")
+	}
+	if !strings.Contains(report.SecurityNotes, "gitleaks") {
+		t.Fatalf("missing failure details: %s", report.SecurityNotes)
+	}
+}
+
+func TestApplySecurityScanNilResultBlocksApproval(t *testing.T) {
+	reviewer := NewReviewer(nil, nil).WithSecurityScanner(&fakeSecurityScanner{
+		results: []*securityscan.ScanResult{nil, {ScannerName: "trivy"}},
+	})
+	report := &ReviewReport{Approvable: true, RiskLevel: "low"}
+	reviewer.applySecurityScan(context.Background(), report, "/workspace")
+	if report.Approvable {
+		t.Fatal("missing scanner result must invalidate approval")
+	}
 }

@@ -2,6 +2,8 @@ package verifier
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -84,6 +86,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 	if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, false); err != nil {
 		return Result{}, err
 	}
+	if err := v.assertClean(ctx, req.SessionID); err != nil {
+		return Result{}, err
+	}
 
 	result := Result{
 		Evidence: repoprotocol.EvidenceBundle{
@@ -102,17 +107,41 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 			Timeout:     profileTimeout(profile.TimeoutSeconds),
 			UnsafeShell: true,
 		}
+		attemptID, err := newAttemptID()
+		if err != nil {
+			return Result{}, fmt.Errorf("create gate execution attempt: %w", err)
+		}
+		startedAt := time.Now().UTC()
 		commandResult, runErr := v.runtime.ExecuteCommand(ctx, req.SessionID, command)
+		finishedAt := time.Now().UTC()
 
 		if err := v.assertHead(ctx, req.SessionID, req.CandidateHead, true); err != nil {
 			return Result{}, err
 		}
+		if err := v.assertClean(ctx, req.SessionID); err != nil {
+			return Result{}, err
+		}
 
+		execution := &repoprotocol.GateExecution{
+			SessionID:      req.SessionID,
+			AttemptID:      attemptID,
+			Outcome:        repoprotocol.GateExecutionRunnerError,
+			StartedAt:      startedAt,
+			FinishedAt:     finishedAt,
+			DurationMillis: finishedAt.Sub(startedAt).Milliseconds(),
+		}
+		if runErr == nil && commandResult != nil {
+			code := commandResult.ExitCode
+			execution.ExitCode = &code
+			execution.Outcome = repoprotocol.GateExecutionCompleted
+			if commandResult.Duration > 0 {
+				execution.DurationMillis = commandResult.Duration.Milliseconds()
+			}
+		}
 		evidence := repoprotocol.GateEvidence{
-			Name:    gateName,
-			Status:  repoprotocol.GatePassed,
-			Command: profile.Command,
-			Output:  evidenceOutput(commandResult, runErr),
+			Name: gateName, Status: repoprotocol.GatePassed,
+			Command: profile.Command, Output: evidenceOutput(commandResult, runErr),
+			Execution: execution,
 		}
 		failed := runErr != nil || commandResult == nil || commandResult.ExitCode != 0
 		if failed {
@@ -129,6 +158,9 @@ func (v *Verifier) Verify(ctx context.Context, req Request) (Result, error) {
 	}
 
 	if len(result.Evidence.Gates) > 0 {
+		if err := result.Evidence.ValidateHead(req.CandidateHead); err != nil {
+			return Result{}, fmt.Errorf("validate executable verification evidence: %w", err)
+		}
 		if err := v.store.PutEvidenceBundle(ctx, result.Evidence); err != nil {
 			return Result{}, fmt.Errorf("persist verification evidence: %w", err)
 		}
@@ -207,6 +239,26 @@ func (v *Verifier) assertHead(ctx context.Context, sessionID, candidate string, 
 	return fmt.Errorf("head mismatch before verification: candidate=%s actual=%s", candidate, actual)
 }
 
+// assertClean prevents tests of an uncommitted workspace from being attributed
+// to an otherwise unchanged Git HEAD. Check before and after each gate: a
+// verification command may itself modify tracked files or create new sources.
+func (v *Verifier) assertClean(ctx context.Context, sessionID string) error {
+	result, err := v.runtime.ExecuteCommand(ctx, sessionID, runtimes.Command{
+		Args:    []string{"git", "status", "--porcelain=v1", "--untracked-files=all"},
+		Timeout: 30 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("read workspace status: %w", err)
+	}
+	if result == nil || result.ExitCode != 0 {
+		return errors.New("read workspace status failed")
+	}
+	if strings.TrimSpace(result.Stdout) != "" {
+		return errors.New("workspace contains uncommitted changes; commit or discard them before verification")
+	}
+	return nil
+}
+
 func profileTimeout(seconds int) time.Duration {
 	if seconds <= 0 {
 		return defaultProfileTimeout
@@ -236,4 +288,12 @@ func evidenceOutput(result *runtimes.CommandResult, err error) string {
 		return output[:maxEvidenceOutput] + "\n... [output truncated]"
 	}
 	return output
+}
+
+func newAttemptID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value[:]), nil
 }

@@ -230,7 +230,7 @@ func (r *Router) tryFallback(ctx context.Context, req CallRequest, failedModel *
 			continue
 		}
 		for _, model := range provider.Models() {
-			if model.Name == failedModel.Name {
+			if model.Name == failedModel.Name || !r.fallbackEligible(model, req) {
 				continue
 			}
 			fallbackReq := req
@@ -244,6 +244,26 @@ func (r *Router) tryFallback(ctx context.Context, req CallRequest, failedModel *
 		}
 	}
 	return nil, fmt.Errorf("all providers failed for task type %s", req.TaskType)
+}
+
+// fallbackEligible applies the original request's hard constraints to every
+// fallback. A failed provider must not silently widen a user's cost or
+// capability requirements.
+func (r *Router) fallbackEligible(model ModelInfo, req CallRequest) bool {
+	if req.ContextSize > 0 && (model.MaxContext <= 0 || req.ContextSize > model.MaxContext) {
+		return false
+	}
+	if req.StructuredReq && !model.SupportsStructuredOutput {
+		return false
+	}
+	costCap := req.CostCap
+	if costCap == 0 {
+		costCap = r.config.MaxCostPer1K
+	}
+	if costCap > 0 && (model.CostPer1KInput > costCap || model.CostPer1KOutput > costCap) {
+		return false
+	}
+	return true
 }
 
 // scoreModel calculates a routing score for a model given the task requirements.

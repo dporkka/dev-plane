@@ -75,7 +75,7 @@ Ownership paths are repository-relative. Escaping paths such as `../secrets/**` 
 
 ## Evidence
 
-Verification evidence is bound to an exact candidate HEAD. A new commit invalidates the previous evidence by definition because `EvidenceBundle.ValidateHead` requires the bundle's `head_sha` to equal the candidate SHA and requires every recorded gate to be passing.
+Verification evidence is bound to an exact candidate HEAD. A new commit invalidates the previous evidence by definition because `EvidenceBundle.ValidateHead` requires the bundle's `head_sha` to equal the candidate SHA and requires every recorded gate to be passing. The verifier also requires a clean Git working tree (no tracked changes or non-ignored untracked files) before running verification profiles and after each profile. Otherwise a passing test could describe uncommitted source instead of the recorded commit. Gate commands should write temporary artifacts to ignored build directories. A dirty tree or failed Git status check rejects verification without persisting passing evidence.
 
 This is the base invariant for later review, CI, handoff, and landing integration:
 

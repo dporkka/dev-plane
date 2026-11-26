@@ -1,0 +1,151 @@
+name: Manual Stacked PR Qualification (advisory)
+
+# Manual opt-in only: do not fan out across the existing stacked PR backlog.
+# These job names are NOT the canonical PR Build/Test/Lint merge gates.
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Number of an open same-repo PR to test (no merge authorization)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: manual-stack-ci-${{ github.repository }}-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve exact PR identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      base_sha: ${{ steps.resolve.outputs.base_sha }}
+    steps:
+      - name: Checkout trusted workflow source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Resolve same-repository PR head and base
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          test "$DISPATCH_REF" = "refs/heads/main"
+          node scripts/ci/resolve-stack-pr.mjs
+
+  qualify:
+    name: Advisory stacked-head validation (not a merge gate)
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GO_VERSION: '1.26.8'
+      NODE_VERSION: '24'
+      DATABASE_URL: 'file:./data/dev.db?_journal_mode=WAL'
+      NATS_URL: 'nats://localhost:4222'
+      JWT_SECRET: 'ci-secret-change-me-min-32-chars-long'
+      SECRET_ENCRYPTION_KEYS: 'primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+      NEXT_PUBLIC_API_URL: 'http://localhost:8080'
+      LINT_BASE_REV: ${{ needs.resolve.outputs.base_sha }}
+    steps:
+      - name: Checkout immutable same-repo PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require exact checked-out head and ancestor base
+        env:
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$HEAD_SHA"
+          test "$HEAD_SHA" != "$BASE_SHA"
+          git cat-file -e "$BASE_SHA^{commit}"
+          git merge-base --is-ancestor "$BASE_SHA" "$HEAD_SHA"
+          {
+            echo "## Advisory stacked PR validation"
+            echo "Tested head: $HEAD_SHA"
+            echo "GitHub-reported PR base: $BASE_SHA"
+            echo "This run is **not** a branch-protection, approval, or merge-readiness decision."
+            echo "A new PR head or merged base requires fresh validation."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            apps/web/package-lock.json
+            packages/sdk/typescript/package-lock.json
+      - name: Build local TypeScript SDK
+        run: cd packages/sdk/typescript && npm ci && npm run build
+      - name: Install web dependencies
+        run: cd apps/web && npm ci
+      - name: Set up Go linter
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.13.2
+          install-only: true
+      - name: Verify Go linter configuration
+        run: golangci-lint config verify
+      - name: Run Go lint against GitHub-reported parent
+        run: make lint-go
+      - name: Run web lint and type checks
+        run: make lint-web && cd apps/web && npm run typecheck
+      - name: Run SDK type checks
+        run: make lint-sdk
+      - name: Start disposable NATS
+        run: docker compose up -d --wait nats
+      - name: Run complete Go and SDK tests
+        run: make test
+      - name: Run web tests
+        run: cd apps/web && npm test
+      - name: Build repository
+        run: make build
+
+  finalize:
+    name: Reconfirm same PR head and base after tests (advisory)
+    needs: [resolve, qualify]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Reject non-main workflow dispatch
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: test "$DISPATCH_REF" = "refs/heads/main"
+      - name: Checkout trusted resolver at dispatch revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Reconfirm live PR head and base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.resolve.outputs.base_sha }}
+        run: |
+          node scripts/ci/resolve-stack-pr.mjs --reconfirm
+          echo "PR head and base still match the tested snapshot. This is advisory, not merge authorization." >> "$GITHUB_STEP_SUMMARY"

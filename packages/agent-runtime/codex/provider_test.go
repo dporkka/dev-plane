@@ -166,10 +166,10 @@ func TestCreateThreadMapsWorkspaceAndCodexOptions(t *testing.T) {
 		t.Fatal("thread/start was not called")
 	}
 	want := map[string]any{
-		"model":                "gpt-5.6-codex",
-		"cwd":                  "/worktrees/workspace-1",
-		"approvalPolicy":       "never",
-		"sandbox":              "workspace-write",
+		"model":                 "gpt-5.6-codex",
+		"cwd":                   "/worktrees/workspace-1",
+		"approvalPolicy":        "never",
+		"sandbox":               "workspace-write",
 		"developerInstructions": "Use repository conventions.",
 	}
 	for key, value := range want {
@@ -352,14 +352,13 @@ func TestInterruptSteerAndCompactMapToCodexMethods(t *testing.T) {
 	}
 }
 
-
 func TestSendEventReturnsWhenContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	out := make(chan agentruntime.Event)
 	if sendEvent(ctx, out, agentruntime.Event{}) {
-		t.Fatal("sendEvent() = true, want false for cancelled context")
+		t.Fatal("sendEvent() = true, want false for canceled context")
 	}
 }
 
@@ -369,7 +368,7 @@ func TestProviderRejectsInvalidRawInput(t *testing.T) {
 
 	_, err := provider.RunTurn(context.Background(), agentruntime.RunTurnRequest{
 		ThreadID: "thread-1",
-		Input:     agentruntime.TurnInput{Data: json.RawMessage(`{"type":"text"}`)},
+		Input:    agentruntime.TurnInput{Data: json.RawMessage(`{"type":"text"}`)},
 	})
 	if err == nil {
 		t.Fatal("RunTurn() error = nil, want raw input array validation error")

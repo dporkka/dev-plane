@@ -382,9 +382,10 @@ func mapNotification(
 		}
 		status := mapTurnStatus(payload.Turn.Status)
 		eventType := agentruntime.EventTypeTurnCompleted
-		if status == agentruntime.TurnStatusFailed {
+		switch status {
+		case agentruntime.TurnStatusFailed:
 			eventType = agentruntime.EventTypeTurnFailed
-		} else if status == agentruntime.TurnStatusInterrupted {
+		case agentruntime.TurnStatusInterrupted:
 			eventType = agentruntime.EventTypeTurnStatus
 		}
 		return agentruntime.Event{

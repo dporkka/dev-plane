@@ -347,8 +347,8 @@ func (p *Provider) streamTurn(
 			// follow-up. Do not make the durable turn terminal until OMP reports
 			// that the whole session is quiescent.
 			if frame.Type == "prompt_result" && frame.ID == turnID && !frame.SessionSettled {
-				copy := frame
-				pendingTerminal = &copy
+				terminalFrame := frame
+				pendingTerminal = &terminalFrame
 				continue
 			}
 			if frame.Type == "session_settled" && pendingTerminal != nil {

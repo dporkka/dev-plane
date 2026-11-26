@@ -103,12 +103,20 @@ func TestEvidenceStoreRoundTripAndExactHeadLookup(t *testing.T) {
 		t.Fatalf("RunMigrations() error = %v", err)
 	}
 
+	zero := 0
+	started := time.Unix(1000, 0).UTC()
 	bundle := repoprotocol.EvidenceBundle{
 		WorkItemID: "DEV-303",
 		BaseSHA:    "base123",
 		HeadSHA:    "head456",
 		Gates: []repoprotocol.GateEvidence{
-			{Name: "changed", Status: repoprotocol.GatePassed, Command: "make verify-changed"},
+			{Name: "changed", Status: repoprotocol.GatePassed, Command: "make verify-changed",
+				Execution: &repoprotocol.GateExecution{
+					SessionID: "session-1", AttemptID: "attempt-1",
+					Outcome: repoprotocol.GateExecutionCompleted, ExitCode: &zero,
+					StartedAt: started, FinishedAt: started.Add(time.Second), DurationMillis: 1000,
+				},
+			},
 			{Name: repoprotocol.GateIndependentReview, Status: repoprotocol.GatePassed},
 		},
 	}

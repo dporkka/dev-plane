@@ -44,7 +44,7 @@ const (
 	WorkReadyToLand  WorkState = "ready_to_land"
 	WorkLanded       WorkState = "landed"
 	WorkFailed       WorkState = "failed"
-	WorkCancelled    WorkState = "cancelled"
+	WorkCancelled    WorkState = "cancelled" //nolint:misspell // Stable serialized state; changing the spelling breaks persisted work items.
 )
 
 type GateStatus string
@@ -93,11 +93,34 @@ type RiskRule struct {
 	Requires []string  `json:"requires,omitempty" yaml:"requires,omitempty"`
 }
 
+// GateExecutionOutcome distinguishes an executed command (including test failure)
+// from an infrastructure failure that did not return a trustworthy exit result.
+type GateExecutionOutcome string
+
+const (
+	GateExecutionCompleted   GateExecutionOutcome = "completed"
+	GateExecutionRunnerError GateExecutionOutcome = "runner_error"
+)
+
+// GateExecution describes one actual runtime command attempt. SessionID is a
+// runtime workspace identifier, not an independently attested worker identity.
+type GateExecution struct {
+	SessionID      string               `json:"session_id"`
+	AttemptID      string               `json:"attempt_id"`
+	Outcome        GateExecutionOutcome `json:"outcome"`
+	StartedAt      time.Time            `json:"started_at"`
+	FinishedAt     time.Time            `json:"finished_at"`
+	ExitCode       *int                 `json:"exit_code,omitempty"`
+	DurationMillis int64                `json:"duration_ms"`
+}
+
 type GateEvidence struct {
-	Name    string     `json:"name"`
-	Status  GateStatus `json:"status"`
-	Command string     `json:"command,omitempty"`
-	Output  string     `json:"output,omitempty"`
+	Name      string           `json:"name"`
+	Status    GateStatus       `json:"status"`
+	Command   string           `json:"command,omitempty"`
+	Output    string           `json:"output,omitempty"`
+	Execution *GateExecution   `json:"execution,omitempty"`
+	RemoteCI  *RemoteCIReceipt `json:"remote_ci,omitempty"`
 }
 
 type EvidenceBundle struct {
@@ -202,7 +225,18 @@ func (c Config) RequiredGatesForPaths(changedPaths []string) []string {
 	return result
 }
 
+// ValidateHead deliberately does not trust self-asserted remote CI receipts.
+// Call ValidateHeadWithRemoteCI with server-pinned policies when remote gates
+// are required by a separate, privileged attestation workflow.
 func (e EvidenceBundle) ValidateHead(candidateHead string) error {
+	return e.validateHead(candidateHead, nil)
+}
+
+func (e EvidenceBundle) ValidateHeadWithRemoteCI(candidateHead string, policies map[string]RemoteCIPolicy) error {
+	return e.validateHead(candidateHead, policies)
+}
+
+func (e EvidenceBundle) validateHead(candidateHead string, policies map[string]RemoteCIPolicy) error {
 	candidateHead = strings.TrimSpace(candidateHead)
 	if candidateHead == "" {
 		return errors.New("candidate head is required")
@@ -219,12 +253,49 @@ func (e EvidenceBundle) ValidateHead(candidateHead string) error {
 	if len(e.Gates) == 0 {
 		return errors.New("evidence requires at least one gate")
 	}
+	seen := make(map[string]bool, len(e.Gates))
 	for _, gate := range e.Gates {
 		if strings.TrimSpace(gate.Name) == "" {
 			return errors.New("evidence gate name is required")
 		}
+		if seen[gate.Name] {
+			return fmt.Errorf("duplicate evidence gate %q", gate.Name)
+		}
+		seen[gate.Name] = true
 		if gate.Status != GatePassed {
 			return fmt.Errorf("evidence gate %q is not passed: %s", gate.Name, gate.Status)
+		}
+		if (gate.Name == GateIndependentReview || gate.Name == GateHumanApproval) &&
+			(gate.RemoteCI != nil || gate.Execution != nil || gate.Command != "") {
+			return fmt.Errorf("evidence gate %q cannot use executable evidence as approval", gate.Name)
+		}
+		if gate.RemoteCI != nil {
+			if gate.Execution != nil || gate.Command != "" {
+				return fmt.Errorf("evidence gate %q contains contradictory local and remote execution", gate.Name)
+			}
+			policy, ok := policies[gate.Name]
+			if !ok {
+				return fmt.Errorf("evidence gate %q requires trusted remote CI policy", gate.Name)
+			}
+			if err := gate.RemoteCI.Verify(e.HeadSHA, policy); err != nil {
+				return fmt.Errorf("evidence gate %q remote CI: %w", gate.Name, err)
+			}
+			continue
+		}
+		// Human approvals are assessed by their own authorization path; they
+		// must not be fabricated as shell commands.
+		if gate.Name == GateIndependentReview || gate.Name == GateHumanApproval {
+			continue
+		}
+		if gate.Execution == nil {
+			return fmt.Errorf("evidence gate %q requires execution evidence", gate.Name)
+		}
+		x := gate.Execution
+		if strings.TrimSpace(x.SessionID) == "" || strings.TrimSpace(x.AttemptID) == "" ||
+			x.Outcome != GateExecutionCompleted || x.ExitCode == nil || *x.ExitCode != 0 ||
+			x.StartedAt.IsZero() || x.FinishedAt.IsZero() || x.FinishedAt.Before(x.StartedAt) ||
+			x.DurationMillis < 0 {
+			return fmt.Errorf("evidence gate %q has invalid execution evidence", gate.Name)
 		}
 	}
 	return nil
