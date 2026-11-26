@@ -239,20 +239,17 @@ requires a separately designed administrative workflow; do not edit the table
 to bypass authorization.
 
 Initial approved-task provisioning and queued approval replay require a fresh
-identity check, as does PR Factory publication (before push and, if a push
-occurs, again before PR creation). Task creation enforces repository/project
+identity check, as does PR Factory publication, before PR creation. Gitea host-worktree
+push is blocked by the isolated execution pilot below. Task creation enforces repository/project
 and creator/organization consistency. Legacy GitHub-only sync and analysis
 routes reject Gitea rather than marking an unverified connection connected or
 reading an owner/name-only local cache.
 
-This is a necessary, not sufficient, production authority boundary. Existing
-direct/retry run paths and workspace custody still need separate qualification;
-API/Git credentials are not independently tenant-scoped by this feature.
-Gitea's name-based mutation endpoints leave a check-to-use window if a
-repository is renamed/recreated between verification and mutation. Restrict
-operator credentials and remote permissions; do not enable webhook-driven
-task creation or merge based on a receipt. The receipt consumer remains
-audit-only.
+This is a necessary, not sufficient, production authority boundary.
+Gitea's name-based endpoints leave a check-to-use window if a repository
+is renamed/recreated between verification and mutation. Restrict operator
+credentials and remote permissions; do not enable webhook-driven task
+creation or merge based on a receipt. The receipt consumer remains audit-only.
 
 The binding and task-scope tests default to SQLite. To qualify PostgreSQL,
 run them against two separate empty databases on a disposable loopback
@@ -266,6 +263,71 @@ DEVPLANE_TEST_TASK_SCOPE_POSTGRES_URL='postgres://fixture@127.0.0.1:55439/devpla
 ```
 
 Both tests refuse unexpected database names, hosts or nonempty schemas.
+
+## Gitea isolated execution pilot
+
+Run dispatch now resolves the durable run/task/project/repository/organization
+chain regardless of whether a run is initial, retried, or handed off. A Gitea
+run must use the legacy model-driven runner inside the task's own Docker
+workspace (no local host path and no external-agent backend). Before dispatch,
+verify the current upstream binding, task and run workspace IDs, actual
+container labels, network isolation, read-only root, named volume, and kernel
+capability/no-new-privileges status. Re-read the local chain after verification.
+An arbitrary runtime-provider string, stale container, or old workspace cannot
+substitute for a scoped workspace.
+
+Provisioning requires a dedicated Gitea worker, a trusted already-installed
+workspace image, and an independent read-only Git credential. The intentionally
+single-repository pilot uses these operator settings:
+
+- `WORKSPACE_RUNTIME=docker` and `DOCKER_WORKSPACE_IMAGE` (trusted, preferably
+  digest-pinned local image; scoped provisioning never pulls).
+- `GITEA_URL` and `GITEA_TOKEN` for binding/API verification, as before.
+- `GITEA_CLONE_REPOSITORY_ID` (approved upstream numeric ID),
+  `GITEA_CLONE_URL` (exact bound clone URL), `GITEA_CLONE_USERNAME`,
+  `GITEA_CLONE_TOKEN` (dedicated read credential).
+- Independently restrict the clone account at the forge to read-only access
+  to that repository. The code checks local identity and distinct token
+  values, not the account's upstream permission configuration.
+
+Clone and checkout occur on the trusted host before a container starts. The
+clone authenticates using a URL-scoped transient Git config environment; it
+disables redirects, helpers, inherited Git config, proxy settings and submodule
+recursion. Non-loopback HTTP is not permitted. The checkout and scoped
+provisioning/verification Docker child processes receive no clone or operator
+token; no arbitrary workspace env is
+accepted, and no secret is stored in the repository or copied into the
+container. Recheck the remote binding after provisioning before persisting a
+ready workspace. Do not reuse old unlabelled workspaces.
+
+Any process holding Gitea operator credentials must not execute or provision
+non-Gitea workloads. Separate the Gitea execution worker/host from legacy
+agents and route work appropriately before activating the pilot; the existing
+shared NATS consumer does not provide dedicated routing yet. Filtering a
+subprocess environment alone cannot protect a host credential from a local
+agent with the same OS identity. All Gitea host-worktree pushes (and legacy
+host-worktree pushes by credential-bearing publication processes) are blocked:
+exporting a reviewed immutable revision to a trusted push broker remains a
+separate task. Publishing an already-present remote branch is not proof that
+the Docker workspace's changes were exported.
+
+The following focused test uses real authenticated Git smart HTTP with
+synthetic credentials; it checks redirect refusal, configuration isolation,
+and the absence of credentials in the cloned repository. Optionally run a
+real local container with a trusted, already-installed image containing
+/bin/sh and /bin/cat:
+
+```sh
+DEVPLANE_TEST_GITEA_DOCKER_IMAGE=YOUR_LOCAL_IMAGE \
+  go test -run '^TestScopedCloneUsesOnlyDedicatedCredential$' -v ./packages/runtimes
+```
+
+The fixture starts only a disposable local repository, container and volume
+and cleans its own resources. The runtime can accept equivalent Podman
+metadata only when the actual kernel capability sets are empty, the exact
+named volume is mounted, and no_new_privs is enabled. Do not enable a
+production worker until the actual deployment image/runtime and end-to-end
+worker routing, revocation, and trusted artifact publication are qualified.
 
 ## Migration sequence
 

@@ -121,6 +121,7 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 	if err != nil {
 		return fmt.Errorf("invalid repository forge settings: %w", err)
 	}
+	var giteaBinding *prfactory.GiteaBinding
 	if authority.Provider == models.ForgeProviderGitea {
 		forge, credential, err := prfactory.ConfiguredGiteaBindingForge()
 		if err != nil {
@@ -135,6 +136,12 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		if binding.CloneURL != task.CloneURL {
 			return prfactory.ErrGiteaRepositoryBinding
 		}
+		if _, ok := h.runtimeProvider.(*runtimes.DockerProvider); !ok || h.runtimeName != "docker" {
+			return runtimes.ErrGiteaWorkspaceAuthority
+		}
+		giteaBinding = &binding
+	} else if prfactory.GiteaCredentialsConfigured() {
+		return runtimes.ErrGiteaWorkspaceAuthority
 	}
 
 	if resumed, err := h.publishExistingQueuedRun(context.Background(), event.TaskID); err != nil {
@@ -170,9 +177,28 @@ func (h *TaskHandler) HandleTaskApproved(msg *nats.Msg) error {
 		CloneURL:      task.CloneURL,
 		DefaultBranch: task.DefaultBranch,
 		WorkspaceID:   workspaceID,
+		GiteaBinding:  giteaBinding,
 	}, now)
 	if err != nil {
 		return fmt.Errorf("provision workspace runtime: %w", err)
+	}
+	// Do not persist a ready workspace if the remote identity or local grant
+	// changed while the host was cloning. The next dispatch also rechecks.
+	if giteaBinding != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		forge, credential, err := prfactory.ConfiguredGiteaBindingForge()
+		if err == nil {
+			var current prfactory.GiteaBinding
+			current, err = prfactory.VerifyGiteaRepositoryBinding(ctx, h.db, forge, credential, task.RepositoryID, task.ProjectID)
+			if err == nil && current != *giteaBinding {
+				err = prfactory.ErrGiteaRepositoryBinding
+			}
+		}
+		cancel()
+		if err != nil {
+			h.cleanupProvisionedWorkspace(context.Background(), workspace)
+			return err
+		}
 	}
 
 	tx, err := h.db.BeginTx(context.Background(), nil)
@@ -265,6 +291,7 @@ type approvedTask struct {
 	CloneURL      string
 	DefaultBranch string
 	WorkspaceID   string
+	GiteaBinding  *prfactory.GiteaBinding
 }
 
 type provisionedWorkspace struct {
@@ -337,18 +364,36 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		workspace.RuntimeProvider = "unprovisioned"
 	}
 	if h.runtimeProvider == nil {
+		if task.GiteaBinding != nil {
+			return provisionedWorkspace{}, runtimes.ErrGiteaWorkspaceAuthority
+		}
 		return workspace, nil
 	}
 
 	provisionCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	session, err := h.runtimeProvider.CreateWorkspace(provisionCtx, runtimes.CreateRequest{
+	request := runtimes.CreateRequest{
 		RepositoryID: task.RepositoryID,
 		CloneURL:     task.CloneURL,
 		Branch:       branchName,
 		BaseBranch:   baseBranch,
 		WorktreeName: workspace.Name,
-	})
+	}
+	var session *runtimes.Session
+	var err error
+	if task.GiteaBinding != nil {
+		docker, ok := h.runtimeProvider.(*runtimes.DockerProvider)
+		if !ok || h.runtimeName != "docker" {
+			return provisionedWorkspace{}, runtimes.ErrGiteaWorkspaceAuthority
+		}
+		binding := task.GiteaBinding
+		session, err = docker.CreateGiteaWorkspace(provisionCtx, request, runtimes.GiteaWorkspaceGrant{
+			RepositoryID: binding.RepositoryID, WorkspaceID: task.WorkspaceID,
+			InstanceURL: binding.InstanceURL, CloneURL: binding.CloneURL, UpstreamRepositoryID: binding.UpstreamRepositoryID,
+		})
+	} else {
+		session, err = h.runtimeProvider.CreateWorkspace(provisionCtx, request)
+	}
 	if err != nil {
 		return provisionedWorkspace{}, err
 	}
