@@ -23,6 +23,13 @@ var (
 )
 
 func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, apiKey, providerName string, req CallRequest, models []ModelInfo) (*CallResult, error) {
+	return callOpenAICompatibleWithHeaders(ctx, client, baseURL, providerName, req, models,
+		map[string]string{"Authorization": "Bearer " + apiKey})
+}
+
+// callOpenAICompatibleWithHeaders keeps the generic OpenAI-compatible JSON
+// codec while allowing gateway-specific auth without changing direct providers.
+func callOpenAICompatibleWithHeaders(ctx context.Context, client *http.Client, baseURL, providerName string, req CallRequest, models []ModelInfo, headers map[string]string) (*CallResult, error) {
 	model := selectedModel(req, models)
 	body := map[string]any{
 		"model":    model,
@@ -34,6 +41,7 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 	}
 
 	var out struct {
+		Model   string `json:"model"`
 		Choices []struct {
 			Message struct {
 				Content string `json:"content"`
@@ -46,20 +54,24 @@ func callOpenAICompatible(ctx context.Context, client *http.Client, baseURL, api
 			TotalTokens      int `json:"total_tokens"`
 		} `json:"usage"`
 	}
-	if err := postJSON(ctx, client, strings.TrimRight(baseURL, "/")+"/chat/completions", apiKey, "", body, &out); err != nil {
+	if err := postJSONWithHeaders(ctx, client, strings.TrimRight(baseURL, "/")+"/chat/completions", headers, body, &out); err != nil {
 		return nil, fmt.Errorf("%s chat completion: %w", providerName, err)
 	}
 	if len(out.Choices) == 0 {
 		return nil, fmt.Errorf("%s chat completion: response contained no choices", providerName)
 	}
 	prompt, completion, total := normalizeUsage(out.Usage.PromptTokens, out.Usage.CompletionTokens, out.Usage.TotalTokens)
+	actualModel := model
+	if strings.TrimSpace(out.Model) != "" {
+		actualModel = out.Model
+	}
 	return &CallResult{
 		Content:          out.Choices[0].Message.Content,
 		PromptTokens:     prompt,
 		CompletionTokens: completion,
 		TotalTokens:      total,
 		Cost:             estimateCost(models, model, prompt, completion),
-		Model:            model,
+		Model:            actualModel,
 		Provider:         providerName,
 		FinishReason:     out.Choices[0].FinishReason,
 	}, nil
