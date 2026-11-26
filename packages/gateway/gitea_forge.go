@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -208,7 +210,7 @@ func (f *GiteaForge) do(ctx context.Context, credential ForgeCredential, method,
 
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return err
+		return fmt.Errorf("create gitea request")
 	}
 	if credential.AccessToken != "" {
 		req.Header.Set("Authorization", "token "+credential.AccessToken)
@@ -220,7 +222,20 @@ func (f *GiteaForge) do(ctx context.Context, credential ForgeCredential, method,
 
 	resp, err := f.httpClient.Do(req)
 	if err != nil {
-		return err
+		// HTTP transports may include credential-bearing URLs or arbitrary
+		// provider-controlled text. Keep cancellation and timeout semantics
+		// without wrapping the original, potentially sensitive error.
+		switch {
+		case errors.Is(err, context.Canceled):
+			return fmt.Errorf("gitea request canceled: %w", context.Canceled)
+		case errors.Is(err, context.DeadlineExceeded):
+			return fmt.Errorf("gitea request timed out: %w", context.DeadlineExceeded)
+		}
+		var timeout net.Error
+		if errors.As(err, &timeout) && timeout.Timeout() {
+			return fmt.Errorf("gitea request timed out: %w", context.DeadlineExceeded)
+		}
+		return fmt.Errorf("gitea transport failed")
 	}
 	// The response is already consumed or rejected; close errors cannot
 	// change the outcome of the completed API request.
