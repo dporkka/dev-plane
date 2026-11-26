@@ -48,13 +48,13 @@ func TestGetRepositoryTargetReadsForgeSettings(t *testing.T) {
 	defer db.Close()
 
 	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").
-		WithArgs("repo-1").
+		WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow(
 			"acme", "widget", `{"forge":{"provider":"gitea","base_url":"https://git.example.test"}}`,
 		))
 
 	factory := NewFactory(db, nil)
-	target, err := factory.getRepositoryTarget(context.Background(), "repo-1")
+	target, err := factory.getRepositoryTarget(context.Background(), "repo-1", "project-1")
 	if err != nil {
 		t.Fatalf("get repository target: %v", err)
 	}

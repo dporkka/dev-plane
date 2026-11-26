@@ -673,3 +673,17 @@ CREATE TABLE IF NOT EXISTS gitea_webhook_receipts (
     PRIMARY KEY (instance_url, delivery_id),
     UNIQUE (instance_url, payload_sha256)
 );
+
+-- =====================================================
+-- 27. Explicit Gitea repository-to-tenant authorization
+-- =====================================================
+CREATE TABLE IF NOT EXISTS gitea_repository_bindings (
+    repository_id           UUID PRIMARY KEY REFERENCES repositories(id),
+    project_id              UUID NOT NULL REFERENCES projects(id),
+    organization_id         UUID NOT NULL REFERENCES organizations(id),
+    instance_url            TEXT NOT NULL,
+    upstream_repository_id  BIGINT NOT NULL CHECK (upstream_repository_id > 0),
+    full_name               TEXT NOT NULL,
+    verified_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (instance_url, upstream_repository_id)
+);

@@ -23,7 +23,7 @@ func TestConnectRepository(t *testing.T) {
 	body, _ := json.Marshal(ConnectRepositoryRequest{Owner: "dporkka", Name: "dev-plane"})
 	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO repositories").
-		WithArgs(sqlmock.AnyArg(), projectID, "dporkka", "dev-plane", "dporkka/dev-plane", "https://github.com/dporkka/dev-plane.git", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), projectID, "dporkka", "dev-plane", "dporkka/dev-plane", "https://github.com/dporkka/dev-plane.git", "connected", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
@@ -67,7 +67,7 @@ func TestConnectRepositoryPersistsGiteaAuthority(t *testing.T) {
 	})
 	expectAuthorizeProject(mock, projectID)
 	mock.ExpectExec("INSERT INTO repositories").
-		WithArgs(sqlmock.AnyArg(), projectID, "acme_team", "widget", "acme_team/widget", "https://git.example.test/code/acme_team/widget.git", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), projectID, "acme_team", "widget", "acme_team/widget", "https://git.example.test/code/acme_team/widget.git", "pending", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := repositoryRequest(http.MethodPost, "/projects/"+projectID+"/repositories", projectID, bytes.NewReader(body))
@@ -86,7 +86,7 @@ func TestConnectRepositoryPersistsGiteaAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse settings: %v", err)
 	}
-	if forge.Provider != models.ForgeProviderGitea || forge.BaseURL != "https://git.example.test/code" {
+	if repo.ConnectionStatus != "pending" || forge.Provider != models.ForgeProviderGitea || forge.BaseURL != "https://git.example.test/code" {
 		t.Fatalf("forge settings = %+v", forge)
 	}
 	if strings.Contains(strings.ToLower(string(repo.Settings)), "token") {

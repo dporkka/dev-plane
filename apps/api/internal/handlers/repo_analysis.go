@@ -83,16 +83,21 @@ func (h *Handler) AnalyzeRepo(w http.ResponseWriter, r *http.Request) {
 		Owner    string
 		Name     string
 	}
+	var settings sql.NullString
 	err := h.db.QueryRowContext(ctx, `
-		SELECT id, clone_url, full_name, owner, name
+		SELECT id, clone_url, full_name, owner, name, settings
 		FROM repositories WHERE id = $1 AND deleted_at IS NULL
-	`, repoID).Scan(&repo.ID, &repo.CloneURL, &repo.FullName, &repo.Owner, &repo.Name)
+	`, repoID).Scan(&repo.ID, &repo.CloneURL, &repo.FullName, &repo.Owner, &repo.Name, &settings)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 			return
 		}
 		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if !requireGitHubRepository(w, settings) {
 		return
 	}
 

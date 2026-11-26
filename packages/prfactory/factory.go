@@ -215,11 +215,15 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 
 	// Repository forge identity is authoritative and must match process-level
 	// configuration before any Git push or PR publication side effect occurs.
-	target, err := f.getRepositoryTarget(ctx, task.RepositoryID)
+	target, err := f.getRepositoryTarget(ctx, task.RepositoryID, task.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("get repository details: %w", err)
 	}
 	if err := f.validateRepositoryForge(target); err != nil {
+		return nil, err
+	}
+
+	if err := f.verifyGiteaTarget(ctx, task.RepositoryID, task.ProjectID, target); err != nil {
 		return nil, err
 	}
 
@@ -231,6 +235,9 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		}
 		if err := f.pushBranch(ctx, workspacePath, workspaceBranch); err != nil {
 			return nil, fmt.Errorf("push branch %s: %w", workspaceBranch, err)
+		}
+		if err := f.verifyGiteaTarget(ctx, task.RepositoryID, task.ProjectID, target); err != nil {
+			return nil, err
 		}
 	}
 

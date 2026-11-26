@@ -21,7 +21,7 @@ type repositoryTarget struct {
 
 // getRepositoryTarget loads the repository-owned forge authority. Existing rows
 // without a forge settings block resolve to GitHub for backward compatibility.
-func (f *Factory) getRepositoryTarget(ctx context.Context, repositoryID string) (repositoryTarget, error) {
+func (f *Factory) getRepositoryTarget(ctx context.Context, repositoryID, projectID string) (repositoryTarget, error) {
 	if f.db == nil {
 		return repositoryTarget{}, fmt.Errorf("database is not configured")
 	}
@@ -29,8 +29,10 @@ func (f *Factory) getRepositoryTarget(ctx context.Context, repositoryID string) 
 	var settings sql.NullString
 	if err := f.db.QueryRowContext(ctx, `
 		SELECT owner, name, settings FROM repositories
-		WHERE id = $1 AND deleted_at IS NULL
-	`, repositoryID).Scan(&owner, &name, &settings); err != nil {
+		WHERE id = $1 AND project_id = $2 AND deleted_at IS NULL
+        AND EXISTS (SELECT 1 FROM projects p JOIN organizations o ON o.id=p.organization_id
+            WHERE p.id=$2 AND p.deleted_at IS NULL AND o.deleted_at IS NULL)
+    `, repositoryID, projectID).Scan(&owner, &name, &settings); err != nil {
 		return repositoryTarget{}, fmt.Errorf("get repository target: %w", err)
 	}
 

@@ -201,7 +201,7 @@ python3 packages/prfactory/testdata/live_gitea.py --binary /path/to/gitea
 The opt-in runner creates an isolated SQLite-backed Gitea server listening only
 on loopback, a synthetic private repository and separate bootstrap/scoped API
 tokens. It runs a build-tagged PR Factory integration test (real Gitea
-publication, mocked Dev Plane DB records, explicit stale-head rejection and
+publication, verified numeric binding using mocked Dev Plane DB records, explicit stale-head rejection and
 independent merged-state lookup). It terminates the server and removes the
 temporary directory even on a test failure. It does not download a binary,
 contact production, use operator credentials, or run in ordinary CI.
@@ -209,6 +209,63 @@ contact production, use operator credentials, or run in ordinary CI.
 The harness seeds a branch through Gitea before publication; it does not
 certify Git push credentials or workspace isolation. Temporary 405 handling in
 the test is not a production merge retry policy.
+
+## Verified Gitea repository bindings
+
+Migration 027 reserves the tuple (canonical instance root, immutable upstream
+numeric repository ID) for exactly one local repository, project and
+organization. New Gitea connection requests remain **pending**. Earlier
+connections are not automatically trusted even if their status says connected.
+No webhook, tenant-provided clone URL, or shared API token constitutes a grant.
+
+After applying migrations, an operator with independently established tenant
+authorization must verify the exact upstream numeric ID from Gitea and issue
+the grant using the configured GITEA_URL, GITEA_TOKEN and explicit DATABASE_URL:
+
+```sh
+go run ./apps/api/cmd/forge-bind-gitea \
+  --repository-id LOCAL_REPO_UUID --project-id PROJECT_UUID \
+  --organization-id ORGANIZATION_UUID --upstream-repository-id 123 \
+  --apply
+```
+
+This command has no tenant HTTP endpoint and requires an explicit apply flag.
+It checks the active project/organization, exact canonical instance and HTTP
+clone URL, upstream numeric ID, name and repository metadata. Only a committed
+grant marks the repository connected. Repeating the same grant refreshes
+metadata; a conflicting grant cannot overwrite it or claim a reserved ID.
+Soft deletion retains the upstream reservation. Reassignment or revocation
+requires a separately designed administrative workflow; do not edit the table
+to bypass authorization.
+
+Initial approved-task provisioning and queued approval replay require a fresh
+identity check, as does PR Factory publication (before push and, if a push
+occurs, again before PR creation). Task creation enforces repository/project
+and creator/organization consistency. Legacy GitHub-only sync and analysis
+routes reject Gitea rather than marking an unverified connection connected or
+reading an owner/name-only local cache.
+
+This is a necessary, not sufficient, production authority boundary. Existing
+direct/retry run paths and workspace custody still need separate qualification;
+API/Git credentials are not independently tenant-scoped by this feature.
+Gitea's name-based mutation endpoints leave a check-to-use window if a
+repository is renamed/recreated between verification and mutation. Restrict
+operator credentials and remote permissions; do not enable webhook-driven
+task creation or merge based on a receipt. The receipt consumer remains
+audit-only.
+
+The binding and task-scope tests default to SQLite. To qualify PostgreSQL,
+run them against two separate empty databases on a disposable loopback
+PostgreSQL server with user `fixture` (replace the fixture port):
+
+```sh
+DEVPLANE_TEST_BINDING_POSTGRES_URL='postgres://fixture@127.0.0.1:55439/devplane_gitea_binding_test?sslmode=disable' \
+DEVPLANE_TEST_TASK_SCOPE_POSTGRES_URL='postgres://fixture@127.0.0.1:55439/devplane_task_scope_test?sslmode=disable' \
+  go test -run 'TestGiteaBindingOwnsNumericIdentity|TestInsertTaskEnforcesRepositoryProjectAndCreatorTenant' \
+    ./apps/api/cmd/forge-bind-gitea ./apps/api/internal/handlers
+```
+
+Both tests refuse unexpected database names, hosts or nonempty schemas.
 
 ## Migration sequence
 

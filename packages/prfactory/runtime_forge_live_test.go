@@ -47,10 +47,8 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "summary", "findings", "risk_level", "approvable", "suggestions", "test_coverage", "security_notes", "diff_summary", "created_at"}).AddRow("review-1", "run-1", "synthetic review", nil, "low", true, nil, "fixture", "fixture", nil, now))
 	mock.ExpectQuery("SELECT id, repository_id, task_id, name, branch").WithArgs("workspace-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "repository_id", "task_id", "name", "branch", "base_branch", "worktree_path", "runtime_provider", "runtime_session_id", "status", "preview_url", "settings", "created_at", "updated_at", "deleted_at"}).AddRow("workspace-1", "repo-1", "task-1", "pilot", "agent-pilot", "main", nil, "local", nil, "ready", nil, nil, now, now, nil))
-	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").WithArgs("repo-1").
+	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow("forgepilot", "pilot", fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base)))
-	mock.ExpectExec("INSERT INTO pull_requests").WillReturnResult(sqlmock.NewResult(1, 1))
-	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").WillReturnResult(sqlmock.NewResult(0, 1))
 	f := NewFactory(db, nil)
 	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Second)
 	defer cancel()
@@ -65,6 +63,13 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	if err != nil || !repo.Private || repo.DefaultBranch != "main" {
 		t.Fatal("private fixture repository lookup failed")
 	}
+	for i := 0; i < 2; i++ {
+		mock.ExpectQuery("SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id").WithArgs("repo-1", "project-1").
+			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname"}).
+				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot"))
+	}
+	mock.ExpectExec("INSERT INTO pull_requests").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").WillReturnResult(sqlmock.NewResult(0, 1))
 	pr, err := f.CreatePullRequest(ctx, "task-1")
 	if err != nil {
 		t.Fatalf("runtime publication failed: %v", err)

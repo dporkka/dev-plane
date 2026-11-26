@@ -274,6 +274,10 @@ func (h *Handler) CreatePullRequest(w http.ResponseWriter, r *http.Request) {
 	pr, err := factory.CreatePullRequest(ctx, taskID)
 	if err != nil {
 		h.logger.Error("failed to create pull request", "task_id", taskID, "error", err)
+		if errors.Is(err, prfactory.ErrGiteaRepositoryBinding) {
+			respond.Error(w, http.StatusConflict, errors.New("repository binding is not verified"))
+			return
+		}
 		if errors.Is(err, prfactory.ErrForgeConfiguration) {
 			respond.Error(w, http.StatusServiceUnavailable, errors.New("forge runtime configuration is unavailable"))
 			return
