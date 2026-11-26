@@ -52,8 +52,8 @@ func New(cfg *config.Config, database *sql.DB, logger *slog.Logger) *Server {
 			if err := bus.CreateStreams(); err != nil {
 				logger.Warn("failed to create NATS streams, event publishing disabled", "error", err)
 			} else {
-				s.eventBus = bus
-				logger.Info("NATS event bus connected", "url", cfg.NATSURL)
+				s.eventBus = bus.WithExecutionRouting(database)
+				logger.Info("NATS event bus connected")
 			}
 		}
 	}

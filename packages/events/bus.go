@@ -1,29 +1,35 @@
 package events
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/nats-io/nats.go"
 )
 
 // Stream names used across the system.
 const (
-	StreamTasks    = "TASKS"
-	StreamAgents   = "AGENTS"
-	StreamRuns     = "RUNS"
-	StreamWebhooks = "WEBHOOKS"
-	StreamAudit    = "AUDIT"
+	StreamTasks          = "TASKS"
+	StreamAgents         = "AGENTS"
+	StreamRuns           = "RUNS"
+	StreamWebhooks       = "WEBHOOKS"
+	StreamAudit          = "AUDIT"
+	StreamGiteaExecution = "GITEA_EXECUTION"
 )
 
 // Bus wraps a NATS connection and JetStream context to provide
 // typed stream management, publishing, and subscription.
 type Bus struct {
-	nc      *nats.Conn
-	js      nats.JetStreamContext
-	streams map[string]nats.StreamConfig
-	mu      sync.RWMutex
+	nc                      *nats.Conn
+	js                      nats.JetStreamContext
+	streams                 map[string]nats.StreamConfig
+	executionRoutingDB      *sql.DB
+	executionRoutingEnabled bool
+	mu                      sync.RWMutex
 }
 
 // New connects to NATS at the given URL and creates a JetStream context.
@@ -72,6 +78,12 @@ func DefaultStreamConfigs() []nats.StreamConfig {
 			Retention: nats.WorkQueuePolicy,
 		},
 		{
+			Name:      StreamGiteaExecution,
+			Subjects:  []string{GiteaTaskApproved, GiteaRunTriggered, GiteaApprovalApproved, GiteaApprovalRejected},
+			Storage:   nats.FileStorage,
+			Retention: nats.WorkQueuePolicy,
+		},
+		{
 			Name:      StreamAudit,
 			Subjects:  []string{"audit.>"},
 			Storage:   nats.FileStorage,
@@ -107,6 +119,20 @@ func (b *Bus) CreateStreams() error {
 
 // Publish sends a message to the given JetStream subject.
 func (b *Bus) Publish(subject string, data []byte) error {
+	if b.executionRoutingEnabled && (IsExecutionCommand(subject) || strings.HasPrefix(subject, "gitea.exec.")) {
+		// Direct lane subjects are never accepted from publishers. Resolve
+		// the durable record each time; never use a caller-supplied forge.
+		if !IsExecutionCommand(subject) {
+			return ErrExecutionRoute
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		var err error
+		subject, err = ResolveExecutionSubject(ctx, b.executionRoutingDB, subject, data)
+		if err != nil {
+			return err
+		}
+	}
 	_, err := b.js.Publish(subject, data)
 	if err != nil {
 		return fmt.Errorf("publish to %q: %w", subject, err)

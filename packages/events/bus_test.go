@@ -28,11 +28,12 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	}
 
 	expectedRetention := map[string]nats.RetentionPolicy{
-		StreamTasks:    nats.WorkQueuePolicy,
-		StreamAgents:   nats.WorkQueuePolicy,
-		StreamRuns:     nats.WorkQueuePolicy,
-		StreamWebhooks: nats.WorkQueuePolicy,
-		StreamAudit:    nats.WorkQueuePolicy,
+		StreamTasks:          nats.WorkQueuePolicy,
+		StreamAgents:         nats.WorkQueuePolicy,
+		StreamRuns:           nats.WorkQueuePolicy,
+		StreamWebhooks:       nats.WorkQueuePolicy,
+		StreamAudit:          nats.WorkQueuePolicy,
+		StreamGiteaExecution: nats.WorkQueuePolicy,
 	}
 	for stream, want := range expectedRetention {
 		cfg, ok := byName[stream]
@@ -45,11 +46,12 @@ func TestDefaultStreamConfigs(t *testing.T) {
 	}
 
 	expected := map[string][]string{
-		StreamTasks:    {"tasks.*"},
-		StreamAgents:   {"agents.>"},
-		StreamRuns:     {"runs.*", "review.*", "approval.*", "pr.*"},
-		StreamWebhooks: {"webhooks.*"},
-		StreamAudit:    {"audit.>"},
+		StreamTasks:          {"tasks.*"},
+		StreamAgents:         {"agents.>"},
+		StreamRuns:           {"runs.*", "review.*", "approval.*", "pr.*"},
+		StreamWebhooks:       {"webhooks.*"},
+		StreamAudit:          {"audit.>"},
+		StreamGiteaExecution: {GiteaTaskApproved, GiteaRunTriggered, GiteaApprovalApproved, GiteaApprovalRejected},
 	}
 	for stream, subjects := range expected {
 		cfg, ok := byName[stream]
@@ -64,6 +66,7 @@ func TestDefaultStreamConfigs(t *testing.T) {
 
 func TestEventSubjectsAreCoveredByConfiguredStreams(t *testing.T) {
 	subjects := []string{
+		GiteaTaskApproved, GiteaRunTriggered, GiteaApprovalApproved, GiteaApprovalRejected,
 		TaskCreated,
 		TaskUpdated,
 		TaskApproved,

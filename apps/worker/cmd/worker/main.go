@@ -80,6 +80,12 @@ func runWorker() int {
 		*runtimeBaseDir = filepath.Join(os.TempDir(), "ai-dev-control-plane-workspaces")
 	}
 
+	workerLane, consumeWebhooks, err := workerRoutingConfig(*runtimeName)
+	if err != nil {
+		logger.Error("invalid worker routing configuration", "error", err)
+		return 1
+	}
+
 	// Set log level
 	if *logLevel != "" {
 		var level slog.Level
@@ -91,7 +97,7 @@ func runWorker() int {
 	}
 
 	logger.Info("starting worker service",
-		"nats_url", *natsURL,
+		"worker_lane", workerLane,
 		"db_driver", detectDriver(*dbURL),
 		"workspace_runtime", *runtimeName,
 	)
@@ -134,216 +140,79 @@ func runWorker() int {
 		logger.Error("failed to create NATS streams", "error", err)
 		return 1
 	}
+	eventBus.WithExecutionRouting(database.DB)
 	logger.Info("NATS event bus connected and streams created")
 
-	runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
-	if err != nil {
-		logger.Error("failed to initialize workspace runtime", "error", err)
-		return 1
-	}
-	logger.Info("workspace runtime initialized", "runtime", runtimeProviderName, "base_dir", *runtimeBaseDir)
-
-	var keyring *crypto.Keyring
-	if keysRaw := os.Getenv("SECRET_ENCRYPTION_KEYS"); keysRaw != "" {
-		keyring, err = crypto.ParseKeyring(keysRaw)
+	var subscriptions workerHandlers
+	if workerLane != laneWebhooks {
+		runtimeProvider, runtimeProviderName, err := initRuntimeProvider(*runtimeName, *runtimeBaseDir, os.Getenv("RUNNER_URL"), os.Getenv("RUNNER_AUTH_TOKEN"))
 		if err != nil {
-			logger.Error("invalid SECRET_ENCRYPTION_KEYS", "error", err)
+			logger.Error("failed to initialize workspace runtime", "error", err)
 			return 1
 		}
-		logger.Info("integration token keyring configured")
-	} else {
-		logger.Warn("SECRET_ENCRYPTION_KEYS not configured; encrypted integration tokens cannot be decrypted")
-	}
+		logger.Info("workspace runtime initialized", "runtime", runtimeProviderName, "base_dir", *runtimeBaseDir)
 
-	// Create handlers
-	taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
-	runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
-	reviewService := reviewer.NewReviewer(database.DB, logger)
-	runAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
-		MaxParallel: *schedulerMaxParallel,
-		CPU:         *schedulerCPU,
-		MemoryMB:    *schedulerMemoryMB,
-	}).WithStartBudget(runExecutor)
-	runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
-		WithRunExecutor(runExecutor).
-		WithRunAdmission(runAdmission).
-		WithReviewer(reviewService)
-	if *runLeaseEnabled {
-		lease := handlers.NewRunLeaseManager(database.DB, logger)
-		if err := lease.CheckSchema(ctx); err != nil {
-			logger.Error("run lease enabled before schema migration", "error", err)
-			return 1
+		var keyring *crypto.Keyring
+		if keysRaw := os.Getenv("SECRET_ENCRYPTION_KEYS"); keysRaw != "" {
+			keyring, err = crypto.ParseKeyring(keysRaw)
+			if err != nil {
+				logger.Error("invalid SECRET_ENCRYPTION_KEYS", "error", err)
+				return 1
+			}
+			logger.Info("integration token keyring configured")
+		} else {
+			logger.Warn("SECRET_ENCRYPTION_KEYS not configured; encrypted integration tokens cannot be decrypted")
 		}
-		runHandler.WithRunLease(lease)
-		go lease.RunReviewSweep(ctx, time.Minute)
-		logger.Info("run liveness leases enabled (expired runs flagged for manual review; no replay)")
-	}
-	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
-	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
-	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus).WithGiteaWebhook(os.Getenv("GITEA_URL"), os.Getenv("GITEA_WEBHOOK_SECRET"))
 
-	// Set up subscriptions - one per stream to avoid consumer conflicts
+		// Create handlers
+		taskHandler := handlers.NewTaskHandler(database.DB, logger).WithEventPublisher(eventBus).WithRuntimeProvider(runtimeProvider, runtimeProviderName)
+		runExecutor := agentexecutor.New(database.DB, eventBus, logger).WithRuntimeProvider(runtimeProviderName, runtimeProvider)
+		reviewService := reviewer.NewReviewer(database.DB, logger)
+		runAdmission := handlers.NewSchedulerAdmission(database.DB, handlers.SchedulerCapacity{
+			MaxParallel: *schedulerMaxParallel,
+			CPU:         *schedulerCPU,
+			MemoryMB:    *schedulerMemoryMB,
+		}).WithStartBudget(runExecutor)
+		runHandler := handlers.NewRunHandler(database.DB, logger, eventBus).
+			WithRunExecutor(runExecutor).
+			WithRunAdmission(runAdmission).
+			WithReviewer(reviewService)
+		if *runLeaseEnabled {
+			lease := handlers.NewRunLeaseManager(database.DB, logger)
+			if err := lease.CheckSchema(ctx); err != nil {
+				logger.Error("run lease enabled before schema migration", "error", err)
+				return 1
+			}
+			runHandler.WithRunLease(lease)
+			go lease.RunReviewSweep(ctx, time.Minute)
+			logger.Info("run liveness leases enabled (expired runs flagged for manual review; no replay)")
+		}
+		approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
+		notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
+
+		subscriptions = workerHandlers{
+			taskCreated:       taskHandler.HandleTaskCreated,
+			taskApproved:      taskHandler.HandleTaskApproved,
+			runCompleted:      runHandler.HandleRunCompleted,
+			runFailed:         runHandler.HandleRunFailed,
+			reviewCompleted:   runHandler.HandleReviewCompleted,
+			approvalApproved:  approvalHandler.HandleApprovalApproved,
+			approvalRejected:  approvalHandler.HandleApprovalRejected,
+			approvalRequested: notificationHandler.HandleApprovalRequested,
+			taskCompleted:     notificationHandler.HandleTaskCompleted,
+			taskFailed:        notificationHandler.HandleTaskFailed,
+			runTriggered:      runHandler.HandleRunTriggered,
+		}
+	}
+	if consumeWebhooks {
+		webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus).WithGiteaWebhook(os.Getenv("GITEA_URL"), os.Getenv("GITEA_WEBHOOK_SECRET"))
+		subscriptions.webhook = webhookConsumer.Handle
+	}
 	shutdownCtx := &shutdownContext{logger: logger}
-
-	// tasks.* -> task lifecycle (created, approved)
-	subTasks, err := eventBus.Subscribe("tasks.*", func(msg *nats.Msg) {
-		logger.Debug("received task event", "subject", msg.Subject)
-		switch msg.Subject {
-		case "tasks.created":
-			if err := taskHandler.HandleTaskCreated(msg); err != nil {
-				logger.Error("failed to handle task created", "error", err)
-			}
-		case "tasks.approved":
-			if err := taskHandler.HandleTaskApproved(msg); err != nil {
-				logger.Error("failed to handle task approved", "error", err)
-			}
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to tasks.*", "error", err)
+	if err := registerWorkerSubscriptions(database.DB, eventBus, workerLane, subscriptions, shutdownCtx); err != nil {
+		logger.Error("failed to subscribe worker lane", "error", err)
 		return 1
 	}
-	shutdownCtx.addSubscription(subTasks)
-	logger.Info("subscribed to tasks.*")
-
-	// agents.run.completed -> mailbox handoff scheduling or review generation
-	subRunCompleted, err := eventBus.Subscribe("agents.run.completed", func(msg *nats.Msg) {
-		logger.Debug("received agents.run.completed event")
-		if err := runHandler.HandleRunCompleted(msg); err != nil {
-			logger.Error("failed to handle run completed", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to agents.run.completed", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subRunCompleted)
-	logger.Info("subscribed to agents.run.completed")
-
-	// agents.run.failed -> fail task and notify integrations
-	subRunFailed, err := eventBus.Subscribe("agents.run.failed", func(msg *nats.Msg) {
-		logger.Debug("received agents.run.failed event")
-		if err := runHandler.HandleRunFailed(msg); err != nil {
-			logger.Error("failed to handle run failed", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to agents.run.failed", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subRunFailed)
-	logger.Info("subscribed to agents.run.failed")
-
-	// review.completed -> PR approval request
-	subReviewCompleted, err := eventBus.Subscribe("review.completed", func(msg *nats.Msg) {
-		logger.Debug("received review.completed event")
-		if err := runHandler.HandleReviewCompleted(msg); err != nil {
-			logger.Error("failed to handle review completed", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to review.completed", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subReviewCompleted)
-	logger.Info("subscribed to review.completed")
-
-	// approval.approved -> create PR
-	subApprovalApproved, err := eventBus.Subscribe("approval.approved", func(msg *nats.Msg) {
-		logger.Debug("received approval.approved event")
-		if err := approvalHandler.HandleApprovalApproved(msg); err != nil {
-			logger.Error("failed to handle approval approved", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to approval.approved", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subApprovalApproved)
-	logger.Info("subscribed to approval.approved")
-
-	// approval.rejected -> fail task
-	subApprovalRejected, err := eventBus.Subscribe("approval.rejected", func(msg *nats.Msg) {
-		logger.Debug("received approval.rejected event")
-		if err := approvalHandler.HandleApprovalRejected(msg); err != nil {
-			logger.Error("failed to handle approval rejected", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to approval.rejected", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subApprovalRejected)
-	logger.Info("subscribed to approval.rejected")
-
-	// approval.requested -> notify integrations
-	subApprovalRequested, err := eventBus.Subscribe("approval.requested", func(msg *nats.Msg) {
-		logger.Debug("received approval.requested event")
-		if err := notificationHandler.HandleApprovalRequested(msg); err != nil {
-			logger.Error("failed to handle approval requested notification", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to approval.requested", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subApprovalRequested)
-	logger.Info("subscribed to approval.requested")
-
-	// tasks.completed / tasks.failed -> notify integrations
-	subTaskCompleted, err := eventBus.Subscribe("tasks.completed", func(msg *nats.Msg) {
-		logger.Debug("received tasks.completed event")
-		if err := notificationHandler.HandleTaskCompleted(msg); err != nil {
-			logger.Error("failed to handle task completed notification", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to tasks.completed", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subTaskCompleted)
-	logger.Info("subscribed to tasks.completed")
-
-	subTaskFailed, err := eventBus.Subscribe("tasks.failed", func(msg *nats.Msg) {
-		logger.Debug("received tasks.failed event")
-		if err := notificationHandler.HandleTaskFailed(msg); err != nil {
-			logger.Error("failed to handle task failed notification", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to tasks.failed", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subTaskFailed)
-	logger.Info("subscribed to tasks.failed")
-
-	// Also subscribe to runs.triggered for agent execution
-	subRunTriggered, err := eventBus.Subscribe("runs.triggered", func(msg *nats.Msg) {
-		logger.Debug("received runs.triggered event", "data", string(msg.Data))
-		if err := runHandler.HandleRunTriggered(msg); err != nil {
-			logger.Error("failed to handle run triggered", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to runs.triggered", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subRunTriggered)
-	logger.Info("subscribed to runs.triggered")
-
-	// webhooks.* -> process incoming webhook events
-	subWebhooks, err := eventBus.SubscribeManual("webhooks.*", func(msg *nats.Msg) {
-		logger.Debug("received webhook event", "subject", msg.Subject)
-		if err := webhookConsumer.Handle(msg); err != nil {
-			logger.Error("failed to handle webhook event", "error", err)
-		}
-	})
-	if err != nil {
-		logger.Error("failed to subscribe to webhooks.*", "error", err)
-		return 1
-	}
-	shutdownCtx.addSubscription(subWebhooks)
-	logger.Info("subscribed to webhooks.*")
 
 	// Start the minimal health HTTP server used by container health checks.
 	healthPort := envOrDefault("WORKER_HEALTH_PORT", "8081")

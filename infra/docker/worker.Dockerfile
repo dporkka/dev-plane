@@ -45,7 +45,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     -X 'main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" \
     -a -installsuffix cgo \
     -o bin/worker \
-    ./apps/worker/cmd/worker/main.go
+    ./apps/worker/cmd/worker
 
 # ------------------------------------------------------------------------------
 # Stage 2: Runtime

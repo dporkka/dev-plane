@@ -104,7 +104,7 @@ endif
 
 dev-worker: ## Start Go worker service
 	@echo "$(BLUE)[worker]$(RESET) Starting Go worker..."
-	cd apps/worker && go run cmd/worker/main.go
+	cd apps/worker && go run ./cmd/worker
 
 dev-runner: ## Start Go runner (runtime) service
 	@echo "$(BLUE)[runner]$(RESET) Starting Go runner service on port $(RUNNER_PORT)..."
@@ -318,7 +318,7 @@ build-cli: ## Build CLI binary --> bin/dev-plane
 build-worker: ## Build worker binary --> bin/worker
 	@echo "$(BLUE)[build]$(RESET) Building worker..."
 	@mkdir -p $(BIN_DIR)
-	cd apps/worker && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/worker cmd/worker/main.go
+	cd apps/worker && go build -ldflags="-s -w" -o ../../$(BIN_DIR)/worker ./cmd/worker
 	@echo "$(GREEN)Worker binary: $(BIN_DIR)/worker$(RESET)"
 
 build-runner: ## Build runner binary --> bin/runner
