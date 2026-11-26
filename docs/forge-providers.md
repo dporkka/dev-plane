@@ -583,6 +583,21 @@ Focused tests use synthetic local Git smart HTTP and disposable databases:
 go test -race ./packages/prfactory ./apps/api/cmd/forge-push-gitea
 ```
 
+## Durable upstream PR identity receipts
+
+Migration 031 records an independently observed upstream PR numeric ID, PR
+number, exact instance and repository ID, base/head SHAs and approval. The
+PR Factory checks both source and target repository IDs before accepting
+the remote result. The local PR row, identity receipt and task transition
+are committed in one transaction. If persistence fails, the external
+creation intent remains consumed; the outcome must be reconciled, not
+retried. Merge preflight requires the receipt and compares the independently
+read upstream ID. Existing records without a receipt are deliberately not
+eligible; migration does not backfill identity from mutable remote state.
+Rollback refuses to discard nonempty receipt storage. This remains an
+insert-only application convention, not protection against a privileged
+database administrator.
+
 ## Read-only Gitea merge revision preflight
 
 The operator-only command below checks the existing PR creation intent,
@@ -606,7 +621,7 @@ read-only database principal and an independently read-only forge credential.
 The command performs SELECTs and GETs only; no merge is attempted. A pass
 is a point-in-time revision observation, **not authorization to merge**.
 A separate merge approval, policy evaluation, trusted exact-head CI proof,
-branch protection, durable PR identity receipt and single-use merge intent
+branch protection and single-use merge intent
 are still needed. The existing GitHub merge endpoint stays unchanged and
 rejects Gitea. No production Gitea merge is enabled. The Gitea merge API
 supports a head SHA precondition but not an atomic base SHA precondition;

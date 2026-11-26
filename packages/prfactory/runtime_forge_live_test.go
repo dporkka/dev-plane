@@ -80,15 +80,18 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	}
 	gateArgs := []driver.Value{"task-1", "run-1", "repo-1", "project-1", "agent/pilot", "main", int64(1), base}
 	mock.ExpectQuery("SELECT a.approval_id,a.head_sha,a.base_sha").WithArgs(gateArgs...).
-		WillReturnRows(sqlmock.NewRows([]string{"approval_id", "head_sha", "base_sha"}).AddRow("approval-1", expected, baseRef.SHA))
+		WillReturnRows(sqlmock.NewRows([]string{"approval_id", "head_sha", "base_sha", "upstream_repository_id"}).AddRow("approval-1", expected, baseRef.SHA, repo.ID))
 	for i := 0; i < 2; i++ {
 		mock.ExpectQuery("SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id").WithArgs("repo-1", "project-1").
 			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname", "generation", "revoked_at"}).
 				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot", 1, nil))
 	}
 	mock.ExpectExec("INSERT INTO gitea_pr_creation_intents").WithArgs(append(gateArgs, "approval-1", expected, baseRef.SHA, "forgepilot", "pilot")...).WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectBegin()
 	mock.ExpectExec("INSERT INTO pull_requests").WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec("INSERT INTO gitea_pr_identity_receipts").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
 	pr, err := f.CreatePullRequest(ctx, "task-1")
 	if err != nil {
 		t.Fatalf("runtime publication failed: %v", err)

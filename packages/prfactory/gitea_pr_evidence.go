@@ -11,6 +11,7 @@ import (
 
 type giteaPRRevision struct {
 	approvalID, headSHA, baseSHA string
+	upstreamRepositoryID         int64
 }
 
 // Validate the live identity and the exact original approval/review snapshot.
@@ -58,10 +59,10 @@ func (f *Factory) reserveGiteaPR(ctx context.Context, task *models.Task, run *mo
 	}
 	args := []any{task.ID, run.ID, task.RepositoryID, task.ProjectID, head, base, generation, provider.Authority().BaseURL}
 	var revision giteaPRRevision
-	if err := f.db.QueryRowContext(ctx, "SELECT a.approval_id,a.head_sha,a.base_sha"+giteaPRRevisionFrom, args...).Scan(&revision.approvalID, &revision.headSHA, &revision.baseSHA); err != nil {
+	if err := f.db.QueryRowContext(ctx, "SELECT a.approval_id,a.head_sha,a.base_sha,a.upstream_repository_id"+giteaPRRevisionFrom, args...).Scan(&revision.approvalID, &revision.headSHA, &revision.baseSHA, &revision.upstreamRepositoryID); err != nil {
 		return fail()
 	}
-	if !fullSHA(revision.headSHA) || !fullSHA(revision.baseSHA) || revision.headSHA == revision.baseSHA {
+	if revision.upstreamRepositoryID <= 0 || !fullSHA(revision.headSHA) || !fullSHA(revision.baseSHA) || revision.headSHA == revision.baseSHA {
 		return fail()
 	}
 	for _, expected := range []gateway.ForgeBranchRef{{Ref: head, SHA: revision.headSHA}, {Ref: base, SHA: revision.baseSHA}} {
@@ -100,8 +101,11 @@ func (f *Factory) confirmGiteaPR(ctx context.Context, target repositoryTarget, c
 	if !ok || !matches(created) {
 		return fail
 	}
-	observed, err := provider.GetPullRequest(ctx, f.forgeCredential, target.Owner, target.Name, created.Number)
-	if err != nil || !matches(observed) || observed.ID != created.ID {
+	observed, err := provider.GetMergeSnapshot(ctx, f.forgeCredential, target.Owner, target.Name, created.Number)
+	if err != nil || observed.ID != created.ID || observed.State != "open" || observed.Draft || observed.Merged ||
+		observed.HTMLURL != created.HTMLURL || observed.Head.Ref != head || observed.Head.SHA != revision.headSHA ||
+		observed.Base.Ref != base || observed.Base.SHA != revision.baseSHA ||
+		observed.Head.Repo.ID != revision.upstreamRepositoryID || observed.Base.Repo.ID != revision.upstreamRepositoryID {
 		return fail
 	}
 	return nil

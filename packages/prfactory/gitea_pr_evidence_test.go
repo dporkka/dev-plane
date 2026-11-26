@@ -34,7 +34,7 @@ func TestGiteaPRConfirmationRejectsChangedProviderState(t *testing.T) {
 				if tc.changed {
 					sha = base
 				}
-				_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/task", "sha": sha}, "base": map[string]any{"ref": "main", "sha": base}})
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/task", "sha": sha, "repo": map[string]any{"id": 77}}, "base": map[string]any{"ref": "main", "sha": base, "repo": map[string]any{"id": 77}}})
 			}))
 			defer server.Close()
 			forge, err := gateway.NewGiteaForge(server.URL, nil)
@@ -46,7 +46,7 @@ func TestGiteaPRConfirmationRejectsChangedProviderState(t *testing.T) {
 			if tc.wrongResponse {
 				created.Head.SHA = base
 			}
-			err = factory.confirmGiteaPR(context.Background(), repositoryTarget{Owner: "acme", Name: "widget"}, created, giteaPRRevision{headSHA: head, baseSHA: base}, "agent/task", "main")
+			err = factory.confirmGiteaPR(context.Background(), repositoryTarget{Owner: "acme", Name: "widget"}, created, giteaPRRevision{headSHA: head, baseSHA: base, upstreamRepositoryID: 77}, "agent/task", "main")
 			if tc.changed || tc.wrongResponse {
 				if !errors.Is(err, ErrReviewedPush) {
 					t.Fatalf("mismatch accepted: %v", err)

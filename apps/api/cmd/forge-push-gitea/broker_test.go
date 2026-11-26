@@ -63,6 +63,7 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	remoteHead.Store(head)
 	var prMismatch atomic.Bool
 	var foreignPR atomic.Bool
+	var substitutedPR atomic.Bool
 	var staleBase atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -105,7 +106,12 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 			if prMismatch.Load() {
 				sha = base
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/concurrent", "sha": sha, "repo": map[string]any{"id": func() int {
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": func() int {
+				if substitutedPR.Load() {
+					return 71
+				}
+				return 70
+			}(), "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/concurrent", "sha": sha, "repo": map[string]any{"id": func() int {
 				if foreignPR.Load() {
 					return 88
 				}
@@ -358,6 +364,21 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 		if err := check(request); err != nil {
 			t.Fatalf("valid merge preflight failed: %v", err)
 		}
+		substitutedPR.Store(true)
+		if err := check(request); err == nil {
+			t.Fatal("substituted upstream PR ID accepted")
+		}
+		substitutedPR.Store(false)
+		var upstream int64
+		if err := database.QueryRow("SELECT upstream_pr_id FROM gitea_pr_identity_receipts WHERE pull_request_id=$1", pr.ID).Scan(&upstream); err != nil || upstream != 70 {
+			t.Fatal("missing identity receipt", err)
+		}
+		execSQL("ALTER TABLE gitea_pr_identity_receipts RENAME TO unavailable_identity_receipts")
+		if err := check(request); err == nil {
+			t.Fatal("missing identity receipt accepted")
+		}
+		execSQL("ALTER TABLE unavailable_identity_receipts RENAME TO gitea_pr_identity_receipts")
+
 		wrong := request
 		wrong.ExpectedHeadSHA = base
 		if err := check(wrong); err == nil {

@@ -35,12 +35,15 @@ type mergeCandidate struct {
 }
 
 const mergeCandidateSQL = `
- SELECT pr.id,a.approval_id,a.head_sha,a.base_sha,b.upstream_repository_id,pr.number,
+ SELECT pr.id,a.approval_id,a.head_sha,a.base_sha,b.upstream_repository_id,ir.upstream_pr_id,pr.number,
  r.owner,r.name,a.branch,a.base_branch,pr.url,b.instance_url
  FROM pull_requests pr
  JOIN gitea_pr_creation_intents i ON i.task_id=pr.task_id
  JOIN gitea_revision_attestations a ON a.approval_id=i.approval_id AND a.task_id=pr.task_id AND a.run_id=pr.run_id
   AND a.repository_id=pr.repository_id AND a.branch=pr.branch AND a.base_branch=pr.base_branch
+ JOIN gitea_pr_identity_receipts ir ON ir.pull_request_id=pr.id AND ir.approval_id=a.approval_id
+  AND ir.instance_url=a.instance_url AND ir.upstream_repository_id=a.upstream_repository_id
+  AND ir.upstream_pr_number=pr.number AND ir.head_sha=a.head_sha AND ir.base_sha=a.base_sha AND ir.confirmed_at>=i.requested_at
  JOIN gitea_publication_receipts rc ON rc.approval_id=a.approval_id AND rc.observed_head_sha=a.head_sha
  JOIN tasks t ON t.id=a.task_id AND t.repository_id=a.repository_id AND t.project_id=a.project_id
   AND t.workspace_id=a.workspace_id AND t.deleted_at IS NULL AND t.status='pr_created' AND t.target_branch=a.base_branch
@@ -72,8 +75,8 @@ const mergeCandidateSQL = `
 func loadMergeCandidate(ctx context.Context, db *sql.DB, req GiteaMergePreflightRequest) (mergeCandidate, error) {
 	var c mergeCandidate
 	err := db.QueryRowContext(ctx, mergeCandidateSQL, req.PullRequestID, req.RepositoryID, req.ProjectID, req.OrganizationID, req.ExpectedHeadSHA, req.ExpectedBaseSHA, req.ExpectedGeneration).
-		Scan(&c.PullRequestID, &c.ApprovalID, &c.HeadSHA, &c.BaseSHA, &c.UpstreamRepositoryID, &c.Number, &c.owner, &c.name, &c.branch, &c.baseBranch, &c.htmlURL, &c.instanceURL)
-	if err != nil || !strings.HasPrefix(c.branch, "agent/") || c.branch == c.baseBranch || c.Number <= 0 || c.UpstreamRepositoryID <= 0 {
+		Scan(&c.PullRequestID, &c.ApprovalID, &c.HeadSHA, &c.BaseSHA, &c.UpstreamRepositoryID, &c.UpstreamPullRequestID, &c.Number, &c.owner, &c.name, &c.branch, &c.baseBranch, &c.htmlURL, &c.instanceURL)
+	if err != nil || !strings.HasPrefix(c.branch, "agent/") || c.branch == c.baseBranch || c.Number <= 0 || c.UpstreamRepositoryID <= 0 || c.UpstreamPullRequestID <= 0 {
 		return mergeCandidate{}, ErrGiteaMergePreflight
 	}
 	return c, nil
@@ -118,7 +121,7 @@ func CheckGiteaMergePreflight(ctx context.Context, db *sql.DB, req GiteaMergePre
 		}
 	}
 	remote, err := forge.GetMergeSnapshot(ctx, cred, c.owner, c.name, c.Number)
-	if err != nil || remote.State != "open" || remote.Draft || remote.Merged || remote.HTMLURL != expectedURL ||
+	if err != nil || remote.ID != c.UpstreamPullRequestID || remote.State != "open" || remote.Draft || remote.Merged || remote.HTMLURL != expectedURL ||
 		remote.Head.Repo.ID != c.UpstreamRepositoryID || remote.Base.Repo.ID != c.UpstreamRepositoryID ||
 		remote.Head.Ref != c.branch || remote.Base.Ref != c.baseBranch || remote.Head.SHA != c.HeadSHA || remote.Base.SHA != c.BaseSHA {
 		return fail("remote PR revision or repository identity changed")
@@ -127,6 +130,5 @@ func CheckGiteaMergePreflight(ctx context.Context, db *sql.DB, req GiteaMergePre
 	if err != nil || latest != c {
 		return fail("local authority changed during remote checks")
 	}
-	c.UpstreamPullRequestID = remote.ID
 	return c.GiteaMergePreflight, nil
 }

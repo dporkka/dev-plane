@@ -290,18 +290,24 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		UpdatedAt:  time.Now().UTC(),
 	}
 
-	if err := f.createPRRecord(ctx, pr); err != nil {
-		return nil, fmt.Errorf("save PR record: %w", err)
-	}
+	if gitea {
+		if err := f.saveGiteaPRIdentity(ctx, task, run, target, pr, created.ID, revision); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := f.createPRRecord(ctx, pr); err != nil {
+			return nil, fmt.Errorf("save PR record: %w", err)
+		}
 
-	// 9. Update task status to pr_created
-	now := time.Now().UTC()
-	_, err = f.db.ExecContext(ctx, `
+		// 9. Update task status to pr_created
+		now := time.Now().UTC()
+		_, err = f.db.ExecContext(ctx, `
 		UPDATE tasks SET status = 'pr_created', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL
 	`, now, taskID)
-	if err != nil {
-		f.logger.Warn("failed to update task status to pr_created", "error", err)
+		if err != nil {
+			f.logger.Warn("failed to update task status to pr_created", "error", err)
+		}
 	}
 
 	f.logger.Info("pull request created",
