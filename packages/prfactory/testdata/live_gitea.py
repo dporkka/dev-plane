@@ -132,11 +132,11 @@ LEVEL = Warn
                 "default_branch": "main", "description": "synthetic fixture only",
             })
             api("POST", "/repos/forgepilot/pilot/branches", {
-                "new_branch_name": "agent-pilot", "old_branch_name": "main",
+                "new_branch_name": "agent/pilot", "old_branch_name": "main",
             })
             result = api("POST", "/repos/forgepilot/pilot/contents/agent.txt", {
                 "content": base64.b64encode(b"synthetic agent change\n").decode(),
-                "branch": "agent-pilot", "message": "test agent change",
+                "branch": "agent/pilot", "message": "test agent change",
             })
             head = result["commit"]["sha"]
             print("Synthetic private repository and branch seeded", flush=True)

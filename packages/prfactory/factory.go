@@ -166,6 +166,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	// 3. Get review report
 	rev := reviewer.NewReviewer(f.db, f.logger)
 	report, err := rev.Get(ctx, run.ID)
+	reviewAvailable := err == nil
 	if err != nil {
 		f.logger.Warn("no review report found, generating default", "error", err)
 		report = &reviewer.ReviewReport{
@@ -229,7 +230,7 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 
 	// A mutable host worktree can install hooks/credential helpers. Never
 	// attach Gitea write credentials to it. Isolated export/push is a separate
-	// broker operation; existing remote branches can still be published.
+	// broker operation; Gitea PR creation requires a confirmed publication receipt.
 	if (target.Forge.Provider == models.ForgeProviderGitea || GiteaCredentialsConfigured()) && workspacePath != "" {
 		return nil, fmt.Errorf("%w: host-worktree push is not authorized on a Gitea credential-bearing process", ErrGiteaRepositoryBinding)
 	}
@@ -248,9 +249,26 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 	}
 
 	draft := report.RiskLevel == "high" || report.RiskLevel == "critical"
+	var revision giteaPRRevision
+	gitea := target.Forge.Provider == models.ForgeProviderGitea
+	if gitea {
+		if !reviewAvailable || !report.Approvable || draft {
+			return nil, fmt.Errorf("%w: Gitea requires an approvable non-draft review", ErrReviewedPush)
+		}
+		revision, err = f.reserveGiteaPR(ctx, task, run, target, workspaceBranch, branch)
+		if err != nil {
+			return nil, err
+		}
+	}
 	created, err := f.createForgePR(ctx, target.Owner, target.Name, prTitle, prBody, workspaceBranch, branch, draft)
 	if err != nil {
 		return nil, fmt.Errorf("create %s pull request: %w", f.forge.Name(), err)
+	}
+
+	if gitea {
+		if err := f.confirmGiteaPR(ctx, target, created, revision, workspaceBranch, branch); err != nil {
+			return nil, err
+		}
 	}
 
 	// 8. Create PR record

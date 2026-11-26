@@ -4,6 +4,7 @@ package prfactory
 
 import (
 	"context"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -47,7 +48,7 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	mock.ExpectQuery("SELECT id, run_id, summary, findings").WithArgs("run-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id", "run_id", "summary", "findings", "risk_level", "approvable", "suggestions", "test_coverage", "security_notes", "diff_summary", "created_at"}).AddRow("review-1", "run-1", "synthetic review", nil, "low", true, nil, "fixture", "fixture", nil, now))
 	mock.ExpectQuery("SELECT id, repository_id, task_id, name, branch").WithArgs("workspace-1").
-		WillReturnRows(sqlmock.NewRows([]string{"id", "repository_id", "task_id", "name", "branch", "base_branch", "worktree_path", "runtime_provider", "runtime_session_id", "status", "preview_url", "settings", "created_at", "updated_at", "deleted_at"}).AddRow("workspace-1", "repo-1", "task-1", "pilot", "agent-pilot", "main", nil, "local", nil, "ready", nil, nil, now, now, nil))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "repository_id", "task_id", "name", "branch", "base_branch", "worktree_path", "runtime_provider", "runtime_session_id", "status", "preview_url", "settings", "created_at", "updated_at", "deleted_at"}).AddRow("workspace-1", "repo-1", "task-1", "pilot", "agent/pilot", "main", nil, "docker", nil, "ready", nil, nil, now, now, nil))
 	mock.ExpectQuery("SELECT owner, name, settings FROM repositories").WithArgs("repo-1", "project-1").
 		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow("forgepilot", "pilot", fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base)))
 	f := NewFactory(db, nil)
@@ -69,13 +70,30 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname", "generation", "revoked_at"}).
 				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot", 1, nil))
 	}
+	branchReader, ok := f.forge.(*gateway.GiteaForge)
+	if !ok {
+		t.Fatal("missing Gitea branch capability")
+	}
+	baseRef, err := branchReader.GetBranch(ctx, f.forgeCredential, "forgepilot", "pilot", "main")
+	if err != nil || len(baseRef.SHA) != 40 {
+		t.Fatalf("fixture base lookup: %v", err)
+	}
+	gateArgs := []driver.Value{"task-1", "run-1", "repo-1", "project-1", "agent/pilot", "main", int64(1), base}
+	mock.ExpectQuery("SELECT a.approval_id,a.head_sha,a.base_sha").WithArgs(gateArgs...).
+		WillReturnRows(sqlmock.NewRows([]string{"approval_id", "head_sha", "base_sha"}).AddRow("approval-1", expected, baseRef.SHA))
+	for i := 0; i < 2; i++ {
+		mock.ExpectQuery("SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id").WithArgs("repo-1", "project-1").
+			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname", "generation", "revoked_at"}).
+				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot", 1, nil))
+	}
+	mock.ExpectExec("INSERT INTO gitea_pr_creation_intents").WithArgs(append(gateArgs, "approval-1", expected, baseRef.SHA, "forgepilot", "pilot")...).WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("INSERT INTO pull_requests").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").WillReturnResult(sqlmock.NewResult(0, 1))
 	pr, err := f.CreatePullRequest(ctx, "task-1")
 	if err != nil {
 		t.Fatalf("runtime publication failed: %v", err)
 	}
-	if pr.Number <= 0 || pr.Branch != "agent-pilot" || pr.BaseBranch != "main" {
+	if pr.Number <= 0 || pr.Branch != "agent/pilot" || pr.BaseBranch != "main" {
 		t.Fatal("unexpected published PR identity")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

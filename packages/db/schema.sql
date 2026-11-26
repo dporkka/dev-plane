@@ -731,3 +731,10 @@ CREATE TABLE IF NOT EXISTS gitea_publication_receipts (
     FOREIGN KEY (approval_id, observed_head_sha)
       REFERENCES gitea_revision_attestations(approval_id, head_sha)
 );
+
+-- 30. Single-use Gitea PR creation intents
+CREATE TABLE IF NOT EXISTS gitea_pr_creation_intents (
+    approval_id UUID PRIMARY KEY REFERENCES gitea_publication_receipts(approval_id),
+    task_id UUID NOT NULL UNIQUE REFERENCES tasks(id),
+    requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
