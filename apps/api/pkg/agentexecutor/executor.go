@@ -113,21 +113,21 @@ func (e *Executor) ExecuteRun(ctx context.Context, runID string) error {
 		return errors.New("agent run id is required")
 	}
 
-	var metadataRaw string
-	if err := e.db.QueryRowContext(ctx, `
-		SELECT COALESCE(metadata, '{}')
-		FROM agent_runs
-		WHERE id = $1
-	`, runID).Scan(&metadataRaw); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("agent run %s not found", runID)
-		}
-		return fmt.Errorf("load agent run execution metadata: %w", err)
-	}
-
-	backend, err := executionBackend(metadataRaw)
+	authority, err := loadRunAuthority(ctx, e.db, runID)
 	if err != nil {
 		return err
+	}
+	backend, err := executionBackend(authority.metadata)
+	if err != nil {
+		return err
+	}
+	if err := authority.authorize(ctx, e.db, backend, runtimes.VerifyGiteaDockerWorkspace); err != nil {
+		return err
+	}
+	// Detect a changed run/tenant/workspace during authority verification.
+	current, err := loadRunAuthority(ctx, e.db, runID)
+	if err != nil || current != authority {
+		return errRunRepositoryAuthority
 	}
 	switch backend {
 	case executionBackendLegacy:

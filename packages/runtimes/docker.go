@@ -30,11 +30,12 @@ type commandRunner interface {
 }
 
 type commandOptions struct {
-	Dir    string
-	Env    map[string]string
-	Stdin  io.Reader
-	Stdout io.Writer
-	Stderr io.Writer
+	Dir      string
+	Env      map[string]string
+	ExactEnv []string // nil preserves the legacy inherited environment
+	Stdin    io.Reader
+	Stdout   io.Writer
+	Stderr   io.Writer
 }
 
 type commandOutput struct {
@@ -53,9 +54,13 @@ type execRunner struct{}
 func (execRunner) Run(ctx context.Context, name string, args []string, opts commandOptions) (commandOutput, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = opts.Dir
-	cmd.Env = os.Environ()
-	for k, v := range opts.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
+	if opts.ExactEnv != nil {
+		cmd.Env = opts.ExactEnv
+	} else {
+		cmd.Env = os.Environ()
+		for k, v := range opts.Env {
+			cmd.Env = append(cmd.Env, k+"="+v)
+		}
 	}
 	cmd.Stdin = opts.Stdin
 
@@ -211,6 +216,10 @@ func (p *DockerProvider) AttachSession(ctx context.Context, sessionID, workspace
 
 // CreateWorkspace provisions a new Docker-based workspace.
 func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest) (*Session, error) {
+	return p.createWorkspace(ctx, req, nil)
+}
+
+func (p *DockerProvider) createWorkspace(ctx context.Context, req CreateRequest, grant *GiteaWorkspaceGrant) (*Session, error) {
 	if req.CloneURL == "" {
 		return nil, fmt.Errorf("clone url is required")
 	}
@@ -219,6 +228,10 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	volume := "dev-plane-" + sessionID + "-workspace"
 	sessionDir := filepath.Join(p.baseDir, sessionID)
 	stagingRepo := filepath.Join(sessionDir, "repo")
+	dockerOpts := commandOptions{}
+	if grant != nil {
+		dockerOpts.ExactEnv = giteaDockerEnv()
+	}
 
 	if err := os.MkdirAll(sessionDir, 0755); err != nil {
 		return nil, fmt.Errorf("create session directory: %w", err)
@@ -227,19 +240,25 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 	defer func() {
 		if cleanupOnError {
 			_ = os.RemoveAll(sessionDir)
-			_, _ = p.runner.Run(context.Background(), "docker", []string{"rm", "-f", container}, commandOptions{})
-			_, _ = p.runner.Run(context.Background(), "docker", []string{"volume", "rm", "-f", volume}, commandOptions{})
+			_, _ = p.runner.Run(context.Background(), "docker", []string{"rm", "-f", container}, dockerOpts)
+			_, _ = p.runner.Run(context.Background(), "docker", []string{"volume", "rm", "-f", volume}, dockerOpts)
 		}
 	}()
 
-	if out, err := p.runner.Run(ctx, "git", []string{"clone", req.CloneURL, stagingRepo}, commandOptions{}); err != nil {
-		return nil, fmt.Errorf("git clone: %w (stderr: %s)", err, out.Stderr)
-	}
-	if err := p.checkoutBranch(ctx, stagingRepo, req); err != nil {
-		return nil, err
+	if grant != nil {
+		if err := cloneGiteaRepository(ctx, p.runner, stagingRepo, req, *grant); err != nil {
+			return nil, err
+		}
+	} else {
+		if out, err := p.runner.Run(ctx, "git", []string{"clone", req.CloneURL, stagingRepo}, commandOptions{}); err != nil {
+			return nil, fmt.Errorf("git clone: %w (stderr: %s)", err, out.Stderr)
+		}
+		if err := p.checkoutBranch(ctx, stagingRepo, req); err != nil {
+			return nil, err
+		}
 	}
 
-	if out, err := p.runner.Run(ctx, "docker", []string{"volume", "create", volume}, commandOptions{}); err != nil {
+	if out, err := p.runner.Run(ctx, "docker", []string{"volume", "create", volume}, dockerOpts); err != nil {
 		return nil, fmt.Errorf("docker volume create: %w (stderr: %s)", err, out.Stderr)
 	}
 
@@ -259,24 +278,36 @@ func (p *DockerProvider) CreateWorkspace(ctx context.Context, req CreateRequest)
 		"--workdir", workspaceDir,
 		"--entrypoint", "sh",
 	}
+	if grant != nil {
+		// Only an operator-approved, already-installed image may run.
+		runArgs = append(runArgs, "--pull=never")
+		for key, value := range grant.labels() {
+			runArgs = append(runArgs, "--label", key+"="+value)
+		}
+	}
 	for k, v := range req.Env {
 		runArgs = append(runArgs, "-e", k+"="+v)
 	}
 	runArgs = append(runArgs, p.image, "-c", "sleep infinity")
-	if out, err := p.runner.Run(ctx, "docker", runArgs, commandOptions{}); err != nil {
+	if out, err := p.runner.Run(ctx, "docker", runArgs, dockerOpts); err != nil {
 		return nil, fmt.Errorf("docker run: %w (stderr: %s)", err, out.Stderr)
 	}
-	if out, err := p.runner.Run(ctx, "docker", []string{"exec", container, "mkdir", "-p", workspaceDir}, commandOptions{}); err != nil {
+	if out, err := p.runner.Run(ctx, "docker", []string{"exec", container, "mkdir", "-p", workspaceDir}, dockerOpts); err != nil {
 		return nil, fmt.Errorf("docker mkdir workspace: %w (stderr: %s)", err, out.Stderr)
 	}
 	// Append "/." explicitly so docker cp copies the contents of the staging
 	// directory into /workspace. filepath.Join(stagingRepo, ".") collapses to
 	// stagingRepo, which would copy the directory itself as /workspace/repo.
 	srcPath := stagingRepo + string(filepath.Separator) + "."
-	if out, err := p.runner.Run(ctx, "docker", []string{"cp", srcPath, container + ":" + workspaceDir + "/"}, commandOptions{}); err != nil {
+	if out, err := p.runner.Run(ctx, "docker", []string{"cp", srcPath, container + ":" + workspaceDir + "/"}, dockerOpts); err != nil {
 		return nil, fmt.Errorf("docker copy workspace: %w (stderr: %s)", err, out.Stderr)
 	}
 
+	if grant != nil {
+		if err := verifyGiteaDockerWorkspace(ctx, p.runner, sessionID, *grant); err != nil {
+			return nil, err
+		}
+	}
 	now := time.Now()
 	sess := &dockerSession{
 		id:          sessionID,

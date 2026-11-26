@@ -259,3 +259,13 @@ func (f *Factory) verifyGiteaTarget(ctx context.Context, repositoryID, projectID
 	}
 	return nil
 }
+
+// GiteaCredentialsConfigured identifies a credential-bearing worker.
+func GiteaCredentialsConfigured() bool {
+	for _, key := range []string{"GITEA_TOKEN", "GITEA_CLONE_TOKEN", "GITEA_GIT_PASSWORD", "GITEA_WEBHOOK_SECRET"} {
+		if os.Getenv(key) != "" {
+			return true
+		}
+	}
+	return false
+}

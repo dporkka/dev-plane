@@ -227,6 +227,12 @@ func (f *Factory) CreatePullRequest(ctx context.Context, taskID string) (*models
 		return nil, err
 	}
 
+	// A mutable host worktree can install hooks/credential helpers. Never
+	// attach Gitea write credentials to it. Isolated export/push is a separate
+	// broker operation; existing remote branches can still be published.
+	if (target.Forge.Provider == models.ForgeProviderGitea || GiteaCredentialsConfigured()) && workspacePath != "" {
+		return nil, fmt.Errorf("%w: host-worktree push is not authorized on a Gitea credential-bearing process", ErrGiteaRepositoryBinding)
+	}
 	if workspacePath != "" {
 		// A workspace is mutable agent-controlled state. Verify its actual origin
 		// against repository authority before GIT_ASKPASS can expose credentials.
