@@ -1495,6 +1495,52 @@ func buildPaths() map[string]PathItem {
 		},
 	}
 
+	// Browser verification queue (submission is not execution).
+	paths["/api/v1/organizations/{orgID}/browser-jobs"] = PathItem{
+		Post: &Operation{
+			Tags: []string{"Browser Jobs"}, Summary: "Enqueue read-only browser verification",
+			Description: "Owner/admin only. Requires server-configured BROWSER_ALLOWED_ORIGINS. Does not execute a browser.",
+			OperationID: "createBrowserJob", Security: []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string"}}},
+			RequestBody: &RequestBody{Required: true, Content: map[string]MediaType{"application/json": {
+				Schema: &Schema{Type: "object", Required: []string{"idempotency_key", "start_url", "checks", "timeout_ms"}, Properties: map[string]*Schema{
+					"idempotency_key": {Type: "string"},
+					"start_url":       {Type: "string", Format: "uri"},
+					"checks": {Type: "array", Items: &Schema{Type: "object", Required: []string{"type", "value"}, Properties: map[string]*Schema{
+						"type":  {Type: "string", Enum: []interface{}{"text_visible", "selector_visible"}},
+						"value": {Type: "string"},
+					}}},
+					"timeout_ms": {Type: "integer"},
+					"capture":    {Type: "object", Properties: map[string]*Schema{"screenshot": {Type: "boolean"}, "trace": {Type: "boolean"}}},
+				}},
+			}}},
+			Responses: map[string]Response{
+				"200": {Description: "Existing idempotent job"},
+				"202": {Description: "Job queued"},
+				"400": {Description: "Invalid job contract or disabled browser verification"},
+				"401": {Description: "Unauthorized"},
+				"403": {Description: "Admin required"},
+				"404": {Description: "Organization not found"},
+				"409": {Description: "Idempotency conflict"},
+			},
+		},
+	}
+	paths["/api/v1/organizations/{orgID}/browser-jobs/{id}"] = PathItem{
+		Get: &Operation{
+			Tags: []string{"Browser Jobs"}, Summary: "Get browser verification job status",
+			OperationID: "getBrowserJob", Security: []SecurityRequirement{{"bearerAuth": {}}},
+			Parameters: []Parameter{
+				{Name: "orgID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{Name: "id", In: "path", Required: true, Schema: &Schema{Type: "string", Format: "uuid"}},
+			},
+			Responses: map[string]Response{
+				"200": {Description: "Tenant-scoped job status"},
+				"401": {Description: "Unauthorized"},
+				"404": {Description: "Job or organization not found"},
+			},
+		},
+	}
+
 	// Policies
 	paths["/api/v1/organizations/{orgID}/policies"] = PathItem{
 		Get: &Operation{

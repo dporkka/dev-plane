@@ -24,6 +24,7 @@ func TestRunMigrationsSQLite(t *testing.T) {
 
 	for _, table := range []string{
 		"agent_messages",
+		"browser_jobs",
 		"agent_runs",
 		"agent_steps",
 		"approvals",
