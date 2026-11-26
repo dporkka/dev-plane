@@ -174,7 +174,7 @@ func TestGiteaBindingOwnsNumericIdentity(t *testing.T) {
 	}
 	exec("UPDATE projects SET organization_id='00000001-0000-4000-8000-000000000001' WHERE id='00000002-0000-4000-8000-000000000001'")
 	// A pre-lifecycle rollback must be safe; after a transition it is forbidden.
-	if err := goose.Down(db, "../../../../packages/db/migrations"); err != nil {
+	if err := goose.DownTo(db, "../../../../packages/db/migrations", 27); err != nil {
 		t.Fatalf("pre-lifecycle rollback failed: %v", err)
 	}
 	if err := goose.Up(db, "../../../../packages/db/migrations"); err != nil {
@@ -213,7 +213,7 @@ func TestGiteaBindingOwnsNumericIdentity(t *testing.T) {
 		t.Fatalf("revoked status=%s %v", status, err)
 	}
 	// The failed down must preserve the tombstone and the audit record.
-	if err := goose.Down(db, "../../../../packages/db/migrations"); err == nil {
+	if err := goose.DownTo(db, "../../../../packages/db/migrations", 27); err == nil {
 		t.Fatal("rollback discarded revocation history")
 	}
 	lifecycle.ExpectedGeneration = 2

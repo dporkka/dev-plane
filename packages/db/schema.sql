@@ -699,3 +699,35 @@ CREATE TABLE IF NOT EXISTS gitea_binding_lifecycle_events (
     occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (repository_id, authorization_generation)
 );
+
+-- 29. Single-use revision attestations and publication receipts
+CREATE TABLE IF NOT EXISTS gitea_revision_attestations (
+    approval_id UUID PRIMARY KEY REFERENCES approvals(id),
+    task_id UUID NOT NULL REFERENCES tasks(id),
+    run_id UUID NOT NULL REFERENCES agent_runs(id),
+    review_id UUID NOT NULL REFERENCES review_reports(id),
+    workspace_id UUID NOT NULL REFERENCES workspaces(id),
+    repository_id UUID NOT NULL REFERENCES gitea_repository_bindings(repository_id),
+    project_id UUID NOT NULL REFERENCES projects(id),
+    organization_id UUID NOT NULL REFERENCES organizations(id),
+    approved_by UUID NOT NULL REFERENCES users(id),
+    instance_url TEXT NOT NULL,
+    upstream_repository_id BIGINT NOT NULL CHECK (upstream_repository_id > 0),
+    authorization_generation BIGINT NOT NULL CHECK (authorization_generation > 0),
+    branch TEXT NOT NULL,
+    base_branch TEXT NOT NULL,
+    base_sha TEXT NOT NULL CHECK (LENGTH(base_sha) = 40),
+    head_sha TEXT NOT NULL CHECK (LENGTH(head_sha) = 40 AND head_sha <> base_sha),
+    approval_responded_at TIMESTAMPTZ NOT NULL,
+    review_created_at TIMESTAMPTZ NOT NULL,
+    attested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE (repository_id, branch),
+    UNIQUE (approval_id, head_sha)
+);
+CREATE TABLE IF NOT EXISTS gitea_publication_receipts (
+    approval_id UUID PRIMARY KEY,
+    observed_head_sha TEXT NOT NULL CHECK (LENGTH(observed_head_sha) = 40),
+    confirmed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (approval_id, observed_head_sha)
+      REFERENCES gitea_revision_attestations(approval_id, head_sha)
+);

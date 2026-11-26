@@ -537,12 +537,31 @@ revocation after the final check cannot be made atomic with the remote
 Git mutation; restrict remote permissions, coordinate the operator and
 stop credentials upstream in emergencies.
 
-This is a manual pilot, not production end-to-end publication. The command
-has no durable immutable review-to-SHA attestation, publication receipt,
-automated workspace export, or automatic integration with PR Factory. The
-existing PR Factory path is unchanged. The next gate is persisting verified
-revision evidence and requiring the confirmed remote head for PR creation
-and subsequent exact-head merge. Do not enable automatic agent publication.
+Migration 029 adds an insert-only revision attestation and publication
+receipt ledger. After bundle, remote base and authority checks, the broker
+records an attestation before attempting any Git mutation. This binds the
+operator-confirmed base/head SHA, task, run, review, approval, approval actor,
+workspace, repository identity, tenant, branch and authorization generation.
+Each approval and repository/branch pair is single-use, even if a remote
+branch is subsequently deleted. The receipt records the independently observed
+exact head only after a successful push. A failed or interrupted push, or a
+receipt write failure, leaves a consumed intent without a receipt. Never
+delete the intent or blindly retry. Reconcile the remote state manually;
+an automated reconciliation operation does not yet exist. Migration rollback
+is refused once either ledger contains evidence.
+
+The broker only inserts evidence; database owners can still alter it.
+Production database permissions must prevent application roles from updating
+or deleting evidence and restrict who can insert it. The approval actor is
+the existing database approver, not an authenticated identity for the CLI
+operator. The attestation records the operator's explicit confirmation at
+publication time, not a signed or independently authenticated review of the
+SHA. Existing review reports still do not themselves store the commit SHA.
+
+This is a manual pilot, not production end-to-end publication. Automated
+workspace export, PR Factory enforcement of the receipt and exact-head
+merge remain unimplemented. The existing PR Factory path is unchanged.
+Do not enable automatic agent publication.
 
 Focused tests use synthetic local Git smart HTTP and disposable databases:
 
