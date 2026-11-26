@@ -15,6 +15,11 @@ import (
 // interpret a provider whose delivery semantics are not implemented.
 var ErrUnsupportedForgeProvider = errors.New("unsupported forge provider")
 
+// ErrForgeWebhookBodyTooLarge signals an oversized webhook before verification.
+var ErrForgeWebhookBodyTooLarge = errors.New("forge webhook exceeds size limit")
+
+const maxGiteaWebhookBytes = 10 * 1024 * 1024
+
 // ValidateGiteaWebhook validates Gitea's native X-Gitea-Signature header. The
 // header is the lowercase hexadecimal HMAC-SHA256 digest without a prefix.
 func ValidateGiteaWebhook(payload []byte, signature, secret string) bool {
@@ -36,9 +41,12 @@ func ComputeGiteaWebhookSignature(payload []byte, secret string) string {
 // accepted as a fallback.
 func ParseGiteaWebhook(r *http.Request, secret string) (*WebhookEvent, error) {
 	defer func() { _ = r.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(r.Body, 10*1024*1024))
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxGiteaWebhookBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read webhook body: %w", err)
+	}
+	if len(body) > maxGiteaWebhookBytes {
+		return nil, ErrForgeWebhookBodyTooLarge
 	}
 
 	signature := strings.TrimSpace(r.Header.Get("X-Gitea-Signature"))
