@@ -357,6 +357,55 @@ func TestRouter_SelectModel_NoProvidersAvailable(t *testing.T) {
 	}
 }
 
+// ProvidersForMode must never add direct API providers to the exclusive gateway lane.
+func TestProvidersForMode_BifrostOnly(t *testing.T) {
+	providers, err := ProvidersForMode("bifrost-only")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(providers) != 1 || providers[0].Name() != "bifrost" {
+		t.Fatalf("bifrost-only must return exactly Bifrost, got %v", providerNames(providers))
+	}
+}
+
+func TestProvidersForMode_LegacyPreservesExistingProviders(t *testing.T) {
+	providers, err := ProvidersForMode("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(providers) != len(AllProviders()) {
+		t.Fatalf("legacy provider set changed")
+	}
+}
+
+func TestProvidersForMode_UnknownFailsClosed(t *testing.T) {
+	providers, err := ProvidersForMode(" bifrsot-only ")
+	if err == nil || len(providers) != 0 {
+		t.Fatalf("unknown routing mode must not enable direct API egress")
+	}
+}
+
+func TestProvidersForMode_BifrostOnlyWithoutCredentialCannotRoute(t *testing.T) {
+	t.Setenv("BIFROST_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "fake-direct-key")
+	providers, err := ProvidersForMode("bifrost-only")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := NewRouter(DefaultConfig(), providers...)
+	if got := router.AvailableProviders(); len(got) != 0 {
+		t.Fatalf("gateway absent: direct API credentials must never become a fallback: %v", got)
+	}
+}
+
+func providerNames(providers []Provider) []string {
+	var names []string
+	for _, provider := range providers {
+		names = append(names, provider.Name())
+	}
+	return names
+}
+
 // TestRouter_RouteCall verifies call routing to the correct provider.
 func TestRouter_RouteCall(t *testing.T) {
 	p1 := &mockProvider{
