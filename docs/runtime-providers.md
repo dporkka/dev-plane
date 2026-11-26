@@ -188,7 +188,35 @@ The `runner` service (`apps/runner`) exposes any in-process provider over HTTP. 
 
 ## Future Providers
 
-> These providers are not implemented yet. The only supported providers are `local` and `docker`.
+## Nulang Cloud Runtime
+
+`packages/runtimes/nulang_cloud.go` adapts Dev Plane's workspace lifecycle to the
+versioned `platform.sandbox.v1` contract owned by Nulang Cloud. Configure it with:
+
+| Variable | Description |
+|----------|-------------|
+| `WORKSPACE_RUNTIME=nulang-cloud` | Select the Nulang Cloud provider |
+| `NULANG_CLOUD_URL` | Sandbox service base URL |
+| `NULANG_CLOUD_TOKEN` | Internal service credential sent as `X-Internal-Auth-Token` |
+
+Leave `RUNNER_URL` empty when selecting this provider; a configured remote runner takes
+precedence at process startup.
+
+The default coding-agent sandbox request is bounded (1 CPU, 2 GiB memory, 8 GiB disk,
+30 minutes), has network disabled, requests manual checkpointing, and marks the workload
+as interactive with arbitrary binaries. Runtime remains `auto`: Nulang Cloud owns the
+Firecracker/WASM/unikernel placement decision. Plaintext `CreateRequest.Env` values are
+rejected for this provider; credentials must be represented by secret references or
+brokered host capabilities.
+
+The initial integration is a wire adapter. Production use remains gated on Nulang
+Cloud exposing the corresponding `/v1/sandboxes` lifecycle and passing its real-KVM
+qualification gates.
+
+## Future Providers
+
+> The providers below remain planned; supported in-process providers are `local`,
+> `docker`, and `nulang-cloud`, plus `remote` through a runner.
 
 ### gVisor
 
