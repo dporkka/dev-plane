@@ -134,7 +134,7 @@ func (e *Executor) ExecuteRun(ctx context.Context, runID string) error {
 		if e.legacy == nil {
 			return errors.New("legacy agent runner is not configured")
 		}
-		return e.legacy.Run(ctx, runID)
+		return authority.runLegacy(ctx, e.db, func(runCtx context.Context) error { return e.legacy.Run(runCtx, runID) })
 	case executionBackendAgentRuntime:
 		if e.external == nil {
 			return errors.New("agent runtime executor is not configured")

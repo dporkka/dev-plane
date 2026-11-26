@@ -23,15 +23,16 @@ func TestHandleTaskApprovedRejectsBoundGiteaOnNonDockerRuntime(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("GITEA_URL", srv.URL)
+	t.Setenv("GITEA_BINDING_GENERATION", "1")
 	t.Setenv("GITEA_TOKEN", "synthetic-api")
-	if _, err := db.Exec(`CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT);`); err != nil {
+	if _, err := db.Exec(`CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT,authorization_generation INTEGER DEFAULT 1,revoked_at TEXT);`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`UPDATE repositories SET owner='acme',name='widget',full_name='acme/widget',clone_url=$1,settings=$2`,
 		srv.URL+"/acme/widget.git", fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, srv.URL)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec("INSERT INTO gitea_repository_bindings VALUES ('repo-1','project-1','org-1',$1,77,'acme/widget')", srv.URL); err != nil {
+	if _, err := db.Exec("INSERT INTO gitea_repository_bindings(repository_id,project_id,organization_id,instance_url,upstream_repository_id,full_name) VALUES ('repo-1','project-1','org-1',$1,77,'acme/widget')", srv.URL); err != nil {
 		t.Fatal(err)
 	}
 	provider := &fakeRuntimeProvider{}

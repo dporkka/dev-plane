@@ -17,12 +17,13 @@ func TestHandleTaskApprovedBlocksUnboundGiteaAndQueuedReplay(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Setenv("GITEA_URL", "http://127.0.0.1:1")
+			t.Setenv("GITEA_BINDING_GENERATION", "1")
 			t.Setenv("GITEA_TOKEN", "fixture")
 			db := setupTaskHandlerDB(t)
 			defer db.Close()
 			insertApprovedTaskFixture(t, db)
 			if _, err := db.Exec(`
-                CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT);
+                CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT,authorization_generation INTEGER DEFAULT 1,revoked_at TEXT);
                 UPDATE repositories SET owner='acme',name='widget',full_name='acme/widget',clone_url='http://127.0.0.1:1/acme/widget.git',
                 settings='{"forge":{"provider":"gitea","base_url":"http://127.0.0.1:1"}}';
             `); err != nil {

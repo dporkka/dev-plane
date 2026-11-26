@@ -21,11 +21,11 @@ var ErrGiteaWorkspaceAuthority = errors.New("gitea workspace authority is unavai
 // It is not part of the remote workspace API.
 type GiteaWorkspaceGrant struct {
 	RepositoryID, WorkspaceID, InstanceURL, CloneURL string
-	UpstreamRepositoryID                             int64
+	UpstreamRepositoryID, AuthorizationGeneration    int64
 }
 
 func (g GiteaWorkspaceGrant) valid() bool {
-	if g.RepositoryID == "" || g.WorkspaceID == "" || g.InstanceURL == "" || g.UpstreamRepositoryID <= 0 ||
+	if g.RepositoryID == "" || g.WorkspaceID == "" || g.InstanceURL == "" || g.UpstreamRepositoryID <= 0 || g.AuthorizationGeneration <= 0 ||
 		!strings.HasPrefix(g.CloneURL, g.InstanceURL+"/") || !strings.HasSuffix(g.CloneURL, ".git") {
 		return false
 	}
@@ -48,6 +48,7 @@ func (g GiteaWorkspaceGrant) labels() map[string]string {
 		"dev-plane.gitea.workspace":  g.WorkspaceID,
 		"dev-plane.gitea.repository": g.RepositoryID,
 		"dev-plane.gitea.instance":   g.InstanceURL,
+		"dev-plane.gitea.generation": strconv.FormatInt(g.AuthorizationGeneration, 10),
 		"dev-plane.gitea.upstream":   strconv.FormatInt(g.UpstreamRepositoryID, 10),
 	}
 }
@@ -55,7 +56,7 @@ func (g GiteaWorkspaceGrant) labels() map[string]string {
 func giteaCloneAuthorization(g GiteaWorkspaceGrant) (string, error) {
 	id, err := strconv.ParseInt(os.Getenv("GITEA_CLONE_REPOSITORY_ID"), 10, 64)
 	user, token := os.Getenv("GITEA_CLONE_USERNAME"), os.Getenv("GITEA_CLONE_TOKEN")
-	if !g.valid() || err != nil || id != g.UpstreamRepositoryID || os.Getenv("GITEA_CLONE_URL") != g.CloneURL ||
+	if !g.valid() || err != nil || id != g.UpstreamRepositoryID || os.Getenv("GITEA_BINDING_GENERATION") != strconv.FormatInt(g.AuthorizationGeneration, 10) || os.Getenv("GITEA_CLONE_URL") != g.CloneURL ||
 		user == "" || token == "" || strings.TrimSpace(user) != user || strings.TrimSpace(token) != token ||
 		strings.ContainsAny(user, ":\r\n\x00") || strings.ContainsAny(token, "\r\n\x00") ||
 		token == os.Getenv("GITEA_TOKEN") || token == os.Getenv("GITEA_GIT_PASSWORD") {

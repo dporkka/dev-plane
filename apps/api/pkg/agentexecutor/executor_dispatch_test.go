@@ -113,7 +113,7 @@ func setupDispatchDB(t *testing.T, metadata string) *sql.DB {
         CREATE TABLE repositories(id TEXT PRIMARY KEY,project_id TEXT,settings TEXT,owner TEXT,name TEXT,full_name TEXT,clone_url TEXT,deleted_at TEXT);
         CREATE TABLE tasks(id TEXT PRIMARY KEY,project_id TEXT,repository_id TEXT,workspace_id TEXT,deleted_at TEXT);
         CREATE TABLE workspaces(id TEXT PRIMARY KEY,task_id TEXT,repository_id TEXT,runtime_provider TEXT,runtime_session_id TEXT,worktree_path TEXT,status TEXT,deleted_at TEXT);
-        CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT);
+        CREATE TABLE gitea_repository_bindings(repository_id TEXT,project_id TEXT,organization_id TEXT,instance_url TEXT,upstream_repository_id INTEGER,full_name TEXT,authorization_generation INTEGER DEFAULT 1,revoked_at TEXT);
         CREATE TABLE agent_runs (id TEXT PRIMARY KEY,task_id TEXT,workspace_id TEXT,metadata TEXT);
         INSERT INTO organizations(id) VALUES ('org-1');
         INSERT INTO projects(id,organization_id) VALUES('project-1','org-1');

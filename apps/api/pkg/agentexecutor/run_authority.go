@@ -77,6 +77,68 @@ func (a runAuthority) authorize(ctx context.Context, db *sql.DB, backend string,
 	}
 	return verify(verifyCtx, a.session.String, runtimes.GiteaWorkspaceGrant{
 		RepositoryID: binding.RepositoryID, WorkspaceID: a.runWorkspace.String, InstanceURL: binding.InstanceURL,
-		CloneURL: binding.CloneURL, UpstreamRepositoryID: binding.UpstreamRepositoryID,
+		CloneURL: binding.CloneURL, UpstreamRepositoryID: binding.UpstreamRepositoryID, AuthorizationGeneration: binding.AuthorizationGeneration,
 	})
+}
+
+// Bind the lifetime of the qualified legacy run to its verified generation.
+// This is cooperative cancellation, not a guarantee of container teardown.
+func (a runAuthority) runLegacy(ctx context.Context, db *sql.DB, run func(context.Context) error) error {
+	settings, err := models.ParseRepositoryForgeSettings([]byte(a.settings.String))
+	if err != nil {
+		return errRunRepositoryAuthority
+	}
+	if settings.Provider != models.ForgeProviderGitea {
+		return run(ctx)
+	}
+	generation, err := prfactory.ConfiguredGiteaBindingGeneration()
+	if err != nil {
+		return err
+	}
+	return a.runWithGiteaAuthority(ctx, db, generation, 2*time.Second, run)
+}
+
+func (a runAuthority) runWithGiteaAuthority(ctx context.Context, db *sql.DB, generation int64, interval time.Duration, run func(context.Context) error) error {
+	check := func(checkCtx context.Context) error {
+		limited, cancel := context.WithTimeout(checkCtx, 2*time.Second)
+		defer cancel()
+		return prfactory.CheckGiteaRepositoryBindingGeneration(limited, db, a.repositoryID, a.projectID, generation)
+	}
+	if err := check(ctx); err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-runCtx.Done():
+				done <- nil
+				return
+			case <-ticker.C:
+				if err := check(runCtx); err != nil {
+					// Normal run completion cancels the watcher as well.
+					if runCtx.Err() != nil {
+						done <- nil
+					} else {
+						cancel()
+						done <- err
+					}
+					return
+				}
+			}
+		}
+	}()
+	err := run(runCtx)
+	cancel()
+	if authorityErr := <-done; authorityErr != nil {
+		return authorityErr
+	}
+	if err != nil {
+		return err
+	}
+	return check(ctx)
 }

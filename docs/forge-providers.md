@@ -220,7 +220,9 @@ No webhook, tenant-provided clone URL, or shared API token constitutes a grant.
 
 After applying migrations, an operator with independently established tenant
 authorization must verify the exact upstream numeric ID from Gitea and issue
-the grant using the configured GITEA_URL, GITEA_TOKEN and explicit DATABASE_URL:
+the grant using the configured GITEA_URL, GITEA_TOKEN and explicit DATABASE_URL.
+Set `GITEA_BINDING_GENERATION=1` in the credential-bearing process for a new
+binding:
 
 ```sh
 go run ./apps/api/cmd/forge-bind-gitea \
@@ -234,9 +236,71 @@ It checks the active project/organization, exact canonical instance and HTTP
 clone URL, upstream numeric ID, name and repository metadata. Only a committed
 grant marks the repository connected. Repeating the same grant refreshes
 metadata; a conflicting grant cannot overwrite it or claim a reserved ID.
-Soft deletion retains the upstream reservation. Reassignment or revocation
-requires a separately designed administrative workflow; do not edit the table
-to bypass authorization.
+Soft deletion and revocation retain the upstream reservation. Reassignment is
+not supported; do not edit the table to bypass authorization.
+
+### Emergency revocation and credential rotation
+
+Migration 028 adds a durable positive authorization generation and revocation
+timestamp to each binding, plus append-only lifecycle event records through
+the operator tool. Existing bindings begin at generation 1. **Stop old
+credential-bearing binaries before migration**: they do not enforce the
+new columns or workspace label. After migration, missing or incorrect
+`GITEA_BINDING_GENERATION` fails closed. Configure the same exact generation
+on each credential-bearing worker and publication process; do not advance it
+automatically from a database query. This remains a single-repository pilot.
+
+Revoke first, even if Gitea is unavailable. Use the exact reservation
+identifiers and canonical instance root, with the currently authorized
+generation and a short **non-secret** audit reason:
+
+```sh
+go run ./apps/api/cmd/forge-bind-gitea --action revoke \
+  --repository-id LOCAL_REPO_UUID --project-id PROJECT_UUID \
+  --organization-id ORGANIZATION_UUID --upstream-repository-id 123 \
+  --instance-url https://forge.example.com --expected-generation 1 \
+  --reason "rotate pilot credentials" --apply
+```
+
+Only the explicit DATABASE_URL is required for revocation. The transaction
+increments the generation to 2, records the reason and timestamp, and marks
+the repository disconnected. Old, revoked, or unbound authorizations cannot
+reach Gitea via the binding verification path. An ordinary bind cannot
+reactivate a revoked row. Repeated/stale lifecycle requests fail instead of
+silently advancing the generation. Inspect the durable row and audit events
+before retrying an ambiguous result. Rollback of migration 028 is refused
+once any lifecycle change has occurred.
+
+1. Drain/stop the dedicated worker, terminate old containers, and revoke the
+   old API, clone and any push credentials upstream. Local revocation is not
+   upstream token invalidation or data erasure.
+2. Provision fresh, independently scoped credentials and configure
+   `GITEA_BINDING_GENERATION=3` (expected revoked generation plus one).
+3. Explicitly reactivate the **same** reservation with a fresh provider lookup:
+
+```sh
+go run ./apps/api/cmd/forge-bind-gitea --action reactivate \
+  --repository-id LOCAL_REPO_UUID --project-id PROJECT_UUID \
+  --organization-id ORGANIZATION_UUID --upstream-repository-id 123 \
+  --instance-url https://forge.example.com --expected-generation 2 \
+  --reason "rotated pilot credentials" --apply
+```
+
+4. Restart only updated credential-bearing binaries with generation 3 and the
+   new secrets; provision new workspaces. Old-generation containers cannot
+   pass execution dispatch. Remove retained volumes according to your data
+   retention policy; do not relabel old containers.
+
+The CLI verifies the replacement API credential and immutable upstream ID,
+but it cannot prove tokens changed or revoke them at Gitea. Rotation,
+supervisor restart and cleanup remain operator responsibilities. The local
+generation is a non-secret configuration pin, not a credential. An already
+dispatched Gitea legacy run polls local authorization every two seconds and
+requests cooperative cancellation on revocation, generation mismatch or
+authority lookup failure (query timeout two seconds). It does not promise
+immediate process termination, container teardown, or reversal of in-flight
+provider mutations. Stop affected workers for an emergency; do not assume
+revocation undoes previously authorized I/O.
 
 Initial approved-task provisioning and queued approval replay require a fresh
 identity check, as does PR Factory publication, before PR creation. Gitea host-worktree
@@ -282,7 +346,7 @@ single-repository pilot uses these operator settings:
 
 - `WORKSPACE_RUNTIME=docker` and `DOCKER_WORKSPACE_IMAGE` (trusted, preferably
   digest-pinned local image; scoped provisioning never pulls).
-- `GITEA_URL` and `GITEA_TOKEN` for binding/API verification, as before.
+- `GITEA_URL` and `GITEA_TOKEN` for binding/API verification, and\n  `GITEA_BINDING_GENERATION` matching the active reservation.
 - `GITEA_CLONE_REPOSITORY_ID` (approved upstream numeric ID),
   `GITEA_CLONE_URL` (exact bound clone URL), `GITEA_CLONE_USERNAME`,
   `GITEA_CLONE_TOKEN` (dedicated read credential).
@@ -298,7 +362,7 @@ provisioning/verification Docker child processes receive no clone or operator
 token; no arbitrary workspace env is
 accepted, and no secret is stored in the repository or copied into the
 container. Recheck the remote binding after provisioning before persisting a
-ready workspace. Do not reuse old unlabelled workspaces.
+ready workspace. Do not reuse old unlabelled or prior-generation workspaces.
 
 Any process holding Gitea operator credentials must not execute or provision
 non-Gitea workloads. Separate the Gitea execution worker/host from legacy
