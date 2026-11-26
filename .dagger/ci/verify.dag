@@ -1,0 +1,46 @@
+#!/usr/bin/env dagger
+
+# Portable Dev Plane CI contract.
+#
+# Woodpecker owns forge-triggered scheduling and exact checkout selection.
+# Dagger owns the hermetic toolchain/execution environment. Repository-native
+# Make/npm commands remain the behavioral source of truth, matching
+# .github/workflows/ci.yml rather than creating a second test definition.
+#
+# Run locally with Dagger v0.20.3:
+#   dagger --progress=plain .dagger/ci/verify.dag
+#
+# Preserve .git so committed-range verification and revision diagnostics operate
+# on the actual checkout. node_modules is intentionally excluded and installed
+# cleanly.
+src=$(host | directory . --exclude node_modules)
+
+container |
+  from node:24-bookworm |
+  with-directory /src $src |
+  with-workdir /src |
+  with-mounted-cache /root/go/pkg/mod dev-plane-go-mod |
+  with-mounted-cache /root/.cache/go-build dev-plane-go-build |
+  with-mounted-cache /root/.npm dev-plane-npm |
+  with-env-variable PATH /usr/local/go/bin:/root/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin |
+  with-env-variable DATABASE_URL "file:./data/dev.db?_journal_mode=WAL" |
+  with-env-variable NATS_URL nats://127.0.0.1:4222 |
+  with-env-variable JWT_SECRET ci-secret-change-me-min-32-chars-long |
+  with-env-variable SECRET_ENCRYPTION_KEYS "primary:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" |
+  with-env-variable NEXT_PUBLIC_API_URL http://localhost:8080 |
+  with-exec -- sh -lc 'apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential ca-certificates curl git make && rm -rf /var/lib/apt/lists/*' |
+  with-exec -- sh -lc 'curl -fsSLo /tmp/go.tgz https://go.dev/dl/go1.26.8.linux-amd64.tar.gz && echo "d0f743b33e8d8945e6b1f432edd15785c70507121d6e2a723b21285eddf8b57b  /tmp/go.tgz" | sha256sum -c - && rm -rf /usr/local/go && tar -C /usr/local -xzf /tmp/go.tgz && rm /tmp/go.tgz' |
+  with-exec -- go version |
+  with-exec -- node --version |
+  with-exec -- npm --version |
+  with-exec -- go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.2 |
+  with-exec -- go install github.com/nats-io/nats-server/v2@v2.10.0 |
+  with-exec -- sh -lc 'cd apps/web && npm ci' |
+  with-exec -- make lint-go |
+  with-exec -- make lint-web |
+  with-exec -- sh -lc 'cd apps/web && npm run typecheck' |
+  with-exec -- make lint-sdk |
+  with-exec -- sh -lc 'set -eu; rm -rf /tmp/dev-plane-jetstream; nats-server --js --http_port 8222 --store_dir /tmp/dev-plane-jetstream >/tmp/nats.log 2>&1 & i=0; until curl -fsS http://127.0.0.1:8222/healthz >/dev/null; do i=$((i + 1)); if [ "$i" -ge 30 ]; then cat /tmp/nats.log; exit 1; fi; sleep 1; done; make test; cd apps/web && npm test' |
+  with-exec -- make build |
+  with-exec -- sh -lc 'set -eu; if git rev-parse --verify origin/main >/dev/null 2>&1; then if [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then git diff --check HEAD^..HEAD; else base=$(git merge-base HEAD origin/main); git diff --check "$base"..HEAD; fi; else git diff --check HEAD^..HEAD; fi' |
+  sync
