@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ai-dev-control-plane/gateway"
@@ -28,26 +29,39 @@ type GiteaBindingRequest struct {
 // GiteaBinding is the verified local-to-external identity. No secrets belong
 // in this value or in the durable binding table.
 type GiteaBinding struct {
-	RepositoryID         string
-	ProjectID            string
-	OrganizationID       string
-	InstanceURL          string
-	UpstreamRepositoryID int64
-	Owner                string
-	Name                 string
-	FullName             string
-	CloneURL             string
+	RepositoryID            string
+	ProjectID               string
+	OrganizationID          string
+	InstanceURL             string
+	UpstreamRepositoryID    int64
+	Owner                   string
+	Name                    string
+	FullName                string
+	CloneURL                string
+	AuthorizationGeneration int64
 }
 
 type giteaBindingRecord struct {
 	identity                                                  GiteaBinding
 	settings                                                  string
 	boundProject, boundOrganization, boundInstance, boundName sql.NullString
-	boundUpstream                                             sql.NullInt64
+	boundUpstream, generation                                 sql.NullInt64
+	revokedAt                                                 sql.NullString
 }
 
 type bindingQueryer interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// ConfiguredGiteaBindingGeneration pins this credential-bearing process to an
+// explicitly provisioned generation. Never infer a new generation from the DB.
+func ConfiguredGiteaBindingGeneration() (int64, error) {
+	raw := os.Getenv("GITEA_BINDING_GENERATION")
+	generation, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || generation <= 0 || strconv.FormatInt(generation, 10) != raw {
+		return 0, ErrGiteaRepositoryBinding
+	}
+	return generation, nil
 }
 
 // ConfiguredGiteaBindingForge loads only the operator-selected instance and
@@ -89,7 +103,7 @@ func loadGiteaBinding(ctx context.Context, q bindingQueryer, repositoryID, proje
 	var settings sql.NullString
 	err := q.QueryRowContext(ctx, `
         SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id,
-               b.project_id,b.organization_id,b.instance_url,b.upstream_repository_id,b.full_name
+               b.project_id,b.organization_id,b.instance_url,b.upstream_repository_id,b.full_name,b.authorization_generation,b.revoked_at
         FROM repositories r
         JOIN projects p ON p.id=r.project_id
         JOIN organizations o ON o.id=p.organization_id
@@ -98,7 +112,7 @@ func loadGiteaBinding(ctx context.Context, q bindingQueryer, repositoryID, proje
           AND p.deleted_at IS NULL AND o.deleted_at IS NULL
     `, repositoryID, projectID).Scan(
 		&out.identity.Owner, &out.identity.Name, &out.identity.FullName, &out.identity.CloneURL, &settings, &out.identity.OrganizationID,
-		&out.boundProject, &out.boundOrganization, &out.boundInstance, &out.boundUpstream, &out.boundName)
+		&out.boundProject, &out.boundOrganization, &out.boundInstance, &out.boundUpstream, &out.boundName, &out.generation, &out.revokedAt)
 	if err != nil {
 		return giteaBindingRecord{}, fmt.Errorf("%w: active repository/project or binding schema unavailable", ErrGiteaRepositoryBinding)
 	}
@@ -117,10 +131,15 @@ func loadGiteaBinding(ctx context.Context, q bindingQueryer, repositoryID, proje
 		return giteaBindingRecord{}, fmt.Errorf("%w: local repository identity is invalid", ErrGiteaRepositoryBinding)
 	}
 	out.identity.InstanceURL = root
+	out.identity.AuthorizationGeneration = out.generation.Int64
 	return out, nil
 }
 
 func (r giteaBindingRecord) matches(expectedID int64) bool {
+	return !r.revokedAt.Valid && r.generation.Valid && r.generation.Int64 > 0 && r.matchesIdentity(expectedID)
+}
+
+func (r giteaBindingRecord) matchesIdentity(expectedID int64) bool {
 	return expectedID > 0 && r.boundUpstream.Valid && r.boundUpstream.Int64 == expectedID &&
 		r.boundProject.Valid && r.boundProject.String == r.identity.ProjectID &&
 		r.boundOrganization.Valid && r.boundOrganization.String == r.identity.OrganizationID &&
@@ -168,7 +187,12 @@ func BindGiteaRepository(ctx context.Context, db *sql.DB, forge gateway.Forge, c
 	if before.identity.OrganizationID != req.OrganizationID || (before.boundUpstream.Valid && !before.matches(req.UpstreamRepositoryID)) {
 		return GiteaBinding{}, ErrGiteaRepositoryBinding
 	}
+	generation, err := ConfiguredGiteaBindingGeneration()
+	if err != nil || (!before.boundUpstream.Valid && generation != 1) || (before.boundUpstream.Valid && generation != before.generation.Int64) {
+		return GiteaBinding{}, ErrGiteaRepositoryBinding
+	}
 	identity := before.identity
+	identity.AuthorizationGeneration = generation
 	identity.UpstreamRepositoryID = req.UpstreamRepositoryID
 	upstream, err := verifyGiteaUpstream(ctx, forge, credential, identity)
 	if err != nil {
@@ -230,7 +254,8 @@ func VerifyGiteaRepositoryBinding(ctx context.Context, db *sql.DB, forge gateway
 	if err != nil {
 		return GiteaBinding{}, err
 	}
-	if !record.matches(record.boundUpstream.Int64) {
+	generation, err := ConfiguredGiteaBindingGeneration()
+	if err != nil || !record.matches(record.boundUpstream.Int64) || generation != record.generation.Int64 {
 		return GiteaBinding{}, ErrGiteaRepositoryBinding
 	}
 	identity := record.identity

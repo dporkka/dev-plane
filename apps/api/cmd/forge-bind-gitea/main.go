@@ -24,7 +24,13 @@ func main() {
 }
 
 func run() error {
-	var req prfactory.GiteaBindingRequest
+	var lifecycle prfactory.GiteaBindingLifecycleRequest
+	req := &lifecycle.GiteaBindingRequest
+	var action string
+	flag.StringVar(&action, "action", "bind", "bind, revoke, or reactivate")
+	flag.StringVar(&lifecycle.InstanceURL, "instance-url", "", "exact canonical binding instance for lifecycle action")
+	flag.Int64Var(&lifecycle.ExpectedGeneration, "expected-generation", 0, "current durable generation for lifecycle action")
+	flag.StringVar(&lifecycle.Reason, "reason", "", "non-secret operator audit reason for lifecycle action")
 	var apply bool
 	flag.StringVar(&req.RepositoryID, "repository-id", "", "explicit local repository ID")
 	flag.StringVar(&req.ProjectID, "project-id", "", "explicit authorized project ID")
@@ -35,9 +41,11 @@ func run() error {
 	if !apply || flag.NArg() != 0 || req.RepositoryID == "" || req.ProjectID == "" || req.OrganizationID == "" || req.UpstreamRepositoryID <= 0 {
 		return fmt.Errorf("explicit repository, project, organization, upstream ID and --apply are required")
 	}
-	forge, credential, err := prfactory.ConfiguredGiteaBindingForge()
-	if err != nil {
-		return err
+	if action != "bind" && action != "revoke" && action != "reactivate" {
+		return fmt.Errorf("unknown binding action")
+	}
+	if action == "bind" && (lifecycle.InstanceURL != "" || lifecycle.ExpectedGeneration != 0 || lifecycle.Reason != "") {
+		return fmt.Errorf("lifecycle flags require revoke or reactivate")
 	}
 	dsn := os.Getenv("DATABASE_URL")
 	var driver string
@@ -62,10 +70,27 @@ func run() error {
 			return fmt.Errorf("cannot enable SQLite foreign keys")
 		}
 	}
-	result, err := prfactory.BindGiteaRepository(ctx, database, forge, credential, req)
+	if action == "revoke" {
+		generation, err := prfactory.RevokeGiteaRepositoryBinding(ctx, database, lifecycle)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Revoked Gitea repository binding: repo=%s generation=%d\n", req.RepositoryID, generation)
+		return nil
+	}
+	forge, credential, err := prfactory.ConfiguredGiteaBindingForge()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Verified Gitea repository binding: repo=%s project=%s organization=%s upstream_id=%d\n", result.RepositoryID, result.ProjectID, result.OrganizationID, result.UpstreamRepositoryID)
+	var result prfactory.GiteaBinding
+	if action == "reactivate" {
+		result, err = prfactory.ReactivateGiteaRepositoryBinding(ctx, database, forge, credential, lifecycle)
+	} else {
+		result, err = prfactory.BindGiteaRepository(ctx, database, forge, credential, *req)
+	}
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Verified Gitea repository binding: repo=%s project=%s organization=%s upstream_id=%d generation=%d\n", result.RepositoryID, result.ProjectID, result.OrganizationID, result.UpstreamRepositoryID, result.AuthorizationGeneration)
 	return nil
 }

@@ -30,6 +30,7 @@ func TestCreatePullRequestRejectsGiteaHostWorktreeAfterVerifiedBinding(t *testin
 	defer server.Close()
 	t.Setenv("FORGE_PROVIDER", "gitea")
 	t.Setenv("GITEA_URL", server.URL)
+	t.Setenv("GITEA_BINDING_GENERATION", "1")
 	t.Setenv("GITEA_TOKEN", "synthetic-api-token")
 	t.Setenv("GITEA_GIT_USERNAME", "writer")
 	t.Setenv("GITEA_GIT_PASSWORD", "synthetic-push-token")
@@ -56,8 +57,8 @@ func TestCreatePullRequestRejectsGiteaHostWorktreeAfterVerifiedBinding(t *testin
 		WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "settings"}).AddRow("acme", "widget", settings))
 	for i := 0; i < 2; i++ {
 		mock.ExpectQuery("SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id").WithArgs("repo-1", "project-1").
-			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname"}).
-				AddRow("acme", "widget", "acme/widget", server.URL+"/acme/widget.git", settings, "org-1", "project-1", "org-1", server.URL, 77, "acme/widget"))
+			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname", "generation", "revoked_at"}).
+				AddRow("acme", "widget", "acme/widget", server.URL+"/acme/widget.git", settings, "org-1", "project-1", "org-1", server.URL, 77, "acme/widget", 1, nil))
 	}
 	factory := NewFactory(db, nil)
 	pr, err := factory.CreatePullRequest(context.Background(), "task-1")

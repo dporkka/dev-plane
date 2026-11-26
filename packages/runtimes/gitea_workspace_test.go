@@ -19,6 +19,7 @@ import (
 
 func configureCloneFixture(t *testing.T, grant GiteaWorkspaceGrant) string {
 	t.Helper()
+	t.Setenv("GITEA_BINDING_GENERATION", "1")
 	t.Setenv("GITEA_CLONE_REPOSITORY_ID", "77")
 	t.Setenv("GITEA_CLONE_URL", grant.CloneURL)
 	t.Setenv("GITEA_CLONE_USERNAME", "clone-reader")
@@ -83,7 +84,7 @@ func TestScopedCloneUsesOnlyDedicatedCredential(t *testing.T) {
 		cgiHandler.ServeHTTP(w, r)
 	}))
 	defer server.Close()
-	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: server.URL, CloneURL: server.URL + "/acme/widget.git", UpstreamRepositoryID: 77}
+	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: server.URL, CloneURL: server.URL + "/acme/widget.git", UpstreamRepositoryID: 77, AuthorizationGeneration: 1}
 	configureCloneFixture(t, grant)
 	// These inherited settings must not influence the real clone process.
 	t.Setenv("GIT_CONFIG_COUNT", "1")
@@ -153,6 +154,11 @@ func TestScopedCloneUsesOnlyDedicatedCredential(t *testing.T) {
 				t.Fatal("container repository config not clean")
 			}
 			wrong := grant
+			wrong.AuthorizationGeneration = 3
+			if err := VerifyGiteaDockerWorkspace(ctx, session.ID, wrong); !errors.Is(err, ErrGiteaWorkspaceAuthority) {
+				t.Fatal("previous-generation container accepted")
+			}
+			wrong = grant
 			wrong.WorkspaceID = "unrelated"
 			if err := VerifyGiteaDockerWorkspace(ctx, session.ID, wrong); !errors.Is(err, ErrGiteaWorkspaceAuthority) {
 				t.Fatal("foreign workspace accepted")
@@ -173,11 +179,16 @@ func TestScopedCloneRejectsRedirectAndMismatchedGrant(t *testing.T) {
 		http.Redirect(w, r, sink.URL+r.URL.Path, http.StatusFound)
 	}))
 	defer source.Close()
-	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: source.URL, CloneURL: source.URL + "/acme/widget.git", UpstreamRepositoryID: 77}
+	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: source.URL, CloneURL: source.URL + "/acme/widget.git", UpstreamRepositoryID: 77, AuthorizationGeneration: 1}
 	configureCloneFixture(t, grant)
 	req := CreateRequest{RepositoryID: "repo-1", CloneURL: grant.CloneURL, BaseBranch: "main", Branch: "agent/fixture"}
 	ctx := context.Background()
 	wrong := grant
+	wrong.AuthorizationGeneration = 3
+	if err := cloneGiteaRepository(ctx, execRunner{}, filepath.Join(t.TempDir(), "stale"), req, wrong); !errors.Is(err, ErrGiteaWorkspaceAuthority) {
+		t.Fatal("stale credential generation accepted")
+	}
+	wrong = grant
 	wrong.UpstreamRepositoryID = 88
 	if err := cloneGiteaRepository(ctx, execRunner{}, filepath.Join(t.TempDir(), "wrong"), req, wrong); !errors.Is(err, ErrGiteaWorkspaceAuthority) {
 		t.Fatal("wrong ID accepted")
@@ -199,7 +210,7 @@ func TestScopedCloneRejectsRedirectAndMismatchedGrant(t *testing.T) {
 }
 
 func TestGiteaContainerIsolationChecks(t *testing.T) {
-	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: "https://git.example.test", CloneURL: "https://git.example.test/acme/widget.git", UpstreamRepositoryID: 77}
+	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: "https://git.example.test", CloneURL: "https://git.example.test/acme/widget.git", UpstreamRepositoryID: 77, AuthorizationGeneration: 1}
 	labels := grant.labels()
 	labels["dev-plane.session"] = "local-123"
 	var good giteaContainerInspect
@@ -219,6 +230,7 @@ func TestGiteaContainerIsolationChecks(t *testing.T) {
 		t.Fatal("isolated fixture rejected")
 	}
 	for name, change := range map[string]func(*giteaContainerInspect){
+		"stale generation":     func(c *giteaContainerInspect) { c.Config.Labels["dev-plane.gitea.generation"] = "2" },
 		"foreign workspace":    func(c *giteaContainerInspect) { c.Config.Labels["dev-plane.gitea.workspace"] = "foreign" },
 		"foreign repository":   func(c *giteaContainerInspect) { c.Config.Labels["dev-plane.gitea.repository"] = "foreign" },
 		"recreated repository": func(c *giteaContainerInspect) { c.Config.Labels["dev-plane.gitea.upstream"] = "88" },
@@ -293,7 +305,7 @@ func (r *scopedWorkspaceRunner) Start(context.Context, string, []string, command
 }
 
 func TestCreateGiteaWorkspaceUsesScopedCloneAndIsolatedContainer(t *testing.T) {
-	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: "https://git.example.test", CloneURL: "https://git.example.test/acme/widget.git", UpstreamRepositoryID: 77}
+	grant := GiteaWorkspaceGrant{RepositoryID: "repo-1", WorkspaceID: "workspace-1", InstanceURL: "https://git.example.test", CloneURL: "https://git.example.test/acme/widget.git", UpstreamRepositoryID: 77, AuthorizationGeneration: 1}
 	header := configureCloneFixture(t, grant)
 	runner := &scopedWorkspaceRunner{}
 	provider := &DockerProvider{baseDir: t.TempDir(), image: "trusted-image", runner: runner, sessions: map[string]*dockerSession{}}
@@ -316,7 +328,7 @@ func TestCreateGiteaWorkspaceUsesScopedCloneAndIsolatedContainer(t *testing.T) {
 			t.Fatal("credential or arbitrary env forwarded to container")
 		}
 	}
-	if runner.labels["dev-plane.gitea.workspace"] != "workspace-1" || runner.labels["dev-plane.gitea.upstream"] != "77" {
+	if runner.labels["dev-plane.gitea.workspace"] != "workspace-1" || runner.labels["dev-plane.gitea.upstream"] != "77" || runner.labels["dev-plane.gitea.generation"] != "1" {
 		t.Fatal("missing immutable identity labels")
 	}
 	calls := len(runner.calls)

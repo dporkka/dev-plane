@@ -29,6 +29,7 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	}
 	t.Setenv("FORGE_PROVIDER", "gitea")
 	t.Setenv("GITEA_URL", base)
+	t.Setenv("GITEA_BINDING_GENERATION", "1")
 	t.Setenv("GITEA_TOKEN", token)
 	t.Setenv("GITEA_GIT_USERNAME", "")
 	t.Setenv("GITEA_GIT_PASSWORD", "")
@@ -65,8 +66,8 @@ func TestLiveGiteaRuntimePublication(t *testing.T) {
 	}
 	for i := 0; i < 2; i++ {
 		mock.ExpectQuery("SELECT r.owner,r.name,r.full_name,r.clone_url,r.settings,p.organization_id").WithArgs("repo-1", "project-1").
-			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname"}).
-				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot"))
+			WillReturnRows(sqlmock.NewRows([]string{"owner", "name", "full_name", "clone_url", "settings", "org", "bproject", "borg", "instance", "upstream", "bname", "generation", "revoked_at"}).
+				AddRow("forgepilot", "pilot", "forgepilot/pilot", repo.CloneURL, fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, base), "org-1", "project-1", "org-1", base, repo.ID, "forgepilot/pilot", 1, nil))
 	}
 	mock.ExpectExec("INSERT INTO pull_requests").WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE tasks SET status = 'pr_created'").WillReturnResult(sqlmock.NewResult(0, 1))

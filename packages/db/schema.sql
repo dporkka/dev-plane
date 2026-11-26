@@ -685,5 +685,17 @@ CREATE TABLE IF NOT EXISTS gitea_repository_bindings (
     upstream_repository_id  BIGINT NOT NULL CHECK (upstream_repository_id > 0),
     full_name               TEXT NOT NULL,
     verified_at             TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    authorization_generation BIGINT NOT NULL DEFAULT 1 CHECK (authorization_generation > 0),
+    revoked_at TIMESTAMPTZ,
     UNIQUE (instance_url, upstream_repository_id)
+);
+
+-- 28. Explicit Gitea binding lifecycle history
+CREATE TABLE IF NOT EXISTS gitea_binding_lifecycle_events (
+    repository_id UUID NOT NULL REFERENCES gitea_repository_bindings(repository_id),
+    authorization_generation BIGINT NOT NULL CHECK (authorization_generation > 1),
+    action TEXT NOT NULL CHECK (action IN ('revoke','reactivate')),
+    reason TEXT NOT NULL,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (repository_id, authorization_generation)
 );

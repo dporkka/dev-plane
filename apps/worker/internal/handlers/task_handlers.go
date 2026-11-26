@@ -389,7 +389,7 @@ func (h *TaskHandler) provisionWorkspace(ctx context.Context, task approvedTask,
 		binding := task.GiteaBinding
 		session, err = docker.CreateGiteaWorkspace(provisionCtx, request, runtimes.GiteaWorkspaceGrant{
 			RepositoryID: binding.RepositoryID, WorkspaceID: task.WorkspaceID,
-			InstanceURL: binding.InstanceURL, CloneURL: binding.CloneURL, UpstreamRepositoryID: binding.UpstreamRepositoryID,
+			InstanceURL: binding.InstanceURL, CloneURL: binding.CloneURL, UpstreamRepositoryID: binding.UpstreamRepositoryID, AuthorizationGeneration: binding.AuthorizationGeneration,
 		})
 	} else {
 		session, err = h.runtimeProvider.CreateWorkspace(provisionCtx, request)

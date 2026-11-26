@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestExecuteRunRejectsForeignProjectAndCredentialBearingLegacyRun(t *testing.T) {
@@ -48,6 +49,7 @@ func giteaRunFixture(t *testing.T, db *sql.DB, root string) {
 			t.Fatal(err)
 		}
 	}
+	t.Setenv("GITEA_BINDING_GENERATION", "1")
 	t.Setenv("GITEA_URL", root)
 	t.Setenv("GITEA_TOKEN", "fixture-api-key")
 	exec(`UPDATE repositories SET owner='acme',name='widget',full_name='acme/widget',clone_url=$1,settings=$2`, root+"/acme/widget.git", fmt.Sprintf(`{"forge":{"provider":"gitea","base_url":%q}}`, root))
@@ -101,7 +103,7 @@ func TestGiteaDispatchRevalidatesUpstreamAndContainerIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	giteaRunFixture(t, db, server.URL)
-	if _, err := db.Exec("INSERT INTO gitea_repository_bindings VALUES ('repo-1','project-1','org-1',$1,77,'acme/widget')", server.URL); err != nil {
+	if _, err := db.Exec("INSERT INTO gitea_repository_bindings(repository_id,project_id,organization_id,instance_url,upstream_repository_id,full_name) VALUES ('repo-1','project-1','org-1',$1,77,'acme/widget')", server.URL); err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
@@ -112,7 +114,7 @@ func TestGiteaDispatchRevalidatesUpstreamAndContainerIdentity(t *testing.T) {
 	checked := false
 	verify := func(_ context.Context, session string, grant runtimes.GiteaWorkspaceGrant) error {
 		checked = true
-		if session != "local-123" || grant.RepositoryID != "repo-1" || grant.WorkspaceID != "workspace-1" || grant.UpstreamRepositoryID != 77 || grant.InstanceURL != server.URL {
+		if session != "local-123" || grant.RepositoryID != "repo-1" || grant.WorkspaceID != "workspace-1" || grant.UpstreamRepositoryID != 77 || grant.AuthorizationGeneration != 1 || grant.InstanceURL != server.URL {
 			t.Fatal("incorrect container grant")
 		}
 		return nil
@@ -130,5 +132,42 @@ func TestGiteaDispatchRevalidatesUpstreamAndContainerIdentity(t *testing.T) {
 		return runtimes.ErrGiteaWorkspaceAuthority
 	}); !errors.Is(err, runtimes.ErrGiteaWorkspaceAuthority) {
 		t.Fatalf("failed container verification ignored: %v", err)
+	}
+}
+
+func TestGiteaRunAuthorityCancelsOnRevocation(t *testing.T) {
+	db := setupDispatchDB(t, "{}")
+	defer db.Close()
+	root := "http://127.0.0.1:1"
+	giteaRunFixture(t, db, root)
+	if _, err := db.Exec("INSERT INTO gitea_repository_bindings(repository_id,project_id,organization_id,instance_url,upstream_repository_id,full_name) VALUES ('repo-1','project-1','org-1',$1,77,'acme/widget')", root); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	a, err := loadRunAuthority(ctx, db, "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = a.runWithGiteaAuthority(ctx, db, 1, 5*time.Millisecond, func(runCtx context.Context) error {
+		if _, err := db.Exec("UPDATE gitea_repository_bindings SET revoked_at='revoked',authorization_generation=2"); err != nil {
+			return err
+		}
+		<-runCtx.Done()
+		return nil // a cooperative runner need not return an error
+	})
+	if !errors.Is(err, prfactory.ErrGiteaRepositoryBinding) || ctx.Err() != nil {
+		t.Fatalf("revocation did not cancel run: %v", err)
+	}
+	if _, err := db.Exec("UPDATE gitea_repository_bindings SET revoked_at=NULL,authorization_generation=3"); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	err = a.runWithGiteaAuthority(ctx, db, 1, 5*time.Millisecond, func(context.Context) error {
+		started = true
+		return nil
+	})
+	if !errors.Is(err, prfactory.ErrGiteaRepositoryBinding) || started {
+		t.Fatalf("stale generation launched: %v", err)
 	}
 }
