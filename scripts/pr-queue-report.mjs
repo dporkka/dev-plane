@@ -241,6 +241,58 @@ async function getEvidence(repo, pr, getJson) {
   return diagnoseChecks(checkRuns.check_runs, statuses.statuses);
 }
 
+const CORRELATABLE_OUTCOMES = new Set(['failure', 'error', 'timed_out', 'startup_failure', 'action_required']);
+
+// Pure advisory co-occurrence across inspected repositories; matching check names
+// and outcomes cannot establish a shared runner or infrastructure root cause.
+export function correlateObservedFailures(reports, { limit = 10 } = {}) {
+  if (!Array.isArray(reports) || !Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+    throw new Error('Invalid portfolio correlation input');
+  }
+  const grouped = new Map();
+  for (const report of reports) {
+    if (typeof report?.repo !== 'string' || !Array.isArray(report.priority)) {
+      throw new Error('Malformed repository report for CI correlation');
+    }
+    for (const pr of report.priority) {
+      const diagnosis = pr?.ciDiagnosis;
+      if (diagnosis?.evidenceComplete !== true || !Array.isArray(diagnosis.attentionChecks)) continue;
+      for (const check of diagnosis.attentionChecks) {
+        if (!['check-run', 'commit-status'].includes(check?.source)
+          || typeof check.name !== 'string' || !check.name.trim()
+          || !CORRELATABLE_OUTCOMES.has(check.outcome)) continue;
+        const key = JSON.stringify([check.source, check.name, check.outcome]);
+        if (!grouped.has(key)) {
+          grouped.set(key, {
+            source: check.source, name: check.name, outcome: check.outcome,
+            repositories: new Set(), pullRequests: new Set(),
+          });
+        }
+        const group = grouped.get(key);
+        group.repositories.add(report.repo);
+        if (Number.isSafeInteger(pr.number) && pr.number > 0) {
+          group.pullRequests.add(report.repo + '#' + pr.number);
+        }
+      }
+    }
+  }
+  const all = [...grouped.values()].filter(group => group.repositories.size >= 2)
+    .map(group => ({
+      source: group.source,
+      name: group.name,
+      outcome: group.outcome,
+      repositoryCount: group.repositories.size,
+      repositories: [...group.repositories].sort(),
+      affectedPRs: group.pullRequests.size,
+      confidence: 'unverified',
+    }))
+    .sort((a, b) => b.repositoryCount - a.repositoryCount
+      || a.name.localeCompare(b.name)
+      || a.outcome.localeCompare(b.outcome)
+      || a.source.localeCompare(b.source));
+  return { signals: all.slice(0, limit), total: all.length };
+}
+
 export async function collectPortfolio(repos, getJson, { now = new Date(), days = 7, staleDays = 3, maxPages = 20, inspect = 5 } = {}) {
   const since = new Date(now.getTime() - days * DAY_MS);
   const reports = [];
@@ -258,7 +310,7 @@ export async function collectPortfolio(repos, getJson, { now = new Date(), days 
   }
   return { generatedAt: now.toISOString(), since: since.toISOString(),
     caveat: 'Read-only snapshot, checks are advisory. Passing observed checks do not certify required contexts, reviews, merged state, or deployment.',
-    reports };
+    sharedFailureSignals: correlateObservedFailures(reports), reports };
 }
 
 export function formatMarkdown(data, { show = 10 } = {}) {
@@ -270,6 +322,21 @@ export function formatMarkdown(data, { show = 10 } = {}) {
     '| Repository | Created in cohort | Merged | Open in cohort | Closed unmerged | All open | Draft open | Stale open |',
     '|---|---:|---:|---:|---:|---:|---:|---:|',
   ];
+  lines.push('', '## Cross-repository check co-occurrences',
+    'Advisory only: matching observed check source, name, and outcome in multiple inspected repositories is not evidence of a common root cause.', '');
+  const correlation = data.sharedFailureSignals ?? correlateObservedFailures(data.reports);
+  if (correlation.signals.length === 0) {
+    lines.push('No cross-repository check co-occurrences observed in the inspected subset.');
+  } else {
+    for (const signal of correlation.signals) {
+      lines.push('- ' + escapeEvidenceLabel(signal.name) + ' (' + signal.source + ', ' + signal.outcome + '): '
+        + signal.repositoryCount + ' repositories; ' + signal.affectedPRs + ' PRs; '
+        + signal.repositories.map(escapeEvidenceLabel).join(', ') + '. Shared cause unverified.');
+    }
+    if (correlation.total > correlation.signals.length) {
+      lines.push('- ' + (correlation.total - correlation.signals.length) + ' additional co-occurrence groups omitted by report limit.');
+    }
+  }
   for (const r of data.reports) {
     lines.push(`| ${r.repo} | ${r.counts.created} | ${r.counts.merged} | ${r.counts.open} | ${r.counts.closedUnmerged} | ${r.inventory.open} | ${r.inventory.draft} | ${r.inventory.stale} |`);
   }

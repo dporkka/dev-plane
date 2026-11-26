@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   classifyChecks,
+  correlateObservedFailures,
   diagnoseChecks,
   collectPortfolio,
   formatMarkdown,
@@ -268,4 +269,104 @@ test('incomplete evidence guidance identifies commit-status pagination, check-ru
   const bothTruncated = await fetchDiagnosis(2, 3);
   assert.match(bothTruncated.nextAction, /check.run/i);
   assert.match(bothTruncated.nextAction, /commit.status/i);
+});
+
+test('correlates only observed failed check outcomes across distinct repositories', () => {
+  const failed = (number, head, outcomes) => ({
+    number, head, ciDiagnosis: { evidenceComplete: true, attentionChecks: outcomes, attentionTotal: outcomes.length },
+  });
+  const build = { source: 'check-run', name: 'build', outcome: 'startup_failure', url: 'https://ci.example/build' };
+  const reports = [
+    { repo: 'acme/api', priority: [failed(1, 'aaaa', [build]), failed(2, 'bbbb', [build])] },
+    { repo: 'acme/web', priority: [failed(7, 'cccc', [build])] },
+    { repo: 'acme/ops', priority: [failed(4, 'dddd', [{ ...build, outcome: 'failure' }])] },
+  ];
+  const result = correlateObservedFailures(reports);
+  assert.equal(result.total, 1);
+  assert.equal(result.signals.length, 1);
+  const signal = result.signals[0];
+  assert.equal(signal.source, 'check-run');
+  assert.equal(signal.name, 'build');
+  assert.equal(signal.outcome, 'startup_failure');
+  assert.equal(signal.repositoryCount, 2);
+  assert.equal(signal.confidence, 'unverified');
+  assert.deepEqual(signal.repositories, ['acme/api', 'acme/web']);
+  assert.equal(signal.affectedPRs, 3);
+});
+
+test('avoids false correlation from missing, truncated, pending, and canceled evidence', () => {
+  const complete = (outcome, evidenceComplete = true) => ({
+    number: 1, head: 'sha', ciDiagnosis: {
+      evidenceComplete, attentionChecks: [{ source: 'commit-status', name: 'Woodpecker', outcome }],
+      attentionTotal: 1,
+    },
+  });
+  const reports = [
+    { repo: 'acme/api', priority: [complete('failure')] },
+    { repo: 'acme/web', priority: [complete('failure', false)] },
+    { repo: 'acme/pending', priority: [complete('pending')] },
+    { repo: 'acme/canceled', priority: [complete('cancelled')] },
+    { repo: 'acme/success', priority: [{ number: 2, ciDiagnosis: { evidenceComplete: true, attentionChecks: [] } }] },
+  ];
+  assert.deepEqual(correlateObservedFailures(reports), { signals: [], total: 0 });
+});
+
+test('cross-repository signal summaries are bounded, escaped and explicitly advisory', () => {
+  const check = { source: 'check-run', name: 'build [a] | b', outcome: 'failure' };
+  const reports = ['acme/a', 'acme/b'].map(repo => ({
+    repo, priority: [{
+      number: 1, head: 'abcdef123456789', ciDiagnosis: {
+        evidenceComplete: true, attentionTotal: 1, attentionChecks: [check],
+      },
+    }],
+  }));
+  const signals = correlateObservedFailures(reports);
+  const markdown = formatMarkdown({
+    generatedAt: now.toISOString(), since: now.toISOString(), caveat: 'observed only',
+    reports: reports.map(r => ({
+      ...r, priority: [], counts: { created: 0, merged: 0, open: 0, closedUnmerged: 0 },
+      inventory: { open: 0, draft: 0, stale: 0 },
+    })),
+    sharedFailureSignals: signals,
+  });
+  assert.match(markdown, /Cross-repository check co-occurrences/);
+  assert.match(markdown, /not evidence of a common root cause/i);
+  assert.match(markdown, /build \\[a\\] \\| b/);
+  assert.match(markdown, /acme\/a/);
+  assert.match(markdown, /acme\/b/);
+});
+
+
+test('portfolio collection adds only bounded cross-repository co-occurrences from inspected PRs', async () => {
+  const getJson = async path => {
+    if (path.includes('/pulls?')) {
+      return [PR(1, 'open', false, '2026-10-17T12:00:00Z')];
+    }
+    if (path.includes('/check-runs')) return {
+      total_count: 1,
+      check_runs: [{ name: 'bootstrap', status: 'completed', conclusion: 'startup_failure' }],
+    };
+    if (path.includes('/status')) return { total_count: 0, statuses: [] };
+    throw new Error('Unexpected route: ' + path);
+  };
+  const result = await collectPortfolio(['acme/a', 'acme/b'], getJson, { now, inspect: 1 });
+  assert.equal(result.sharedFailureSignals.total, 1);
+  assert.equal(result.sharedFailureSignals.signals[0].repositoryCount, 2);
+  assert.equal(result.sharedFailureSignals.signals[0].outcome, 'startup_failure');
+  assert.equal(result.sharedFailureSignals.signals[0].confidence, 'unverified');
+  assert.equal((await collectPortfolio(['acme/a', 'acme/b'], getJson, { now, inspect: 0 })).sharedFailureSignals.total, 0);
+});
+
+test('cross-repository correlation respects its output limit without hiding total groups', () => {
+  const checks = Array.from({ length: 4 }, (_, i) =>
+    ({ name: 'check-' + i, source: 'check-run', outcome: 'failure' }));
+  const reports = ['acme/a', 'acme/b'].map(repo => ({
+    repo, priority: [{ number: 1, ciDiagnosis: {
+      evidenceComplete: true, attentionChecks: checks, attentionTotal: checks.length,
+    } }],
+  }));
+  const result = correlateObservedFailures(reports, { limit: 2 });
+  assert.equal(result.total, 4);
+  assert.equal(result.signals.length, 2);
+  assert.throws(() => correlateObservedFailures(reports, { limit: 0 }), /Invalid/);
 });
