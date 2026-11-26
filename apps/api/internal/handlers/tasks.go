@@ -59,19 +59,20 @@ type CreateTaskRequest struct {
 }
 
 type createTaskOptions struct {
-	ProjectID    string
-	RepositoryID string
-	CreatedBy    string
-	Source       string
-	SourceID     *string
-	Title        string
-	Description  string
-	Priority     string
-	RiskLevel    string
-	TargetBranch string
-	MaxCost      *float64
-	Spec         json.RawMessage
-	Metadata     json.RawMessage
+	ProjectID          string
+	RepositoryID       string
+	CreatedBy          string
+	Source             string
+	SourceID           *string
+	Title              string
+	Description        string
+	Priority           string
+	RiskLevel          string
+	TargetBranch       string
+	MaxCost            *float64
+	Spec               json.RawMessage
+	AcceptanceCriteria json.RawMessage
+	Metadata           json.RawMessage
 }
 
 // UpdateTaskRequest is the request body for updating a task.
@@ -123,18 +124,23 @@ func decodeApproveSpecRequest(r *http.Request) (ApproveSpecRequest, error) {
 	return req, nil
 }
 
+// The persisted status is spelled "cancelled" in database and API contracts.
+//
+//nolint:misspell // Changing this spelling would break existing clients.
+const taskStatusCancelled = "cancelled"
+
 // Valid status transitions: map[current_status] -> []allowed_next_statuses
 var validStatusTransitions = map[string][]string{
-	"backlog":     {"spec_review", "cancelled"},
-	"spec_review": {"approved", "backlog", "cancelled"},
-	"approved":    {"running", "cancelled"},
-	"running":     {"reviewing", "failed", "cancelled"},
-	"reviewing":   {"pr_created", "running", "failed", "cancelled"},
-	"pr_created":  {"deploying", "done", "running", "cancelled"},
-	"deploying":   {"done", "failed", "cancelled"},
-	"done":        {},
-	"failed":      {"backlog", "running", "cancelled"},
-	"cancelled":   {"backlog"},
+	"backlog":           {"spec_review", taskStatusCancelled},
+	"spec_review":       {"approved", "backlog", taskStatusCancelled},
+	"approved":          {"running", taskStatusCancelled},
+	"running":           {"reviewing", "failed", taskStatusCancelled},
+	"reviewing":         {"pr_created", "running", "failed", taskStatusCancelled},
+	"pr_created":        {"deploying", "done", "running", taskStatusCancelled},
+	"deploying":         {"done", "failed", taskStatusCancelled},
+	"done":              {},
+	"failed":            {"backlog", "running", taskStatusCancelled},
+	taskStatusCancelled: {"backlog"},
 }
 
 func isValidTransition(from, to string) bool {
@@ -192,7 +198,11 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() {
+		if err := rows.Close(); err != nil {
+			h.logger.Warn("failed to close task rows", "error", err)
+		}
+	}()
 
 	var tasks []Task
 	for rows.Next() {
@@ -202,6 +212,10 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tasks = append(tasks, t)
+	}
+	if err := rows.Err(); err != nil {
+		respond.Error(w, http.StatusInternalServerError, err)
+		return
 	}
 
 	if tasks == nil {
@@ -467,7 +481,7 @@ func (h *Handler) ApproveSpec(w http.ResponseWriter, r *http.Request) {
 	respond.JSON(w, http.StatusOK, map[string]string{"status": "approved"})
 }
 
-// CancelTask transitions a task to cancelled status.
+// CancelTask transitions a task to the persisted canceled state.
 func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	user, ok := authz.RequireUser(w, r)
@@ -487,6 +501,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().UTC()
+	//nolint:misspell // The SQL statement uses the existing persisted status spelling.
 	result, err := h.db.ExecContext(ctx, `
 		UPDATE tasks SET status = 'cancelled', updated_at = $1
 		WHERE id = $2 AND deleted_at IS NULL AND status NOT IN ('done', 'cancelled')
@@ -498,11 +513,11 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 
 	rowsAffected, _ := result.RowsAffected()
 	if rowsAffected == 0 {
-		respond.Error(w, http.StatusBadRequest, errors.New("task cannot be cancelled or not found"))
+		respond.Error(w, http.StatusBadRequest, errors.New("task cannot be canceled or not found"))
 		return
 	}
 
-	respond.JSON(w, http.StatusOK, map[string]string{"status": "cancelled"})
+	respond.JSON(w, http.StatusOK, map[string]string{"status": taskStatusCancelled})
 }
 
 type taskScanner interface {
@@ -584,6 +599,10 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 	if len(opts.Spec) > 0 {
 		spec = opts.Spec
 	}
+	criteria := json.RawMessage(`[]`)
+	if len(opts.AcceptanceCriteria) > 0 {
+		criteria = opts.AcceptanceCriteria
+	}
 	metadata := json.RawMessage(`{}`)
 	if len(opts.Metadata) > 0 {
 		metadata = opts.Metadata
@@ -594,30 +613,31 @@ func (h *Handler) insertTask(ctx context.Context, opts createTaskOptions) (Task,
 			description, status, priority, risk_level, target_branch, spec,
 			acceptance_criteria, max_cost, max_runtime_minutes, approval_requirements, metadata, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'backlog', $9, $10, $11, $12,
-			'[]', $13, 60, '[]', $14, $15, $15)
-	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, opts.MaxCost, metadata, now)
+			$13, $14, 60, '[]', $15, $16, $16)
+	`, id, opts.ProjectID, opts.RepositoryID, opts.CreatedBy, source, opts.SourceID, opts.Title, desc, priority, riskLevel, targetBranch, spec, criteria, opts.MaxCost, metadata, now)
 	if err != nil {
 		return Task{}, err
 	}
 
 	task := Task{
-		ID:                id,
-		ProjectID:         opts.ProjectID,
-		RepositoryID:      opts.RepositoryID,
-		CreatedBy:         opts.CreatedBy,
-		Source:            source,
-		SourceID:          opts.SourceID,
-		Title:             opts.Title,
-		Status:            "backlog",
-		Priority:          priority,
-		RiskLevel:         riskLevel,
-		TargetBranch:      targetBranch,
-		Spec:              opts.Spec,
-		Metadata:          metadata,
-		MaxCost:           opts.MaxCost,
-		MaxRuntimeMinutes: 60,
-		CreatedAt:         now,
-		UpdatedAt:         now,
+		ID:                 id,
+		ProjectID:          opts.ProjectID,
+		RepositoryID:       opts.RepositoryID,
+		CreatedBy:          opts.CreatedBy,
+		Source:             source,
+		SourceID:           opts.SourceID,
+		Title:              opts.Title,
+		Status:             "backlog",
+		Priority:           priority,
+		RiskLevel:          riskLevel,
+		TargetBranch:       targetBranch,
+		Spec:               opts.Spec,
+		AcceptanceCriteria: criteria,
+		Metadata:           metadata,
+		MaxCost:            opts.MaxCost,
+		MaxRuntimeMinutes:  60,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if opts.Description != "" {
 		desc := opts.Description

@@ -25,7 +25,7 @@ func TestCreateVoiceTask(t *testing.T) {
 	})
 
 	mock.ExpectExec("INSERT INTO tasks").
-		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeVoice, nil, "Investigate failed deploy and prepare a rollback plan", "Investigate failed deploy and prepare a rollback plan.", "medium", "low", "main", nil, nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeVoice, nil, "Investigate failed deploy and prepare a rollback plan", "Investigate failed deploy and prepare a rollback plan.", "medium", "low", "main", nil, sqlmock.AnyArg(), nil, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	req := httptest.NewRequest(http.MethodPost, "/projects/proj-1/voice-tasks", bytes.NewReader(body))

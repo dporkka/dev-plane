@@ -5,10 +5,11 @@ package spec
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -318,11 +319,20 @@ func (g *Generator) buildImplementationPlan(task *models.Task, config *models.Pr
 
 // buildAcceptanceCriteria generates acceptance criteria from task description.
 func (g *Generator) buildAcceptanceCriteria(task *models.Task) []string {
-	criteria := []string{
+	// Explicit, reviewed requirements from a Builder's Brief take precedence
+	// over inferred heuristics. These are goals, not execution evidence.
+	var imported []string
+	if len(task.AcceptanceCriteria) > 0 {
+		if err := json.Unmarshal(task.AcceptanceCriteria, &imported); err != nil {
+			g.logger.Warn("invalid canonical acceptance criteria; falling back to generated criteria", "task_id", task.ID, "error", err)
+		}
+	}
+	criteria := append([]string(nil), imported...)
+	criteria = append(criteria,
 		fmt.Sprintf("The implementation satisfies: %s", task.Title),
 		"All existing tests continue to pass",
 		"New functionality has appropriate test coverage",
-	}
+	)
 
 	// Add criteria based on description if available
 	if task.Description != nil && *task.Description != "" {
@@ -370,7 +380,7 @@ func (g *Generator) buildTestPlan(task *models.Task, config *models.ProjectConfi
 
 	// Add test command if available
 	if config != nil && config.TestCommand != "" {
-		parts = append(parts, fmt.Sprintf("### Test Command"))
+		parts = append(parts, "### Test Command")
 		parts = append(parts, fmt.Sprintf("```bash\n%s\n```", config.TestCommand))
 	}
 
@@ -515,10 +525,11 @@ func (g *Generator) loadTask(ctx context.Context, taskID string) (*models.Task, 
 		task.AcceptanceCriteria = []byte(ac.String)
 	}
 	if maxCost.Valid {
-		// Parse as float64
-		var f float64
-		fmt.Sscanf(maxCost.String, "%f", &f)
-		task.MaxCost = &f
+		value, parseErr := strconv.ParseFloat(maxCost.String, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse task max_cost: %w", parseErr)
+		}
+		task.MaxCost = &value
 	}
 	if apr.Valid {
 		task.ApprovalRequirements = []byte(apr.String)

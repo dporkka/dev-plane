@@ -60,6 +60,11 @@ export const api = {
   createTask: (projectId: string, data: any): Promise<any> =>
     getClient().createTask(projectId, data),
 
+  createBriefHandoff: (
+    projectId: string,
+    payload: import("@ai-cp/dev-plane-sdk").CreateBriefHandoffRequest,
+  ) => getClient().createBriefHandoff(projectId, payload),
+
   updateTask: (id: string, data: any): Promise<any> =>
     getClient().updateTask(id, data),
 

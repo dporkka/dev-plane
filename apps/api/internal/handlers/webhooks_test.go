@@ -268,7 +268,7 @@ func TestIntegrationWebhook_LinearCreatesTask(t *testing.T) {
 		WithArgs(integrationTypeLinear, "lin-123").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec("INSERT INTO tasks").
-		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeLinear, "lin-123", "Fix production bug", "Investigate the failing deploy", "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeLinear, "lin-123", "Fix production bug", "Investigate the failing deploy", "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE integrations SET last_synced_at =").
 		WithArgs(sqlmock.AnyArg(), "int-1").
@@ -305,7 +305,7 @@ func TestIntegrationWebhook_SlackCreateCommand(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id", "organization_id", "integration_type", "display_name", "config", "status"}).
 			AddRow("int-2", "org-1", integrationTypeSlack, "Slack", configJSON, "connected"))
 	mock.ExpectExec("INSERT INTO tasks").
-		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeSlack, sqlmock.AnyArg(), "Document the new integration flow", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "proj-1", "repo-1", "user-1", integrationTypeSlack, sqlmock.AnyArg(), "Document the new integration flow", sqlmock.AnyArg(), "medium", "low", "main", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec("UPDATE integrations SET last_synced_at =").
 		WithArgs(sqlmock.AnyArg(), "int-2").
