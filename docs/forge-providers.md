@@ -558,9 +558,23 @@ operator. The attestation records the operator's explicit confirmation at
 publication time, not a signed or independently authenticated review of the
 SHA. Existing review reports still do not themselves store the commit SHA.
 
-This is a manual pilot, not production end-to-end publication. Automated
-workspace export, PR Factory enforcement of the receipt and exact-head
-merge remain unimplemented. The existing PR Factory path is unchanged.
+Migration 030 adds a single-use PR creation intent. The Gitea PR Factory
+requires the exact current receipt, approvable low/medium-risk review,
+matching approval actor/timestamps, ready Docker workspace, current binding
+generation, and independently observed base/head branch SHAs. It consumes
+the intent before creating a PR and independently reads the resulting PR
+before persisting a local record. Missing receipt/schema, stale authority,
+branch drift, or a prior intent fails closed. One creation attempt per task
+is deliberate; do not delete an unresolved intent to retry. GitHub's
+existing publication path is unchanged.
+
+The Gitea API creates PRs using branch names, not a compare-and-swap SHA
+precondition. A concurrent change can create an upstream PR that fails
+post-verification; the broker does not record it as qualified locally.
+Inspect and reconcile the existing upstream PR manually, never blindly
+retry or merge it. Restrict branch writers upstream. This gate is not
+merge authorization. Automated workspace export, reconciliation, exact-head
+merge enforcement and least-privilege database permissions remain required.
 Do not enable automatic agent publication.
 
 Focused tests use synthetic local Git smart HTTP and disposable databases:

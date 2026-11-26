@@ -21,6 +21,7 @@ import (
 
 	"github.com/ai-dev-control-plane/db"
 	"github.com/ai-dev-control-plane/prfactory"
+	"github.com/pressly/goose/v3"
 )
 
 func TestReviewedBrokerDurableAuthority(t *testing.T) {
@@ -57,7 +58,10 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	bundle := filepath.Join(root, "export.bundle")
 	git(source, "bundle", "create", bundle, "refs/heads/export")
 	backend := &cgi.Handler{Path: filepath.Join(git(source, "--exec-path"), "git-http-backend"), Env: []string{"GIT_PROJECT_ROOT=" + root, "GIT_HTTP_EXPORT_ALL=1", "REMOTE_USER=fixture"}}
-	var calls, mutations, bad atomic.Int64
+	var calls, mutations, bad, prPosts atomic.Int64
+	var remoteHead atomic.Value
+	remoteHead.Store(head)
+	var prMismatch atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.URL.Path == "/api/v1/repos/acme/widget" {
@@ -68,6 +72,35 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 			}
 			origin := "http://" + r.Host
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 77, "name": "widget", "full_name": "acme/widget", "clone_url": origin + "/acme/widget.git", "html_url": origin + "/acme/widget", "default_branch": "main"})
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/v1/repos/acme/widget/") {
+			if r.Header.Get("Authorization") != "token fixture-api" {
+				bad.Add(1)
+				http.Error(w, "denied", 401)
+				return
+			}
+			route := strings.TrimPrefix(r.URL.Path, "/api/v1/repos/acme/widget/")
+			if strings.HasPrefix(route, "branches/") && r.Method == http.MethodGet {
+				branch := strings.TrimPrefix(route, "branches/")
+				sha := remoteHead.Load().(string)
+				if branch == "main" {
+					sha = base
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"name": branch, "commit": map[string]any{"id": sha}})
+				return
+			}
+			if route == "pulls" && r.Method == http.MethodPost {
+				prPosts.Add(1)
+			} else if route != "pulls/7" || r.Method != http.MethodGet {
+				http.NotFound(w, r)
+				return
+			}
+			sha := head
+			if prMismatch.Load() {
+				sha = base
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 70, "number": 7, "state": "open", "html_url": "http://" + r.Host + "/acme/widget/pulls/7", "head": map[string]any{"ref": "agent/concurrent", "sha": sha}, "base": map[string]any{"ref": "main", "sha": base}})
 			return
 		}
 		if r.Header.Get("Authorization") != "Basic "+base64.StdEncoding.EncodeToString([]byte("writer:fixture-push")) {
@@ -110,7 +143,7 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	if err := database.RunMigrations("../../../../packages/db/migrations"); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.RunMigrationsDown("../../../../packages/db/migrations"); err != nil {
+	if err := goose.DownTo(database.DB, "../../../../packages/db/migrations", 28); err != nil {
 		t.Fatalf("empty evidence migration rollback failed: %v", err)
 	}
 	if err := database.RunMigrations("../../../../packages/db/migrations"); err != nil {
@@ -281,11 +314,38 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_publication_receipts WHERE approval_id=$1", approval3).Scan(&receiptCount); err != nil || receiptCount != 1 {
 		t.Fatal("concurrent receipt missing", err)
 	}
+	if database.Driver == "postgres" {
+		t.Setenv("FORGE_PROVIDER", "gitea")
+		factory := prfactory.NewFactory(database.DB, nil)
+		// An attestation alone is not publication authority.
+		execSQL("ALTER TABLE gitea_publication_receipts RENAME TO unavailable_receipts")
+		if _, err := factory.CreatePullRequest(ctx, task); err == nil || prPosts.Load() != 0 {
+			t.Fatal("created PR without receipt")
+		}
+		execSQL("ALTER TABLE unavailable_receipts RENAME TO gitea_publication_receipts")
+		remoteHead.Store(base)
+		if _, err := factory.CreatePullRequest(ctx, task); err == nil || prPosts.Load() != 0 {
+			t.Fatal("created PR for stale head")
+		}
+		remoteHead.Store(head)
+		execSQL("UPDATE approvals SET response='rejected' WHERE id=$1", approval3)
+		if _, err := factory.CreatePullRequest(ctx, task); err == nil || prPosts.Load() != 0 {
+			t.Fatal("created PR after approval rejection")
+		}
+		execSQL("UPDATE approvals SET response='approved' WHERE id=$1", approval3)
+		pr, err := factory.CreatePullRequest(ctx, task)
+		if err != nil || pr == nil || pr.Number != 7 || prPosts.Load() != 1 {
+			t.Fatalf("guarded PR creation failed: %v", err)
+		}
+		if _, err := factory.CreatePullRequest(ctx, task); err == nil || prPosts.Load() != 1 {
+			t.Fatal("duplicate PR attempt")
+		}
+	}
 	// A receipt cannot refer to a different SHA or nonexistent intent.
 	if _, err := database.Exec("INSERT INTO gitea_publication_receipts(approval_id,observed_head_sha) VALUES ($1,$2)", approval2, base); err == nil {
 		t.Fatal("receipt accepted a mismatched SHA")
 	}
-	if err := database.RunMigrationsDown("../../../../packages/db/migrations"); err == nil {
+	if err := goose.DownTo(database.DB, "../../../../packages/db/migrations", 28); err == nil {
 		t.Fatal("migration rollback erased durable evidence")
 	}
 	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_revision_attestations").Scan(&intentCount); err != nil || intentCount != 3 {
@@ -293,7 +353,7 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	}
 	reject(req)
 	var status sql.NullString
-	if err := database.QueryRow("SELECT status FROM tasks WHERE id=$1", task).Scan(&status); err != nil || status.String != "reviewing" {
-		t.Fatal("broker must not create a PR or change task state")
+	if err := database.QueryRow("SELECT status FROM tasks WHERE id=$1", task).Scan(&status); err != nil || status.String != map[string]string{"postgres": "pr_created", "sqlite": "reviewing"}[database.Driver] {
+		t.Fatal("guarded PR must update task state")
 	}
 }
