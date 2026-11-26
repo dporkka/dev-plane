@@ -72,10 +72,10 @@ func (h *Handler) DeployTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var task struct {
-		Status     string
-		RepoID     string
-		Branch     string
-		ProjectID  string
+		Status    string
+		RepoID    string
+		Branch    string
+		ProjectID string
 	}
 	err := h.db.QueryRowContext(ctx, `
 		SELECT status, repository_id, target_branch, project_id
@@ -125,14 +125,19 @@ func (h *Handler) DeployTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var repoOwner, repoName string
+	var repoSettings sql.NullString
 	if err := h.db.QueryRowContext(ctx, `
-		SELECT owner, name FROM repositories WHERE id = $1 AND deleted_at IS NULL
-	`, task.RepoID).Scan(&repoOwner, &repoName); err != nil {
+		SELECT owner, name, settings FROM repositories WHERE id = $1 AND deleted_at IS NULL
+	`, task.RepoID).Scan(&repoOwner, &repoName, &repoSettings); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 			return
 		}
 		respond.Error(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	if !requireGitHubRepository(w, repoSettings) {
 		return
 	}
 
