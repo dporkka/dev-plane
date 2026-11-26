@@ -75,7 +75,7 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 			http.Error(w, "denied", 401)
 			return
 		}
-		if r.Method == http.MethodPost {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/git-receive-pack") {
 			mutations.Add(1)
 		}
 		backend.ServeHTTP(w, r)
@@ -106,6 +106,12 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 		if err := database.QueryRow("SELECT COUNT(*) FROM pg_tables WHERE schemaname='public'").Scan(&tables); err != nil || tables != 0 {
 			t.Fatal("fixture database must be empty")
 		}
+	}
+	if err := database.RunMigrations("../../../../packages/db/migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RunMigrationsDown("../../../../packages/db/migrations"); err != nil {
+		t.Fatalf("empty evidence migration rollback failed: %v", err)
 	}
 	if err := database.RunMigrations("../../../../packages/db/migrations"); err != nil {
 		t.Fatal(err)
@@ -172,12 +178,118 @@ func TestReviewedBrokerDurableAuthority(t *testing.T) {
 	t.Setenv("GITEA_GIT_PASSWORD", "fixture-api")
 	reject(req)
 	t.Setenv("GITEA_GIT_PASSWORD", "fixture-push")
+	// Missing durable ledger must fail before any Git mutation.
+	execSQL("ALTER TABLE gitea_revision_attestations RENAME TO unavailable_attestations")
+	before := mutations.Load()
+	reject(req)
+	if mutations.Load() != before {
+		t.Fatal("push occurred without durable intent")
+	}
+	execSQL("ALTER TABLE unavailable_attestations RENAME TO gitea_revision_attestations")
 	if err := prfactory.PublishReviewedGiteaBundle(ctx, database.DB, req); err != nil {
 		t.Logf("fixture calls=%d mutations=%d bad=%d", calls.Load(), mutations.Load(), bad.Load())
 		t.Fatal(err)
 	}
 	if mutations.Load() == 0 || bad.Load() != 0 || git(remote, "rev-parse", "refs/heads/agent/fixture") != head || git(remote, "rev-parse", "refs/heads/main") != base {
 		t.Fatal("incorrect publication")
+	}
+	var recordedHead, recordedBase, recordedRun, recordedActor, recordedBranch, observed string
+	var recordedGeneration int64
+	if err := database.QueryRow(`SELECT a.head_sha,a.base_sha,a.run_id,a.approved_by,a.branch,a.authorization_generation,r.observed_head_sha
+      FROM gitea_revision_attestations a JOIN gitea_publication_receipts r ON r.approval_id=a.approval_id
+      WHERE a.approval_id=$1`, approval).Scan(&recordedHead, &recordedBase, &recordedRun, &recordedActor, &recordedBranch, &recordedGeneration, &observed); err != nil {
+		t.Fatal(err)
+	}
+	if recordedHead != head || recordedBase != base || recordedRun != run || recordedActor != user || recordedBranch != req.Branch || recordedGeneration != 1 || observed != head {
+		t.Fatal("incorrect durable evidence")
+	}
+	// Even if the remote branch is deleted, the same approval cannot replay.
+	git(remote, "update-ref", "-d", "refs/heads/agent/fixture")
+	before = mutations.Load()
+	reject(req)
+	if mutations.Load() != before {
+		t.Fatal("consumed approval replayed")
+	}
+	if refs := git(remote, "for-each-ref", "--format=%(refname)", "refs/heads/agent/fixture"); refs != "" {
+		t.Fatal("branch recreated")
+	}
+	// A new authorized branch is allowed, but a receipt write failure must
+	// leave a durable intent and block replay rather than retry the remote.
+	approval2 := id(21)
+	execSQL("UPDATE workspaces SET branch='agent/uncertain' WHERE id=$1", workspace)
+	execSQL("INSERT INTO approvals(id,task_id,agent_run_id,approval_type,requested_by,responded_by,response,responded_at) VALUES ($1,$2,$3,'pr_create',$4,$4,'approved',$5)", approval2, task, run, user, now)
+	pending := req
+	pending.ApprovalID = approval2
+	pending.Branch = "agent/uncertain"
+	execSQL("ALTER TABLE gitea_publication_receipts RENAME TO unavailable_receipts")
+	reject(pending)
+	if got := git(remote, "rev-parse", "refs/heads/agent/uncertain"); got != head {
+		t.Fatal("expected remote confirmation before receipt failure")
+	}
+	execSQL("ALTER TABLE unavailable_receipts RENAME TO gitea_publication_receipts")
+	var intentCount, receiptCount int
+	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_revision_attestations WHERE approval_id=$1", approval2).Scan(&intentCount); err != nil || intentCount != 1 {
+		t.Fatal("pending intent missing", err)
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_publication_receipts WHERE approval_id=$1", approval2).Scan(&receiptCount); err != nil || receiptCount != 0 {
+		t.Fatal("false receipt", err)
+	}
+	git(remote, "update-ref", "-d", "refs/heads/agent/uncertain")
+	before = mutations.Load()
+	reject(pending)
+	if mutations.Load() != before {
+		t.Fatal("pending publication replayed")
+	}
+	// A different approval cannot reuse a consumed repository/branch.
+	approval3 := id(22)
+	execSQL("INSERT INTO approvals(id,task_id,agent_run_id,approval_type,requested_by,responded_by,response,responded_at) VALUES ($1,$2,$3,'pr_create',$4,$4,'approved',$5)", approval3, task, run, user, now)
+	conflict := pending
+	conflict.ApprovalID = approval3
+	reject(conflict)
+	if mutations.Load() != before {
+		t.Fatal("new approval reused consumed branch")
+	}
+	// Two independent broker database connections race for a fresh intent.
+	execSQL("UPDATE workspaces SET branch='agent/concurrent' WHERE id=$1", workspace)
+	conflict.Branch = "agent/concurrent"
+	otherDB, err := db.New(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = otherDB.Close() }()
+	otherDB.SetMaxOpenConns(1)
+	results := make(chan error, 2)
+	start := make(chan struct{})
+	for _, conn := range []*sql.DB{database.DB, otherDB.DB} {
+		go func(conn *sql.DB) {
+			<-start
+			results <- prfactory.PublishReviewedGiteaBundle(ctx, conn, conflict)
+		}(conn)
+	}
+	close(start)
+	successes := 0
+	for range 2 {
+		if err := <-results; err == nil {
+			successes++
+		} else if !errors.Is(err, prfactory.ErrReviewedPush) {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 || mutations.Load() != before+1 {
+		t.Fatalf("concurrent publication successes=%d mutations=%d", successes, mutations.Load()-before)
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_publication_receipts WHERE approval_id=$1", approval3).Scan(&receiptCount); err != nil || receiptCount != 1 {
+		t.Fatal("concurrent receipt missing", err)
+	}
+	// A receipt cannot refer to a different SHA or nonexistent intent.
+	if _, err := database.Exec("INSERT INTO gitea_publication_receipts(approval_id,observed_head_sha) VALUES ($1,$2)", approval2, base); err == nil {
+		t.Fatal("receipt accepted a mismatched SHA")
+	}
+	if err := database.RunMigrationsDown("../../../../packages/db/migrations"); err == nil {
+		t.Fatal("migration rollback erased durable evidence")
+	}
+	if err := database.QueryRow("SELECT COUNT(*) FROM gitea_revision_attestations").Scan(&intentCount); err != nil || intentCount != 3 {
+		t.Fatal("rollback changed evidence", intentCount, err)
 	}
 	reject(req)
 	var status sql.NullString

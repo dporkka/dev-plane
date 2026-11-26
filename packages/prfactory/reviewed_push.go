@@ -33,6 +33,7 @@ type ReviewedPushRequest struct {
 type reviewedPushPlan struct {
 	cloneURL, branch, baseBranch, headSHA, baseSHA, bundlePath string
 	username, password                                         string
+	recordIntent                                               func(context.Context) error
 }
 
 // PublishReviewedGiteaBundle is an opt-in broker boundary. It creates a new
@@ -71,8 +72,15 @@ func PublishReviewedGiteaBundle(ctx context.Context, db *sql.DB, req ReviewedPus
 		}
 		return verifyReviewedPushApproval(checkCtx, db, req)
 	}
-	return pushReviewedBundle(ctx, reviewedPushPlan{cloneURL: cloneURL, branch: req.Branch, baseBranch: req.BaseBranch,
-		headSHA: req.HeadSHA, baseSHA: req.BaseSHA, bundlePath: req.BundlePath, username: username, password: password}, verify)
+	intent := func(checkCtx context.Context) error {
+		return recordReviewedPushIntent(checkCtx, db, req, forge.Authority().BaseURL, cloneURL)
+	}
+	if err := pushReviewedBundle(ctx, reviewedPushPlan{cloneURL: cloneURL, branch: req.Branch, baseBranch: req.BaseBranch,
+		headSHA: req.HeadSHA, baseSHA: req.BaseSHA, bundlePath: req.BundlePath, username: username, password: password,
+		recordIntent: intent}, verify); err != nil {
+		return err
+	}
+	return recordReviewedPushReceipt(ctx, db, req)
 }
 
 func verifyReviewedPushApproval(ctx context.Context, db *sql.DB, req ReviewedPushRequest) error {
@@ -207,7 +215,7 @@ func copyReviewedBundle(src, dst string) error {
 // The credential-bearing operation runs in a new bare repository; no agent
 // worktree, agent-origin remote, checkout, hook or arbitrary refspec is used.
 func pushReviewedBundle(ctx context.Context, p reviewedPushPlan, verify func(context.Context) error) error {
-	if !validReviewedPush(p) || verify == nil {
+	if !validReviewedPush(p) || verify == nil || p.recordIntent == nil {
 		return ErrReviewedPush
 	}
 	root, err := os.MkdirTemp("", "devplane-reviewed-push-")
@@ -273,6 +281,11 @@ func pushReviewedBundle(ctx context.Context, p reviewedPushPlan, verify func(con
 	}
 	if err := verify(ctx); err != nil {
 		return ErrReviewedPush
+	}
+	// Consume the approval before attempting the external mutation. A crash
+	// between this write and the receipt leaves an intent for reconciliation.
+	if err := p.recordIntent(ctx); err != nil {
+		return err
 	}
 	// An empty expected old SHA means create-only. Even if another writer
 	// races the preflight, Git must not replace an existing branch.

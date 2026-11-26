@@ -75,7 +75,7 @@ func TestReviewedPushCreatesOnlyApprovedRevision(t *testing.T) {
 	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:1")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	req := reviewedPushPlan{cloneURL: server.URL + "/acme/widget.git", branch: "agent/fixture", baseBranch: "main", baseSHA: base, headSHA: head, bundlePath: bundle, username: "writer", password: "fixture-push-token"}
+	req := reviewedPushPlan{cloneURL: server.URL + "/acme/widget.git", branch: "agent/fixture", baseBranch: "main", baseSHA: base, headSHA: head, bundlePath: bundle, username: "writer", password: "fixture-push-token", recordIntent: func(context.Context) error { return nil }}
 	verify := func(context.Context) error { return nil }
 	reject := func(plan reviewedPushPlan, check func(context.Context) error) {
 		t.Helper()
@@ -84,6 +84,9 @@ func TestReviewedPushCreatesOnlyApprovedRevision(t *testing.T) {
 		}
 	}
 	wrong := req
+	wrong.recordIntent = nil
+	reject(wrong, verify)
+	wrong = req
 	wrong.headSHA = base
 	reject(wrong, verify)
 	wrong = req
