@@ -1240,6 +1240,12 @@ func buildPaths() map[string]PathItem {
 			Security:    []SecurityRequirement{{"bearerAuth": {}}},
 			Parameters: []Parameter{
 				{Name: "projectID", In: "path", Required: true, Schema: &Schema{Type: "string"}},
+				{
+					Name:        "Idempotency-Key",
+					In:          "header",
+					Description: "Optional retry key. Replays return the existing active task for this project.",
+					Schema:      &Schema{Type: "string"},
+				},
 			},
 			RequestBody: &RequestBody{
 				Required: true,
@@ -1248,6 +1254,9 @@ func buildPaths() map[string]PathItem {
 				},
 			},
 			Responses: map[string]Response{
+				"200": {Description: "Existing task returned for an idempotent replay", Content: map[string]MediaType{
+					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Task"}},
+				}},
 				"201": {Description: "Task created", Content: map[string]MediaType{
 					"application/json": {Schema: &Schema{Ref: "#/components/schemas/Task"}},
 				}},
