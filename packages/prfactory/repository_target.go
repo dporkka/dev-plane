@@ -114,58 +114,115 @@ func canonicalInstanceRoot(raw string) (string, error) {
 // attached. This prevents an attacker-controlled workspace origin from receiving
 // a token intended for another Gitea/GitHub instance.
 func (f *Factory) validateWorkspaceOrigin(ctx context.Context, workspacePath string, target repositoryTarget) error {
-	cmd := exec.CommandContext(ctx, "git", "-C", workspacePath, "remote", "get-url", "origin")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("read workspace origin: %w: %s", err, strings.TrimSpace(string(out)))
+	// Git can rewrite origin differently for fetch and push, and can push to
+	// multiple configured pushurl values. Check the effective destinations,
+	// not just the fetch URL, before exposing any push credential.
+	for _, options := range [][]string{{"--all"}, {"--push", "--all"}} {
+		args := append([]string{"-C", workspacePath, "remote", "get-url"}, options...)
+		cmd := exec.CommandContext(ctx, "git", append(args, "origin")...)
+		out, err := cmd.Output()
+		if err != nil {
+			return fmt.Errorf("read workspace origin: %w", err)
+		}
+		origin := strings.TrimSuffix(string(out), "\n")
+		if origin == "" || strings.TrimSpace(origin) != origin || strings.ContainsAny(origin, "\x00\r\n") {
+			return fmt.Errorf("workspace origin must resolve to exactly one destination")
+		}
+		if err := f.validateWorkspaceRemote(origin, target); err != nil {
+			return err
+		}
 	}
-	origin := strings.TrimSpace(string(out))
-	if origin == "" {
-		return fmt.Errorf("workspace origin is empty")
-	}
+	return nil
+}
 
+func (f *Factory) validateWorkspaceRemote(origin string, target repositoryTarget) error {
 	base, err := repositoryForgeBaseURL(target.Forge)
 	if err != nil {
 		return err
 	}
-	baseURL, _ := url.Parse(base)
-	wantPath := path.Join(baseURL.Path, target.Owner, target.Name+".git")
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return fmt.Errorf("invalid repository forge authority")
+	}
+	wantPath := path.Join("/", baseURL.Path, target.Owner, target.Name+".git")
+	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
+
+	// Git commonly stores SSH remotes in SCP syntax (git@host:owner/repo.git).
+	if host, remotePath, ok := parseSCPLikeSSHRemote(origin); ok {
+		if credentialed {
+			return fmt.Errorf("workspace origin uses ssh but HTTPS Git credentials are configured")
+		}
+		if !strings.EqualFold(host, baseURL.Hostname()) {
+			return fmt.Errorf("workspace origin authority mismatch")
+		}
+		wantSSHPath := path.Join("/", target.Owner, target.Name+".git")
+		if path.Clean(remotePath) != wantSSHPath {
+			return fmt.Errorf("workspace origin repository mismatch")
+		}
+		return nil
+	}
 
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return fmt.Errorf("workspace origin %q is not an absolute HTTPS/SSH URL", origin)
+		return fmt.Errorf("workspace origin is not an absolute HTTPS/SSH URL or SCP-style SSH remote")
 	}
 	parsed.Scheme = strings.ToLower(parsed.Scheme)
-	if parsed.User != nil && parsed.Scheme != "ssh" {
-		return fmt.Errorf("workspace origin must not contain embedded HTTP credentials")
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(origin, "#") {
+		return fmt.Errorf("workspace origin must not contain query or fragment")
+	}
+	if parsed.User != nil {
+		if parsed.Scheme != "ssh" {
+			return fmt.Errorf("workspace origin must not contain embedded HTTP credentials")
+		}
+		if _, hasPassword := parsed.User.Password(); hasPassword {
+			return fmt.Errorf("workspace origin must not contain embedded SSH password")
+		}
 	}
 
-	credentialed := strings.TrimSpace(f.gitPushCredential.Username) != "" || strings.TrimSpace(f.gitPushCredential.Password) != ""
 	switch parsed.Scheme {
 	case "http", "https":
 		if parsed.Scheme != baseURL.Scheme {
-			return fmt.Errorf("workspace origin scheme mismatch: expected %s, got %s", baseURL.Scheme, parsed.Scheme)
+			return fmt.Errorf("workspace origin scheme mismatch")
 		}
 		if !strings.EqualFold(parsed.Host, baseURL.Host) {
-			return fmt.Errorf("workspace origin authority mismatch: expected %s, got %s", baseURL.Host, parsed.Host)
+			return fmt.Errorf("workspace origin authority mismatch")
 		}
 	case "ssh":
 		if credentialed {
 			return fmt.Errorf("workspace origin uses ssh but HTTPS Git credentials are configured")
 		}
 		if !strings.EqualFold(parsed.Hostname(), baseURL.Hostname()) {
-			return fmt.Errorf("workspace origin authority mismatch: expected host %s, got %s", baseURL.Hostname(), parsed.Hostname())
+			return fmt.Errorf("workspace origin authority mismatch")
 		}
-		// The forge's SSH service can legitimately use a port different from its
-		// web/API authority, so repository identity is bound by hostname + path.
+		// SSH can use a service port separate from the web/API authority.
 		wantPath = path.Join("/", target.Owner, target.Name+".git")
 	default:
-		return fmt.Errorf("workspace origin uses unsupported scheme %s", parsed.Scheme)
+		return fmt.Errorf("workspace origin uses unsupported scheme")
 	}
 
-	remotePath := path.Clean(parsed.Path)
-	if remotePath != path.Clean(wantPath) {
-		return fmt.Errorf("workspace origin repository mismatch: expected path %s, got %s", wantPath, remotePath)
+	if path.Clean(parsed.Path) != wantPath {
+		return fmt.Errorf("workspace origin repository mismatch")
 	}
 	return nil
+}
+
+func parseSCPLikeSSHRemote(raw string) (host, remotePath string, ok bool) {
+	if strings.Contains(raw, "://") {
+		return "", "", false
+	}
+	at := strings.LastIndex(raw, "@")
+	if at <= 0 || at == len(raw)-1 {
+		return "", "", false
+	}
+	rest := raw[at+1:]
+	colon := strings.Index(rest, ":")
+	if colon <= 0 || colon == len(rest)-1 {
+		return "", "", false
+	}
+	host = rest[:colon]
+	remote := rest[colon+1:]
+	if strings.ContainsAny(host, "/\\") || strings.ContainsAny(remote, "\x00\r\n") {
+		return "", "", false
+	}
+	return host, "/" + strings.TrimPrefix(remote, "/"), true
 }
