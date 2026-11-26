@@ -6,7 +6,12 @@ module github.com/ai-dev-control-plane/events
 
 go 1.25.11
 
-require github.com/nats-io/nats.go v1.52.0
+require (
+	github.com/ai-dev-control-plane/models v0.0.0
+	github.com/nats-io/nats.go v1.52.0
+)
+
+replace github.com/ai-dev-control-plane/models => ../models
 
 require (
 	github.com/klauspost/compress v1.18.7 // indirect

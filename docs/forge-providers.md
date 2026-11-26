@@ -366,14 +366,100 @@ ready workspace. Do not reuse old unlabelled or prior-generation workspaces.
 
 Any process holding Gitea operator credentials must not execute or provision
 non-Gitea workloads. Separate the Gitea execution worker/host from legacy
-agents and route work appropriately before activating the pilot; the existing
-shared NATS consumer does not provide dedicated routing yet. Filtering a
+agents and route work appropriately before activating the pilot; use the
+dedicated NATS routing below. Filtering a
 subprocess environment alone cannot protect a host credential from a local
 agent with the same OS identity. All Gitea host-worktree pushes (and legacy
 host-worktree pushes by credential-bearing publication processes) are blocked:
 exporting a reviewed immutable revision to a trusted push broker remains a
 separate task. Publishing an already-present remote branch is not proof that
 the Docker workspace's changes were exported.
+
+### Dedicated NATS execution lanes
+
+The API and worker publishers resolve the active task → repository → project
+→ organization from the database on each execution command. A run must belong
+to that task, and an approval must match its durable task, run, response and
+type. Caller-supplied forge/lane metadata is ignored. A reserved Gitea identity
+cannot be downgraded to the shared lane by changing repository settings.
+Missing/invalid identity or schema fails closed; there is no fallback publish.
+An unbound Gitea repository is routed to the Gitea lane but still fails binding
+verification before clone or execution.
+
+The new WorkQueue stream `GITEA_EXECUTION` has four exact subjects outside
+legacy wildcards:
+
+| Command | Shared | Dedicated Gitea |
+| --- | --- | --- |
+| Task approved | `tasks.approved` | `gitea.exec.tasks.approved` |
+| Run triggered (initial, retry, handoff, resume) | `runs.triggered` | `gitea.exec.runs.triggered` |
+| Approval accepted | `approval.approved` | `gitea.exec.approval.approved` |
+| Approval rejected | `approval.rejected` | `gitea.exec.approval.rejected` |
+
+Worker startup requires an explicit lane for credential-bearing processes.
+Use independent OS identities/hosts and separate process environment files,
+not a single shared env file:
+
+- `DEV_PLANE_WORKER_LANE=shared` (default): no Gitea credentials or Gitea
+  publication provider; handles legacy execution, shared completion/review,
+  mailbox handoffs, notification events, and webhooks by default. Shared
+  orchestration can publish classified Gitea commands, but cannot execute them.
+- `DEV_PLANE_WORKER_LANE=gitea`: only the four exact dedicated command
+  subscriptions; `FORGE_PROVIDER=gitea`, `WORKSPACE_RUNTIME=docker`,
+  no `RUNNER_URL` override. Requires the API token, exact configured
+  generation, dedicated clone configuration above. Rejects GitHub, Gitea push
+  and webhook secrets, as well as unrelated integration-encryption and GitHub
+  App private keys. Use a single dedicated worker for the pilot; enable
+  the existing durable run-lease gate separately (`DEV_PLANE_RUN_LEASE_ENABLED=1`).
+- `DEV_PLANE_WORKER_LANE=webhooks`: only `webhooks.*`, no execution
+  runtime or command subscriptions, API/clone/push credentials prohibited.
+  Give this process the Gitea receipt secret and root. Set
+  `DEV_PLANE_WORKER_WEBHOOKS=0` on shared workers so the webhook durable
+  has only one owner. Ingress remains on the API.
+
+Consumers re-resolve routing before handler side effects and manually ACK
+command deliveries only through successful handlers. Wrong-lane, stale and
+unresolvable messages are deferred on their original queues for operator
+reconciliation; never forward between lanes based on a message. Dedicated
+durables use a 35-minute ACK wait and one outstanding message per subject,
+matching the bounded run/provisioning contexts. Invalid commands can block
+their subject until reviewed; do not purge them blindly. Existing handler
+failures/replays and broker availability still require normal monitoring.
+Routing is not exactly-once delivery, a scheduler lease, a durable transactional
+outbox, or broker access-control policy.
+
+**Rollout gate:** stop/drain old publishers and workers before enabling new
+routing, apply DB migrations through 028, inspect existing JetStream streams
+and consumers, then start updated API, shared worker and dedicated worker.
+Existing messages on shared subjects are not automatically migrated; inspect
+their durable task/run/approval state and explicitly reconcile/re-publish
+legitimate pending commands only after stopping old consumers. Keep the
+`tasks_star` durable and consolidate task notifications in that wildcard
+handler (WorkQueue policy forbids overlapping `tasks.completed` /
+`tasks.failed` consumers). If conflicting old notification durables exist,
+inspect their pending state and reconcile them before removing obsolete
+consumers. Do not delete streams or silently replay stale approvals.
+
+The new lane filter and DB checks are application-level isolation, not a
+broker security boundary against a principal with broad JetStream management
+permissions. Separate broker accounts/least-privilege ACLs, provisioning
+stream management outside workers, and tested deployment isolation remain
+production prerequisites. The API's existing database-commit-before-publish
+window is unchanged; a publish failure can leave durable queued work
+requiring operator reconciliation. No production activation yet.
+
+For a disposable real-broker qualification (never uses NATS_URL):
+
+```sh
+DEVPLANE_TEST_NATS_SERVER=/absolute/path/to/nats-server \
+  go test -race -run 'TestWorkerRoutingConfig|TestExecutionRoutingDurableIdentity|TestLiveWorkerCommandRouting' \
+    ./apps/worker/cmd/worker
+```
+
+Optionally run only the durable identity test against its separately created
+empty loopback PostgreSQL database `devplane_routing_test` with fixture
+user `fixture` and
+`DEVPLANE_TEST_ROUTING_POSTGRES_URL=postgres://fixture@127.0.0.1:PORT/devplane_routing_test?sslmode=disable`.
 
 The following focused test uses real authenticated Git smart HTTP with
 synthetic credentials; it checks redirect refusal, configuration isolation,
