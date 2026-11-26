@@ -192,7 +192,7 @@ func (h *Handler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		respond.Error(w, http.StatusInternalServerError, err)
 		return
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var tasks []Task
 	for rows.Next() {
@@ -241,6 +241,10 @@ func (h *Handler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Title == "" {
 		respond.Error(w, http.StatusBadRequest, errors.New("title is required"))
+		return
+	}
+	if err := authz.AuthorizeRepositoryForProject(ctx, h.db, user, req.RepositoryID, projectID); err != nil {
+		respond.Error(w, http.StatusNotFound, errors.New("repository not found"))
 		return
 	}
 

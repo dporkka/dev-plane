@@ -317,13 +317,13 @@ func runWorker() int {
 	shutdownCtx.addSubscription(subTaskFailed)
 	logger.Info("subscribed to tasks.failed")
 
-	// Also subscribe to runs.triggered for agent execution
-	subRunTriggered, err := eventBus.Subscribe("runs.triggered", func(msg *nats.Msg) {
+	// Let the handler acknowledge runs only after execution and completion delivery.
+	subRunTriggered, err := eventBus.JetStream().Subscribe("runs.triggered", func(msg *nats.Msg) {
 		logger.Debug("received runs.triggered event", "data", string(msg.Data))
 		if err := runHandler.HandleRunTriggered(msg); err != nil {
 			logger.Error("failed to handle run triggered", "error", err)
 		}
-	})
+	}, nats.Durable("runs_triggered"), nats.ManualAck())
 	if err != nil {
 		logger.Error("failed to subscribe to runs.triggered", "error", err)
 		return 1

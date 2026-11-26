@@ -68,7 +68,8 @@ func (s *Server) routes() {
 
 	// Built-in Chi middleware
 	s.router.Use(middleware.RequestID)
-	s.router.Use(middleware.RealIP)
+	// Never trust caller-supplied forwarded-IP headers at the application edge.
+	// A trusted ingress may enforce its own peer-address normalization.
 
 	// Custom middleware
 	s.router.Use(appmiddleware.Logger(s.logger))
@@ -137,7 +138,7 @@ func (s *Server) routes() {
 
 		// Authenticated endpoints
 		r.Group(func(r chi.Router) {
-			r.Use(appmiddleware.Auth(s.config.JWTSecret, s.logger))
+			r.Use(appmiddleware.AuthWithMembership(s.config.JWTSecret, s.logger, s.db))
 
 			// Organizations
 			r.Get("/organizations", h.ListOrganizations)

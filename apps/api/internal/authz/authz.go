@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/google/uuid"
+
 	"github.com/ai-dev-control-plane/api/internal/auth"
 )
 
@@ -89,6 +91,43 @@ func AuthorizeRepository(ctx context.Context, db *sql.DB, user *auth.Claims, rep
 		return ErrNotFound
 	}
 	return nil
+}
+
+// AuthorizeRepositoryForProject verifies repository ownership and exact project
+// association. A repository from another project, even in the same tenant,
+// cannot be referenced by a new task in this project.
+func AuthorizeRepositoryForProject(ctx context.Context, db *sql.DB, user *auth.Claims, repoID, projectID string) error {
+	if user == nil || user.OrgID == "" || repoID == "" || projectID == "" {
+		return ErrNotFound
+	}
+	var actualProjectID string
+	err := db.QueryRowContext(ctx, `
+        SELECT r.project_id FROM repositories r
+        JOIN projects p ON p.id = r.project_id
+        WHERE r.id = $1 AND p.organization_id = $2
+          AND r.deleted_at IS NULL AND p.deleted_at IS NULL
+    `, repoID, user.OrgID).Scan(&actualProjectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("authorize repository for project: %w", err)
+	}
+	if !sameProjectIdentifier(actualProjectID, projectID) {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// sameProjectIdentifier preserves exact matches while comparing valid UUID
+// spellings by value. Invalid, non-matching IDs must not be conflated.
+func sameProjectIdentifier(actual, requested string) bool {
+	if actual == requested {
+		return true
+	}
+	actualUUID, actualErr := uuid.Parse(actual)
+	requestedUUID, requestedErr := uuid.Parse(requested)
+	return actualErr == nil && requestedErr == nil && actualUUID == requestedUUID
 }
 
 // AuthorizeTask verifies that the user's organization owns the task.

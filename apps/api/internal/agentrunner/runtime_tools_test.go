@@ -23,17 +23,19 @@ import (
 func TestExecuteToolUsesRuntimeProviderForDockerWorkspace(t *testing.T) {
 	sessionID := "runtime-1"
 	provider := &fakeRuntimeProvider{files: map[string][]byte{"README.md": []byte("# Runtime\n")}}
-	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+	db := agentRunnerScopeDB(t)
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
 		WithRuntimeProvider("docker", provider)
 
 	workspace := &models.Workspace{
 		ID:               "ws-1",
+		RepositoryID:     "repo-1",
 		RuntimeProvider:  "docker",
 		RuntimeSessionID: &sessionID,
 		Status:           models.WorkspaceStatusReady,
 	}
-	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
-	task := &models.Task{ID: "task-1", Title: "read docs"}
+	run := &models.AgentRun{ID: "run-1", TaskID: "task-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1", Title: "read docs"}
 
 	output, err := runner.executeTool(context.Background(), run, task, workspace, "/missing-local-path", "read_file", json.RawMessage(`{"path":"README.md"}`))
 	if err != nil {
@@ -57,17 +59,19 @@ func TestRuntimeRunTestsDetectsCommandThroughProvider(t *testing.T) {
 		files:         map[string][]byte{"go.mod": []byte("module example\n")},
 		commandResult: &runtimes.CommandResult{Stdout: "ok  \texample\t0.1s\n", ExitCode: 0},
 	}
-	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+	db := agentRunnerScopeDB(t)
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
 		WithRuntimeProvider("docker", provider)
 
 	workspace := &models.Workspace{
 		ID:               "ws-1",
+		RepositoryID:     "repo-1",
 		RuntimeProvider:  "docker",
 		RuntimeSessionID: &sessionID,
 		Status:           models.WorkspaceStatusReady,
 	}
-	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
-	task := &models.Task{ID: "task-1", Title: "test"}
+	run := &models.AgentRun{ID: "run-1", TaskID: "task-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1", Title: "test"}
 
 	output, err := runner.executeTool(context.Background(), run, task, workspace, "", "run_tests", json.RawMessage(`{}`))
 	if err != nil {
@@ -91,17 +95,19 @@ func TestRuntimeListDirectorySendsValidShellCommand(t *testing.T) {
 		files:         map[string][]byte{},
 		commandResult: &runtimes.CommandResult{Stdout: "README.md\tfile\t42\nsrc\tdirectory\t0\n"},
 	}
-	runner := NewRunner(nil, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
+	db := agentRunnerScopeDB(t)
+	runner := NewRunner(db, tools.NewWorkspaceTools(slog.Default()), allowAllPolicies(), nil, nil, slog.Default()).
 		WithRuntimeProvider("docker", provider)
 
 	workspace := &models.Workspace{
 		ID:               "ws-1",
+		RepositoryID:     "repo-1",
 		RuntimeProvider:  "docker",
 		RuntimeSessionID: &sessionID,
 		Status:           models.WorkspaceStatusReady,
 	}
-	run := &models.AgentRun{ID: "run-1", AgentRole: models.AgentRoleImplementer}
-	task := &models.Task{ID: "task-1", Title: "list files"}
+	run := &models.AgentRun{ID: "run-1", TaskID: "task-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1", Title: "list files"}
 
 	output, err := runner.executeTool(context.Background(), run, task, workspace, "", "list_directory", json.RawMessage(`{"path":"."}`))
 	if err != nil {
@@ -149,9 +155,9 @@ func TestAgentToolPersistsCapabilityAudit(t *testing.T) {
 	logger := slog.Default()
 	runner := NewRunner(db, tools.NewWorkspaceTools(logger), allowAllPolicies(), nil, nil, logger).
 		WithCapabilityKernel(capability.NewKernel(allowAllPolicies(), nil, audit.NewLogger(db, logger), logger))
-	run := &models.AgentRun{ID: "33333333-3333-3333-3333-333333333333", AgentRole: models.AgentRoleImplementer}
-	task := &models.Task{ID: "task-1", ProjectID: "project-1", Title: "audit tool"}
-	workspace := &models.Workspace{ID: "workspace-1", RuntimeProvider: "local", Status: models.WorkspaceStatusReady}
+	run := &models.AgentRun{ID: "33333333-3333-3333-3333-333333333333", TaskID: "task-1", AgentRole: models.AgentRoleImplementer}
+	task := &models.Task{ID: "task-1", ProjectID: "project-1", RepositoryID: "repo-1", Title: "audit tool"}
+	workspace := &models.Workspace{ID: "workspace-1", RepositoryID: "repo-1", RuntimeProvider: "local", Status: models.WorkspaceStatusReady}
 
 	if _, err := runner.executeTool(context.Background(), run, task, workspace, workspacePath, "read_file", json.RawMessage(`{"path":"README.md"}`)); err != nil {
 		t.Fatalf("executeTool() error: %v", err)
@@ -276,4 +282,20 @@ func (p *fakeRuntimeProvider) StreamLogs(ctx context.Context, sessionID string) 
 	ch := make(chan runtimes.LogLine)
 	close(ch)
 	return ch, nil
+}
+
+// agentRunnerScopeDB creates a real project ownership mapping for the
+// execution-scope guards instead of bypassing them in unit tests.
+func agentRunnerScopeDB(t *testing.T) *sql.DB {
+	t.Helper()
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if _, err := db.Exec(`CREATE TABLE projects (id TEXT PRIMARY KEY, organization_id TEXT NOT NULL);
+		INSERT INTO projects (id, organization_id) VALUES ('project-1','org-1');`); err != nil {
+		t.Fatal(err)
+	}
+	return db
 }

@@ -43,12 +43,14 @@ type schedulerTaskMetadata struct {
 }
 
 type schedulerTaskRow struct {
-	ID           string
-	ProjectID    string
-	RepositoryID string
-	Status       string
-	Metadata     string
-	RunMetadata  string
+	ID                string
+	ProjectID         string
+	RepositoryID      string
+	Status            string
+	Metadata          string
+	RunMetadata       string
+	RunStatus         string
+	CompletionPending bool
 }
 
 func NewSchedulerAdmission(db *sql.DB, capacity SchedulerCapacity) *SchedulerAdmission {
@@ -80,6 +82,12 @@ func (a *SchedulerAdmission) AdmitRun(ctx context.Context, runID, taskID string)
 	if err != nil {
 		return RunAdmissionDecision{}, err
 	}
+	// Completed runs can only deliver their pending event. They need no
+	// scheduler claim, dependencies, capacity, or run-start budget.
+	if candidate.RunStatus == "completed" {
+		return RunAdmissionDecision{Allowed: true, SkipExecution: !candidate.CompletionPending}, nil
+	}
+
 	if decision, ok, err := validatePersistedAdmission(candidate.RunMetadata); err != nil {
 		return RunAdmissionDecision{}, err
 	} else if ok {
@@ -241,19 +249,19 @@ func (a *SchedulerAdmission) ReleaseRun(ctx context.Context, runID string) error
 
 func (a *SchedulerAdmission) loadCandidate(ctx context.Context, runID, taskID string) (schedulerTaskRow, error) {
 	var row schedulerTaskRow
-	var runStatus string
 	err := a.db.QueryRowContext(ctx, `
 		SELECT t.id, t.project_id, t.repository_id, t.status,
-		       COALESCE(t.metadata, '{}'), ar.status, COALESCE(ar.metadata, '{}')
+		       COALESCE(t.metadata, '{}'), ar.status, COALESCE(ar.metadata, '{}'),
+		       ar.pending_completion_event IS NOT NULL
 		FROM agent_runs ar
 		JOIN tasks t ON t.id = ar.task_id
-		WHERE ar.id = $1 AND t.id = $2 AND t.deleted_at IS NULL
-	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &runStatus, &row.RunMetadata)
+		WHERE ar.id = $1 AND t.id = $2 AND (t.deleted_at IS NULL OR ar.status = 'completed')
+	`, runID, taskID).Scan(&row.ID, &row.ProjectID, &row.RepositoryID, &row.Status, &row.Metadata, &row.RunStatus, &row.RunMetadata, &row.CompletionPending)
 	if err != nil {
 		return row, fmt.Errorf("load scheduler candidate: %w", err)
 	}
-	if runStatus != "queued" && runStatus != "admitting" {
-		return row, fmt.Errorf("scheduler candidate run %s has status %s, want queued or admitting", runID, runStatus)
+	if row.RunStatus != "queued" && row.RunStatus != "admitting" && row.RunStatus != "completed" {
+		return row, fmt.Errorf("scheduler candidate run %s has status %s, want queued, admitting, or completed", runID, row.RunStatus)
 	}
 	return row, nil
 }
