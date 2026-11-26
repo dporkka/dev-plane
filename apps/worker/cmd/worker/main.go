@@ -180,7 +180,7 @@ func runWorker() int {
 	}
 	approvalHandler := handlers.NewApprovalHandler(database.DB, logger, eventBus)
 	notificationHandler := handlers.NewNotificationHandler(database.DB, logger, eventBus).WithKeyring(keyring)
-	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus)
+	webhookConsumer := webhooks.NewConsumer(database.DB, logger, eventBus).WithGiteaWebhook(os.Getenv("GITEA_URL"), os.Getenv("GITEA_WEBHOOK_SECRET"))
 
 	// Set up subscriptions - one per stream to avoid consumer conflicts
 	shutdownCtx := &shutdownContext{logger: logger}
@@ -332,7 +332,7 @@ func runWorker() int {
 	logger.Info("subscribed to runs.triggered")
 
 	// webhooks.* -> process incoming webhook events
-	subWebhooks, err := eventBus.Subscribe("webhooks.*", func(msg *nats.Msg) {
+	subWebhooks, err := eventBus.SubscribeManual("webhooks.*", func(msg *nats.Msg) {
 		logger.Debug("received webhook event", "subject", msg.Subject)
 		if err := webhookConsumer.Handle(msg); err != nil {
 			logger.Error("failed to handle webhook event", "error", err)

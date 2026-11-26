@@ -115,7 +115,7 @@ func (s *Server) routes() {
 		WithSlackSigningSecret(s.config.SlackSigningSecret).
 		WithDiscordWebhookSecret(s.config.DiscordWebhookSecret).
 		WithHandler(h)
-	giteaWebhook := handlers.NewGiteaWebhookHandler().WithWebhookSecret(s.config.GiteaWebhookSecret)
+	giteaWebhook := handlers.NewGiteaWebhookHandler().WithWebhookSecret(s.config.GiteaWebhookSecret).WithInstanceURL(s.config.GiteaWebhookURL)
 	if s.eventBus != nil {
 		wh = wh.WithEventPublisher(s.eventBus)
 		giteaWebhook = giteaWebhook.WithEventPublisher(s.eventBus)

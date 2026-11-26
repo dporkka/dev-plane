@@ -15,10 +15,10 @@ func TestGiteaWebhookHandlerPublishesCanonicalEvent(t *testing.T) {
 	publisher := &webhookEventPublisher{}
 	secret := "gitea-secret"
 	h := NewGiteaWebhookHandler().
-		WithWebhookSecret(secret).
+		WithWebhookSecret(secret).WithInstanceURL("https://git.example.test/code").
 		WithEventPublisher(publisher)
 
-	body := []byte(`{"ref":"refs/heads/main","repository":{"id":77,"full_name":"acme/widget"},"sender":{"login":"forge-bot"}}`)
+	body := []byte(`{  "ref":"refs/heads/main","repository":{"id":77,"full_name":"acme/widget","html_url":"https://git.example.test/code/acme/widget"},"sender":{"login":"forge-bot"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(body))
 	req.Header.Set("X-Gitea-Event", "push")
 	req.Header.Set("X-Gitea-Delivery", "delivery-gitea-1")
@@ -40,14 +40,17 @@ func TestGiteaWebhookHandlerPublishesCanonicalEvent(t *testing.T) {
 	if event.Source != "gitea" || event.EventType != "push" || event.DeliveryID != "delivery-gitea-1" {
 		t.Fatalf("event = %+v", event)
 	}
+	if event.ForgeInstance != "https://git.example.test/code" || !bytes.Equal(event.SignedPayload, body) || string(event.Payload) != "null" {
+		t.Fatal("signed bytes or instance authority lost in the envelope")
+	}
 	if event.RepositoryID != "acme/widget" {
 		t.Fatalf("repository id = %q, want acme/widget", event.RepositoryID)
 	}
 }
 
 func TestGiteaWebhookHandlerRejectsInvalidSignature(t *testing.T) {
-	h := NewGiteaWebhookHandler().WithWebhookSecret("gitea-secret")
-	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget"}}`)
+	h := NewGiteaWebhookHandler().WithWebhookSecret("gitea-secret").WithInstanceURL("https://git.example.test/code")
+	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget","html_url":"https://git.example.test/code/acme/widget"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(body))
 	req.Header.Set("X-Gitea-Event", "push")
 	req.Header.Set("X-Gitea-Signature", gateway.ComputeGiteaWebhookSignature(body, "wrong-secret"))
@@ -61,7 +64,7 @@ func TestGiteaWebhookHandlerRejectsInvalidSignature(t *testing.T) {
 
 func TestGiteaWebhookHandlerRequiresConfiguredSecret(t *testing.T) {
 	h := NewGiteaWebhookHandler()
-	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget"}}`)
+	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget","html_url":"https://git.example.test/code/acme/widget"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(body))
 	req.Header.Set("X-Gitea-Event", "push")
 	rec := httptest.NewRecorder()
@@ -75,8 +78,8 @@ func TestGiteaWebhookHandlerRequiresConfiguredSecret(t *testing.T) {
 func TestGiteaWebhookHandlerPingAcknowledgesWithoutPublishing(t *testing.T) {
 	publisher := &webhookEventPublisher{}
 	secret := "gitea-secret"
-	h := NewGiteaWebhookHandler().WithWebhookSecret(secret).WithEventPublisher(publisher)
-	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget"}}`)
+	h := NewGiteaWebhookHandler().WithWebhookSecret(secret).WithInstanceURL("https://git.example.test/code").WithEventPublisher(publisher)
+	body := []byte(`{"repository":{"id":77,"full_name":"acme/widget","html_url":"https://git.example.test/code/acme/widget"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/webhooks/gitea", bytes.NewReader(body))
 	req.Header.Set("X-Gitea-Event", "ping")
 	req.Header.Set("X-Gitea-Signature", gateway.ComputeGiteaWebhookSignature(body, secret))

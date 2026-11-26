@@ -16,6 +16,7 @@ type Config struct {
 	GitHubSecret         string
 	GitHubWebhookSecret  string
 	GiteaWebhookSecret   string
+	GiteaWebhookURL      string
 	LinearWebhookSecret  string
 	SlackSigningSecret   string
 	DiscordWebhookSecret string
@@ -44,7 +45,8 @@ func Load() (*Config, error) {
 		GitHubClientID:       EnvOrDefault("GITHUB_CLIENT_ID", ""),
 		GitHubSecret:         EnvOrDefault("GITHUB_CLIENT_SECRET", ""),
 		GitHubWebhookSecret:  EnvOrDefault("GITHUB_APP_WEBHOOK_SECRET", ""),
-		GiteaWebhookSecret:   EnvOrDefault("GITEA_WEBHOOK_SECRET", ""),
+		GiteaWebhookSecret:   strings.TrimSpace(os.Getenv("GITEA_WEBHOOK_SECRET")),
+		GiteaWebhookURL:      os.Getenv("GITEA_URL"),
 		LinearWebhookSecret:  EnvOrDefault("LINEAR_WEBHOOK_SECRET", ""),
 		SlackSigningSecret:   EnvOrDefault("SLACK_SIGNING_SECRET", ""),
 		DiscordWebhookSecret: EnvOrDefault("DISCORD_WEBHOOK_SECRET", ""),

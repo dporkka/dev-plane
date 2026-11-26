@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nats-io/nats.go"
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/nats-io/nats.go"
 
 	"github.com/ai-dev-control-plane/events"
 )
@@ -77,6 +77,7 @@ func setupConsumerDB(t *testing.T) *sql.DB {
 			full_name TEXT NOT NULL,
 			clone_url TEXT NOT NULL,
 			default_branch TEXT NOT NULL DEFAULT 'main',
+			settings TEXT,
 			deleted_at DATETIME
 		);
 		CREATE TABLE tasks (
@@ -399,11 +400,11 @@ func TestHandleLinearIssueNoIntegrationIgnored(t *testing.T) {
 		"type":   "Issue",
 		"action": "create",
 		"data": map[string]any{
-			"id":          "issue-uuid-3",
-			"identifier":  "TEAM-44",
-			"title":       "Orphan issue",
-			"state":       map[string]any{"name": "Todo"},
-			"team":        map[string]any{"id": "unknown-team", "name": "Team", "key": "TEAM"},
+			"id":         "issue-uuid-3",
+			"identifier": "TEAM-44",
+			"title":      "Orphan issue",
+			"state":      map[string]any{"name": "Todo"},
+			"team":       map[string]any{"id": "unknown-team", "name": "Team", "key": "TEAM"},
 		},
 	})
 	event := events.WebhookEvent{
