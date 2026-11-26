@@ -58,6 +58,9 @@ func (m *Manager) WithEventSink(sink EventSink) *Manager {
 // CreateThread starts a provider thread and persists its durable identity before
 // returning it to the caller.
 func (m *Manager) CreateThread(ctx context.Context, providerName string, req CreateThreadRequest) (*Thread, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validate create thread: %w", err)
+	}
 	provider, err := m.registry.Get(providerName)
 	if err != nil {
 		return nil, err
@@ -73,6 +76,12 @@ func (m *Manager) CreateThread(ctx context.Context, providerName string, req Cre
 	now := m.now()
 	if strings.TrimSpace(thread.Provider) == "" {
 		thread.Provider = provider.Name()
+	}
+	if thread.WorkspaceID != req.WorkspaceID {
+		return nil, fmt.Errorf("provider thread workspace %q does not match requested workspace %q", thread.WorkspaceID, req.WorkspaceID)
+	}
+	if normalizeProviderName(thread.Provider) != normalizeProviderName(provider.Name()) {
+		return nil, fmt.Errorf("provider thread owner %q does not match selected provider %q", thread.Provider, provider.Name())
 	}
 	if thread.CreatedAt.IsZero() {
 		thread.CreatedAt = now
@@ -116,6 +125,18 @@ func (m *Manager) ResumeThread(ctx context.Context, threadID string) (*Thread, e
 	if resumed == nil {
 		return nil, errors.New("agent runtime provider returned nil resumed thread")
 	}
+	if resumed.ID != "" && resumed.ID != stored.ID {
+		return nil, fmt.Errorf("resumed thread id %q does not match stored thread %q", resumed.ID, stored.ID)
+	}
+	if resumed.WorkspaceID != "" && resumed.WorkspaceID != stored.WorkspaceID {
+		return nil, fmt.Errorf("resumed thread workspace %q does not match stored workspace %q", resumed.WorkspaceID, stored.WorkspaceID)
+	}
+	if resumed.Provider != "" && normalizeProviderName(resumed.Provider) != normalizeProviderName(stored.Provider) {
+		return nil, fmt.Errorf("resumed thread provider %q does not match stored provider %q", resumed.Provider, stored.Provider)
+	}
+	if resumed.ProviderThreadID != "" && stored.ProviderThreadID != "" && resumed.ProviderThreadID != stored.ProviderThreadID {
+		return nil, fmt.Errorf("resumed native thread id does not match stored native thread id")
+	}
 
 	resumed.ID = stored.ID
 	resumed.WorkspaceID = firstValue(resumed.WorkspaceID, stored.WorkspaceID)
@@ -144,6 +165,9 @@ func (m *Manager) ResumeThread(ctx context.Context, threadID string) (*Thread, e
 // durably recorded. Persistence failure cancels the provider context and closes
 // the stream with an error rather than continuing in a partially recorded state.
 func (m *Manager) RunTurn(ctx context.Context, req RunTurnRequest) (*RunStream, error) {
+	if err := req.Validate(); err != nil {
+		return nil, fmt.Errorf("validate run turn: %w", err)
+	}
 	thread, err := m.store.GetThread(ctx, req.ThreadID)
 	if err != nil {
 		return nil, fmt.Errorf("load agent thread %s: %w", req.ThreadID, err)
@@ -152,9 +176,12 @@ func (m *Manager) RunTurn(ctx context.Context, req RunTurnRequest) (*RunStream, 
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(req.ProviderThreadID) == "" {
-		req.ProviderThreadID = thread.ProviderThreadID
+	if req.ProviderThreadID != "" && req.ProviderThreadID != thread.ProviderThreadID {
+		return nil, fmt.Errorf("run turn native session does not match stored thread")
 	}
+	// The durable record is authoritative; callers cannot redirect a turn to
+	// another provider-native session by supplying their own identifier.
+	req.ProviderThreadID = thread.ProviderThreadID
 
 	runCtx, cancel := context.WithCancel(ctx)
 	providerEvents, err := provider.RunTurn(runCtx, req)
