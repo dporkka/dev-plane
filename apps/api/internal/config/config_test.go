@@ -120,6 +120,33 @@ func TestLoad_CustomLogLevel(t *testing.T) {
 	assertEqual(t, cfg.LogLevel, "warn")
 }
 
+func TestLoad_RejectsUnsafeGitHubOAuthRedirectURL(t *testing.T) {
+	t.Setenv("JWT_SECRET", "this-is-a-very-long-development-secret-key")
+	for _, bad := range []string{
+		"http://staging.example.invalid/api/auth/github/callback",
+		"https://staging.example.invalid/other",
+		"https://staging.example.invalid/api/auth/github/callback?next=https://attacker.invalid",
+		"https://evil@staging.example.invalid/api/auth/github/callback",
+		"javascript:alert(1)",
+	} {
+		t.Setenv("GITHUB_OAUTH_REDIRECT_URL", bad)
+		if _, err := Load(); err == nil {
+			t.Fatalf("Load() must reject unsafe OAuth redirect %q", bad)
+		}
+	}
+}
+
+func TestLoad_TrustedGitHubOAuthRedirectURL(t *testing.T) {
+	t.Setenv("JWT_SECRET", "this-is-a-very-long-development-secret-key")
+	const allowed = "https://review-staging.example.invalid/api/auth/github/callback"
+	t.Setenv("GITHUB_OAUTH_REDIRECT_URL", allowed)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() rejected a trusted callback: %v", err)
+	}
+	assertEqual(t, cfg.GitHubRedirectURL, allowed)
+}
+
 func TestLoad_RequiresJWTSecret(t *testing.T) {
 	os.Unsetenv("JWT_SECRET")
 	_, err := Load()
