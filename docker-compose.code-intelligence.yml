@@ -1,0 +1,22 @@
+services:
+  zoekt:
+    image: ghcr.io/sourcegraph/zoekt:sha-b0de0bb
+    command: ["zoekt-webserver", "-index", "/data/index", "-listen", ":6070", "-rpc"]
+    ports:
+      - "6070:6070"
+    volumes:
+      - zoekt-index:/data/index
+    restart: unless-stopped
+
+  zoekt-sync:
+    image: ghcr.io/sourcegraph/zoekt:sha-b0de0bb
+    profiles: ["index"]
+    entrypoint: ["/bin/sh", "-lc"]
+    command: ["zoekt-local-sync -index /data/index -f /repos"]
+    volumes:
+      - ${CODE_REPOS_ROOT:?set CODE_REPOS_ROOT to a directory containing local git repositories}:/repos:ro
+      - zoekt-index:/data/index
+
+volumes:
+  zoekt-index:
+    driver: local

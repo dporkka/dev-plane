@@ -1,0 +1,146 @@
+{
+  "version": 9,
+  "scenarios": [
+    {
+      "id": "adacavo-proposal-flow",
+      "repository": "dporkka/adacavo",
+      "intent": "impact",
+      "prompt": "Trace ProposalService through proposal entry points and the durable proposal-booking workflow. Return the production files that must be reviewed before changing proposal status-transition semantics.",
+      "expected": [
+        "apps/api/services/proposal-service.ts",
+        "apps/api/services/proposal-service-legacy.ts",
+        "apps/api/proposals/actions.ts",
+        "apps/api/proposals/booking.ts",
+        "apps/api/proposals.ts",
+        "temporal/workflows/proposal-booking-workflow.ts",
+        "temporal/activities/proposal-booking-activities.ts"
+      ],
+      "backends": {
+        "codebase-memory": [
+          {
+            "tool": "search_graph",
+            "arguments": {
+              "project": "adacavo",
+              "query": "ProposalService transitionLifecycle proposal status transition booking workflow durable Temporal",
+              "limit": 30
+            }
+          }
+        ],
+        "gitnexus": [
+          {
+            "tool": "query",
+            "arguments": {
+              "search_query": "ProposalService transitionLifecycle proposal status transition booking workflow durable Temporal",
+              "maxTokens": 8000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "nulang-mir-codegen-callers",
+      "repository": "nulang-org/nulang",
+      "intent": "impact",
+      "prompt": "Find the core production entry points that call mir_codegen::compile_mir and should be reviewed before changing MIR-to-bytecode code generation semantics.",
+      "expected": [
+        "src/mir_codegen.rs",
+        "src/main.rs",
+        "src/repl.rs",
+        "src/dap/mod.rs",
+        "src/aot/mod.rs",
+        "src/ffi/c_api.rs"
+      ],
+      "backends": {
+        "codebase-memory": [
+          {
+            "tool": "trace_path",
+            "arguments": {
+              "project": "nulang",
+              "function_name": "compile_mir",
+              "direction": "inbound"
+            }
+          }
+        ],
+        "gitnexus": [
+          {
+            "tool": "impact",
+            "arguments": {
+              "target": "compile_mir",
+              "direction": "upstream",
+              "summaryOnly": false,
+              "maxTokens": 8000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "nulang-cloud-runtime-boundary",
+      "repository": "dporkka/nulang-cloud",
+      "intent": "understand",
+      "prompt": "Locate the core executable runtime boundary between local Wasmtime execution and Firecracker-backed host-agent execution. Return the production implementation files that define those boundaries.",
+      "expected": [
+        "nlc-dev-server/src/runtime.rs",
+        "host-agent/src/main.rs",
+        "host-agent/src/vm_factory.rs"
+      ],
+      "backends": {
+        "codebase-memory": [
+          {
+            "tool": "search_graph",
+            "arguments": {
+              "project": "nulang-cloud",
+              "query": "local Wasmtime execution Firecracker host-agent VmFactory runtime boundary",
+              "limit": 30
+            }
+          }
+        ],
+        "gitnexus": [
+          {
+            "tool": "query",
+            "arguments": {
+              "search_query": "local Wasmtime execution Firecracker host-agent VmFactory runtime boundary",
+              "maxTokens": 8000
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "dev-plane-run-admission",
+      "repository": "dporkka/dev-plane",
+      "intent": "impact",
+      "prompt": "Trace run admission from scheduler claim through task readiness, budget checks, agent-runner delegation, and worker wiring. Return the production files that define or consume admission semantics.",
+      "expected": [
+        "apps/worker/internal/handlers/scheduler_admission.go",
+        "apps/worker/internal/handlers/run_handlers.go",
+        "apps/worker/cmd/worker/main.go",
+        "apps/api/pkg/agentexecutor/executor.go",
+        "apps/api/internal/agentrunner/runner_budget.go",
+        "apps/api/internal/budget/engine.go",
+        "packages/readiness/task.go"
+      ],
+      "backends": {
+        "codebase-memory": [
+          {
+            "tool": "search_graph",
+            "arguments": {
+              "project": "dev-plane",
+              "query": "run admission SchedulerAdmission task-readiness-v1 CheckRunStart agentexecutor runner budget worker wiring",
+              "limit": 30
+            }
+          }
+        ],
+        "gitnexus": [
+          {
+            "tool": "query",
+            "arguments": {
+              "search_query": "run admission SchedulerAdmission task-readiness-v1 CheckRunStart agentexecutor runner budget worker wiring",
+              "maxTokens": 8000
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
