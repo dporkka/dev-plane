@@ -640,3 +640,69 @@ do not infer atomicity from preflight or readback.
 ## Non-goals
 
 Do not fork Gitea to add Dev Plane features unless an unavoidable forge-level primitive is missing. Agent orchestration, workspace execution, Project Brain, verification, proof, and policy belong in Dev Plane or its workspace providers, not inside the forge.
+
+## Trusted exact-head CI work binding (operator pilot)
+
+Migration 032 adds a single-use association from a confirmed Gitea PR to
+an existing verification work item. Work-item IDs cannot be shared between
+PRs. The operator selects the item and required executable gate names
+outside the agent workspace. The work item and signed receipt repository
+identity must use `gitea:<canonical instance URL>#<upstream numeric repo ID>`,
+not the unqualified repository name. The base and head are pinned to the
+existing revision/PR receipts. The required gate set cannot be silently
+replaced by editing a work item.
+
+Create a trusted policy JSON outside the agent workspace. Populate it from
+independently established current CI execution identities; never derive the
+pins from the evidence being checked. Example shape (replace all placeholders,
+including the full SHA/digest and base64 Ed25519 public key):
+
+```json
+{
+  "pull_request_id": "LOCAL_PR_UUID",
+  "repository_id": "LOCAL_REPO_UUID",
+  "project_id": "PROJECT_UUID",
+  "organization_id": "ORG_UUID",
+  "head_sha": "FULL_HEAD_SHA",
+  "base_sha": "FULL_BASE_SHA",
+  "generation": 1,
+  "work_item_id": "OPERATOR_SELECTED_WORK_ITEM",
+  "gates": {
+    "build": {
+      "Provider": "trusted-ci",
+      "Repository": "gitea:https://forge.example#123",
+      "DefinitionSHA256": "FULL_DEFINITION_SHA256",
+      "SignerKeyID": "operator-key",
+      "PublicKey": "BASE64_ED25519_PUBLIC_KEY",
+      "PipelineID": "PIPELINE",
+      "RunID": "RUN",
+      "JobID": "JOB",
+      "AttemptID": "CURRENT_ATTEMPT"
+    }
+  }
+}
+```
+
+With the trusted database and Gitea configuration described above:
+
+```sh
+go run ./apps/api/cmd/forge-check-gitea-ci --policy /private/ci-policy.json --bind
+go run ./apps/api/cmd/forge-check-gitea-ci --policy /private/ci-policy.json
+```
+
+The second invocation is read-only. It verifies the current merge preflight,
+durable association, work item state, exact gate set, evidence head/base and
+work-item ID, and requires signed remote CI evidence for every gate using
+the existing RemoteCIReceipt protocol. Unsigned local execution and
+status-only evidence do not qualify. Use separate trusted operator roles
+for binding and checking; the policy file and database permissions are
+part of the trust boundary. Do not make this a tenant API.
+
+The existing signature covers the exact **head**, repository identity,
+definition digest and attempt, not the PR/work-item/base tuple. The
+trusted policy and durable association bind the latter locally. A future
+merge path must establish fresh current-attempt pins and recheck all
+authority; a passing diagnostic is not a reusable authorization token.
+There is no live Gitea CI signer in this pilot. Woodpecker's existing
+diagnostic reader intentionally refuses to attest release success without
+authoritative assignment evidence; do not weaken that contract.
